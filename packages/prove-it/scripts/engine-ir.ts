@@ -1,28 +1,26 @@
-// Lowers every corpus model to the engine IR and holds the IR to M3's acceptance in native/DESIGN.md:
-// each model has an IR or a reason it has none; each IR decodes and encodes again byte for byte in
-// Rust; the golden models' IR matches tests/conformance/ir; and each IR's string table is TLC's
-// string order, as createTlcOrder and getStringRank give it.
+// Lowers every corpus model to the engine IR through the Rust front end, as the binary does, and
+// holds the IR to M3's acceptance in native/DESIGN.md: each model has an IR or the front end's
+// reason it has none; each IR decodes and encodes again byte for byte in Rust; the golden models'
+// IR matches tests/conformance/ir; and each IR's string table is TLC's string order. front-dump's
+// model-full lowers the models in batches, as tla_front::model::lower_model does for prove-it, and
+// its order mode gives TLC's string order of each.
 //
-// Usage: bun scripts/run.ts engine-ir [--filter <text>] [--concurrency <n>] [--timeout-ms <ms>]
-//        [--update]
-// --update rewrites the golden files. --timeout-ms stops a model that hasn't reached the engine
-// by then, and counts it as a failure; without it nothing does. Cargo must be on the PATH, for the Rust round trip.
+// Usage: bun scripts/run.ts engine-ir [--filter <text>] [--concurrency <n>] [--update]
+// --update rewrites the golden files. --concurrency is how many front-dump batches run at once.
+// Cargo must be on the PATH: it builds front-dump and runs the Rust round trip.
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { parseConfig } from "../src/config";
-import { createTlcOrder } from "../src/tlc/order";
-import { getStringRank, setStringOrder } from "../src/values";
-import type { ModelOutcome } from "./check-model";
 import {
   CONFORMANCE_DIRECTORY,
   type CorpusModel,
   EXPECTED_PATH,
   findModels,
-  getLibraryModules,
   getOption,
+  LIBRARY_PATH,
+  linkLibraryModules,
 } from "./corpora";
 
 // The models whose IR tests/conformance/ir keeps: the suite's corpus models, then models that
@@ -117,9 +115,8 @@ const GOLDEN_MODELS = [
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");
 const OUT_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".ir");
 const NATIVE_DIRECTORY = join(import.meta.dirname, "../native");
-const timeoutOption = getOption("--timeout-ms");
-const timeoutMilliseconds = timeoutOption === undefined ? undefined : Number(timeoutOption);
-const TIMED_OUT = "timed out before the engine";
+// Batches keep each front-dump's output, the IR in hex, well under a string's largest size.
+const BATCH = 25;
 
 const filter = getOption("--filter");
 const concurrency = Number(getOption("--concurrency") ?? 4);
@@ -132,65 +129,62 @@ interface IrRun {
   reason?: string;
 }
 
+// What front-dump writes for a model it couldn't lower or order.
+interface FrontFailure {
+  error?: string;
+  notYet?: string;
+}
+
 const getIrPath = (directory: string, id: string) => join(directory, id.replace(/\.cfg$/, ".ir"));
 
-// Runs a model until the engine reports its IR, or says why it built none.
-const lowerModel = (model: CorpusModel) =>
-  new Promise<IrRun>((resolve) => {
-    const path = getIrPath(OUT_DIRECTORY, model.id);
-    mkdirSync(dirname(path), { recursive: true });
-    const child = spawn(
-      process.execPath,
-      [
-        "--stack-size=8000",
-        "--max-old-space-size=6144",
-        join(import.meta.dirname, "check-model.js"),
-        model.specPath,
-        model.configPath,
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, PROVE_IT_ENGINE: "debug", PROVE_IT_IR_DUMP: path },
-      },
-    );
-    const run: { result?: IrRun } = {};
-    const timer =
-      timeoutMilliseconds === undefined
-        ? undefined
-        : setTimeout(() => {
-            run.result ??= { id: model.id, reason: TIMED_OUT };
-            child.kill("SIGKILL");
-          }, timeoutMilliseconds);
-    const stdout: Buffer[] = [];
-    const stderr: string[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr.push(chunk.toString("utf8"));
-      const lines = stderr.join("");
-      const lowered = /^\[engine\] native: ir: (?:(\d+) bytes|declined: (.*)) in /m.exec(lines);
-      const skipped = /^\[engine\] skipped: (.*)$/m.exec(lines);
-      if (!lowered && !skipped) return;
-      run.result ??= lowered?.[1]
-        ? { id: model.id, bytes: Number(lowered[1]) }
-        : { id: model.id, reason: `declined: ${lowered?.[2] ?? `skipped: ${skipped?.[1]}`}` };
-      child.kill("SIGKILL");
+const build = spawnSync(
+  "cargo",
+  ["build", "--release", "--locked", "--quiet", "-p", "tla-front", "--bin", "front-dump"],
+  { cwd: NATIVE_DIRECTORY, stdio: "inherit" },
+);
+if (build.status !== 0) process.exit(build.status ?? 1);
+const FRONT_DUMP = join(NATIVE_DIRECTORY, "target/release/front-dump");
+linkLibraryModules();
+
+// front-dump's line for each model, in the mode given.
+const runFrontDump = (mode: "model-full" | "order", batch: CorpusModel[]) =>
+  new Promise<string[]>((resolve, reject) => {
+    const child = spawn(FRONT_DUMP, [mode, "--library", LIBRARY_PATH], {
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    child.on("close", () => {
-      clearTimeout(timer);
-      const output = Buffer.concat(stdout).toString("utf8");
-      const outcome: ModelOutcome | undefined = output.startsWith("{")
-        ? JSON.parse(output)
-        : undefined;
-      // A check that succeeds without reaching the engine has no Init or Next for it to search.
-      const ending = !outcome
-        ? "it crashed"
-        : outcome.status === "success"
-          ? "success, with no Init or Next"
-          : `${outcome.status}${outcome.error ? `: ${outcome.error.split("\n")[0]}` : ""}`;
-      resolve(
-        run.result ?? { id: model.id, reason: `the check ended before the engine: ${ending}` },
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (status) => {
+      const lines = Buffer.concat(stdout).toString("utf8").split("\n").slice(0, batch.length);
+      if (status === 0 && lines.length === batch.length) return resolve(lines);
+      reject(
+        new Error(
+          `front-dump ${mode} failed on ${batch[0].id} and the ${batch.length - 1} models after it: ${Buffer.concat(stderr).toString("utf8")}`,
+        ),
       );
     });
+    child.stdin.end(batch.map((model) => `${model.configPath}\t${model.specPath}\n`).join(""));
+  });
+
+const describeFailure = (failure: FrontFailure) =>
+  failure.notYet === undefined
+    ? (failure.error ?? JSON.stringify(failure))
+    : `not native yet: ${failure.notYet}`;
+
+// Writes each model's IR to OUT_DIRECTORY, or says why the front end built none.
+const lowerBatch = async (batch: CorpusModel[]) =>
+  (await runFrontDump("model-full", batch)).map((line, index): IrRun => {
+    const { id } = batch[index];
+    const written = JSON.parse(line) as { ir?: string } & FrontFailure;
+    if (written.ir === undefined) return { id, reason: describeFailure(written) };
+    const ir = Buffer.from(written.ir, "hex");
+    const path = getIrPath(OUT_DIRECTORY, id);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, ir);
+    return { id, bytes: ir.length };
   });
 
 // The IR's texts, and how many TLC ranks.
@@ -206,30 +200,20 @@ const readTexts = (ir: Uint8Array) => {
   };
 };
 
-const libraryModules = getLibraryModules();
-
 // Why the IR's string table isn't TLC's string order, if it isn't: it starts with the order
-// createTlcOrder gives the model, and getStringRank ranks every text in it by its position.
-const checkStringOrder = (model: CorpusModel, ir: Uint8Array) => {
-  const loadModule = (name: string) => {
-    const besideSpec = join(model.directory, `${name}.tla`);
-    const libraryPath = libraryModules.get(name);
-    return existsSync(besideSpec)
-      ? readFileSync(besideSpec, "utf8")
-      : libraryPath && readFileSync(libraryPath, "utf8");
-  };
-  const order = createTlcOrder(readFileSync(model.specPath, "utf8"), loadModule);
-  const tlcOrder = [
-    ...new Set(order.getStringOrder(parseConfig(readFileSync(model.configPath, "utf8")))),
-  ];
+// front-dump gives the model, and the texts it ranks are that order's, each at its rank.
+const checkStringOrder = (line: string, ir: Uint8Array) => {
+  const written = JSON.parse(line) as { strings?: string[] } & FrontFailure;
+  if (written.strings === undefined) return `no string order: ${describeFailure(written)}`;
+  const tlcOrder = [...new Set(written.strings)];
   const table = readTexts(ir);
   const prefix = tlcOrder.findIndex((text, index) => table.texts[index] !== text);
   if (prefix !== -1) return `text ${prefix} is ${table.texts[prefix]}, not ${tlcOrder[prefix]}`;
-  setStringOrder(tlcOrder);
+  const ranks = new Map(tlcOrder.map((text, rank) => [text, rank]));
   const misranked = table.texts
     .slice(0, table.rankedCount)
-    .findIndex((text, index) => getStringRank(text) !== index);
-  return misranked === -1 ? undefined : `getStringRank ranks text ${misranked} otherwise`;
+    .findIndex((text, index) => ranks.get(text) !== index);
+  return misranked === -1 ? undefined : `TLC's order ranks text ${misranked} otherwise`;
 };
 
 const expectedIds = new Set(
@@ -239,31 +223,36 @@ const models = findModels().filter(
   (model) => expectedIds.has(model.id) && (filter === undefined || model.id.includes(filter)),
 );
 rmSync(OUT_DIRECTORY, { recursive: true, force: true });
+const batches = Array.from({ length: Math.ceil(models.length / BATCH) }, (_, index) =>
+  models.slice(index * BATCH, (index + 1) * BATCH),
+);
 const runs: IrRun[] = [];
-const queue = [...models];
+const failures: string[] = [];
+const queue = [...batches];
 await Promise.all(
   Array.from({ length: concurrency }, async () => {
-    for (let model = queue.shift(); model; model = queue.shift()) {
-      const run = await lowerModel(model);
-      runs.push(run);
-      console.log(
-        `[${runs.length}/${models.length}] ${run.bytes === undefined ? `no IR: ${run.reason}` : `${run.bytes} bytes`}  ${model.id}`,
-      );
+    for (let batch = queue.shift(); batch; batch = queue.shift()) {
+      const batchRuns = await lowerBatch(batch);
+      for (const run of batchRuns) {
+        runs.push(run);
+        console.log(
+          `[${runs.length}/${models.length}] ${run.bytes === undefined ? `no IR: ${run.reason}` : `${run.bytes} bytes`}  ${run.id}`,
+        );
+      }
+      const batchLowered = batch.filter((_, index) => batchRuns[index].bytes !== undefined);
+      if (batchLowered.length === 0) continue;
+      const orders = await runFrontDump("order", batchLowered);
+      batchLowered.forEach((model, index) => {
+        const failure = checkStringOrder(
+          orders[index],
+          readFileSync(getIrPath(OUT_DIRECTORY, model.id)),
+        );
+        if (failure) failures.push(`${model.id}: the string table: ${failure}`);
+      });
     }
   }),
 );
-
-const failures: string[] = [];
-// A model stopped before it reached the engine had its IR checked by nothing.
-for (const run of runs) {
-  if (run.reason === TIMED_OUT) failures.push(`${run.id}: ${TIMED_OUT}`);
-}
 const lowered = runs.filter((run) => run.bytes !== undefined);
-for (const run of lowered) {
-  const model = models.find((candidate) => candidate.id === run.id)!;
-  const failure = checkStringOrder(model, readFileSync(getIrPath(OUT_DIRECTORY, run.id)));
-  if (failure) failures.push(`${run.id}: the string table: ${failure}`);
-}
 
 const roundTrip = spawnSync(
   "cargo",
@@ -300,7 +289,7 @@ writeFileSync(
 );
 console.log(`\n${lowered.length} of ${runs.length} models have an IR.`);
 for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {
-  console.log(`${String(count).padStart(5)}  ${reason}`);
+  console.log(`${String(count).padStart(5)}  ${reason.replace(/\s*\n\s*/g, " ")}`);
 }
 console.log(roundTrip.stdout.trim());
 console.log(
