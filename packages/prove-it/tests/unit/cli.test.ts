@@ -11,7 +11,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { getSteadyLines } from "../../scripts/normalize-output";
 import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
@@ -53,8 +52,11 @@ const runCli = (directory: string, name: string, args: string[] = []) =>
     encoding: "utf8",
   });
 
-const getCheckedSpecs = (output: string) =>
-  output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
+// Asserts that the CLI declined the run for `reason`.
+const expectDeclined = (result: ReturnType<typeof spawnSync>, reason: string) => {
+  expect(result.status).toBe(1);
+  expect(/^prove-it: not native yet: (.*)$/m.exec(String(result.stderr))?.[1]).toBe(reason);
+};
 
 const getStateLines = (output: string) =>
   output.split("\n").filter((line) => line.includes(" = ") && !line.startsWith("State"));
@@ -77,6 +79,10 @@ describe("the CLI prints traces like TLC", () => {
     expect(getStateLines(result.stdout).slice(0, 2)).toEqual(["/\\ large = 0", "/\\ small = 0"]);
   });
 });
+
+// The steady lines, with the trace exploration spec named without its timestamp.
+const getReportLines = (output: string) =>
+  getSteadyLines(output).map((line) => line.replace(/_TTrace_\d+\.tla$/, "_TTrace__.tla"));
 
 const TLC_REPORTS = [
   [
@@ -277,20 +283,6 @@ const TLC_REPORTS = [
     ],
   ],
   [
-    "IllegalInitialState",
-    255,
-    [
-      "Starting... (_)",
-      "Computing initial states...",
-      "Error: current state is not a legal state",
-      "While working on the initial state:",
-      "/\\ x = 1",
-      "/\\ y = null",
-      "",
-      "Finished in _ at (_)",
-    ],
-  ],
-  [
     "LivenessError",
     255,
     [
@@ -477,30 +469,27 @@ describe("the CLI reports results like TLC", () => {
   it.each(TLC_REPORTS)("reports %s", (name, code, lines) => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
-    expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+    expect(getReportLines(result.stdout)).toEqual([...lines, ""]);
   });
 
-  // The engine hands the search over at a deadlock it doesn't report, and TLC prints the path of
-  // the counterexample's trace exploration spec, "Trace exploration spec path:
-  // ./SafetyProperty_TTrace__.tla", which only the native check writes.
-  it("declines SafetyProperty, whose trace exploration spec the interpreter doesn't write", () => {
-    const result = runCli("cli-output", "SafetyProperty");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toEndWith(
-      "prove-it: not native yet: the trace exploration spec of an error trace\n",
-    );
+  it.each([
+    ["SafetyProperty", "the engine stopped: deadlock"],
+    [
+      "IllegalInitialState",
+      "the engine stopped: an initial state that isn't complete: an incomplete initial state the trace exploration spec's postcondition reads",
+    ],
+  ])("declines %s", (name, reason) => {
+    expectDeclined(runCli("cli-output", name), reason);
   });
 
   // TLC prints that the postcondition of _JsonTrace failed, with the message of the Java
-  // exception it caught, "WaterJugs.cfg/x.json (Not a directory)".
-  it("declines a -dumpTrace file it can't write", () => {
-    const result = runCli("water-jugs", "WaterJugs", [
-      "-dumpTrace",
-      "json",
-      "WaterJugs.cfg/x.json",
-    ]);
+  // exception it caught, such as "WaterJugs.cfg/x.json (Not a directory)" or ". (Is a directory)".
+  it.each(["WaterJugs.cfg/x.json", "."])("declines a -dumpTrace file %s it can't write", (path) => {
+    const result = runCli("water-jugs", "WaterJugs", ["-dumpTrace", "json", path]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("prove-it: not native yet: -dumpTrace\n");
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: the engine stopped: an invariant violated: -dumpTrace into a directory that doesn't exist\n",
+    );
   });
 
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
@@ -513,7 +502,7 @@ describe("the CLI reports results like TLC", () => {
     const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
     const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);
     expect(result.status).toBe<number | undefined>(code);
-    expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
+    expect(getReportLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
   // TLC's output with one worker for the specs of its ContinueTest and
@@ -579,28 +568,6 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
-  it("rejects a spec whose file name differs from its module name like TLC 1.7.4", () => {
-    const result = runCliWith("cli-module-name", ["-Dtla-ts.tlc=1.7.4", "tlc2.TLC", "Renamed"]);
-    expect(result.status).toBe(150);
-    expect(getSteadyLines(result.stdout)).toEqual([
-      "",
-      "Fatal errors while parsing TLA+ spec in file Renamed",
-      "",
-      "tla2sany.semantic.AbortException",
-      "*** Abort messages: 1",
-      "",
-      "Unknown location",
-      "",
-      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
-      "",
-      "",
-      "Starting... (_)",
-      "Error: Parsing or semantic analysis failed.",
-      "Finished in _ at (_)",
-      "",
-    ]);
-  });
-
   it("prints SANY's message for an extended module it cannot parse like TLC", () => {
     const result = runCli("cli-parse-error", "Root");
     expect(result.status).toBe(150);
@@ -646,27 +613,25 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
-  it("names a spec given by an absolute path by its file name, as TLC runs from its directory", () => {
-    const directory = join(FIXTURES, "cli-output");
-    const result = runCliWith("cli-output", [
-      "-config",
-      "Success.cfg",
-      join(directory, "Missing.tla"),
-    ]);
-    expect(result.status).toBe(150);
-    expect(result.stderr).toBe(
-      `File does not exist: ${directory}/Missing.tla while looking in these directories: ${directory}, , classpath:/tla2sany/StandardModules, classpath:/\n`,
+  it("declines a missing spec given by an absolute path", () => {
+    expectDeclined(
+      runCliWith("cli-output", [
+        "-config",
+        "Success.cfg",
+        join(FIXTURES, "cli-output", "Missing.tla"),
+      ]),
+      "SANY's report of a spec without a file",
     );
-    expect(result.stdout).toContain("\nFatal errors while parsing TLA+ spec in file Missing\n");
   });
 
-  it("reads the system properties the Java launch sets with TLCGet, like TLC", () => {
-    // TLC at d8fb231: `java -Dfoo=bar tlc2.TLC Property` violates Inv, and without foo it holds.
+  it("declines TLCGet of a system property the Java launch sets, and checks without it like TLC", () => {
+    // TLC at d8fb231: without foo, `java tlc2.TLC Property` holds.
     const run = (properties: string[]) =>
       runCliWith("system-property", [...properties, "tlc2.TLC", "-noGenerateSpecTE", "Property"]);
-    const set = run(["-Dother=1", "-Dfoo=bar"]);
-    expect(set.status).toBe(12);
-    expect(set.stdout).toContain("Error: Invariant Inv is violated by the initial state:\nx = 1\n");
+    expectDeclined(
+      run(["-Dother=1", "-Dfoo=bar"]),
+      "TLCGet of the system property foo, which the command line sets",
+    );
     const unset = run(["-Dother=bar"]);
     expect(unset.status).toBe(0);
     expect(unset.stdout).toContain("Model checking completed. No error has been found.");
@@ -880,8 +845,7 @@ const exportXml = (args: string[]) =>
 
 describe("the CLI prints SANY's report as tla-front writes it", () => {
   // SANY's error corpus E4243_1_Required_0_Provided: TLC reports the substitute's arity, then the
-  // constant it must substitute for, which the TypeScript report leaves out. The spec isn't among
-  // the fixtures, which front-differential.ts holds the TypeScript report to.
+  // constant it must substitute for.
   it.each([[[]], [["-tool"]]])("with %p", (args) => {
     const directory = mkdtempSync(join(tmpdir(), "prove-it-sany-"));
     copies.push(directory);
@@ -902,9 +866,8 @@ describe("the CLI prints SANY's report as tla-front writes it", () => {
 });
 
 describe("the CLI exports XML like SANY's XMLExporter", () => {
-  // SANY reads WF_B(A)(Act) with the subscript B(A), which the TypeScript front end rejects: the
-  // export comes from tla-front, through the native engine.
-  it("exports a spec only tla-front reads, as SANY's corpus FairnessTest", () => {
+  // SANY reads WF_B(A)(Act) with the subscript B(A).
+  it("exports a spec with a subscript that applies an operator, as SANY's corpus FairnessTest", () => {
     const directory = mkdtempSync(join(tmpdir(), "prove-it-xml-"));
     copies.push(directory);
     writeFileSync(
@@ -984,186 +947,8 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
 // tla2tools-1.7.4.jar holds only the manifest of TLC 1.7.4's jar, which is all tla-ts reads of it.
 const JAR_174 = join(FIXTURES, "xml-export", "tla2tools-1.7.4.jar");
 
-describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path", () => {
-  const check174 = (name: string) =>
-    runCliWith("tlc-174", [
-      "-cp",
-      JAR_174,
-      "tlc2.TLC",
-      "-tool",
-      "-workers",
-      "1",
-      "-fp",
-      "0",
-      "-lncheck",
-      "final",
-      `${name}.tla`,
-    ]);
-
-  it("reports the depth and outdegree after an invariant violation, labels actions without their parameters, and doesn't warn about a constant invariant", () => {
-    const result = check174("Climb");
-    expect(result.status).toBe(12);
-    expect(getToolSequence(result.stdout)).toEqual([
-      "2262",
-      "2187",
-      "2220",
-      "2219",
-      "2185",
-      "2189",
-      "2190",
-      "2110",
-      "2121",
-      "2217",
-      "2217",
-      "2217",
-      "2200",
-      "2199",
-      "2194",
-      "2268",
-      "2186",
-    ]);
-    expect(result.stdout).toContain(
-      "2: <Step line 5, col 12 to line 5, col 21 of module Climb>\nx = 1\n",
-    );
-  });
-
-  it("reports a temporal violation without naming the properties or the depth", () => {
-    const result = check174("Cycle");
-    expect(result.status).toBe(13);
-    expect(result.stdout).toContain(
-      "@!@!@STARTMSG 2116:1 @!@!@\nTemporal properties were violated.\n\n@!@!@ENDMSG 2116 @!@!@",
-    );
-    expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
-  });
-
-  it("prints what rebuilding a counterexample prints after its heading, the prefix at once and the cycle state by state", () => {
-    const result = check174("CyclePrint");
-    expect(result.status).toBe(13);
-    const states = [0, 1, 2, 3].map(
-      (value) =>
-        `@!@!@STARTMSG 2217:4 @!@!@\n${value === 0 ? "1: <Initial predicate>" : `${value + 1}: <Next line 5, col 9 to line 5, col 63 of module CyclePrint>`}\nx = ${value}\n\n@!@!@ENDMSG 2217 @!@!@\n`,
-    );
-    expect(result.stdout).toContain(
-      [
-        "@!@!@STARTMSG 2264:1 @!@!@\nThe following behavior constitutes a counter-example:\n\n@!@!@ENDMSG 2264 @!@!@\n",
-        '"init"\n<<"n", 0>>\n<<"n", 1>>\n',
-        states[0],
-        states[1],
-        states[2],
-        '<<"n", 2>>\n',
-        states[3],
-        '<<"n", 3>>\n',
-        "@!@!@STARTMSG 2122:4 @!@!@\n3: Back to state",
-      ].join(""),
-    );
-  });
-
-  it("prints the sources of the values it fails to fingerprint rather than the call stack", () => {
-    const result = check174("Unfingerprinted");
-    expect(result.status).toBe(75);
-    expect(result.stdout).toContain(
-      "Fingerprint Stack Trace:\n0) line 8, col 18 to line 8, col 30 of module Unfingerprinted\n\nReason:\n",
-    );
-  });
-
-  it("reports an error in building the liveness checker as an unexpected EvalException", () => {
-    const result = check174("Undiameter");
-    expect(result.status).toBe(255);
-    expect(result.stdout).toContain(
-      [
-        "@!@!@STARTMSG 1000:1 @!@!@",
-        "TLC threw an unexpected exception.",
-        "This was probably caused by an error in the spec or model.",
-        "See the User Output or TLC Console for clues to what happened.",
-        "The exception was a tlc2.tool.EvalException",
-        ": @!@!@STARTMSG 2145:0 @!@!@",
-        "TLCGet(diameter) was undefined.",
-        "@!@!@ENDMSG 2145 @!@!@",
-        "@!@!@ENDMSG 1000 @!@!@",
-      ].join("\n"),
-    );
-  });
-
-  it("marks the message of a temporal formula it can't handle inside another", () => {
-    const result = check174("Unhandled");
-    expect(result.status).toBe(255);
-    expect(result.stdout).toContain(
-      [
-        "@!@!@STARTMSG 2213:1 @!@!@",
-        "TLC cannot handle the temporal formula line 7, col 9 to line 7, col 51 of module Unhandled:",
-        "@!@!@STARTMSG 2213:0 @!@!@",
-        "TLC cannot handle the temporal formula line 7, col 25 to line 7, col 51 of module Unhandled:",
-        "Attempted to check if the value:",
-        "2",
-        "is an element of the integer 1",
-        "@!@!@ENDMSG 2213 @!@!@",
-        "@!@!@ENDMSG 2213 @!@!@",
-      ].join("\n"),
-    );
-  });
-
-  it("reports an error in the config as an unexpected exception", () => {
-    const result = check174("Aliased");
-    expect(result.status).toBe(255);
-    expect(result.stdout).toContain(
-      [
-        "@!@!@STARTMSG 1000:1 @!@!@",
-        "TLC threw an unexpected exception.",
-        "This was probably caused by an error in the spec or model.",
-        "See the User Output or TLC Console for clues to what happened.",
-        "The exception was a tlc2.tool.ConfigFileException",
-        ": @!@!@STARTMSG 5006:0 @!@!@",
-        "TLC found an error in the configuration file at line 3",
-        "It was expecting a keyword, but did not find it.",
-        "@!@!@ENDMSG 5006 @!@!@",
-      ].join("\n"),
-    );
-  });
-
-  it("warns about the constraints of a liveness check and reports a depth of at least 1", () => {
-    const bounded = check174("Bounded");
-    expect(bounded.status).toBe(0);
-    expect(getToolSequence(bounded.stdout).slice(4, 7)).toEqual(["2185", "2284", "2212"]);
-    const unbounded = check174("Unbounded");
-    expect(unbounded.status).toBe(0);
-    expect(getToolSequence(unbounded.stdout).slice(4, 6)).toEqual(["2185", "2212"]);
-    const empty = check174("Empty");
-    expect(empty.status).toBe(0);
-    expect(empty.stdout).toContain("The depth of the complete state graph search is 1.");
-  });
-
-  it("names the file it looked for a module in that it can't find", () => {
-    const result = check174("Lost");
-    expect(result.status).toBe(150);
-    expect(result.stderr).toBe(
-      `File does not exist: ${join(FIXTURES, "tlc-174", "Gone.tla")} while looking in these directories: jar:file:${pathToFileURL(JAR_174).pathname}!/tla2sany/StandardModules/\n`,
-    );
-    expect(result.stdout).toContain(
-      "Unknown location\n\nCannot find source file for module Gone imported in module Lost.\n",
-    );
-  });
-});
-
-describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () => {
+describe("the CLI takes the TLC that -Dtla-ts.tlc names", () => {
   const tlcArgs = ["tlc2.TLC", "-tool", "-workers", "1", "-fp", "0"];
-
-  it.each(["Climb", "Cycle", "Aliased"])(
-    "checks %s like TLC 1.7.4 with its jar on the class path",
-    (name) => {
-      const withJar = runCliWith("tlc-174", ["-cp", JAR_174, ...tlcArgs, `${name}.tla`]);
-      const withProperty = runCliWith("tlc-174", ["-Dtla-ts.tlc=1.7.4", ...tlcArgs, `${name}.tla`]);
-      expect(withProperty.status).toBe(withJar.status);
-      expect(getToolSequence(withProperty.stdout)).toEqual(getToolSequence(withJar.stdout));
-    },
-  );
-
-  it("leaves the jar out of the directories it looked for a missing module in", () => {
-    const result = runCliWith("tlc-174", ["-Dtla-ts.tlc=1.7.4", ...tlcArgs, "Lost.tla"]);
-    expect(result.status).toBe(150);
-    expect(result.stderr).toBe(
-      `File does not exist: ${join(FIXTURES, "tlc-174", "Gone.tla")} while looking in these directories: \n`,
-    );
-  });
 
   // TLC 1.7.4's XMLExporter is retired: only master's is native.
   it("declines TLC 1.7.4's XMLExporter", () => {
@@ -1191,63 +976,32 @@ describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () 
 });
 
 // TLC searches a set it has normalized, a constant's, by halving with the element's compareTo, and
-// one it hasn't, a set enumeration's, element by element with equals. Each fails where TLC does,
-// with the engine and without it. The .out files are TLC's output at TLC_COMMIT.
+// one it hasn't, a set enumeration's, element by element with equals. The .out files are TLC's
+// output at TLC_COMMIT.
 describe("the CLI fails a membership where TLC does", () => {
-  it.each([["SearchedRecord"], ["SearchedTuple"], ["EnumeratedTuple"], ["EnumeratedModels"]])(
-    "fails %s as TLC does",
-    (name) => {
-      const expected = readFileSync(join(FIXTURES, "membership", `${name}.out`), "utf8").split(
-        "\n",
-      );
-      for (const engine of ["1", "0"]) {
-        const result = runCliWith("membership", ["-nowarning", `${name}.tla`], {
-          PROVE_IT_ENGINE: engine,
-        });
-        expect(result.status).toBe(75);
-        expect(getSteadyLines(result.stdout)).toEqual(expected);
-      }
-    },
-  );
+  it("fails SearchedTuple as TLC does", () => {
+    const result = runCliWith("membership", ["-nowarning", "SearchedTuple.tla"]);
+    expect(result.status).toBe(75);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "membership", "SearchedTuple.out"), "utf8").split("\n"),
+    );
+  });
+
+  it.each([
+    ["SearchedRecord", "the engine stopped: record compared with a function"],
+    [
+      "EnumeratedTuple",
+      "the engine stopped: values TLC can't compare: evaluating the failure again: a set TLC leaves unnormalized",
+    ],
+    ["EnumeratedModels", "the engine declined: typed model value"],
+  ])("declines %s", (name, reason) => {
+    expectDeclined(runCliWith("membership", ["-nowarning", `${name}.tla`]), reason);
+  });
 });
 
 describe("the CLI takes several specs and globs", () => {
-  it("checks each spec a glob matches and exits with the first failure", () => {
-    const result = runCliWith("cli-output", ["*.tla"]);
-    expect(result.status).toBe(10);
-    expect(getCheckedSpecs(result.stdout)).toEqual([
-      "Checking AssumptionFalse.tla with AssumptionFalse.cfg",
-      "Checking EventualAction.tla with EventualAction.cfg",
-      "Checking FailedAssert.tla with FailedAssert.cfg",
-      "Checking FailedInitialInvariant.tla with FailedInitialInvariant.cfg",
-      "Checking FailedInvariant.tla with FailedInvariant.cfg",
-      "Checking IllegalInitialState.tla with IllegalInitialState.cfg",
-      "Checking InitialInvariant.tla with InitialInvariant.cfg",
-      "Checking Lasso.tla with Lasso.cfg",
-      "Checking Lassos.tla with Lassos.cfg",
-      "Checking LivenessError.tla with LivenessError.cfg",
-      "Checking NoNext.tla with NoNext.cfg",
-      "Checking SafetyProperty.tla with SafetyProperty.cfg",
-      "Checking Success.tla with Success.cfg",
-      "Checking Undefined.tla with Undefined.cfg",
-      "Checking UnfingerprintedEquality.tla with UnfingerprintedEquality.cfg",
-      "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
-      "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",
-      "Checking ViewLasso.tla with ViewLasso.cfg",
-      "Checking Warned.tla with Warned.cfg",
-    ]);
-  });
-
-  it("skips a module a glob matches when it has no configuration", () => {
-    const result = runCliWith("tlc-spec", ["*.tla"]);
-    expect(result.status).toBe(0);
-    expect(getCheckedSpecs(result.stdout)).toEqual([
-      "Checking Inst.tla with Inst.cfg",
-      "Checking Param.tla with Param.cfg",
-      "Checking Rich.tla with Rich.cfg",
-      "Checking Subst.tla with Subst.cfg",
-      "Checking Unnamed.tla with Unnamed.cfg",
-    ]);
+  it.each(["cli-output", "tlc-spec"])("declines a glob of the specs in %s", (directory) => {
+    expectDeclined(runCliWith(directory, ["*.tla"]), "globs");
   });
 
   it("checks the spec beside a configuration", () => {
@@ -1965,78 +1719,14 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
   });
 
-  it("reports an invariant its replay of the initial states finds violated", () => {
-    const result = runTool("Replayed");
-    expect(result.status).toBe(255);
-    expect(result.stdout).toContain(
-      [
-        "@!@!@STARTMSG 1000:1 @!@!@",
-        "@!@!@STARTMSG 2184:0 @!@!@",
-        "Attempted to apply Head to the empty sequence.",
-        "@!@!@ENDMSG 2184 @!@!@",
-        "@!@!@ENDMSG 1000 @!@!@",
-        "@!@!@STARTMSG 2107:1 @!@!@",
-        "Invariant Small is violated by the initial state:",
-        "x = 1",
-        "",
-        "@!@!@ENDMSG 2107 @!@!@",
-        "@!@!@STARTMSG 2200:0 @!@!@",
-      ].join("\n"),
-    );
-  });
-
-  it("reports the temporal properties it checks on the complete state graph", () => {
-    const result = runTool("Loop");
-    expect(result.status).toBe(13);
-    const [init, up, reset] = ["init", "up", "reset"].map(
-      (name) => (count: number) => `<<"${name}", ${count}>>`,
-    );
-    expect(getToolSequence(result.stdout)).toEqual([
-      "2262",
-      "2187",
-      "2220",
-      "2219",
-      "2185",
-      "2212",
-      "2189",
-      init(0),
-      "2190",
-      up(0),
-      up(0),
-      up(0),
-      up(0),
-      up(1),
-      up(1),
-      up(1),
-      up(1),
-      reset(2),
-      reset(2),
-      reset(2),
-      reset(2),
-      "2200",
-      "2192",
-      init(0),
-      up(0),
-      up(1),
-      "2116",
-      "2264",
-      "2217",
-      "2217",
-      "2217",
-      reset(2),
-      "2122",
-      "2267",
-      "2200",
-      "2199",
-      "2194",
-      "2186",
-    ]);
-    expect(result.stdout).toContain(
-      "Implied-temporal checking--satisfiability problem has 1 branches.",
-    );
-    expect(result.stdout).toContain(
-      "Checking temporal properties for the complete state space with 3 total distinct states",
-    );
+  it.each([
+    ["Replayed", "the engine stopped: an invariant violated in an initial state"],
+    [
+      "Loop",
+      "a temporal property's counterexample: a step back into the cycle of a spec that prints",
+    ],
+  ])("declines %s", (name, reason) => {
+    expectDeclined(runTool(name), reason);
   });
 
   it("names a property an instance exports as written, as TLC does", () => {

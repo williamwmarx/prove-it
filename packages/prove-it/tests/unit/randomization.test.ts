@@ -2,19 +2,17 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkOnEngine } from "../native-check";
+import { check } from "../../src";
+import { expectDeclined } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/randomization");
 
-const checkWithSeed = (name: string, seed: bigint, declinedFor?: string) =>
-  checkOnEngine(
-    {
-      source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-      config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
-      seed,
-    },
-    declinedFor,
-  );
+const checkWithSeed = (name: string, seed: bigint) =>
+  check({
+    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
+    seed,
+  });
 
 const getSummary = async (name: string, seed: bigint) => {
   const result = await checkWithSeed(name, seed);
@@ -143,19 +141,19 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
-  it("draws again at each reference to a LET definition in an action", async () => {
-    const result = await checkWithSeed(
-      "RandomLet",
-      1n,
+  it("declines drawing again at each reference to a LET definition in an action", async () => {
+    await expectDeclined(
+      {
+        source: readFileSync(join(DIRECTORY, "RandomLet.tla"), "utf8"),
+        config: readFileSync(join(DIRECTORY, "RandomLet.cfg"), "utf8"),
+        seed: 1n,
+      },
       "the engine declined: unsupported: RandomElement",
     );
-    expect(result.violations[0]?.states.map((step) => step.variables.alpha.value)).toEqual([
-      0, 100, 77, 50, 66, 68, 12,
-    ]);
   });
 
   it('reports the seed in TLCGet("config")', async () => {
-    const result = await checkOnEngine({
+    const result = await check({
       source:
         '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nASSUME TLCGet("config").seed = "-42"\n====',
       config: "INIT Init\nNEXT Next",
@@ -165,30 +163,10 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
   });
 });
 
-// The expected values are what TLC 1.7.4 prints with -fp 0 and -seed 4.
-describe("random choices match TLC 1.7.4", () => {
-  it("draws RandomSubset as TLC 1.7.4 does, and refuses to enumerate a large set of tuples", async () => {
-    const result = await checkOnEngine(
-      {
-        source: readFileSync(join(DIRECTORY, "RandomSubsetNext.tla"), "utf8"),
-        config: readFileSync(join(DIRECTORY, "RandomSubsetNext.cfg"), "utf8"),
-        seed: 4n,
-        version: "1.7.4",
-      },
-      "TLC 1.7.4",
-    );
-    expect(result.status).toBe("error");
-    expect(result.violations[0]?.states.map((step) => step.variables.x.value)).toEqual([39]);
-    expect(result.violations[0]?.headline).toMatch(
-      /RandomSubset\(tlc2\.value\.impl\.Value,tlc2\.value\.impl\.Value\),\nbut it produced the following error:\nAttempted to construct a set with too many elements \(>1000000\)\.$/,
-    );
-  });
-});
-
 describe("a violating successor TLC fails to draw again", () => {
   it("reports TLC's exception after the initial state", async () => {
     // TLC at d8fb231 with -seed 0 prints the initial state, then a NullPointerException.
-    const result = await checkOnEngine({
+    const result = await check({
       source:
         "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x' = RandomElement(0..1) /\\ y' = RandomElement(0..1)\nSpec == Init /\\ [][Next]_<<x,y>>\nInv == x = y\n====",
       config: "SPECIFICATION Spec\nINVARIANT Inv",

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { check, parseConfig } from "../../src";
+import { expectDeclined } from "../native-check";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -15,7 +16,6 @@ const MODELS = [
   ["operator-constants", "ConstantOperatorConfiguration"],
   ["queue", "Queue"],
   ["randomization", "RandomModelValue"],
-  ["strings", "StringOrder"],
   ["symmetry", "SymmetricMessages"],
   ["tlc-spec", "Rich"],
   ["view", "ViewSymmetry"],
@@ -45,28 +45,42 @@ describe("check takes a ModelConfig as its configuration file", () => {
       await checkModel(directory, name, text),
     );
   });
+
+  it("declines strings/StringOrder as with the file's text", async () => {
+    const text = readFileSync(join(FIXTURES, "strings/StringOrder.cfg"), "utf8");
+    const getOptions = (config: string | ReturnType<typeof parseConfig>) => ({
+      source: readFileSync(join(FIXTURES, "strings/StringOrder.tla"), "utf8"),
+      config,
+    });
+    await expectDeclined(getOptions(text), "the engine stopped: an invariant violated");
+    await expectDeclined(
+      getOptions(parseConfig(text)),
+      "the engine stopped: an invariant violated",
+    );
+  });
 });
 
 // The binary reads a Java launch's -D, as the library passes systemProperties: it checks a spec that
-// doesn't read them natively, and declines TLCGet of one that is set, where the TypeScript check
-// reads its value.
+// doesn't read them natively, and declines TLCGet of one that is set.
 describe("check takes systemProperties as a Java launch's -D", () => {
+  const getOptions = (source: string, prints: string[] = []) => ({
+    source,
+    config: "INIT Init\nNEXT Next",
+    systemProperties: new Map([["color", "blue"]]),
+    onPrint: (text: string) => prints.push(text),
+  });
   const getRun = (source: string) => {
     const prints: string[] = [];
-    return check({
-      source,
-      config: "INIT Init\nNEXT Next",
-      systemProperties: new Map([["color", "blue"]]),
-      onPrint: (text) => prints.push(text),
-    }).then((result) => ({ status: result.status, prints }));
+    return check(getOptions(source, prints)).then((result) => ({ status: result.status, prints }));
   };
 
-  it("reads a property TLCGet names", async () => {
-    expect(
-      await getRun(
+  it("declines a property TLCGet names", async () => {
+    await expectDeclined(
+      getOptions(
         '---- MODULE P ----\nEXTENDS TLC\nVARIABLE x\nInit == PrintT(TLCGet("-Dcolor")) /\\ x = 0\nNext == UNCHANGED x\n====',
       ),
-    ).toEqual({ status: "success", prints: ['"blue"'] });
+      "TLCGet of the system property color, which the command line sets",
+    );
   });
 
   it("checks a spec that reads none", async () => {

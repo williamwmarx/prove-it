@@ -2,38 +2,34 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { CheckOptions } from "../../src";
-import { checkParsed } from "../../src/parallel";
-import { checkOnEngine } from "../native-check";
-
 const FIXTURES = join(import.meta.dirname, "../fixtures");
+const DIST = join(import.meta.dirname, "../../dist/index.js");
+
+const loadPackage = (): Promise<typeof import("../../src")> => import(DIST);
+
+type Package = Awaited<ReturnType<typeof loadPackage>>;
+
 // TLC's -workers leaves the engine on one thread, so each check asks for as many engine threads
 // as it asks for workers.
-const checkWithThreads = async (options: CheckOptions, declinedFor?: string) => {
+const checkWithThreads = async (tlaTs: Package, options: Parameters<Package["check"]>[0]) => {
   const previous = process.env.PROVE_IT_WORKERS;
   process.env.PROVE_IT_WORKERS = String(options.workers ?? 1);
   try {
-    return await checkOnEngine(options, declinedFor);
+    return await tlaTs.check(options);
   } finally {
     if (previous === undefined) delete process.env.PROVE_IT_WORKERS;
     else process.env.PROVE_IT_WORKERS = previous;
   }
 };
 
-const checkFixtureInParallel = (
-  directory: string,
-  name: string,
-  workers: number,
-  declinedFor?: string,
-) =>
-  checkWithThreads(
-    {
-      source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-      config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-      workers,
-    },
-    declinedFor,
-  );
+const checkFixtureInParallel = async (directory: string, name: string, workers: number) => {
+  const tlaTs = await loadPackage();
+  return checkWithThreads(tlaTs, {
+    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
+    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+    workers,
+  });
+};
 
 const getCounts = (result: { generatedStates: number; distinctStates: number; depth: number }) => [
   result.generatedStates,
@@ -49,7 +45,8 @@ describe("check with workers matches TLC", () => {
   });
 
   it("reports an invariant that fails to evaluate on an initial state like one worker", async () => {
-    const result = await checkWithThreads({
+    const tlaTs = await loadPackage();
+    const result = await checkWithThreads(tlaTs, {
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == 1 \\div x = 0\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
@@ -61,25 +58,9 @@ describe("check with workers matches TLC", () => {
     ]);
   });
 
-  it("summarizes the outdegrees and the fingerprints of every worker like one worker", async () => {
-    const directory = join(import.meta.dirname, "../../benchmarks/queue");
-    const options = {
-      source: readFileSync(join(directory, "Queue.tla"), "utf8"),
-      config: readFileSync(join(directory, "Queue.cfg"), "utf8"),
-    };
-    const sequential = await checkParsed(options);
-    const parallel = await checkParsed({ ...options, workers: 3 });
-    expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
-    expect(parallel.fingerprintDistance).toBeDefined();
-    const getTotals = (outDegrees: number[] | undefined = []) => [
-      outDegrees.reduce((sum, count) => sum + count, 0),
-      outDegrees.reduce((sum, count, degree) => sum + count * degree, 0),
-    ];
-    expect(getTotals(parallel.outDegrees)).toEqual(getTotals(sequential.outDegrees));
-  });
-
   it("reports an invariant that a successor outside the action constraint violates", async () => {
-    const result = await checkWithThreads({
+    const tlaTs = await loadPackage();
+    const result = await checkWithThreads(tlaTs, {
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 0..1\nNext == x < 5 /\\ x' = x + 1\nInv == x # 3\nSkip == x' # 3\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nACTION_CONSTRAINT Skip\nCHECK_DEADLOCK FALSE",
@@ -91,7 +72,8 @@ describe("check with workers matches TLC", () => {
   });
 
   it("reports an action property violated in a level the workers expand", async () => {
-    const result = await checkWithThreads({
+    const tlaTs = await loadPackage();
+    const result = await checkWithThreads(tlaTs, {
       source: [
         "---- MODULE M ----",
         "EXTENDS Naturals",
@@ -112,8 +94,9 @@ describe("check with workers matches TLC", () => {
   });
 
   it("prints what assumptions print once when it checks on the calling thread", async () => {
+    const tlaTs = await loadPackage();
     const printed: string[] = [];
-    const result = await checkWithThreads({
+    const result = await checkWithThreads(tlaTs, {
       source:
         '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME PrintT("start")\nInit == x = 0\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 2)\n====',
       config: "SPECIFICATION Spec\nPROPERTY Live",
@@ -124,24 +107,9 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
-  it("prints values as the version of TLC it matches does", async () => {
-    const printed: string[] = [];
-    await checkWithThreads(
-      {
-        source:
-          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME PrintT([k \\in 1..0 |-> k])\nInit == x = 0\nNext == x' = (x + 1) % 3\n====",
-        config: "INIT Init\nNEXT Next",
-        workers: 2,
-        version: "1.7.4",
-        onPrint: (text) => printed.push(text),
-      },
-      "TLC 1.7.4",
-    );
-    expect(printed).toEqual(["<< >>"]);
-  });
-
   it("grows the fingerprint table that workers share while they expand a level", async () => {
-    const result = await checkWithThreads({
+    const tlaTs = await loadPackage();
+    const result = await checkWithThreads(tlaTs, {
       source:
         "---- MODULE Grid ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 99 /\\ x' = x + 1 /\\ y' = y\n        \\/ y < 99 /\\ y' = y + 1 /\\ x' = x\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
@@ -152,13 +120,14 @@ describe("check with workers matches TLC", () => {
   });
 
   it("explores a level long enough for workers to take breaks like one worker", async () => {
+    const tlaTs = await loadPackage();
     const options = {
       source:
         "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     };
-    const sequential = await checkWithThreads(options);
-    const parallel = await checkWithThreads({ ...options, workers: 3 });
+    const sequential = await checkWithThreads(tlaTs, options);
+    const parallel = await checkWithThreads(tlaTs, { ...options, workers: 3 });
     expect(parallel.status).toBe("success");
     expect(getCounts(parallel)).toEqual(getCounts(sequential));
   });
@@ -201,14 +170,12 @@ describe("check with workers matches TLC", () => {
     expect(getCounts(result)).toEqual([76, 31, 5]);
   });
 
-  it("checks specs that create strings while checking like one worker", async () => {
-    const result = await checkFixtureInParallel(
-      "strings",
-      "RuntimeStrings",
-      2,
-      "the engine stopped: an order of strings the search made",
+  it("declines specs that create strings while checking", async () => {
+    const tlaTs = await loadPackage();
+    await expect(checkFixtureInParallel("strings", "RuntimeStrings", 2)).rejects.toThrow(
+      new tlaTs.TlaUnsupportedError(
+        "not native yet: the engine stopped: an order of strings the search made",
+      ),
     );
-    expect(result.status).toBe("success");
-    expect(getCounts(result)).toEqual([115, 97, 6]);
   });
 });

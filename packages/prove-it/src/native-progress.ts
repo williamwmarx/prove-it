@@ -2,8 +2,7 @@
 // records with its outcome. They arrive once the check ends, in TLC's order among what the spec
 // printed.
 
-import type { CheckStatus } from "./check";
-import type { CheckProgress, Violation } from "./check-result";
+import type { CheckProgress, CheckStatus, Violation } from "./check-result";
 import type { ModelConfig } from "./config";
 import type { NativeCheckOutcome } from "./engine/native";
 import { MESSAGE_CODE, MESSAGE_LEVEL } from "./tlc/messages";

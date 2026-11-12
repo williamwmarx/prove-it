@@ -6,8 +6,8 @@
 use tla_ir::{AtomKind, EnabledActions, Index, Ir, ScopeBinding, Value};
 use tla_trace::add_actions;
 
-// The golden IRs, or those of every corpus model where PROVE_IT_SPLIT_IRS names the directory
-// `engine-ir` writes them to.
+// The golden IRs, or those of every corpus model where PROVE_IT_SPLIT_IRS names a directory of
+// them.
 fn ir_directory() -> std::path::PathBuf {
     std::env::var_os("PROVE_IT_SPLIT_IRS").map_or_else(
         || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/conformance/ir"),

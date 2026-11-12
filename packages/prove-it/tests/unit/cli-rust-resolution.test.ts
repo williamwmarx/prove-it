@@ -17,8 +17,7 @@ const useDirectory = (prefix: string, test: (directory: string) => void) => {
   }
 };
 
-// TLC reads a module's text not in UTF-8, as here bytes in a comment, and so does the CLI, with
-// readFileSync's UTF-8 as it did, though the binary declines it.
+// TLC reads a module's text not in UTF-8, as here bytes in a comment, and so does the CLI.
 describe("a module not in UTF-8", () => {
   it.each([
     [["-noGenerateSpecTE", "M"], "2 states generated, 1 distinct states found, 0 states left"],
@@ -71,7 +70,7 @@ describe("absolute paths", () => {
         ],
         { cwd: join(directory, "work"), encoding: "utf8", env: { ...process.env, ...env } },
       );
-      // The status with what the run wrote to stderr, which PROVE_IT_ENGINE=debug writes to.
+      // The status with what the run wrote to stderr, so that a failure says why.
       expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
       expect(run.stdout).toContain(
         `Parsing file ${join(directory, "spec", "Spec.tla")}\nParsing file ${join(directory, "lib", "L.tla")}\n`,
@@ -79,18 +78,13 @@ describe("absolute paths", () => {
       expect(run.stdout).toContain("1 distinct states found");
     });
 
-  it.each(["debug", "0"])("are found with the addon, with PROVE_IT_ENGINE=%s", (setting) =>
-    checkAbsolute("bun", CLI, { PROVE_IT_ENGINE: setting }),
-  );
+  it("are found with the addon", () => checkAbsolute("bun", CLI, {}));
 
-  it.if(WASM !== undefined).each(["debug", "0"])(
-    "are found with the engine as WebAssembly, with PROVE_IT_ENGINE=%s",
-    (setting) =>
-      checkAbsolute("node", BUILT_CLI, {
-        PROVE_IT_ENGINE: setting,
-        PROVE_IT_ENGINE_ADDON: undefined,
-        PROVE_IT_ENGINE_WASM: WASM,
-      }),
+  it.if(WASM !== undefined)("are found with the engine as WebAssembly", () =>
+    checkAbsolute("node", BUILT_CLI, {
+      PROVE_IT_ENGINE_ADDON: undefined,
+      PROVE_IT_ENGINE_WASM: WASM,
+    }),
   );
 });
 
@@ -108,9 +102,9 @@ it("XMLExporter names where it looked for a root module it doesn't find", () =>
     );
   }));
 
-// TLC checks the config -config names, where the binary's parser declines another option on the
-// command line and the TypeScript check takes it: here TLC reports Other.cfg's invariant violated.
-it("finds the config -config names beside an option the binary declines", () =>
+// TLC checks the config -config names, here reporting Other.cfg's invariant violated, where the
+// binary declines another option on the command line.
+it("declines -config beside an option the binary declines", () =>
   useDirectory("prove-it-config-option-", (directory) => {
     writeFileSync(
       join(directory, "Spec.tla"),
@@ -123,8 +117,10 @@ it("finds the config -config names beside an option the binary declines", () =>
       [CLI, "-noGenerateSpecTE", "-lncheck", "off", "-config", "Other.cfg", "Spec"],
       { cwd: directory, encoding: "utf8" },
     );
-    expect(run.status).toBe(12);
-    expect(run.stdout).toContain("Error: Invariant Inv is violated by the initial state:");
+    expect({ status: run.status, stderr: run.stderr }).toEqual({
+      status: 1,
+      stderr: "prove-it: not native yet: -lncheck off\n",
+    });
   }));
 
 // A property of TLC's that SANY doesn't read leaves XMLExporter's XML as it is.
@@ -140,7 +136,7 @@ it("XMLExporter exports with a system property of TLC's that SANY doesn't read",
   }));
 
 // TLC rejects -config without a file name where it reads it among the other options, which the
-// TypeScript check doesn't order as TLC does, so it declines rather than check another config.
+// binary declines rather than check another config.
 it("declines -config without a value beside an option the binary declines", () =>
   useDirectory("prove-it-config-missing-", (directory) => {
     writeFileSync(
@@ -152,44 +148,22 @@ it("declines -config without a value beside an option the binary declines", () =
       cwd: directory,
       encoding: "utf8",
     });
-    expect(run.status).toBe(255);
-    expect(run.stderr).toContain("TlaUnsupportedError: -config without a value");
+    expect({ status: run.status, stderr: run.stderr }).toEqual({
+      status: 1,
+      stderr: "prove-it: not native yet: the TLC option -view\n",
+    });
     expect(run.stdout).not.toContain("Model checking completed");
   }));
 
-// TLC 1.7.4 names each file it parses by its real path alone, where master adds the URI of the
-// path its resolver made, here through `..`.
-it("names a file reached through .. by its real path alone as TLC 1.7.4", () =>
-  useDirectory("prove-it-174-dotdot-", (directory) => {
-    mkdirSync(join(directory, "sub"));
-    mkdirSync(join(directory, "w"));
-    writeFileSync(
-      join(directory, "sub", "Spec.tla"),
-      "---- MODULE Spec ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====\n",
-    );
-    writeFileSync(join(directory, "sub", "Other.cfg"), "INIT Init\nNEXT Next\n");
+// TLC names an absolute spec by Java's File.getName, which drops the separators the path ends with.
+it("names an absolute spec that ends in a separator by its last part", () =>
+  useDirectory("prove-it-trailing-", (directory) => {
     const run = spawnSync(
       "bun",
-      [CLI, "-Dtla-ts.tlc=1.7.4", "tlc2.TLC", "-config", "Other", "../sub/Spec"],
-      { cwd: join(directory, "w"), encoding: "utf8" },
+      [CLI, "tlc2.TLC", "-noGenerateSpecTE", `${join(directory, "Nope")}/`],
+      { cwd: directory, encoding: "utf8" },
     );
-    expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
-    expect(run.stdout).toContain(`Parsing file ${join(directory, "sub", "Spec.tla")}\n`);
-    expect(run.stdout).not.toContain("(file:");
+    expect(run.stdout).toContain(
+      "Error: TLC encountered the following error when trying to read the configuration file Nope.cfg:",
+    );
   }));
-
-// TLC names an absolute spec by Java's File.getName, which drops the separators the path ends with.
-it.each(["debug", "0"])(
-  "names an absolute spec that ends in a separator by its last part, with PROVE_IT_ENGINE=%s",
-  (setting) =>
-    useDirectory("prove-it-trailing-", (directory) => {
-      const run = spawnSync(
-        "bun",
-        [CLI, "tlc2.TLC", "-noGenerateSpecTE", `${join(directory, "Nope")}/`],
-        { cwd: directory, encoding: "utf8", env: { ...process.env, PROVE_IT_ENGINE: setting } },
-      );
-      expect(run.stdout).toContain(
-        "Error: TLC encountered the following error when trying to read the configuration file Nope.cfg:",
-      );
-    }),
-);

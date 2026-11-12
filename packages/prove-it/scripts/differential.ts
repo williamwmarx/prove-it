@@ -1,15 +1,12 @@
-// Compares the full output of Java TLC, of Prove It with its engine, and of Prove It with the engine
-// off, on each corpus model, in TLC's default output and with -tool. TLC's output comes from the
+// Compares the full output of Java TLC and of Prove It on each corpus model, in TLC's default output
+// and with -tool. TLC's output comes from the
 // recordings record-tlc.ts --stdout makes (tlc-recordings.ts); Prove It runs as its CLI with the
 // same command line. Each output is the exit code, stdout and stderr, normalised by
 // normalize-output.ts. Every difference must be the one tests/conformance/known-differences.json
 // lists for that model, mode and pair of checkers, or the run fails.
 //
-// --stop-at also runs the engine stopped by PROVE_IT_STOP_AT before a state picked at random
-// from those it found, and its output must not differ from the engine's. The engine, named rust in
-// the pairs, is compared with TLC (tlc/rust), with the interpreter (rust/interpreter) and with
-// itself stopped (rust/stopped). --update rewrites known-differences.json from the run, keeping
-// the reasons it gives.
+// Prove It, named rust in the pairs, is compared with TLC (tlc/rust). --update rewrites
+// known-differences.json from the run, keeping the reasons it gives.
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
 // too, as it ships, with tla-front as its front end, and is compared with TLC as tlc/native. That
 // pair fails nothing: the run reports how many runs it matches and why the others differ.
@@ -26,7 +23,7 @@
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
-//        [--modes default,tool,te] [--stop-at] [--timeout-ms ms] [--update] [--out path]
+//        [--modes default,tool,te] [--timeout-ms ms] [--update] [--out path]
 //        [--native path [--native-only]]
 
 import { spawn } from "node:child_process";
@@ -43,12 +40,7 @@ import {
   linkLibraryModules,
   writeResults,
 } from "./corpora";
-import {
-  classifyEngineLine,
-  ENGINE_LABEL,
-  getEngineEnvironment,
-  getEngineLine,
-} from "./engine-runs";
+import { ENGINE_LABEL, getEngineEnvironment, getEngineLine } from "./engine-runs";
 import { getLineDiff } from "./line-diff";
 import { getTranscript } from "./normalize-output";
 import type { ExpectedResult } from "./record-tlc";
@@ -102,7 +94,6 @@ const timeoutMilliseconds = timeoutOption === undefined ? undefined : Number(tim
 const modes = (getOption("--modes")?.split(",") ?? OUTPUT_MODES).filter(
   (mode): mode is OutputMode => RECORDED_MODES.some((known) => known === mode),
 );
-const isStopping = process.argv.includes("--stop-at");
 const isUpdate = process.argv.includes("--update");
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".differential.json");
 // Resolved here, since each checker runs from its model's directory.
@@ -347,17 +338,6 @@ const runChecker = async (
 const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.ProcessEnv) =>
   runChecker(process.execPath, [CLI_PATH], model, mode, environment);
 
-// A state from those the run found, the same for a model on every run.
-const getStopState = (id: string, transcript: string) => {
-  const distinct = [...transcript.matchAll(/(\d+) distinct states? found/g)].at(-1);
-  if (!distinct || Number(distinct[1]) === 0) return undefined;
-  const hash = [...id].reduce(
-    (total, character) => Math.imul(total ^ character.charCodeAt(0), 0x01000193),
-    0x811c9dc5,
-  );
-  return (hash >>> 0) % Number(distinct[1]);
-};
-
 const knownDifferences: KnownDifference[] = existsSync(KNOWN_DIFFERENCES_PATH)
   ? JSON.parse(readFileSync(KNOWN_DIFFERENCES_PATH, "utf8"))
   : [];
@@ -388,9 +368,6 @@ const absent = expectedResults
   .filter((expected) => isSelected(expected) && !foundIds.has(expected.id))
   .map((expected) => expected.id);
 
-// What the engine says when PROVE_IT_STOP_AT stops it.
-const STOPPED_REASON = "stopped where PROVE_IT_STOP_AT asked";
-
 const comparisons: Comparison[] = [];
 // The native binary's comparisons with TLC, which measure how much of TLC's output it prints and
 // fail nothing yet: why it couldn't do a run, if it said.
@@ -398,8 +375,6 @@ const comparisons: Comparison[] = [];
 const nativeSummary: { text?: string } = {};
 const nativeComparisons: (Comparison & { reason: string | undefined; isAborted: boolean })[] = [];
 const missing: string[] = [];
-// The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
-const unforced: string[] = [];
 const results: unknown[] = [];
 
 const getComparison = (
@@ -463,47 +438,12 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
       );
       continue;
     }
-    const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
     const modelComparisons: Comparison[] = [];
-    const outputs: Record<string, Output> = { interpreter };
     const engine = await runCli(model, mode, getEngineEnvironment());
-    outputs[ENGINE_LABEL] = engine;
+    const outputs: Record<string, Output> = { [ENGINE_LABEL]: engine };
     if (tlc) {
       modelComparisons.push(compare(model.id, mode, `tlc/${ENGINE_LABEL}`, tlc, engine.transcript));
     }
-    modelComparisons.push(
-      compare(
-        model.id,
-        mode,
-        `${ENGINE_LABEL}/interpreter`,
-        engine.transcript,
-        interpreter.transcript,
-      ),
-    );
-    // A stop needs a search to stop: an engine that skipped the spec would only run the
-    // interpreter again.
-    const isSearched = ["completed", "handed over"].includes(
-      classifyEngineLine(engine.engineLine).engine,
-    );
-    // The final count includes states the engine never expanded when it handed over, so a stop
-    // there wouldn't stop it: a run counts only when the engine says it stopped, and otherwise
-    // the stop moves to half as far, down to the first state.
-    let stopAt = isStopping && isSearched ? getStopState(model.id, engine.transcript) : undefined;
-    let isForced = false;
-    while (stopAt !== undefined && !isForced) {
-      const stopped = await runCli(model, mode, {
-        ...getEngineEnvironment(),
-        PROVE_IT_STOP_AT: String(stopAt),
-      });
-      isForced = stopped.engineLine?.endsWith(STOPPED_REASON) ?? false;
-      if (isForced) {
-        outputs[`${ENGINE_LABEL} stopped at ${stopAt}`] = stopped;
-        modelComparisons.push(
-          compare(model.id, mode, `${ENGINE_LABEL}/stopped`, engine.transcript, stopped.transcript),
-        );
-      } else stopAt = stopAt > 0 ? Math.floor(stopAt / 2) : undefined;
-    }
-    if (isStopping && isSearched && !isForced) unforced.push(`${ENGINE_LABEL} ${mode} ${model.id}`);
     if (nativeBinary) {
       const native = await runChecker(nativeBinary, [], model, mode, process.env);
       outputs.native = native;
@@ -627,10 +567,6 @@ if (missing.length > 0) {
     `\n${missing.length} runs have no TLC recording; record them with record-tlc.ts --stdout.`,
   );
   process.exitCode = 1;
-}
-if (unforced.length > 0) {
-  console.log(`\n${unforced.length} runs the engine handed over before any stop could take it:`);
-  for (const run of unforced.slice(0, 20)) console.log(`  ${run}`);
 }
 if (absent.length > 0) {
   console.log(

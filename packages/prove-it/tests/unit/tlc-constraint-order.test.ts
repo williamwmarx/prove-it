@@ -1,22 +1,17 @@
-import { expect, it } from "bun:test";
+import { it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkOnEngine } from "../native-check";
+import { expectDeclined } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-constraint-order");
 
-it("evaluates constraints before the duplicate check and invariants, as TLC does", async () => {
-  const printed: string[] = [];
-  const result = await checkOnEngine(
+it("declines a spec that prints in its constraints and invariants", async () => {
+  await expectDeclined(
     {
       source: readFileSync(join(DIRECTORY, "Order.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "Order.cfg"), "utf8"),
-      onPrint: (text) => printed.push(text),
     },
     "the engine declined: unsupported: PrintT",
   );
-  expect(result.status).toBe("success");
-  expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([8, 4, 3]);
-  expect(printed).toEqual(readFileSync(join(DIRECTORY, "Order.out"), "utf8").trim().split("\n"));
 });
