@@ -96,10 +96,9 @@ fn set_statistic(
 /// resource limit, the quantifier instances, and what stopped a search that gave up, in the order
 /// the TypeScript writes them. Every other error, which the TypeScript rethrows, fails as well.
 pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
-    let limit = ResourceLimit::new(limits);
     let mut statistics = Vec::new();
     // Only the SMT-LIB tlapm's encoder writes is decided; anything else is declined.
-    if check_script(text).is_err() {
+    let Ok(rlimit) = check_script(text) else {
         set_statistic(
             &mut statistics,
             "stop",
@@ -110,7 +109,11 @@ pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
             verdict: Verdict::Unknown,
             statistics,
         });
-    }
+    };
+    // The steps are Z3's rlimit units, so the rlimit is a step limit.
+    let limit = ResourceLimit::new(
+        &rlimit.map_or_else(|| limits.clone(), |steps| limits.with_step_limit(steps)),
+    );
     let verdict = match check_smt(text, limit.clone()) {
         Ok(check) => {
             set_statistic(

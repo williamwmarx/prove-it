@@ -539,6 +539,52 @@ const OUTSIDE_THE_ENCODER: [&str; 49] = [
     r"(set-logic UFNIA)(declare-fun smt__a () Int)(declare-fun smt__b () Int)(declare-fun smt__c () Int)(assert (= smt__a smt__b smt__c))(assert (not (= smt__a smt__c)))(check-sat)",
 ];
 
+/// Scripts inside the commands and symbols the encoder writes on which Z3 4.8.9 reports an error or
+/// a warning, drops what it couldn't read and answers (independent break-it round on the subset):
+/// a :named name that names something else, a bound name that is `true` or applied, a pattern Z3
+/// drops, and an ill-sorted term. The port declines each, never answering where Z3 read otherwise.
+const MISREAD_BY_Z3: [&str; 16] = [
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |a|))(assert (! (not smt__p) :named |a|))",
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |smt__p|))(assert (not smt__p))",
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |smt__q|))(declare-fun smt__q () Int)(assert (= smt__q 5))(assert (= smt__q 6))",
+    "(declare-fun smt__q () Bool)(assert (! smt__q :named |not|))(assert (not smt__q))",
+    "(assert (exists ((true Bool)) (not true)))",
+    "(assert (exists ((false Bool)) false))",
+    "(assert (forall ((true Bool)) true))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__f Int)) (= (smt__f 1) 0)))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((forall ((smt__y Int)) (= smt__y smt__x))))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((smt__f smt__x) smt__x))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((+ smt__x 1)))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int Int) Int)(assert (forall ((smt__x Int) (smt__y Int)) (! (= (smt__f smt__x smt__y) 0) :pattern ((smt__f smt__x 1)))))(assert (= (smt__f 1 2) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__y Int)) (forall ((smt__x Int)) (! (= (smt__f smt__x) smt__y) :pattern ((smt__f smt__y))))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__p () Bool)(declare-fun smt__i () Int)(assert (= smt__p smt__i))(assert (not smt__p))",
+    "(declare-fun smt__i () Int)(assert (and smt__i true))",
+    "(declare-fun smt__i () Int)(assert (+ smt__i 1))",
+];
+
+#[test]
+fn declines_what_z3_reads_otherwise() {
+    for body in MISREAD_BY_Z3 {
+        let script = format!("(set-logic UFNIA)(declare-sort Idv 0){body}(check-sat)");
+        let decision = decide_with(&script, None).map(|decision| get_decision_text(&decision));
+        assert_eq!(
+            decision,
+            Ok("unknown stop=unsupported steps=0".into()),
+            "{script}"
+        );
+    }
+}
+
+// Z3 stops at the rlimit a script sets, in the units the port counts as steps: one step is too few
+// to refute even a contradiction, and Z3 4.8.9 answers unknown.
+#[test]
+fn stops_at_the_rlimit() {
+    let script = "(set-option :rlimit 1)(set-logic UFNIA)(declare-sort Idv 0)\
+                  (declare-fun smt__p () Bool)(assert smt__p)(assert (not smt__p))(check-sat)";
+    let decision = decide_with(script, None).map(|decision| get_decision_text(&decision));
+    assert_eq!(decision, Ok("unknown steps=3 stop=steps".into()));
+}
+
 #[test]
 fn declines_what_tlapm_does_not_write() {
     for script in OUTSIDE_THE_ENCODER {
@@ -552,10 +598,10 @@ fn declines_what_tlapm_does_not_write() {
 }
 
 // What the encoder writes is decided: a goal named |Goal|, a pattern, a negative numeral as
-// (- 1), the rlimit option and the final (exit).
+// (- 1), tlapm's rlimit and the final (exit).
 #[test]
 fn decides_what_tlapm_writes() {
-    let script = "(set-option :rlimit 100)\n(set-logic UFNIA)\n(declare-sort Idv 0)\n\
+    let script = "(set-option :rlimit 30000000)\n(set-logic UFNIA)\n(declare-sort Idv 0)\n\
                   (declare-fun smt__p (Int) Bool)\n(declare-fun smt__i () Int)\n\
                   (assert (forall ((smt__z Int)) (! (smt__p smt__z) :pattern ((smt__p smt__z)))))\n\
                   (assert (! (not (and (smt__p smt__i) (> smt__i (- 1)))) :named |Goal|))\n\
