@@ -489,6 +489,14 @@ SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTEND
 (exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
 an extended module") checks it with the TypeScript check until the front end matches.
 
+A module file holding a UTF-8-encoded surrogate (`ED A0`–`ED BF` and a byte after) reads otherwise
+than TLC reads it in the CLI of `dist/`. SANY reads a file through Java's
+`InputStreamReader(stream, "UTF-8")` (`TLAplusParser`'s constructor), which replaces each such
+three bytes with one U+FFFD, and the CLI's `readFileSync(path, "utf8")` with three. With
+`"\xED\xA0\x80"` in a string, TLC prints `Len` of it as 1 and the CLI as 3. Every other sequence
+that isn't UTF-8 decodes alike in both (compared over 8,150 sequences of one to four bytes). The
+binary's `read_to_string` gives such a file no text and declines it.
+
 A membership in a union whose enumerable side holds a value of another type is TRUE where TLC
 fails: TLC tests the enumerable side first, so `ASSUME 1 \in Int \cup {"none"}` stops with
 "Attempted to check equality of string "none" with non-string:\n1", where the engine finds the
@@ -662,6 +670,26 @@ Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as 
 `File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
 path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
 run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
+
+`prove-it tlapm` declines a module file with a byte that isn't UTF-8 where it reaches what the
+obligations hold (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
+with U+FFFD for each such byte, two different strings would be one and a theorem that they are equal
+proved. Each such byte reads as the lone surrogate U+DC00 plus the byte (Python's surrogateescape),
+which no UTF-8 text or file name holds, one character for one byte so that columns count it as
+tlapm's, which count bytes, do, where a cut-short sequence such as `E2 82` was one U+FFFD; and a run
+declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
+comment, before the module's header or past its end, it changes nothing printed or proved.
+
+Declines to win back: the obligations hold more than they print or prove, such as the theorems of
+an extended module, so a byte that isn't UTF-8 in a string there declines, where reading it as
+U+FFFD printed what tlapm prints only because nothing read it. A method pragma's string is read with JSON's escapes, so
+`"\udcfe"` is the same lone surrogate as the byte `FE`, and where a module read holds that byte,
+in a comment or anywhere, it declines too, as does a string that spells such an escape, `"\udcfe"`,
+which the check takes for the byte as the lexer's error spells it. The check finds an escaped byte by its UTF-16
+unit, so a character outside the BMP whose low surrogate is `\uDCxx` declines too where a module
+read the byte `xx`. tla-ts's lexer ends a `\*` comment at a line feed
+alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
+comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT

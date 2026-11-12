@@ -108,6 +108,7 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   try {
     return generate();
   } catch (error) {
+    declineHeldNotUtf8([error instanceof Error ? error.message : String(error), error]);
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
     return undefined;
@@ -214,7 +215,130 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
+// The length of the well-formed UTF-8 sequence at index (Unicode's table 3-7), or 0.
+const getSequenceLength = (bytes: Uint8Array, index: number) => {
+  const lead = bytes[index];
+  if (lead < 0x80) return 1;
+  const [length, low, high] =
+    lead >= 0xc2 && lead <= 0xdf
+      ? [2, 0x80, 0xbf]
+      : lead === 0xe0
+        ? [3, 0xa0, 0xbf]
+        : lead === 0xed
+          ? [3, 0x80, 0x9f]
+          : lead >= 0xe1 && lead <= 0xef
+            ? [3, 0x80, 0xbf]
+            : lead === 0xf0
+              ? [4, 0x90, 0xbf]
+              : lead === 0xf4
+                ? [4, 0x80, 0x8f]
+                : lead >= 0xf1 && lead <= 0xf3
+                  ? [4, 0x80, 0xbf]
+                  : [0, 0, 0];
+  if (length === 0 || index + length > bytes.length) return 0;
+  if (bytes[index + 1] < low || bytes[index + 1] > high) return 0;
+  for (let next = index + 2; next < index + length; next++)
+    if (bytes[next] < 0x80 || bytes[next] > 0xbf) return 0;
+  return length;
+};
+
+// tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
+// strings would be one, and a theorem that they are equal proved. So each such byte reads as the
+// lone surrogate U+DC00 plus the byte, as Python's surrogateescape does, which no UTF-8 text or
+// file name holds: one character for one byte, so that columns count it once, as tlapm's, which
+// count bytes, do. A run declines where one is held by the obligations, a warning or an error;
+// elsewhere, as in a comment, it changes nothing printed or proved.
+// Which of the modules read with the byte holds the one reached isn't known, so it names them all.
+class NotUtf8Error extends Error {
+  constructor(paths: string[]) {
+    super(
+      `a byte that isn't UTF-8 outside a comment in ${paths.length === 1 ? paths[0] : `one of ${paths.join(", ")}`}`,
+    );
+  }
+}
+
+// By code unit, not code point: a string's escape of a high surrogate, such as a pragma's
+// "\ud800", pairs with an escaped byte that follows it.
+const ESCAPED_BYTE = /[\uDC80-\uDCFF]/g;
+
+// The modules read with an escaped byte, by the byte.
+const notUtf8 = { paths: new Map<string, string[]>() };
+
+// JSON's spelling of an escaped byte, as the lexer's error writes one it can't read.
+const ESCAPED_BYTE_JSON = /\\u[dD][cC][89a-fA-F][0-9a-fA-F]/g;
+
+// A lone surrogate is an escaped byte only where a module read held that byte: a string's escape,
+// such as a pragma's "\udcfe", makes one too.
+const findNotUtf8 = (text: string) => {
+  const escapes = [
+    ...[...text.matchAll(ESCAPED_BYTE)].map(([escaped]) => escaped),
+    ...[...text.matchAll(ESCAPED_BYTE_JSON)].map(([spelled]) =>
+      String.fromCharCode(Number.parseInt(spelled.slice(2), 16)),
+    ),
+  ];
+  for (const escaped of escapes) {
+    const paths = notUtf8.paths.get(escaped);
+    if (paths !== undefined) return paths;
+  }
+  return undefined;
+};
+
+const readModule = (path: string) => {
+  const bytes = readFileSync(path);
+  const parts: string[] = [];
+  let start = 0;
+  for (let index = 0; index < bytes.length;) {
+    const length = getSequenceLength(bytes, index);
+    if (length > 0) {
+      index += length;
+      continue;
+    }
+    const escaped = String.fromCharCode(0xdc00 + bytes[index]);
+    const paths = notUtf8.paths.get(escaped) ?? [];
+    if (!paths.includes(path)) notUtf8.paths.set(escaped, [...paths, path]);
+    parts.push(bytes.toString("utf8", start, index), escaped);
+    start = ++index;
+  }
+  parts.push(bytes.toString("utf8", start));
+  return parts.join("");
+};
+
+// The module an escaped byte comes from, wherever one is held.
+const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string[] | undefined => {
+  if (typeof value === "string") return findNotUtf8(value);
+  if (typeof value !== "object" || value === null || seen.has(value)) return undefined;
+  seen.add(value);
+  const values =
+    value instanceof Map
+      ? [...value.keys(), ...value.values()]
+      : value instanceof Set
+        ? [...value]
+        : Object.values(value);
+  for (const held of values) {
+    const paths = findHeldNotUtf8(held, seen);
+    if (paths !== undefined) return paths;
+  }
+  return undefined;
+};
+
+const declineHeldNotUtf8 = (value: unknown) => {
+  if (notUtf8.paths.size === 0) return;
+  const paths = findHeldNotUtf8(value);
+  if (paths !== undefined) throw new NotUtf8Error(paths);
+};
+
 export const runTlapm = async (args: string[]) => {
+  notUtf8.paths.clear();
+  try {
+    return await runTlapmOrDecline(args);
+  } catch (error) {
+    if (!(error instanceof NotUtf8Error)) throw error;
+    console.error(`prove-it: not native yet: ${error.message}`);
+    return 1;
+  }
+};
+
+const runTlapmOrDecline = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
   const unsupported =
@@ -274,19 +398,20 @@ export const runTlapm = async (args: string[]) => {
       throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
     }
     return getObligations(
-      modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+      modulePaths.map((path) => ({ file: `./${path}`, source: readModule(path) })),
       (name) => {
         moduleNames.add(name);
         // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
         const file = directories
           .map((directory) => `${directory}/${name}.tla`)
           .find((path) => existsSync(path));
-        if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
+        if (file !== undefined) return { file, source: readModule(file) };
         return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },
       {
         lines,
         onWarning: (warning) => {
+          declineHeldNotUtf8(warning);
           if (warning.channel === "stdout") return console.log(warning.text);
           const isToolboxMessage =
             warning.channel === "toolbox" || warning.channel === "toolboxOnly";
@@ -297,6 +422,7 @@ export const runTlapm = async (args: string[]) => {
       },
     );
   });
+  declineHeldNotUtf8(modules);
   if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
