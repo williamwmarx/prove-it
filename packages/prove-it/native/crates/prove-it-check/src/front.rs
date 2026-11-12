@@ -199,44 +199,7 @@ fn lower(
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }
 
-/// The modules of the files tla2tools.jar holds, which TLC's resolver finds on the class path:
-/// the standard modules, and modules at the jar's root.
-const JAR_MODULES: &[&str] = &[
-    "Bags",
-    "FiniteSets",
-    "Integers",
-    "Json",
-    "Naturals",
-    "Randomization",
-    "RealTime",
-    "Reals",
-    "Sequences",
-    "TLC",
-    "TLCExt",
-    "Toolbox",
-    "_CBORTrace",
-    "_DotTrace",
-    "_JsonTrace",
-    "_Possible",
-    "_TLAPlusCounterExample",
-    "_TLCActionTrace",
-    "_TLCTESpec",
-    "_TLCTrace",
-    "_TLCTracePlain",
-    "AST",
-    "OldPlusCal",
-    "Pcal",
-    "PlusCal",
-    "PlusCal2",
-    "XPlusCal",
-    "OpenAddressing",
-    "OpenAddressing.ConcurrentFlusher",
-    "BufferedRandomAccessFile",
-    "SubsetValue",
-];
-
-/// SANY's report, or its fatal error where no file holds the spec and the jar holds no module of
-/// its name.
+/// SANY's report, or its fatal error where no file holds the spec (`get_missing_spec_decline`).
 fn native_sany(
     platform: Platform,
     is_spec_absent: bool,
@@ -254,14 +217,7 @@ fn native_sany(
         main_file
     };
     let Some(sources) = sources else {
-        // TLC reads a spec of the name of a module its jar holds from the jar, and drops a .tla in
-        // another case from the file it says it looked for only where the spec is relative.
-        let is_in_jar = [root, platform.file_name(main_file)]
-            .iter()
-            .any(|name| JAR_MODULES.contains(name));
-        let is_extension_cased =
-            main_file.len() >= 4 && main_file[main_file.len() - 4..].eq_ignore_ascii_case(".tla");
-        return if is_spec_absent && !is_in_jar && !is_extension_cased {
+        return if is_spec_absent {
             Ok(SanyText {
                 text: get_missing_root_text(name, name),
                 is_failed: true,

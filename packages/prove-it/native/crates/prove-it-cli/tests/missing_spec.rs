@@ -147,22 +147,57 @@ fn reports_a_spec_no_file_holds_as_tlc_with_tool() {
     std::fs::remove_dir_all(&root).expect("the root is removed");
 }
 
-// TLC finds a spec named as a module of its jar on the class path, and drops a .tla in another case
-// from the file it says it looked for, which the binary declines.
+// Where TLC may still find the spec, names the files it looked for in a way the binary doesn't, or
+// stops before it parses the spec as it makes its meta directory, the binary declines.
 #[test]
-fn declines_a_spec_no_file_holds_that_tlc_finds_in_its_jar() {
-    for (name, config, spec) in [
-        ("in-jar", "pcal/PlusCal.cfg", "pcal/PlusCal"),
-        ("in-jar-standard", "_CBORTrace.cfg", "_CBORTrace"),
-        ("extension-case", "Nope.TLA.cfg", "Nope.TLA"),
+fn declines_a_spec_no_file_holds_where_tlc_may_not_report_it() {
+    for (name, file, args) in [
+        (
+            "in-jar",
+            "pcal/PlusCal.cfg",
+            &["tlc2.TLC", "pcal/PlusCal"][..],
+        ),
+        (
+            "in-jar-standard",
+            "_CBORTrace.cfg",
+            &["tlc2.TLC", "_CBORTrace"],
+        ),
+        (
+            "in-library",
+            "lib/Nope.tla",
+            &["-DTLA-Library=lib", "tlc2.TLC", "{root}/Nope"],
+        ),
+        (
+            "on-class-path",
+            "lib/Nope.tla",
+            &["-cp", "tla2tools.jar:lib", "tlc2.TLC", "Nope"],
+        ),
+        (
+            "user-directory",
+            "sub/Nope.cfg",
+            &["-Duser.dir={root}/sub", "tlc2.TLC", "Nope"],
+        ),
+        ("extension-case", "Nope.TLA.cfg", &["tlc2.TLC", "Nope.TLA"]),
+        (
+            "library-encoding",
+            "Nope.cfg",
+            &["-DTLA-Library=\u{fc}", "tlc2.TLC", "Nope"],
+        ),
+        (
+            "metadir",
+            "Nope.cfg",
+            &["tlc2.TLC", "-metadir", "m", "Nope"],
+        ),
+        ("metadir-file", "states", &["tlc2.TLC", "Nope"]),
     ] {
         let root = set_up(name);
-        let path = root.join(config);
+        let path = root.join(file);
         std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
-        std::fs::write(&path, CONFIG).expect("the configuration");
-        let (_, stderr, code) = run(&root, &["tlc2.TLC", spec]);
+        std::fs::write(&path, CONFIG).expect("the file");
+        let (_, stderr, code) = run(&root, args);
         assert!(
-            stderr.contains("prove-it: not native yet: "),
+            stderr.contains("prove-it: not native yet: ")
+                && stderr.contains("a spec no file holds"),
             "{name}: {stderr}"
         );
         assert_eq!(code, Some(1), "{name}");

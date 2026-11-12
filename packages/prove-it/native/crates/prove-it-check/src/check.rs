@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::host_path::Platform;
+use crate::host_path::{Platform, get_stem};
 use std::sync::mpsc;
 use std::time::Duration;
 use tla_engine::Prints;
@@ -24,7 +24,7 @@ use crate::failure::{
     ErrorStop, deadlock_atom_stack, print_assumption_failure, print_call_stack, print_failure,
 };
 use crate::front::{Failure, Read, read_front};
-use crate::host::{Files, Host};
+use crate::host::{FileKind, Files, Host};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::outcome::{Counts, Reported, ReportedState};
@@ -989,6 +989,16 @@ fn check_spec(
             te_spec::join_place(&directory, &format!("{name}.bin"))
         }),
     );
+    if let Some(reason) = get_missing_spec_decline(
+        printer.host,
+        spec_path,
+        main_file,
+        &directories,
+        &java,
+        args.first("-metadir"),
+    ) {
+        return report_not_native(printer, reason);
+    }
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -2755,6 +2765,95 @@ pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) {
             if is_plural { "" } else { "s" },
         ),
     );
+}
+
+/// The modules of the files tla2tools.jar holds, which TLC's resolver finds on the class path:
+/// the standard modules, and modules at the jar's root.
+const JAR_MODULES: &[&str] = &[
+    "Bags",
+    "FiniteSets",
+    "Integers",
+    "Json",
+    "Naturals",
+    "Randomization",
+    "RealTime",
+    "Reals",
+    "Sequences",
+    "TLC",
+    "TLCExt",
+    "Toolbox",
+    "_CBORTrace",
+    "_DotTrace",
+    "_JsonTrace",
+    "_Possible",
+    "_TLAPlusCounterExample",
+    "_TLCActionTrace",
+    "_TLCTESpec",
+    "_TLCTrace",
+    "_TLCTracePlain",
+    "AST",
+    "OldPlusCal",
+    "Pcal",
+    "PlusCal",
+    "PlusCal2",
+    "XPlusCal",
+    "OpenAddressing",
+    "OpenAddressing.ConcurrentFlusher",
+    "BufferedRandomAccessFile",
+    "SubsetValue",
+];
+
+/// Why the check doesn't report a spec no file holds as TLC does, as SANY's fatal error: where TLC
+/// may still find it, in its jar, on its class path, in a directory SANY looks in or in another
+/// user directory, where TLC names a file it looked for in a way the binary doesn't, or where TLC
+/// may stop before it parses the spec, as it makes its meta directory (`FileUtil.makeMetaDir`).
+/// None where something is at the spec's path.
+fn get_missing_spec_decline(
+    host: &dyn Host,
+    spec_path: &str,
+    main_file: &str,
+    directories: &[String],
+    java: &Java,
+    metadir: Option<&str>,
+) -> Option<&'static str> {
+    if host.kind(Path::new(spec_path)) != FileKind::Absent {
+        return None;
+    }
+    let platform = host.platform();
+    let root = get_stem(platform.file_name(spec_path));
+    let module_file = format!("{root}.tla");
+    if [root, platform.file_name(main_file)]
+        .iter()
+        .any(|name| JAR_MODULES.contains(name))
+        || directories
+            .iter()
+            .any(|directory| host.is_file(Path::new(&platform.join(directory, &module_file))))
+        || java.class_path.as_deref().is_some_and(|class_path| {
+            class_path.split(platform.delimiter()).any(|entry| {
+                !entry.is_empty() && Some(entry) != get_tools_jar(class_path, platform)
+            })
+        })
+        || java.properties.iter().any(|name| name == "user.dir")
+    {
+        return Some("a spec no file holds, which TLC may find elsewhere");
+    }
+    // TLC drops a .tla in another case from a relative spec, and Java's Path rejects a library
+    // path the platform's encoding can't hold.
+    if main_file.len() >= 4 && main_file[main_file.len() - 4..].eq_ignore_ascii_case(".tla")
+        || java.libraries.iter().any(|library| !library.is_ascii())
+    {
+        return Some("the files TLC names for a spec no file holds");
+    }
+    let spec_directory = &main_file[..platform.last_separator(main_file).map_or(0, |end| end + 1)];
+    let spec_directory = if spec_directory.is_empty() {
+        "."
+    } else {
+        spec_directory
+    };
+    (metadir.is_some()
+        || host.kind(Path::new(spec_directory)) != FileKind::Directory
+        || host.kind(Path::new(&platform.join(spec_directory, "states"))) == FileKind::File)
+        .then_some("the meta directory of a spec no file holds")
 }
 
 fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
