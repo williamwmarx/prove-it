@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check, type CheckResult } from "../../src";
-import { checkOnEngine } from "../native-check";
+import { checkNatively, checkOnEngine } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -47,9 +47,15 @@ const runBoth = async (
   searchPrinted?: string[],
   source = `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\n${body}\n====`,
 ) => {
-  const native = await run(source, config, "debug");
+  const printed: string[] = [];
+  const { result, declined } = await checkNatively({
+    source,
+    config,
+    onPrint: (text) => printed.push(text),
+  });
+  expect(declined).toBeUndefined();
+  const native = { result, printed };
   const typeScript = await run(source, config, "0");
-  expect(native.isNative).toBe(true);
   expect(native.result).toEqual(typeScript.result);
   expect(typeScript.printed).toEqual(searchPrinted ?? native.printed);
   return native;
@@ -249,17 +255,14 @@ describe("check's result", () => {
   // rebuilds the trace, as the CLI prints them. The native check declines the model, so the
   // TypeScript check reports it.
   it("reports what fails as TLC rebuilds a failure's trace, after the trace", async () => {
-    const lines: string[] = [];
-    process.env.PROVE_IT_ENGINE = "debug";
-    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-      if (typeof message === "string") lines.push(message);
-    });
-    const result = await check({
-      source:
-        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
-      config: "INIT Init\nNEXT Next",
-    }).finally(() => spy.mockRestore());
-    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: check declined: /));
+    const result = await checkOnEngine(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: an action that fails or prints after a successor TLC can't fingerprint",
+    );
     expect([result.status, result.violations]).toEqual([
       "error",
       [
