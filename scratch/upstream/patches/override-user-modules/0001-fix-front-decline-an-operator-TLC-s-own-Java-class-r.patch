@@ -1,0 +1,520 @@
+From 1e58e538021bc456b3d01da9eab63b52c79bdb75 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 18:53:54 +0000
+Subject: [PATCH] fix(front): decline an operator TLC's own Java class replaces
+ in a module of the user's
+
+TLC loads its own Java class named after each module of the spec,
+wherever the module's text comes from, and runs each public static
+method in place of the operator of that module spelled the same,
+whatever its arity (processModuleOverrides, for the classes
+BuiltInModuleHelper counts as its own). The front end gave an imported
+module named like a standard module the builtins of the same names and
+arities, and read any other operator by its body: a user's
+TransitiveClosure.tla printed its Warshall body where TLC computes the
+transitive closure, 264 wrong runs of the upstream conformance suite. A
+spec that names such an operator now declines; fallback.md lists the
+five runs that matched only by comparing two stub values.
+---
+ .../java-class-user-any-set/AnySet.tla        |   3 +
+ .../java-class-user-any-set/M.cfg             |   2 +
+ .../java-class-user-any-set/M.tla             |   7 +
+ .../java-class-user-any-set/declined          |   1 +
+ .../java-class-user-other-operator/M.cfg      |   2 +
+ .../java-class-user-other-operator/M.tla      |   7 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../java-class-user-other-operator/tlc.out    |  18 +++
+ .../java-class-user-randomization/M.cfg       |   2 +
+ .../java-class-user-randomization/M.tla       |   7 +
+ .../Randomization.tla                         |   3 +
+ .../java-class-user-randomization/declined    |   1 +
+ .../java-class-user-transitive-closure/M.cfg  |   2 +
+ .../java-class-user-transitive-closure/M.tla  |   7 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../declined                                  |   1 +
+ .../java-class-user-unused/M.cfg              |   2 +
+ .../java-class-user-unused/M.tla              |   7 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../java-class-user-unused/tlc.out            |  18 +++
+ .../java-class-user-wrong-arity/M.cfg         |   2 +
+ .../java-class-user-wrong-arity/M.tla         |   7 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../java-class-user-wrong-arity/declined      |   1 +
+ .../crates/tla-front/src/environment.rs       | 137 ++++++++++++++++++
+ .../native/crates/tla-front/src/startup.rs    |   2 +-
+ packages/prove-it/native/design/fallback.md   |  11 ++
+ 27 files changed, 261 insertions(+), 1 deletion(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/AnySet.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/Randomization.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/declined
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/AnySet.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/AnySet.tla
+new file mode 100644
+index 00000000..a4025bd0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/AnySet.tla
+@@ -0,0 +1,3 @@
++---- MODULE AnySet ----
++ANY == "replaced by tlc2.module.AnySet"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.tla
+new file mode 100644
+index 00000000..ee4570eb
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS AnySet, TLC
++VARIABLE x
++ASSUME PrintT(ANY)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/declined
+new file mode 100644
+index 00000000..6355a449
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-any-set/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: AnySet!ANY
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.tla
+new file mode 100644
+index 00000000..430f182d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++ASSUME PrintT(Reach)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/TransitiveClosure.tla
+new file mode 100644
+index 00000000..0453a11f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Reach == "kept"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/tlc.out
+new file mode 100644
+index 00000000..24761b4e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-other-operator/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++"kept"
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.tla
+new file mode 100644
+index 00000000..67f48a2f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Randomization, TLC
++VARIABLE x
++ASSUME PrintT(RandomSubset(2, {1, 2, 3}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/Randomization.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/Randomization.tla
+new file mode 100644
+index 00000000..d9f6eb4c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/Randomization.tla
+@@ -0,0 +1,3 @@
++---- MODULE Randomization ----
++RandomSubset(k, S) == "replaced by tlc2.module.Randomization"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/declined
+new file mode 100644
+index 00000000..2d297529
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-randomization/declined
+@@ -0,0 +1 @@
++an assumption that fails to evaluate: evaluating the assumption again: the builtin RandomSubset@Randomization
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.tla
+new file mode 100644
+index 00000000..18685d45
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++ASSUME PrintT(Warshall({<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-transitive-closure/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.tla
+new file mode 100644
+index 00000000..c7cfe5ed
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++ASSUME PrintT(1)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/tlc.out
+new file mode 100644
+index 00000000..57fc7a6f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++1
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.tla
+new file mode 100644
+index 00000000..f81a95fc
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++ASSUME PrintT(Warshall)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/TransitiveClosure.tla
+new file mode 100644
+index 00000000..4d17c149
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall == "no argument"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-wrong-arity/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/tla-front/src/environment.rs b/packages/prove-it/native/crates/tla-front/src/environment.rs
+index 19e3aca0..00a038d6 100644
+--- a/packages/prove-it/native/crates/tla-front/src/environment.rs
++++ b/packages/prove-it/native/crates/tla-front/src/environment.rs
+@@ -2061,6 +2061,142 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+     Ok(environment)
+ }
+ 
++/// The modules whose Java class TLC counts as its own (`BuiltInModuleHelper.isBuiltInModule`).
++const BUILT_IN_CLASSES: [&str; 15] = [
++    "AnySet",
++    "Bags",
++    "FiniteSets",
++    "Integers",
++    "Naturals",
++    "Sequences",
++    "Strings",
++    "TLC",
++    "TransitiveClosure",
++    "Randomization",
++    "Json",
++    "TLCExt",
++    "TLCGetSet",
++    "TLCEval",
++    "_Possible",
++];
++
++/// TLC loads its own Java class named after each module of the spec, wherever the module's text
++/// comes from, and runs each method of it in place of the operator of the module spelled the same,
++/// whatever its arity (`processModuleOverrides`): a module of the user's named TransitiveClosure
++/// computes Warshall in Java, not by its body. The front end gives an imported module named like a
++/// standard module the builtins of that module of the same names and arities
++/// (`get_linked_module`), and reads any other operator by its body, so a spec that names one the
++/// class replaces declines.
++fn reject_class_overrides(
++    modules: &[Rc<Module>],
++    root: &Module,
++    config: &ModelConfig,
++    version: TlcVersion,
++) -> Result<()> {
++    for module in modules {
++        if !BUILT_IN_CLASSES.contains(&&*module.name) {
++            continue;
++        }
++        let standard = (module.name != root.name && is_sany_standard_module(&module.name, version))
++            .then(|| {
++                get_standard_modules(version)
++                    .iter()
++                    .find(|standard| standard.name == &*module.name)
++            })
++            .flatten();
++        for definition in &module.definitions {
++            let is_replaced = crate::startup::get_overrides().any(|(class, operator, _)| {
++                class == &*module.name && operator == &*definition.name
++            });
++            let arity = match &definition.kind {
++                DefinitionKind::Operator { params, .. } => params.len(),
++                DefinitionKind::Function { .. } => 0,
++            };
++            let is_builtin = standard.is_some_and(|standard| {
++                standard
++                    .operators
++                    .iter()
++                    .any(|operator| operator.name == &*definition.name && operator.arity == arity)
++            });
++            if is_replaced && !is_builtin && is_named(&definition.name, modules, definition, config)
++            {
++                return Err(FrontError::NotYet(format!(
++                    "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
++                    module.name, definition.name
++                )));
++            }
++        }
++    }
++    Ok(())
++}
++
++/// Whether any expression of the modules but the definition's own body, or the configuration,
++/// names the operator, by the last part of the name as written.
++fn is_named(
++    operator: &str,
++    modules: &[Rc<Module>],
++    definition: &Rc<Definition>,
++    config: &ModelConfig,
++) -> bool {
++    fn names(expression: &Expr, operator: &str) -> bool {
++        let written = match &expression.kind {
++            ExpressionKind::Identifier { name, .. } => Some(name),
++            ExpressionKind::Apply { operator, .. }
++            | ExpressionKind::OperatorReference { operator, .. } => Some(operator),
++            _ => None,
++        };
++        written.is_some_and(|written| written.rsplit('!').next() == Some(operator))
++            || expression
++                .children()
++                .iter()
++                .any(|child| names(child, operator))
++    }
++    let in_modules = modules.iter().any(|module| {
++        module
++            .definitions
++            .iter()
++            .filter(|other| !Rc::ptr_eq(other, definition))
++            .any(|other| names(&other.body, operator))
++            || module
++                .assumptions
++                .iter()
++                .any(|assumption| names(&assumption.expression, operator))
++            || module.instances.iter().any(|instance| {
++                instance
++                    .substitutions
++                    .iter()
++                    .any(|substitution| names(&substitution.expression, operator))
++            })
++    });
++    let named = [
++        &config.init,
++        &config.next,
++        &config.specification,
++        &config.symmetry,
++        &config.view,
++        &config.alias,
++        &config.periodic,
++        &config.rl_reward,
++    ];
++    let listed = [
++        &config.invariants,
++        &config.properties,
++        &config.constraints,
++        &config.action_constraints,
++        &config.postconditions,
++        &config.possible,
++    ];
++    in_modules
++        || named.iter().any(|name| name.as_deref() == Some(operator))
++        || listed
++            .iter()
++            .any(|names| names.iter().any(|name| name == operator))
++        || config
++            .substitutions
++            .iter()
++            .any(|substitution| substitution.target == operator)
++}
++
+ /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
+ /// the constant definitions (`processConstantDefns`), after it has rejected any other error of
+ /// the configuration (`processSpec`).
+@@ -2467,6 +2603,7 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
+             .map(|linked| linked.module.clone())
+             .collect(),
+     };
++    reject_class_overrides(&environment.modules, &root, config, options.version)?;
+     Ok(environment)
+ }
+ 
+diff --git a/packages/prove-it/native/crates/tla-front/src/startup.rs b/packages/prove-it/native/crates/tla-front/src/startup.rs
+index 02886bda..de7d217f 100644
+--- a/packages/prove-it/native/crates/tla-front/src/startup.rs
++++ b/packages/prove-it/native/crates/tla-front/src/startup.rs
+@@ -16,7 +16,7 @@ use crate::spec::get_definition;
+ const TLC_OVERRIDES: &str = include_str!("tlc_overrides.tsv");
+ 
+ // TLC's overrides as (module, operator, level).
+-fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
++pub(crate) fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
+     TLC_OVERRIDES
+         .lines()
+         .filter(|line| !line.starts_with('#'))
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index 1a0736c1..25de4907 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -456,6 +456,17 @@ it from one that printed something else. Each is outside the corpus:
+   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
+   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
+   first position where the stream differs from the normalized set, not where the stream starts.
++- an operator of a module of the user's named after a class TLC counts as its own
++  (`BuiltInModuleHelper`: TransitiveClosure, Randomization, AnySet, Bags, Json, TLCExt, ...),
++  which TLC replaces by the class's method whatever the module's text (`processModuleOverrides`).
++  The front end gives an imported module named like a standard module the builtins of the same
++  names and arities, and read any other such operator by its body, which printed the body's value
++  where TLC computes the method's (264 wrong runs in the upstream conformance suite, whose
++  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that names one now
++  declines (`an operator of a module of the user's that TLC's Java class replaces`). Five runs
++  matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
++  (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
++  ANY and RandomSubsetSet as builtins.
+ - a configuration substitute `C <- D`, and an operator a TLCOverrides index replaces, where TLC
+   computes the definition or the Java method again at each read: TLC holds C as D's definition, so
+   it prints, draws and sets registers again wherever it reads C, and calls a `final` method without
+-- 
+2.43.0
+
