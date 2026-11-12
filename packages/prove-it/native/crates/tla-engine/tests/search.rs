@@ -31,7 +31,7 @@ fn describe(outcome: &SearchOutcome) -> String {
         SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
         SearchOutcome::ConfigError { message } => format!("configuration error: {message}"),
         SearchOutcome::StartupException { message } => format!("exception: {message}"),
-        SearchOutcome::AssumptionFailed { position } => {
+        SearchOutcome::AssumptionFailed { position, .. } => {
             format!("assumption {position} failed to evaluate")
         }
         SearchOutcome::Invariant(reason) => format!("invariant: {reason}"),

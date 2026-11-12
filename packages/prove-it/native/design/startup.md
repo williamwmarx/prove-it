@@ -163,22 +163,30 @@ evaluate again where it is used, and so does a failure's evaluation, which takes
 even where it takes no other startup value. The trace evaluator does the same for one its own
 startup finds failing before it printed, drew or set a register.
 
-The engine retries only a failure TLC surely has where the engine has it. It does not retry the
-ones its assumptions already leave to the trace evaluator (`UNSURE_FAILURES`), where TLC may
-never test the set the engine finds failing.
+The search records which startup definitions it found failing, and hands that record to the
+trace evaluator's startup (`set_searched_failing`). The search may fail where TLC doesn't, as on a
+set operation's operand that TLC never tests for an element. A definition the search found failing
+that the evaluator computes is such a disagreement, and declines: TLC printed or computed it as
+the evaluator does, which the search didn't.
 
 At a use, the trace evaluator holds the definition to failing again as TLC does
 (`evaluate_failed_startup`). Several cases decline instead:
 - an evaluation that succeeds;
 - an EXCEPT of a key outside the domain, which TLC warns of with 2144;
-- an evaluation that built a set TLC can't normalize, or a value TLC may keep lazy;
-- a failure in a function constructor, a filter or a map;
-- a failure comparing, enumerating or testing membership.
+- an evaluation that built a set TLC can't normalize, or evaluated a UNION, whose membership TLC
+  tests set by set;
+- a failure in a function constructor, which TLC keeps lazy;
+- a tuple pattern that doesn't match, or a function over a set TLC doesn't enumerate, which the
+  evaluator words otherwise;
+- a sequence operator's failure on a value TLC may keep lazy, which TLC converts first;
+- a comparison with a product or SUBSET TLC holds lazy, or an enumeration with a SUBSET;
+- a failure that prints `S \cup T`, `S \cap T` or `S \ T` as TLC holds it lazy;
+- a comparison after a set map.
 
-TLC holds values unnormalized or lazy where the evaluator doesn't always, so in those cases it may
-fail elsewhere: building its message, or at another element (fallback.md, "Known wrong outputs").
-A set applied as a function declines before its argument is evaluated, as TLC fails there first,
-naming the class it built the set as.
+In these TLC holds values unnormalized or lazy where the evaluator doesn't, and may fail elsewhere,
+in building its message or at another element (fallback.md, "Known wrong outputs"). A set applied
+as a function declines before its argument is evaluated, as TLC fails there first, naming the class
+it built the set as.
 
 The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
 argument of most operators. So an effect TLC runs before the failure is one the engine runs

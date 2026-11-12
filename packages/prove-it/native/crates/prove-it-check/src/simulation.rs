@@ -209,11 +209,15 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         Err(SearchOutcome::AssumptionFailed { .. }) if is_reading => {
             return report_not_native(printer, "an assumption of a simulation that reads TLCGet");
         }
-        Err(SearchOutcome::AssumptionFailed { position }) => {
+        Err(SearchOutcome::AssumptionFailed {
+            position,
+            failed_startup,
+        }) => {
             return print_assumption_failure(
                 printer,
                 ir,
                 position,
+                &failed_startup,
                 &assumed_printed,
                 workers,
                 start,
