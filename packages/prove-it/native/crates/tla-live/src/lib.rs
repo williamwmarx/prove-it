@@ -253,6 +253,27 @@ pub fn find_accepted(
         .transpose()
 }
 
+/// Adds the states the search expanded to the behavior graphs as TLC does as it searches, each atom
+/// evaluated each time TLC evaluates it: those evaluations, in TLC's order, or why the checker
+/// doesn't follow TLC, as at an atom the engine didn't answer or at a node that accepts every
+/// behavior, where TLC's search stops.
+pub fn added_events(
+    formula: &[Term],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Result<Vec<Event>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let mut checker = checker::Checker::new(terms, root)?;
+    checker.log_effects();
+    let answers = Tables { tables, graph };
+    let source = Source {
+        graph,
+        answers: &answers,
+    };
+    checker::add_logged(&mut checker, &source)
+}
+
 /// TLC's behavior graphs as a search builds them: each state added once the search has expanded
 /// it, where TLC evaluates its atoms, whose effects the rest of the search sees, such as the
 /// registers they set. The atoms are asked each time TLC evaluates them.

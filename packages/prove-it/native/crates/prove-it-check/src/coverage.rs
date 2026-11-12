@@ -54,7 +54,10 @@ pub(crate) fn compute(
             violation.kind,
             ViolationKind::Invariant(_)
                 | ViolationKind::InitialInvariant(_)
-                | ViolationKind::Deadlock { accepted: None }
+                | ViolationKind::Deadlock {
+                    accepted: None,
+                    atom: None
+                }
         ) =>
         {
             (violation.counts.generated, violation.counts.distinct)

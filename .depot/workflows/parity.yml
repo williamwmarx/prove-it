@@ -152,6 +152,24 @@ jobs:
           bun scripts/platform-packages.ts build
           (cd native && cargo build --release --locked -p prove-it-cli)
           bun scripts/fetch-corpora.ts
+      # The jar TLC's recordings were made with, whose -loadTrace reads back each trace file the
+      # TLC-default comparison sees, as the Record TLC workflow builds it.
+      - name: Build TLC
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun java ant):$PATH"
+          tlc_commit="$(cd packages/prove-it && bun -e 'import { TLC_COMMIT } from "./scripts/tlc-recordings"; console.log(TLC_COMMIT)')"
+          tlaplus="$RUNNER_TEMP/tlaplus"
+          git init -q "$tlaplus"
+          git -C "$tlaplus" remote add origin https://github.com/tlaplus/tlaplus.git
+          git -C "$tlaplus" sparse-checkout set tlatools/org.lamport.tlatools
+          git -C "$tlaplus" fetch -q --depth 1 --filter=blob:none origin "$tlc_commit"
+          git -C "$tlaplus" checkout -q FETCH_HEAD
+          mkdir -p "$tlaplus/tlatools/org.lamport.tlatools/test-class"
+          JAVA_HOME="$(cd "$(dirname "$(command -v java)")/.." && pwd)"
+          export JAVA_HOME
+          unset ANT_HOME
+          ant --noconfig -f "$tlaplus/tlatools/org.lamport.tlatools/customBuild.xml" compile dist
       - name: Compare the full output with TLC's
         env:
           FILTER: ${{ inputs.filter || '' }}
@@ -200,7 +218,7 @@ jobs:
           exit "$status"
       # The same runs in TLC's own default, which records the trace for its trace exploration
       # spec, against TLC's recordings without -noGenerateSpecTE: the trace exploration files TLC
-      # writes are part of each run's output.
+      # writes are part of each run's output, each .bin as what the jar's -loadTrace reads back.
       - name: Compare the native binary's output with TLC's in TLC's own default
         if: success() || failure()
         env:
@@ -208,7 +226,8 @@ jobs:
           MAX_TLC_MS: ${{ inputs.max_tlc_ms || '20000' }}
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node java):$PATH"
+          export TLA2TOOLS_JAR="$RUNNER_TEMP/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar"
           cd packages/prove-it
           mkdir -p "$RUNNER_TEMP/parity"
           status=0

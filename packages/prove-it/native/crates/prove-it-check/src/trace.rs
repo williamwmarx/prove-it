@@ -374,7 +374,11 @@ fn rebuild(
                         trace: held.as_ref().unwrap_or(&trace),
                         cycle,
                     };
-                    dumps.dump(ir, &mut rebuilder, &counter_example)?
+                    let is_initial = matches!(
+                        kind,
+                        ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_)
+                    );
+                    dumps.dump(ir, &mut rebuilder, &counter_example, is_initial)?
                 }
                 None => Vec::new(),
             };

@@ -2,19 +2,24 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
-const checkFixture = (name: string, configName = name) =>
-  check({
-    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
-  });
+const checkFixture = (name: string, configName = name, declinedFor?: string) =>
+  checkOnEngine(
+    {
+      source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+      config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
+    },
+    declinedFor,
+  );
+
+const TRACE = "the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep";
 
 describe("TLCExt matches TLC", () => {
   it("checks TLC's TLCExtTrace model with Trace in an invariant and a constraint", async () => {
-    const result = await checkFixture("TLCExtTrace");
+    const result = await checkFixture("TLCExtTrace", "TLCExtTrace", TRACE);
     expect(result.status).toBe("deadlock");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([10, 10, 10]);
   });
@@ -27,7 +32,7 @@ describe("TLCExt matches TLC", () => {
   });
 
   it("ends Trace in the state that the next-state relation extends", async () => {
-    const result = await checkFixture("TraceNext");
+    const result = await checkFixture("TraceNext", "TraceNext", TRACE);
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 5, 5]);
   });
