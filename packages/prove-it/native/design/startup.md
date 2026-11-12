@@ -180,9 +180,14 @@ At a use, the trace evaluator holds the definition to failing again as TLC does
 (`evaluate_failed_startup`). Several cases decline instead:
 - an evaluation that succeeds;
 - an EXCEPT of a key outside the domain, which TLC warns of with 2144;
-- an evaluation that built a set TLC can't normalize, or evaluated a UNION, whose membership TLC
-  tests set by set;
+- an evaluation that built a set TLC can't normalize, or a UNION TLC keeps lazy (`UnionValue`, of
+  anything but a set enumeration of set enumerations), whose membership TLC tests set by set;
 - a failure in a function constructor, which TLC keeps lazy;
+- an evaluation that read DOMAIN of a function TLC keeps lazy (its domain isn't a set enumeration
+  or an interval) and that the evaluator built, but as the argument of Cardinality: TLC's DOMAIN
+  gives the set it holds as the domain, as `SUBSET S` a `SubsetValue`, where TLC may fail
+  elsewhere (`{DOMAIN [b \in SUBSET {1} |-> 1] \ (3 .. 3), CHOOSE y \in {} : TRUE}` fails at the
+  CHOOSE in TLC, in the difference in the evaluator);
 - a tuple pattern that doesn't match, or a function over a set TLC doesn't enumerate, which the
   evaluator words otherwise;
 - a sequence operator's failure on a value TLC may keep lazy, which TLC converts first;
@@ -194,6 +199,11 @@ In these TLC holds values unnormalized or lazy where the evaluator doesn't, and 
 in building its message or at another element (fallback.md, "Known wrong outputs"). A set applied
 as a function declines before its argument is evaluated, as TLC fails there first, naming the class
 it built the set as.
+
+A UNION of a set enumeration of set enumerations TLC computes at once (`UnionValue.union`): it
+keeps each element in the order it holds the sets, where `equals` finds no earlier one equal, and
+holds the result as an unnormalized set enumeration. The evaluator does the same, so a failure past
+it, or in its `equals`, is TLC's.
 
 The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
 argument of most operators. So an effect TLC runs before the failure is one the engine runs
