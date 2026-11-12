@@ -408,3 +408,53 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
   }
   return config;
 };
+
+const formatValue = (value: ConfigValue): string =>
+  value.kind === "Number"
+    ? String(value.value)
+    : value.kind === "String"
+      ? `"${value.value}"`
+      : value.kind === "Boolean"
+        ? String(value.value).toUpperCase()
+        : value.kind === "ModelValue"
+          ? value.name
+          : `{${value.elements.map(formatValue).join(", ")}}`;
+
+// The objects' fields in one order, so that their texts compare.
+const getCanonical = (value: unknown) =>
+  JSON.stringify(value, (_, inner) =>
+    inner !== null && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort())
+      : inner,
+  );
+
+// The configuration file that holds a ModelConfig, or undefined for one no file holds, which
+// parseConfig wouldn't read back as the same object, as for an object of another shape.
+export const formatConfig = (config: ModelConfig) => {
+  const scope = (module: string | undefined) => (module === undefined ? "" : `[${module}] `);
+  try {
+    const lines = [
+      ...[...SINGLE_KEYWORDS].flatMap((entry) =>
+        config[entry[1]] === undefined ? [] : [`${entry[0]} ${config[entry[1]]}`],
+      ),
+      ...[...LIST_KEYWORDS]
+        .filter((entry) => !entry[0].endsWith("S"))
+        .flatMap((entry) =>
+          config[entry[1]].length === 0 ? [] : [`${entry[0]} ${config[entry[1]].join(" ")}`],
+        ),
+      ...config.constants.map(
+        (constant) =>
+          `CONSTANT ${constant.name}${constant.args === undefined ? "" : `(${constant.args.map(formatValue).join(", ")})`} = ${scope(constant.module)}${formatValue(constant.value)}`,
+      ),
+      ...config.substitutions.map(
+        (substitution) =>
+          `CONSTANT ${substitution.name} <- ${scope(substitution.module)}${substitution.target}`,
+      ),
+      `CHECK_DEADLOCK ${config.checkDeadlock ? "TRUE" : "FALSE"}`,
+    ];
+    const text = `${lines.join("\n")}\n`;
+    return getCanonical(parseConfig(text)) === getCanonical(config) ? text : undefined;
+  } catch {
+    return undefined;
+  }
+};

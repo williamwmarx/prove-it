@@ -18,7 +18,7 @@ const dumpFixture = async (
   name: string,
   dump: NonNullable<CheckOptions["dump"]>,
   options: Partial<CheckOptions> = {},
-  declinedFor = "-dump",
+  declinedFor: string | undefined = dump.dot ? "-dump dot" : undefined,
 ) => {
   const written = new Map<string, string>();
   const result = await checkOnEngine(
@@ -85,6 +85,12 @@ describe("check dumps the state graph like TLC's -dump", () => {
   it("lists the reachable states without dot", async () => {
     const dump = await dumpFixture("counter", "Counter", { path: "Counter.dump" });
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
+  });
+
+  it("lists the states it reached when an invariant fails", async () => {
+    const dump = await dumpFixture("water-jugs", "WaterJugs", { path: "WaterJugs.dump" });
+    expect(dump.result.status).toBe("invariant-violation");
+    expect(dump.written.get("WaterJugs.dump")).toBe(readTlcDump("WaterJugs.dump"));
   });
 
   it("writes the stuttering steps of a liveness check like TLC 1.7.4, and plain edge labels", async () => {
