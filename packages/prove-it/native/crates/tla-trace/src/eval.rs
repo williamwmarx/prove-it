@@ -454,6 +454,11 @@ pub struct Evaluator<'ir> {
     pub register_writes: usize,
     /// How many EXCEPTs named a key outside the function's domain, which TLC warns of.
     except_skips: usize,
+    /// Whether a failure came from what a walk goes on to once a value is chosen, the rest of the
+    /// predicate or the check of the state it gives, and passed no frame since: TLC's
+    /// `getInitStates` and `getNextStates` call that from `Tool`, after the set's enumerator
+    /// returned, so the failure is in no method of the set.
+    pub(crate) is_continued_failure: bool,
     /// How many times TLCGet read a register.
     pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
@@ -644,6 +649,7 @@ const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.Sort
 fn is_text(text: &Text, word: &str) -> bool {
     text.units.iter().copied().eq(word.encode_utf16())
 }
+const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
 const TO_STRING: &str =
     "public static tlc2.value.impl.Value tlc2.module.TLC.ToString(tlc2.value.impl.Value)";
 const PRINT: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.Print(tlc2.value.impl.Value,tlc2.value.impl.Value)";
@@ -737,7 +743,6 @@ const MODULE_OVERFLOW: u32 = 2178;
 const NULL_POWER_NULL: u32 = 2180;
 const IS_FINITE_SET: &str =
     "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
-const CARDINALITY: &str = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
 const TEXT_SERIALIZE: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 impl<'ir> Evaluator<'ir> {
@@ -777,6 +782,7 @@ impl<'ir> Evaluator<'ir> {
             registers: Registers::default(),
             register_writes: 0,
             except_skips: 0,
+            is_continued_failure: false,
             register_reads: 0,
             is_tool: None,
             trace: None,
@@ -1339,6 +1345,33 @@ impl<'ir> Evaluator<'ir> {
         if reason == APPLIED_NON_BOOLEAN {
             return;
         }
+        // A set of functions TLC can't enumerate fails in its own method
+        // (`SetOfFcnsValue.elements`), wherever TLC enumerates it: as the set of a CHOOSE, a
+        // quantifier, a set filter or a set map, or as the base of a filter it keeps lazy, which
+        // the method of another value enumerates. That set's source heads the
+        // FingerprintException, and the lazy filter has none.
+        if reason == "enumerated an infinite set" {
+            let sets: Vec<NodeId> = match self.kind(node) {
+                NodeKind::Choose { set: Some(set), .. } => vec![*set],
+                NodeKind::SetFilter { bound, .. } => vec![bound.set],
+                NodeKind::Forall { bounds, .. }
+                | NodeKind::Exists { bounds, .. }
+                | NodeKind::SetMap { bounds, .. } => bounds.iter().map(|bound| bound.set).collect(),
+                _ => self.receiver(node).into_iter().collect(),
+            };
+            let sets: Vec<NodeId> = sets.into_iter().map(|set| self.resolved(set)).collect();
+            if let Some(stack) = &mut self.call_stack
+                && let Some(source) = sets.iter().find_map(|set| {
+                    stack.source(&crate::sets::unenumerable_function_set(
+                        stack.values.get(set)?,
+                    )?)
+                })
+            {
+                stack.is_fingerprinted = true;
+                stack.fingerprinted_sources = vec![source];
+                return;
+            }
+        }
         // CHOOSE enumerates its set by the set's own method, which fails where TLC can't
         // enumerate the set.
         let chosen = match self.kind(node) {
@@ -1513,7 +1546,9 @@ impl<'ir> Evaluator<'ir> {
             stack.frames.push(frame);
         }
         let result = run(self);
+        let is_continued = std::mem::take(&mut self.is_continued_failure);
         if let Err(error) = &result
+            && !is_continued
             && self
                 .call_stack
                 .as_ref()
@@ -4898,8 +4933,19 @@ impl<'ir> Evaluator<'ir> {
             "Cardinality" => {
                 arity(1)?;
                 let set = self.operand(&operands[0])?;
-                // `SetPredValue.size` enumerates a filter TLC keeps lazy.
-                let set = self.settle(&set)?;
+                // `SetPredValue.size` enumerates a filter TLC keeps lazy. A set of functions with a
+                // source that fails to enumerate throws a FingerprintException, no EvalException,
+                // which `MethodValue` reports as the method's failure.
+                let settled = self.settle(&set);
+                let set = if settled.is_err()
+                    && let Some(stack) = &self.call_stack
+                    && crate::sets::unenumerable_function_set(&set)
+                        .is_some_and(|functions| stack.source(&functions).is_some())
+                {
+                    as_java_failure(CARDINALITY, settled)?
+                } else {
+                    settled?
+                };
                 // `FiniteSets.Cardinality` counts an `Enumerable` value.
                 let is_enumerable = match &set {
                     Value::Lazy(lazy) => !lazy.is_overridden(),

@@ -5,8 +5,9 @@
 // TLC builds them and applications of tuples and records, failures in a value TLC gives no source,
 // comparisons TLC can't make in the next-state relation or of an initial state's value with a set,
 // initial states that hold values TLC can't fingerprint, temporal properties that fail on the
-// initial state with an EvalException, function definitions that fail as TLC builds them, and
-// ALIASes TLC holds as values. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
+// initial state with an EvalException, function definitions that fail as TLC builds them,
+// ALIASes TLC holds as values, state checks that fail after the initial predicate's last
+// enumeration, and sets of functions over Nat. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
 // its output without the lines that differ from run to run, which the test drops from the binary's
 // too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
@@ -186,6 +187,55 @@ const unsourced: Cell[] = ["{n \\in Nat : n > 2}"].map((set) => ({
     "VARIABLE x",
     `Init == x \\in ${set}`,
     "Next == UNCHANGED x",
+    "====",
+  ].join("\n"),
+  config: "INIT Init\nNEXT Next",
+}));
+
+// A state check that fails as the initial predicate's last conjunct enumerates its set: TLC
+// checks the state from `Tool.getInitStates`, after the set's enumerator returned, so the failure
+// is in no method of the set and TLC reports the nested expressions.
+const continued: Cell[] = [
+  ["x \\in 0..1 /\\ y \\in {0}", "INVARIANT Inv", "Inv == 1"],
+  ["x = 0 /\\ y \\in {0, 1}", "INVARIANT Inv", "Inv == 1"],
+  ["y \\in {0} /\\ x \\in 0..1", "INVARIANT Inv", "Inv == 1"],
+  ["x = 0 /\\ y \\in {0}", "CONSTRAINT Con", "Con == 1"],
+].map(([init, section, check]) => ({
+  name: `Init == ${init}: ${check}`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Integers",
+    "VARIABLES x, y",
+    `Init == ${init}`,
+    "Next == x' = x /\\ y' = y",
+    check,
+    "====",
+  ].join("\n"),
+  config: `INIT Init\nNEXT Next\n${section}`,
+}));
+
+// A set of functions over Nat, which TLC enumerates by its own method wherever it enumerates it:
+// as the set of a quantifier, a CHOOSE or a set map, and as the base of a set filter TLC keeps
+// lazy, which another value's method enumerates. Cardinality, a Java method, reports the
+// FingerprintException as its failure.
+const functionSets: Cell[] = [
+  "{f \\in [Nat -> {0}] : TRUE} = {}",
+  "\\E f \\in [Nat -> {0}] : TRUE",
+  "\\A f \\in [Nat -> {0}] : TRUE",
+  "\\A f \\in {g \\in [Nat -> {0}] : TRUE} : TRUE",
+  "CHOOSE f \\in [Nat -> {0}] : TRUE",
+  "{f : f \\in [Nat -> {0}]} = {}",
+  "Cardinality({f \\in [Nat -> {0}] : TRUE}) = 1",
+  "Cardinality([Nat -> {0}]) = 1",
+].map((test) => ({
+  name: `Init == x = ${test}`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Integers, FiniteSets",
+    "VARIABLE x",
+    `Test == ${test}`,
+    "Init == x = Test",
+    "Next == x' = x",
     "====",
   ].join("\n"),
   config: "INIT Init\nNEXT Next",
@@ -497,6 +547,8 @@ const blocks = [
   ...nestedComparisons,
   ...functions,
   ...unsourced,
+  ...continued,
+  ...functionSets,
   ...steps,
   ...initialComparisons,
   ...initialStates,
