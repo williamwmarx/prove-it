@@ -1,1 +1,1 @@
-the trace file of the trace exploration spec, which TLC compresses with Java's Deflater
+the trace file of a simulation's violation, which the trace exploration spec's postcondition writes

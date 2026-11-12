@@ -165,6 +165,118 @@ non-set"): TLC's Next doesn't fail there, as its `\E` over `{1} \cup SUBSET 3` s
 the engine's eager enumeration doesn't; it is the ENABLED of the fairness that fails, and its
 rerun with the call stack fails to fingerprint, so TLC replays Next for its call stack.
 
+## A deadlock in a model with temporal properties where a check fails (as built)
+
+The binary declined it ("the engine stopped: deadlock"; the `tlc-replay` test's deadlock runs).
+Read from `Worker.run`, `Worker#doNextCheckLiveness`, `ModelChecker#doNextSetErr` and
+`ModelChecker#doNextFailed` at d8fb231, and checked against TLC built there:
+
+1. `getNextStates` generates no successor of s. The worker's `doNextSetErr` sets the error state
+   with `keepCallStack` false, prints "Deadlock reached." and the trace to s, and checks the
+   postconditions on that trace.
+2. With temporal properties the worker goes on to `doNextCheckLiveness` on s, whose successors
+   are only the stuttering step from s to s, and `LiveCheck#addNextState` runs the checks of the
+   section above in the same order: each solution's `checkAction` on the stuttering step, its
+   `checkState` on s (ENABLED and the state checks), then the tableau's consistency.
+3. Where one throws an EvalException or a TLCRuntimeException, TLC runs them again with a
+   `CallStackTool` and prints that call stack where it has one (`EC.TLC_NESTED_EXPRESSION`), then
+   rethrows. The worker's `doNextFailed` finds the error state set and prints nothing, and no
+   replay runs, as `keepCallStack` is false.
+4. Where the rerun throws a FingerprintException instead (a value with a source, as `<<1>>[2]`),
+   it isn't caught there, and reaches `doNextFailed` the same way: TLC prints nothing of it.
+5. Where a POSTCONDITION is a definition TLC computed as it started, such as `Post == TRUE`,
+   `Spec#getPostConditionSpecs` rejects it in step 1, after the trace, with an exception that
+   leaves the worker's loop for its catch, which prints nothing as the error state is set. The
+   worker never reaches step 2: no check fails on s and no node of s accepts, so TLC prints the
+   plain deadlock, and the binary drops what the engine found there.
+
+So TLC prints the deadlock, the trace and what the postconditions print, then the failing check's
+call stack, if any, then the statistics, and exits 11 whatever failed. Where every check holds it
+prints the plain deadlock. `-tool` prints the stack as message 2103, and `-lncheck final` changes
+nothing, as TLC adds each state to the behavior graphs as it searches either way. A check on s
+can fail only where it reads s alone: a state predicate of a successor is a check of the state
+before it, and a step's subscript is evaluated on both its states, so an action atom fails on the
+stuttering step only at a deadlocked initial state.
+
+The engine adds s to the graph as an expanded state with no steps, as it did for an accepting
+node (Github710d), and lets `unanswered_at` reach s too. The first atom the tables leave
+unanswered on s that fails as TLC fails becomes `ViolationKind::Deadlock::atom` (a
+`DeadlockAtom`, `is_extra` for the stuttering step); one that holds when evaluated declines, as
+one after it may fail. The binary evaluates it again with `tla-trace` (`Site::DeadlockAtom`) for
+the call stack alone, which it prints after the postconditions' report; where `tla-trace` finds
+the rerun throws a FingerprintException it prints none. It declines where the atom prints, and
+where the search past the initial states or an atom prints. What the initial predicate prints
+comes before the search, so it follows the atom there too. Where the search doesn't follow TLC's
+checks (SYMMETRY, a VIEW, the diameter, TLC's registers), it declines a deadlock with an atom left
+unanswered, where it had printed the plain deadlock. A grid of 59 specs (ENABLED of WF and SF, state
+predicates, the stuttering step's subscript, several fairness conditions and properties,
+invariants, an ALIAS, a postcondition, a constraint, deadlocks at an initial state and later),
+each in plain, `-tool`, `-lncheck final` and both, on one thread and four, matched TLC on 424 of
+472 runs and declined the other 48: Print in Next or an atom (3 specs), a function applied
+outside its domain, whose message `tla-trace` doesn't give, and two atoms that fail on a state
+before the deadlock, or with no deadlock check, which TLC words as a FingerprintException, as
+before. The engine had printed the plain deadlock where the stuttering step's subscript fails on a
+deadlocked initial state, as the tables left that step unanswered and the verdict reads no action
+atom; it now prints TLC's call stack there. `prove-it-cli/tests/deadlock-live.rs` holds a
+representative set.
+
+## Print at a stop (as built)
+
+Where the search stops, at a deadlock, a violated invariant or action property, or a failure of
+Next or of an invariant, in a model with temporal properties whose spec prints, TLC prints in an
+order read from `Worker.run`, `Worker#addElement`, `Worker#doNextSetErr`,
+`Worker#doNextCheckLiveness`, `LiveCheck#addNextState` and `ModelChecker.modelCheck` at d8fb231:
+
+1. As it searches, each expansion's prints, then those of the atoms as it adds the state to the
+   behavior graphs, late nodes included, up to the state s it stops in, and s's expansion up to the
+   stop.
+2. The error and the trace, with what rebuilding the trace prints (`TLCTrace.printTrace`), and,
+   where the worker reports it (`Worker#doNextSetErr`: a deadlock or a violation), the trace
+   rebuilt again for the postconditions (`doPostCondition`), whatever the postconditions.
+3. The worker goes on: an exception in `getNextStates` is caught (`doNextFailed` prints nothing
+   once the error state is set), and `doNextCheckLiveness` adds s with the successors already in
+   its `SetOfStates`, the one that violated or failed an invariant among them, since
+   `isSeenState` put it there before the invariants were checked, and the stuttering step. So TLC
+   adds s after an invariant that fails too, which TLC confirms: seven prints after the trace that
+   the model without its property doesn't print.
+4. Once the workers are done, where the error keeps its call stack, the replay of s's expansion
+   (`ModelChecker.doNext`), which prints Next's prints again, then the call stack.
+
+The engine follows it where the search held its prints (`place_stop_prints`): it adds s to the
+graph, with its steps so far marked partial, and the new successor it stopped at as a state past
+the stored ones (`Graph::stopped`, the edge `record_step` keeps). `tla_live::added_events` adds the
+states with each atom's evaluation logged; the events up to `Event::Expanded(s)` place the prints
+before the stop, as `order_printed` does for a complete search, and those after it are carried in
+`Violation::added`, which the binary prints after the trace (step 2) and before the replay's
+prints (step 4).
+
+A late node of s runs Next from s in full, checking no invariant (`LiveCheck#addNextState`). After
+a deadlock that is the expansion the search printed. After a violation or an invariant that fails,
+the engine runs Next from s again and follows it where it takes the steps the search took, so the
+late node's steps are the graph's. It declines, each with its reason:
+- a late node of a state whose next states fail: Next fails again there, and TLC reports that
+  failure after evaluating the checks a second time on a graph the first attempt changed
+  (TLC's output shows the late node's prints, then fewer prints again, then the call stack);
+- a late node of s whose full Next takes other steps than the search took (a second successor,
+  or two equal ones), with several actions, or with constraints;
+- an atom the engine doesn't answer or a node that accepts every behavior as TLC adds the states,
+  as where the fairness action is the one that fails on s (TLC reports the atom's failure, and
+  evaluates the checks twice);
+- an atom that prints as TLC adds an initial state, as for a complete search;
+- SYMMETRY or a VIEW, atoms that read TLC's diameter or level, and a POSTCONDITION where the
+  added state prints.
+
+Where the engine declines for any of those reasons and nothing prints past the initial states,
+neither the search, nor the atoms, nor Next run again from s in full as a late node of s would, it
+reports the stop as where nothing prints, which matched TLC before: a model whose initial predicate
+alone prints and whose property reads `TLCGet("level")`, or whose deadlocked state's atoms under
+strong fairness the engine doesn't answer, or whose deadlocked state's node accepts every behavior.
+`place_stop_prints` leaves the search as it found it when it declines, for that report.
+
+Verified against TLC on 360 generated specs (the stop's kind and depth, prints in the action, in a disjunct, in the fairness action alone or in the property, three
+properties, WF, SF or none), each in plain, -tool, -lncheck final and both, on 1 and 4 workers:
+2880 runs, 1936 print what TLC prints, 944 decline, none differ.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never
@@ -458,7 +570,7 @@ Declined after the pre-PR review (infinite-sets session, 2026-11-10), each with 
 `prove-it-cli/tests/cli.rs`:
 - A stop, a deadlock or an invariant, in a model with behavior graphs where an expansion
   printed: TLC runs Next again from a state it adds a tableau node of late, printing again what
-  Next prints, which the search doesn't place before its stop.
+  Next prints, which the search doesn't place before its stop. Now placed: see "Print at a stop".
 - A late node's prints where Next has several actions: TLC runs it action by action there, with
   the atoms of each action's successors between (`LiveCheck.addNextState`); `order_printed`
   places them only where Next is one action.

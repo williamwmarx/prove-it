@@ -19,10 +19,11 @@ pub const STACK_OVERFLOW_MESSAGE: &str = "This was a Java StackOverflowError. It
 const INVARIANT_VIOLATED_LEVEL: u32 = 2146;
 /// EC.TLC_LIVE_FORMULA_TAUTOLOGY, which it exits with as a failure to evaluate a liveness property.
 const LIVE_FORMULA_TAUTOLOGY: u32 = 2253;
-/// EC.TLC_LIVE_CANNOT_HANDLE_FORMULA and EC.TLC_LIVE_WRONG_FORMULA_FORMAT, which it exits with as
-/// any general error.
+/// EC.TLC_LIVE_CANNOT_HANDLE_FORMULA, EC.TLC_LIVE_WRONG_FORMULA_FORMAT and EC.TLC_EXPECTED_VALUE,
+/// which it exits with as any general error.
 const LIVE_CANNOT_HANDLE_FORMULA: u32 = 2213;
 const LIVE_WRONG_FORMULA_FORMAT: u32 = 2214;
+const EXPECTED_VALUE: u32 = 2215;
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -324,7 +325,9 @@ impl FrontError {
             exit_code: match code {
                 INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
                 LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
-                LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => GENERAL_ERROR,
+                EXPECTED_VALUE | LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => {
+                    GENERAL_ERROR
+                }
                 _ if message.starts_with(crate::errors::UNEXPECTED_HEAD) => GENERAL_ERROR,
                 _ => exit_code,
             },

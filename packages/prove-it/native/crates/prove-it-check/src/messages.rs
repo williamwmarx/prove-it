@@ -154,7 +154,8 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// A line the spec printed as TLC searched, which the outcome records where its caller reads it.
+    /// A line the spec printed, as TLC searched or as it printed a trace and checked the
+    /// postconditions on it, which the outcome records where its caller reads it.
     pub fn printed(&mut self, text: &str) {
         self.line(text);
         if self.host.is_plain() {
