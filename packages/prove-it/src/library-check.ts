@@ -3,7 +3,7 @@
 // files. Where it declines the model, or the options ask for what only the TypeScript check does,
 // the TypeScript check checks it and its result converts.
 
-import type { CheckOptions as SearchOptions } from "./check";
+import type { CheckOptions as SearchOptions, OutputLine, TraceStep } from "./check";
 import {
   type CheckProgress,
   type CheckResult,
@@ -126,7 +126,22 @@ const checkWithEngine = (options: CheckOptions) => {
 
 // What the TypeScript check finds, converted. With -continue it reports each violation it goes on
 // past as it finds it.
+// A violation or a failure of the TypeScript check, with its trace.
+interface Traced {
+  trace: TraceStep[];
+  traceOutput?: OutputLine[];
+}
+
+// What the spec printed as TLC rebuilt and printed a trace, then after it, as the native check
+// reports it.
+const getTracePrints = (reported: Traced | undefined) =>
+  [
+    ...(reported?.trace ?? []).flatMap((step) => step.output ?? []),
+    ...(reported?.traceOutput ?? []),
+  ].filter((line) => typeof line === "string");
+
 const checkWithInterpreter = async (options: CheckOptions) => {
+  const print = options.onPrint ?? console.log;
   const isTool = options.isTool ?? false;
   const version = options.version ?? "master";
   const continued: Violation[] = [];
@@ -137,6 +152,9 @@ const checkWithInterpreter = async (options: CheckOptions) => {
       onProgress || options.isContinued
         ? (progress) => {
             if (progress.kind !== "violation") return onProgress?.(progress);
+            // TLC prints each violation's trace as it reports it, without rebuilding it once more
+            // after it, and goes on.
+            getTracePrints({ trace: progress.violation.trace }).forEach((line) => print(line));
             const reported = toContinuedViolation(
               progress.status,
               progress.violation,
@@ -148,16 +166,11 @@ const checkWithInterpreter = async (options: CheckOptions) => {
           }
         : undefined,
   });
-  // What the spec printed as TLC rebuilt and printed the violation's trace, then after it, as the
-  // native check reports it.
-  const violation = result.violation;
-  const print = options.onPrint ?? console.log;
+  // Under -continue each violation's trace printed as it was reported.
   [
-    ...(violation?.trace ?? []).flatMap((step) => step.output ?? []),
-    ...(violation?.traceOutput ?? []),
-  ]
-    .filter((line) => typeof line === "string")
-    .forEach((line) => print(line));
+    ...(options.isContinued ? [] : getTracePrints(result.violation)),
+    ...getTracePrints(result.failure),
+  ].forEach((line) => print(line));
   return fromSearchResult(result, continued, isTool, version);
 };
 
