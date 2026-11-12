@@ -1,0 +1,567 @@
+From c99d69dec5a87b08f212d54ef4bbc39f13ed06d4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 22:49:58 +0000
+Subject: [PATCH 5/5] fix(front): read a subscript's constant definition as TLC
+ holds it, and decline only where that changes its warnings
+
+A definition TLC computes as it starts is a value in the subscript of
+[][Next]_v, which the SubscriptCollector ignores, unless the
+computation fails, when TLC enters its body. The front end declined
+wherever its small evaluator couldn't compute the definition
+(C == PrintT(1)), a model main checks. Now a definition the evaluator
+computes, or one built of literals, tuples, sets, records and what
+Print and PrintT print of such, is a value; one whose evaluation fails
+is entered; and of any other the warnings are unknown only where
+entering its body reaches what the collector gives up at, since a
+definition of constant level holds no variable. A LET definition whose
+body is a literal TLC holds as the literal's value (processConstants),
+which the collector ignores, as it does a global one.
+---
+ .../startup_checks/sub-failing-startup/M.cfg  |  1 +
+ .../startup_checks/sub-failing-startup/M.tla  |  6 ++
+ .../sub-failing-startup/tlc.out               | 15 ++++
+ .../sub-let-literal-tuple/M.cfg               |  1 +
+ .../sub-let-literal-tuple/M.tla               |  6 ++
+ .../sub-let-literal-tuple/tlc.out             | 15 ++++
+ .../startup_checks/sub-let-literal/M.cfg      |  1 +
+ .../startup_checks/sub-let-literal/M.tla      |  6 ++
+ .../startup_checks/sub-let-literal/tlc.out    | 20 +++++
+ .../tests/startup_checks/sub-let-string/M.cfg |  1 +
+ .../tests/startup_checks/sub-let-string/M.tla |  6 ++
+ .../startup_checks/sub-let-string/tlc.out     | 15 ++++
+ .../startup_checks/sub-let-tuple-body/M.cfg   |  1 +
+ .../startup_checks/sub-let-tuple-body/M.tla   |  6 ++
+ .../startup_checks/sub-let-tuple-body/tlc.out | 18 ++++
+ .../startup_checks/sub-print-all-vars/M.cfg   |  1 +
+ .../startup_checks/sub-print-all-vars/M.tla   |  6 ++
+ .../startup_checks/sub-print-all-vars/tlc.out | 16 ++++
+ .../sub-print-missing-var/M.cfg               |  1 +
+ .../sub-print-missing-var/M.tla               |  6 ++
+ .../sub-print-missing-var/tlc.out             | 19 ++++
+ .../startup_checks/sub-print-tuple/M.cfg      |  1 +
+ .../startup_checks/sub-print-tuple/M.tla      |  6 ++
+ .../startup_checks/sub-print-tuple/tlc.out    | 16 ++++
+ .../startup_checks/sub-tuple-value/M.cfg      |  1 +
+ .../startup_checks/sub-tuple-value/M.tla      |  6 ++
+ .../startup_checks/sub-tuple-value/tlc.out    | 15 ++++
+ .../native/crates/tla-front/src/spec.rs       | 88 +++++++++++++++++--
+ 28 files changed, 292 insertions(+), 8 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.tla
+new file mode 100644
+index 00000000..85e16d77
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == 1 \div 0
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, y, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/tlc.out
+new file mode 100644
+index 00000000..dcae52b3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-failing-startup/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.tla
+new file mode 100644
+index 00000000..6ddee21e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == 1
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_(LET L == 1 IN <<x, y, L>>)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/tlc.out
+new file mode 100644
+index 00000000..dcae52b3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal-tuple/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.tla
+new file mode 100644
+index 00000000..3160f606
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == 1
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_(LET L == 1 IN L)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/tlc.out
+new file mode 100644
+index 00000000..24697096
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-literal/tlc.out
+@@ -0,0 +1,20 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable x
++(Use the -nowarning option to disable this warning.)
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable y
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.tla
+new file mode 100644
+index 00000000..49c50e74
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == 1
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_(LET L == "s" IN <<x, y, L>>)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/tlc.out
+new file mode 100644
+index 00000000..dcae52b3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-string/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.tla
+new file mode 100644
+index 00000000..23223ff2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == 1
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_(LET L == <<1>> IN <<x, y, L>>)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/tlc.out
+new file mode 100644
+index 00000000..a0364904
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-let-tuple-body/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.tla
+new file mode 100644
+index 00000000..38b068f3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == PrintT(1)
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, y, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/tlc.out
+new file mode 100644
+index 00000000..1d585b0d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-all-vars/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++1
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.tla
+new file mode 100644
+index 00000000..39486907
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == PrintT(1)
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/tlc.out
+new file mode 100644
+index 00000000..eb958155
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-missing-var/tlc.out
+@@ -0,0 +1,19 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++1
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable y
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.tla
+new file mode 100644
+index 00000000..7ac41c69
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == <<PrintT(1), 2>>
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, y, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/tlc.out
+new file mode 100644
+index 00000000..1d585b0d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-print-tuple/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++1
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.tla
+new file mode 100644
+index 00000000..2fa7b410
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLES x, y
++C == <<1, 2>>
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, y, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/tlc.out
+new file mode 100644
+index 00000000..dcae52b3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sub-tuple-value/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index b1d410d0..0a4b6d3c 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -1314,6 +1314,50 @@ impl SubscriptCollector<'_, '_> {
+         ))
+     }
+ 
++    /// Whether an expression of constant level evaluates without fail, which TLC then holds as a
++    /// value as it starts: literals, tuples, set enumerations and records of such, what Print and
++    /// PrintT print of such, and definitions of such.
++    fn is_total(&self, expression: &Expr) -> bool {
++        match &expression.kind {
++            ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
++            ExpressionKind::Tuple(items) | ExpressionKind::SetEnumeration(items) => {
++                items.iter().all(|item| self.is_total(item))
++            }
++            ExpressionKind::Record {
++                is_set: false,
++                fields,
++            } => fields.iter().all(|field| self.is_total(&field.value)),
++            ExpressionKind::Label { body, .. } => self.is_total(body),
++            ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {
++                if expression.is_locally_resolved() {
++                    return false;
++                }
++                let Some(name) = expression.reference() else {
++                    return false;
++                };
++                let args: &[Expr] = match &expression.kind {
++                    ExpressionKind::Apply { args, .. } => args,
++                    _ => &[],
++                };
++                if self.environment.builtins.contains_key(&name) {
++                    return match (&*name, args) {
++                        ("TRUE" | "FALSE", []) => true,
++                        ("Print", [_, _]) | ("PrintT", [_]) => {
++                            args.iter().all(|argument| self.is_total(argument))
++                        }
++                        _ => false,
++                    };
++                }
++                args.is_empty()
++                    && get_definition(&name, self.environment).is_some_and(|definition| {
++                        matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
++                            && self.is_total(&definition.body)
++                    })
++            }
++            _ => false,
++        }
++    }
++
+     // `enter`: false where TLC gives up on the subscript.
+     fn enter(
+         &self,
+@@ -1360,6 +1404,18 @@ impl SubscriptCollector<'_, '_> {
+             && let Some((node, binding)) = lookup_scope(scope, &name)
+         {
+             match binding {
++                // A LET definition whose body is a literal TLC holds as the literal's value
++                // (`processConstants`), which the collector ignores.
++                Binding::Thunk {
++                    expression: bound,
++                    scope: ScopeOf::Own,
++                } if matches!(
++                    bound.kind,
++                    ExpressionKind::Number { .. } | ExpressionKind::String { .. }
++                ) =>
++                {
++                    return Ok(true);
++                }
+                 Binding::Thunk {
+                     expression: bound,
+                     scope: bound_scope,
+@@ -1409,15 +1465,31 @@ impl SubscriptCollector<'_, '_> {
+             {
+                 match self.startup.read(definition) {
+                     crate::startup::Read::Literal => return Ok(true),
++                    // TLC computes the definition as it starts: where that succeeds it holds the
++                    // value, which the collector ignores, and where it fails, the operator, whose
++                    // body it enters. Of constant level, the body holds no variable, so the two
++                    // differ only where the body reaches what the collector gives up at.
+                     crate::startup::Read::Attempted => {
+-                        let evaluator = self.evaluator.ok_or(Unfollowed(
+-                            "a subscript of [][Next]_v that TLC may compute as it starts",
+-                        ))?;
+-                        return match evaluator.evaluate(&body, None) {
+-                            Ok(_) => Ok(true),
+-                            Err(_) => Err(Unfollowed(
+-                                "a subscript of [][Next]_v whose definition fails as TLC starts",
+-                            )),
++                        let computed = match self.evaluator {
++                            Some(evaluator) => match evaluator.evaluate(&body, None) {
++                                Ok(_) => Some(true),
++                                Err(FrontError::Evaluation(_)) => Some(false),
++                                Err(_) => None,
++                            },
++                            None => None,
++                        };
++                        return match computed {
++                            Some(true) => Ok(true),
++                            Some(false) => self.enter(&body, closure_scope.as_ref(), found),
++                            None if self.is_total(&body) => Ok(true),
++                            None => {
++                                match self.enter(&body, closure_scope.as_ref(), &mut Vec::new()) {
++                                    Ok(true) => Ok(true),
++                                    _ => Err(Unfollowed(
++                                        "a definition in the subscript of [][Next]_v that TLC may compute as it starts",
++                                    )),
++                                }
++                            }
+                         };
+                     }
+                     crate::startup::Read::Operator => {}
+-- 
+2.43.0
+

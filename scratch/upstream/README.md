@@ -94,3 +94,7 @@ Binary sha256 0372d4d82d95fe3f6a78d854dd998198197a9f1ff1ee8dd4699524d1ca457841; 
 ## override-user-modules 9b51e6ea (over origin/override-user-modules b929e751): cause 5 (2144 EXCEPT warning)
 
 b929e751 (the coordinator's branch: causes 1, 3 and 4 over main 2af9b885) measured first, `results/override-user-modules-b929e751.jsonl.gz`: against 02f7849c, 4 decline -> match from main, nothing else of note. Then cause 5, binary sha256 bff221bf30ffac59fc62c5b80f34eb205346403079cf29380d4c34f2a4193d13, `patches/override-user-modules-cause5/`, `results/override-user-modules-9b51e6ea.*`: against b929e751, 10 runs changed: wrong -> decline 5 (tlc/expressions/except/missing_lazy_key_warns, all contexts), decline -> decline 5 (reason). Classes: match 35,155, decline 36,655, wrong vs the recording 1,014, noncompletion 3.
+
+## PR 367 review findings: override-user-modules 0004, 0005 (over b929e751)
+
+`patches/override-user-modules/0004-*`, `0005-*`; cause 5 is withdrawn (its patch stays under `patches/override-user-modules-cause5/`, not for the PR). Full suite of c99d69de against b929e751: no run changed. Differential (`fuzz/`): `gen_fuzz.py` seeds 7 (160 subscripts) and 8 (200 subscripts) plus 84 override shapes, each run with the pinned jar, main 346f96ed and the branch: branch wrong 0; main matches the jar and the branch declines 0; subscripts wrong on main and matching on the branch 236; override shapes wrong on main and declined on the branch 12.

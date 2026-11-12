@@ -1,0 +1,579 @@
+From b11c67307f595579b8c0c588c96ccfc02358bccf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 22:49:58 +0000
+Subject: [PATCH 4/5] fix(front): decline only where the spec names the
+ operator TLC's Java class replaces
+
+The check of a module of the user's named after one of TLC's own
+classes matched a reference by the last part of the name as written,
+so a root definition spelled like the replaced operator declined a
+model main checks (I == INSTANCE TransitiveClosure, Warshall(a) == a).
+It now finds the definitions TLC replaces, and their copies an
+INSTANCE makes, by their place in their module, and declines only where
+an expression of the spec or the configuration resolves to one of
+them: through EXTENDS, a named or LOCAL INSTANCE, or a substitution of
+the configuration, and not through an operator another module spells
+the same.
+---
+ .../ovr-cfg-reference/AnySet.tla              |   3 +
+ .../startup_checks/ovr-cfg-reference/M.cfg    |   3 +
+ .../startup_checks/ovr-cfg-reference/M.tla    |   8 +
+ .../startup_checks/ovr-cfg-reference/declined |   1 +
+ .../startup_checks/ovr-extends-used/M.cfg     |   2 +
+ .../startup_checks/ovr-extends-used/M.tla     |   8 +
+ .../ovr-extends-used/TransitiveClosure.tla    |   3 +
+ .../startup_checks/ovr-extends-used/declined  |   1 +
+ .../ovr-instance-root-same-name/M.cfg         |   2 +
+ .../ovr-instance-root-same-name/M.tla         |   9 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../ovr-instance-root-same-name/tlc.out       |  18 ++
+ .../ovr-local-instance-used/M.cfg             |   2 +
+ .../ovr-local-instance-used/M.tla             |   8 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../ovr-local-instance-used/declined          |   1 +
+ .../ovr-named-instance-used/M.cfg             |   2 +
+ .../ovr-named-instance-used/M.tla             |   8 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../ovr-named-instance-used/declined          |   1 +
+ .../ovr-other-module-same-name/M.cfg          |   2 +
+ .../ovr-other-module-same-name/M.tla          |   8 +
+ .../ovr-other-module-same-name/Other.tla      |   3 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../ovr-other-module-same-name/tlc.out        |  20 ++
+ .../crates/tla-front/src/environment.rs       | 182 ++++++++++++------
+ 26 files changed, 249 insertions(+), 58 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/AnySet.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/Other.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/AnySet.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/AnySet.tla
+new file mode 100644
+index 00000000..a4025bd0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/AnySet.tla
+@@ -0,0 +1,3 @@
++---- MODULE AnySet ----
++ANY == "replaced by tlc2.module.AnySet"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.cfg
+new file mode 100644
+index 00000000..4553dc59
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.cfg
+@@ -0,0 +1,3 @@
++INIT Init
++NEXT Next
++CONSTANT K <- ANY
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.tla
+new file mode 100644
+index 00000000..b547a1e1
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS AnySet, TLC
++CONSTANT K
++VARIABLE x
++ASSUME PrintT(K)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/declined
+new file mode 100644
+index 00000000..6355a449
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-cfg-reference/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: AnySet!ANY
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.tla
+new file mode 100644
+index 00000000..8492e12e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++
++ASSUME PrintT(Warshall({<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-extends-used/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.tla
+new file mode 100644
+index 00000000..affbfc8d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS Naturals, TLC
++VARIABLE x
++I == INSTANCE TransitiveClosure
++Warshall(a) == a
++ASSUME PrintT(Warshall(0))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/tlc.out
+new file mode 100644
+index 00000000..98e1ee56
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-instance-root-same-name/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++0
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.tla
+new file mode 100644
+index 00000000..4c1ccb52
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TLC
++VARIABLE x
++LOCAL INSTANCE TransitiveClosure
++ASSUME PrintT(Warshall({<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-local-instance-used/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.tla
+new file mode 100644
+index 00000000..95eff92d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TLC
++VARIABLE x
++I == INSTANCE TransitiveClosure
++ASSUME PrintT(I!Warshall({<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-named-instance-used/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.tla
+new file mode 100644
+index 00000000..78502d5f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Other, TLC
++VARIABLE x
++I == INSTANCE TransitiveClosure
++ASSUME PrintT(Warshall({<<1, 2>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/Other.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/Other.tla
+new file mode 100644
+index 00000000..35904526
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/Other.tla
+@@ -0,0 +1,3 @@
++---- MODULE Other ----
++Warshall(R) == R \cup R
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/tlc.out
+new file mode 100644
+index 00000000..9016b9ee
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/ovr-other-module-same-name/tlc.out
+@@ -0,0 +1,20 @@
++exit 0
++Semantic processing of module Other
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module M
++Linting of module Other
++Linting of module TransitiveClosure
++Linting of module M
++{<<1, 2>>}
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/environment.rs b/packages/prove-it/native/crates/tla-front/src/environment.rs
+index 00a038d6..50554ab3 100644
+--- a/packages/prove-it/native/crates/tla-front/src/environment.rs
++++ b/packages/prove-it/native/crates/tla-front/src/environment.rs
+@@ -2088,12 +2088,13 @@ const BUILT_IN_CLASSES: [&str; 15] = [
+ /// (`get_linked_module`), and reads any other operator by its body, so a spec that names one the
+ /// class replaces declines.
+ fn reject_class_overrides(
+-    modules: &[Rc<Module>],
++    environment: &Environment,
+     root: &Module,
+     config: &ModelConfig,
+     version: TlcVersion,
+ ) -> Result<()> {
+-    for module in modules {
++    let mut replaced: Vec<(Rc<str>, Name, Option<Position>)> = Vec::new();
++    for module in &environment.modules {
+         if !BUILT_IN_CLASSES.contains(&&*module.name) {
+             continue;
+         }
+@@ -2118,56 +2119,115 @@ fn reject_class_overrides(
+                     .iter()
+                     .any(|operator| operator.name == &*definition.name && operator.arity == arity)
+             });
+-            if is_replaced && !is_builtin && is_named(&definition.name, modules, definition, config)
+-            {
+-                return Err(FrontError::NotYet(format!(
+-                    "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
+-                    module.name, definition.name
+-                )));
++            if is_replaced && !is_builtin {
++                replaced.push((
++                    module.name.clone(),
++                    definition.name.clone(),
++                    definition.location.range.as_ref().map(|range| range.start),
++                ));
+             }
+         }
+     }
+-    Ok(())
++    if replaced.is_empty() {
++        return Ok(());
++    }
++    // The keys of the replaced definitions, and of their copies an INSTANCE makes, which keep the
++    // definition's place in its module.
++    let is_replaced = |definition: &Definition| {
++        replaced.iter().any(|(module, name, start)| {
++            definition.name == *name
++                && definition
++                    .location
++                    .range
++                    .as_ref()
++                    .is_some_and(|range| range.module == *module && Some(range.start) == *start)
++        })
++    };
++    let keys: FastSet<Name> = environment
++        .definitions
++        .iter()
++        .filter(|(_, definition)| is_replaced(definition))
++        .map(|(key, _)| key.clone())
++        .collect();
++    let named = get_named_definition(environment, config, &keys);
++    match named.and_then(|key| environment.definitions.get(&key)) {
++        Some(definition) => Err(FrontError::NotYet(format!(
++            "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
++            definition
++                .location
++                .range
++                .as_ref()
++                .map_or("", |range| &*range.module),
++            definition.name
++        ))),
++        None => Ok(()),
++    }
+ }
+ 
+-/// Whether any expression of the modules but the definition's own body, or the configuration,
+-/// names the operator, by the last part of the name as written.
+-fn is_named(
+-    operator: &str,
+-    modules: &[Rc<Module>],
+-    definition: &Rc<Definition>,
++/// The first of the keys that an expression of the spec, but the definition's own body, or the
++/// configuration names, by the definition the name resolves to.
++fn get_named_definition(
++    environment: &Environment,
+     config: &ModelConfig,
+-) -> bool {
+-    fn names(expression: &Expr, operator: &str) -> bool {
+-        let written = match &expression.kind {
+-            ExpressionKind::Identifier { name, .. } => Some(name),
+-            ExpressionKind::Apply { operator, .. }
+-            | ExpressionKind::OperatorReference { operator, .. } => Some(operator),
+-            _ => None,
+-        };
+-        written.is_some_and(|written| written.rsplit('!').next() == Some(operator))
+-            || expression
+-                .children()
+-                .iter()
+-                .any(|child| names(child, operator))
+-    }
+-    let in_modules = modules.iter().any(|module| {
+-        module
+-            .definitions
++    keys: &FastSet<Name>,
++) -> Option<Name> {
++    fn find(expression: &Expr, keys: &FastSet<Name>) -> Option<Name> {
++        if !expression.is_locally_resolved()
++            && matches!(
++                expression.kind,
++                ExpressionKind::Identifier { .. }
++                    | ExpressionKind::Apply { .. }
++                    | ExpressionKind::OperatorReference { .. }
++            )
++            && let Some(key) = expression.reference()
++            && keys.contains(&key)
++        {
++            return Some(key);
++        }
++        expression
++            .children()
+             .iter()
+-            .filter(|other| !Rc::ptr_eq(other, definition))
+-            .any(|other| names(&other.body, operator))
+-            || module
+-                .assumptions
++            .find_map(|child| find(child, keys))
++    }
++    for module in &environment.modules {
++        for definition in &module.definitions {
++            // A recursive definition's own body is the class's method in TLC.
++            let inner: FastSet<Name> = keys
+                 .iter()
+-                .any(|assumption| names(&assumption.expression, operator))
+-            || module.instances.iter().any(|instance| {
++                .filter(|key| {
++                    environment
++                        .definitions
++                        .get(*key)
++                        .is_none_or(|replaced| !Rc::ptr_eq(replaced, definition))
++                })
++                .cloned()
++                .collect();
++            if let Some(key) = find(&definition.body, &inner) {
++                return Some(key);
++            }
++        }
++        let others = module
++            .assumptions
++            .iter()
++            .map(|assumption| &assumption.expression)
++            .chain(module.instances.iter().flat_map(|instance| {
+                 instance
+                     .substitutions
+                     .iter()
+-                    .any(|substitution| names(&substitution.expression, operator))
+-            })
+-    });
++                    .map(|substitution| &substitution.expression)
++            }));
++        for expression in others {
++            if let Some(key) = find(expression, keys) {
++                return Some(key);
++            }
++        }
++    }
++    let root_key = |name: &str| -> Name {
++        environment
++            .root_symbols
++            .get(name)
++            .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
++    };
+     let named = [
+         &config.init,
+         &config.next,
+@@ -2177,24 +2237,30 @@ fn is_named(
+         &config.alias,
+         &config.periodic,
+         &config.rl_reward,
+-    ];
+-    let listed = [
+-        &config.invariants,
+-        &config.properties,
+-        &config.constraints,
+-        &config.action_constraints,
+-        &config.postconditions,
+-        &config.possible,
+-    ];
+-    in_modules
+-        || named.iter().any(|name| name.as_deref() == Some(operator))
+-        || listed
+-            .iter()
+-            .any(|names| names.iter().any(|name| name == operator))
+-        || config
++    ]
++    .into_iter()
++    .flatten()
++    .chain(
++        [
++            &config.invariants,
++            &config.properties,
++            &config.constraints,
++            &config.action_constraints,
++            &config.postconditions,
++            &config.possible,
++        ]
++        .into_iter()
++        .flatten(),
++    )
++    .chain(
++        config
+             .substitutions
+             .iter()
+-            .any(|substitution| substitution.target == operator)
++            .map(|substitution| &substitution.target),
++    );
++    named
++        .map(|name| root_key(name))
++        .find(|key| keys.contains(key))
+ }
+ 
+ /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
+@@ -2603,7 +2669,7 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
+             .map(|linked| linked.module.clone())
+             .collect(),
+     };
+-    reject_class_overrides(&environment.modules, &root, config, options.version)?;
++    reject_class_overrides(&environment, &root, config, options.version)?;
+     Ok(environment)
+ }
+ 
+-- 
+2.43.0
+
