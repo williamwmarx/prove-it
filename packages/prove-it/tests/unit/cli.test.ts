@@ -1418,9 +1418,49 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     );
     const result = runTlapmIn(directory, ["M.tla"]);
     expect(result.stderr).toBe(
-      `prove-it: not native yet: a module file tlapm finds but can't read: ${path}\n`,
+      `prove-it: not native yet: a byte that isn't UTF-8 outside a comment in ${path}\n`,
     );
     expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  // tlapm's lexer skips what comes before a module's header and what a comment holds, so a byte
+  // that isn't UTF-8 there reads as it did, one U+FFFD for one byte.
+  it.each([
+    ["before the header", [0xe9, 0x0a], ""],
+    ["in a line comment", [], "\\* caf\xe9\n"],
+    ["in a nested comment", [], "(* (* caf\xe9 *) \xff *)\n"],
+  ])("reads a byte that isn't UTF-8 %s as it did", (_, before, inside) => {
+    const getModule = (byte: number) =>
+      Buffer.concat([
+        Buffer.from(before.map((value) => (value === 0xe9 ? byte : value))),
+        Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\n", "latin1"),
+        Buffer.from(inside.replaceAll("\xe9", String.fromCharCode(byte)), "latin1"),
+        Buffer.from("THEOREM 1 = 1 OBVIOUS\n====\n"),
+      ]);
+    const run = (byte: number) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(join(directory, "M.tla"), getModule(byte));
+      return runTlapmIn(directory, ["-N", "M.tla"]);
+    };
+    const read = run(0xe9);
+    expect(read.stderr).not.toContain("not native yet");
+    expect(read).toMatchObject({ status: 0, stdout: run(0x65).stdout, stderr: run(0x65).stderr });
+  });
+
+  it("declines a byte that isn't UTF-8 in a pragma", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(
+        '---- MODULE M ----\nEXTENDS TLAPS\nF == TRUE (*{ by (prover:"\xff") }*)\nTHEOREM 1 = 1 BY F\n====\n',
+        "latin1",
+      ),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+    );
     expect(result.status).toBe(1);
   });
 });

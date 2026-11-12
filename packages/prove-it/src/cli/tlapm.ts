@@ -214,23 +214,103 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
-// A module file that isn't UTF-8, which tlapm reads as bytes: read with U+FFFD for each byte that
-// isn't UTF-8, two different strings would be one, and a theorem that they are equal proved.
+// The length of the well-formed UTF-8 sequence at index (Unicode's table 3-7), or 0.
+const getSequenceLength = (bytes: Uint8Array, index: number) => {
+  const lead = bytes[index];
+  if (lead < 0x80) return 1;
+  const [length, low, high] =
+    lead >= 0xc2 && lead <= 0xdf
+      ? [2, 0x80, 0xbf]
+      : lead === 0xe0
+        ? [3, 0xa0, 0xbf]
+        : lead === 0xed
+          ? [3, 0x80, 0x9f]
+          : lead >= 0xe1 && lead <= 0xef
+            ? [3, 0x80, 0xbf]
+            : lead === 0xf0
+              ? [4, 0x90, 0xbf]
+              : lead === 0xf4
+                ? [4, 0x80, 0x8f]
+                : lead >= 0xf1 && lead <= 0xf3
+                  ? [4, 0x80, 0xbf]
+                  : [0, 0, 0];
+  if (length === 0 || index + length > bytes.length) return 0;
+  if (bytes[index + 1] < low || bytes[index + 1] > high) return 0;
+  for (let next = index + 2; next < index + length; next++)
+    if (bytes[next] < 0x80 || bytes[next] > 0xbf) return 0;
+  return length;
+};
+
+const MODULE_HEADER = /----+ *MODULE/y;
+
+// Whether a byte that isn't UTF-8 is where tlapm's lexer (alexer.mll) reads it as part of a token:
+// anywhere but before the first module's header, which its modfile rule skips, and inside a
+// comment, `\*` to the end of the line or a nested `(* *)`. `(*{` and `}*)` delimit a pragma, whose
+// contents are tokens.
+const hasIllFormedToken = (bytes: Uint8Array) => {
+  const text = new TextDecoder("latin1").decode(bytes);
+  let state: "modfile" | "token" | "line" | "string" = "modfile";
+  let depth = 0;
+  let index = 0;
+  while (index < bytes.length) {
+    const length = getSequenceLength(bytes, index);
+    const isComment = state === "modfile" || state === "line" || depth > 0;
+    if (length === 0 && !isComment) return true;
+    const rest = text.slice(index, index + 3);
+    if (state === "modfile") {
+      MODULE_HEADER.lastIndex = index;
+      if (MODULE_HEADER.test(text)) {
+        state = "token";
+        index = MODULE_HEADER.lastIndex;
+        continue;
+      }
+    } else if (depth > 0) {
+      if (rest.startsWith("*)")) depth--;
+      else if (rest.startsWith("(*")) depth++;
+      if (rest.startsWith("*)") || rest.startsWith("(*")) {
+        index += 2;
+        continue;
+      }
+    } else if (state === "line") {
+      if (rest[0] === "\r" || rest[0] === "\n") state = "token";
+    } else if (state === "string") {
+      if (rest[0] === '"') state = "token";
+      else if (/^\\["\\tnfr]/.test(rest)) {
+        index += 2;
+        continue;
+      } else if (rest[0] === "\r" || rest[0] === "\n") state = "token";
+    } else if (rest === "(*{" || rest === "}*)") {
+      index += 3;
+      continue;
+    } else if (rest.startsWith("\\*")) {
+      state = "line";
+      index += 2;
+      continue;
+    } else if (rest.startsWith("(*")) {
+      depth = 1;
+      index += 2;
+      continue;
+    } else if (rest[0] === '"') {
+      state = "string";
+    }
+    index += Math.max(length, 1);
+  }
+  return false;
+};
+
+// tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
+// strings would be one, and a theorem that they are equal proved, so such a byte declines but
+// where tlapm skips it.
 class NotUtf8Error extends Error {
   constructor(readonly path: string) {
-    super(`a module file tlapm finds but can't read: ${path}`);
+    super(`a byte that isn't UTF-8 outside a comment in ${path}`);
   }
 }
 
-const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-
 const readModule = (path: string) => {
   const bytes = readFileSync(path);
-  try {
-    return decoder.decode(bytes);
-  } catch {
-    throw new NotUtf8Error(path);
-  }
+  if (hasIllFormedToken(bytes)) throw new NotUtf8Error(path);
+  return bytes.toString("utf8");
 };
 
 export const runTlapm = async (args: string[]) => {
