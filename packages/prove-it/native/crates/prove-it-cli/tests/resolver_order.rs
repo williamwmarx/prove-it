@@ -3,6 +3,8 @@
 //! loads, its errors and its exit code, with the case's root written `{root}`. The binary prints
 //! the same, or declines what it doesn't.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -276,9 +278,7 @@ fn set_up(root: &Path, files: &[(&str, &str)]) {
             "class" => {
                 std::fs::copy(&class, &path).expect("the class");
             }
-            link if link.starts_with("->") => {
-                std::os::unix::fs::symlink(&link[2..], &path).expect("the link");
-            }
+            link if link.starts_with("->") => common::link(Path::new(&link[2..]), &path),
             text => std::fs::write(&path, text).expect("a file"),
         }
     }
@@ -304,11 +304,13 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
 #[test]
 fn finds_specs_modules_and_overrides_as_tlc_does() {
     for case in CASES {
-        let root = std::env::temp_dir().join(format!(
+        let created = std::env::temp_dir().join(format!(
             "prove-it-resolver-order-{}-{}",
             case.name,
             std::process::id()
         ));
+        std::fs::create_dir_all(&created).expect("a directory");
+        let root = common::get_working_path(&created);
         set_up(&root, case.files);
         let root_text = root.to_string_lossy().into_owned();
         // TLC writes no trace exploration spec with -noGenerateSpecTE.

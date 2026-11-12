@@ -4,6 +4,8 @@
 //! wrote the spec. TLC names the spec's directory by the path it was given, so a spec found on the
 //! library path has its trace exploration spec written in the working directory.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -163,7 +165,7 @@ fn set_up(root: &Path, body: &str) {
     std::fs::write(root.join("specs/M.tla"), body).expect("the spec");
     std::fs::write(root.join("specs/M.cfg"), CONFIG).expect("the configuration");
     std::fs::write(root.join("conf/M.cfg"), CONFIG).expect("the configuration");
-    std::os::unix::fs::symlink(root.join("specs"), root.join("link")).expect("the link");
+    common::link(&root.join("specs"), &root.join("link"));
 }
 
 fn get_trace_files(root: &Path) -> Vec<String> {
@@ -332,7 +334,7 @@ fn set_up_extending(root: &Path, is_library_used: bool, is_shadowed: bool) {
     if is_shadowed {
         std::fs::write(root.join("N.tla"), "---- MODULE N ----\nK == 5\n====\n").expect("N");
     }
-    std::os::unix::fs::symlink(root.join("specs"), root.join("link")).expect("the link");
+    common::link(&root.join("specs"), &root.join("link"));
 }
 
 struct Resolution {

@@ -2,9 +2,11 @@
 //! against TLC built at d8fb231. Each directory of `tests/front_constants` holds a spec with its
 //! configuration, which names it, and the files beside it, and either `tlc.out`, TLC's exit code
 //! and output with `-fp 0 -nowarning -noGenerateSpecTE` but the lines that depend on the time or
-//! the machine, with the directory's path as `{directory}`, or `declined`, the reason the binary
-//! gives for a spec it leaves to TLC. Each runs on one thread and with every level shared between
+//! the machine, with the path TLC knows its working directory by, every link resolved, as
+//! `{directory}`, or `declined`, the reason the binary gives for a spec it leaves to TLC. Each runs on one thread and with every level shared between
 //! four.
+
+mod common;
 
 use std::path::Path;
 use std::process::Command;
@@ -89,7 +91,8 @@ fn computes_constants_and_overrides_as_tlc() {
                 .current_dir(&directory)
                 .output()
                 .expect("the binary runs");
-            let path = directory.to_str().expect("a path");
+            let working = common::get_working_path(&directory);
+            let path = working.to_str().expect("a path");
             let actual = format!(
                 "exit {}\n{}",
                 output.status.code().unwrap_or(-1),

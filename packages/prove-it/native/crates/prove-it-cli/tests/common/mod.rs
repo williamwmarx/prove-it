@@ -2,7 +2,7 @@
 //! it printed.
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 pub fn run(directory: &PathBuf, args: &[&str]) -> Output {
@@ -52,4 +52,48 @@ pub fn run_named(
     std::fs::write(directory.join(format!("{name}.tla")), spec).expect("a spec");
     std::fs::write(directory.join(format!("{name}.cfg")), config).expect("a configuration");
     (run(&directory, args), directory)
+}
+
+/// The path the binary and TLC know `directory` by once it is their working directory: `getcwd`,
+/// which the JVM's `user.dir` is, names it with every symbolic link resolved, as macOS's temporary
+/// directory under `/var`, a link to `/private/var`.
+pub fn get_working_path(directory: &Path) -> PathBuf {
+    let real = std::fs::canonicalize(directory).expect("the directory's real path");
+    // Windows's canonical path is a verbatim one, `\\?\C:\…`, where `getcwd` gives `C:\…`.
+    match real.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(plain) if cfg!(windows) && plain.as_bytes().get(1) == Some(&b':') => {
+            PathBuf::from(plain)
+        }
+        _ => real,
+    }
+}
+
+/// Makes `link` a symbolic link to `target`, which, where relative, is read from the link's
+/// directory, as the system reads it.
+pub fn link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    // Windows links a directory and a file differently, and creates either only with the
+    // privilege to (an elevated process, as on GitHub's runners, or Developer Mode).
+    #[cfg(windows)]
+    let made = {
+        let parent = link.parent().expect("the link's directory");
+        if parent.join(target).is_dir() {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    };
+    if let Err(error) = made {
+        panic!(
+            "cannot make {} a symbolic link to {}: {error}{}",
+            link.display(),
+            target.display(),
+            if cfg!(windows) {
+                " (Windows makes symbolic links only for an elevated process or in Developer Mode)"
+            } else {
+                ""
+            }
+        );
+    }
 }
