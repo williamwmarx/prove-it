@@ -397,6 +397,20 @@ record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[f
 fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
 the records inside it") checks it with the TypeScript check.
 
+A successor whose value fails as TLC fingerprints it is reported as an evaluation failure where TLC
+reports a fingerprint failure. With `Filter == {n \in SUBSET {1} : 1 \div 0 = 1}`,
+`Next == x' = Filter /\ {} = x'` (or `x' = 1 /\ {1} # Filter`), TLC prints the division, the
+behavior, then "TLC was unable to fingerprint." with its Fingerprint Stack Trace and exits 75; the
+engine prints the same frames as "The error occurred when TLC was evaluating the nested
+expressions" and exits 255. A set TLC keeps lazy that fails to enumerate as TLC fingerprints the
+successor does the same with the exit code right: `\E n \in ({1} \cup 2) : x' = n`,
+`x' = x /\ \A n \in ({1} \cup 2) : TRUE`, `x' = CHOOSE n \in ({1} \cup 2) : TRUE` and
+`x' = Cardinality({n + 1 : n \in ({1} \cup 2)})` print the nested expressions where TLC prints its
+fingerprint failure, and `x' \in {1} \cup ({1} \cup 2)` leaves out the last frame of TLC's
+Fingerprint Stack Trace. `tests/unit/check.test.ts` ("reports the sources of a set the replay of %s
+fails to enumerate", "reports the left side of %s that fails to compare") checks them with the
+TypeScript check.
+
 A file that instantiates or extends its own inner module of the file's name, as `---- MODULE B ----`
 holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
 its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
