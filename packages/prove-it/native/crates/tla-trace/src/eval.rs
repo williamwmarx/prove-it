@@ -36,6 +36,10 @@ use crate::value::{
     take_is_record_built, unnormalized, unsorted_failure, written_function,
 };
 
+/// Why the evaluator declines an EXCEPT of a key the function lacks: TLC leaves the function as
+/// it is and warns that the EXCEPT was applied to non-existing fields (`Tool`'s OPCODE_exc).
+const EXCEPT_OF_MISSING_KEY: &str = "an EXCEPT of a key the function lacks, which TLC warns of";
+
 /// The bindings an expression sees, innermost first.
 #[derive(Clone, Default)]
 pub struct Env(Option<Rc<Frame>>);
@@ -2248,14 +2252,19 @@ impl<'ir> Evaluator<'ir> {
                 )
             };
             let before = effects(self);
-            let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
-                if ir.model.startup.definitions.contains(&index)
-                    && effects(self) == before
-                    && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
-                {
-                    self.failed_startup.insert(node);
+            let value = match self.evaluate(self.definition(node).body, &Context::default()) {
+                Ok(value) => value,
+                // TLC warns as it goes on, which the evaluator doesn't print.
+                Err(error) if error.reason == EXCEPT_OF_MISSING_KEY => return Err(error),
+                Err(_) => {
+                    if ir.model.startup.definitions.contains(&index)
+                        && effects(self) == before
+                        && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
+                    {
+                        self.failed_startup.insert(node);
+                    }
+                    continue;
                 }
-                continue;
             };
             if ir.model.startup.definitions.contains(&index) {
                 self.cache.insert((node, false), value.clone());
@@ -3997,10 +4006,16 @@ impl<'ir> Evaluator<'ir> {
                 ),
             );
         };
-        // TLC leaves a function as it is where the key isn't in its domain.
+        // TLC leaves a function as it is where the key isn't in its domain, and warns that the
+        // EXCEPT was applied to non-existing fields (`Tool`'s OPCODE_exc), which the evaluator
+        // doesn't print. `MP.printWarning` prints nothing under -nowarning.
         let Some(position) = find_key(function, &key)? else {
             self.except_skips += 1;
-            return Ok(value.clone());
+            return if self.ir.model.is_warning_enabled {
+                fail(EXCEPT_OF_MISSING_KEY)
+            } else {
+                Ok(value.clone())
+            };
         };
         let next = self.except(&function.range[position], rest, update, context)?;
         let mut range = function.range.clone();

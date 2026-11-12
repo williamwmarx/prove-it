@@ -752,13 +752,11 @@ reaches either:
 | `(assert (= (* b1 b2 … b12) 1))`, a product of 12 binomials over 24 Int constants | sat at once | runs on: `nlsat::levelwise::add_linear_approximations` reaches `AlgebraicManager::select` and `Rational::floor`, which read neither the deadline nor the step limit |
 | `(assert (distinct c0 … c11999))` over `Idv` | not measured | aborts the process: the rewriter's `mk_not` allocates past the size cap, which preprocessing never reads, and an allocation failure isn't caught |
 
-Found porting the unit tests off the interpreter (PR 7), each test case deleted with it, so the
-TLC answer the test held is here:
-
-| Repro | TLC | Native |
-|---|---|---|
-| `onProgress` of a spec whose INSTANCE adds definitions TLC warns about (EXCEPT warnings, check.test.ts "computes the definitions an INSTANCE adds…") | three warnings, at Cases lines 4, 6 and 5 | none, from the library or the CLI |
-| `onProgress` of a state-level PROPERTY before a CONSTRAINT equal to FALSE | the `state-level-property` warning for P, then the error | the error alone |
+TLC warns that an EXCEPT was applied to non-existing fields wherever it evaluates an EXCEPT of a
+key the function lacks, the constant definitions it computes at startup included, unless run with
+`-nowarning`. With warnings on, the native check declines one it evaluates, but doesn't compute a
+constant definition nothing reads, so a spec whose only such EXCEPT is in one (`INSTANCE Cases`
+of `FcnExceptMissing == [F EXCEPT !["c"] = 9]`) prints no warning where TLC prints one for each.
 
 #### Every reason
 

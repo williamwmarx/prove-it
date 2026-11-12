@@ -5179,6 +5179,41 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
   });
 
+  // TLC warns that P is a state-level property before it reads the constraint C and rejects it,
+  // as the CLI prints; the library throws the error, and declines where onProgress would receive
+  // the warning.
+  it("warns about a state-level property before it reads the constraints", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == x = 0\nC == FALSE\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY P\nCONSTRAINT C",
+    };
+    await expect(checkOnEngine(options)).rejects.toThrow(
+      new TlaConfigError("The constraint of C is equal to FALSE"),
+    );
+    await expectDeclined(
+      { ...options, onProgress: () => {} },
+      "warnings onProgress receives before an error",
+    );
+  });
+
+  it("leaves a function as it is where an EXCEPT names a key it lacks, and warns of it", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nf == [i \\in 1..2 |-> i]\nASSUME [f EXCEPT ![3] = 1] = f\nASSUME [f EXCEPT ![3] = 1][1] = 2\n====",
+      config: "",
+    };
+    const result = await checkOnEngine({ ...options, isWarningEnabled: false });
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violations[0]?.headline).toBe(
+      "Assumption line 5, col 8 to line 5, col 33 of module M is false.",
+    );
+    await expectDeclined(
+      options,
+      "an assumption that fails to evaluate: evaluating the assumption again: an EXCEPT of a key the function lacks, which TLC warns of",
+    );
+  });
+
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkSource(
