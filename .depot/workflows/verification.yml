@@ -103,14 +103,6 @@ jobs:
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o.json" --arguments "-o" --names "$names"
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o-t-r-u.json" --arguments "-o -t -r -u" --names "$names"
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-include.json" --arguments "-o -I nested" --names Missing,Root
-          # Every corpus model lowered to the engine IR, which round-trips through Rust, and the
-          # golden models' IR, which must match tests/conformance/ir: a change to the lowering
-          # updates them (`bun scripts/run.ts engine-ir --update`).
-          - task: Engine IR
-            command: |
-              cd packages/prove-it
-              bun scripts/fetch-corpora.ts
-              bun scripts/run.ts engine-ir --concurrency 8
           # The standalone executable with the native engine embedded, which build-binary.ts runs on
           # models that need what it embeds.
           - task: Binary

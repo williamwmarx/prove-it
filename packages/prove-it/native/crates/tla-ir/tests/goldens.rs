@@ -1,5 +1,5 @@
-//! The golden IR files of tests/conformance/ir, which `scripts/engine-ir.ts` writes from the
-//! corpus: each decodes and encodes again byte for byte, and holds what its model asks for.
+//! The golden IR files of tests/conformance/ir, frozen fixtures the deleted TypeScript lowering
+//! wrote from the corpus: each decodes and encodes again byte for byte, and holds what its model asks for.
 
 use std::path::{Path, PathBuf};
 
