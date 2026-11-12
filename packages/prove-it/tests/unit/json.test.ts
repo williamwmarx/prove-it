@@ -75,6 +75,26 @@ Inv == /\\ JsonSerialize("out.json", <<x, "s", TRUE, {1, 2}>>)
     ]);
   });
 
+  // TLC writes the file as it checks the assumption, then reports that there is no next-state
+  // action.
+  it("writes the files the spec writes before the error it stops on", async () => {
+    const written: [string, string][] = [];
+    const checking = checkOnEngine({
+      source: `---- MODULE W ----
+EXTENDS Json
+VARIABLE x
+ASSUME JsonSerialize("out.json", <<42>>)
+Init == x = 0
+====`,
+      config: "INIT Init",
+      writeFile: (path, text) => written.push([path, text]),
+    });
+    await expect(checking).rejects.toThrow(
+      "No next state actions defined to generate successor states from.",
+    );
+    expect(written).toEqual([["out.json", "[42]"]]);
+  });
+
   it("declines reading values like TLC's Java Json module", async () => {
     await expectDeclined(
       getOptions("JsonValues"),

@@ -202,10 +202,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     reportEngine(`native: check declined: ${result.reason}`);
     throw new TlaUnsupportedError(`not native yet: ${result.reason}`);
   }
-  if (result.outcome !== undefined) {
-    // The library writes each file the check wrote, with what each write appended. The check names
-    // the -dump file as TLC does, with .dump added, and the library writes it at the path the
-    // caller gave; other files, as a trace exploration spec, keep their names.
+  // The library writes each file the check wrote, with what each write appended, before what it
+  // prints or throws, as the CLI does. The check names the -dump file as TLC does, with .dump
+  // added, and the library writes it at the path the caller gave; other files, as a trace
+  // exploration spec, keep their names.
+  const writeFiles = () => {
     const written = new Map<string, string>();
     const decoder = new TextDecoder();
     result.writes.forEach((write) =>
@@ -223,45 +224,49 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
         text,
       ),
     );
-    const print = logged.onPrint ?? console.log;
-    if (!logged.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
-    const prints = result.outcome.prints;
-    const checked = fromNativeOutcome(result.outcome);
-    const onProgress = logged.onProgress;
-    const events = onProgress
-      ? getNativeProgress(
-          result.outcome,
-          checked.violations,
-          parseConfig(config),
-          logged.isContinued ?? false,
+  };
+  const { outcome, thrown } = result;
+  if (outcome === undefined) {
+    // The check stopped before it searched, at a spec or a configuration TLC rejects, after what
+    // the spec printed as TLC computed its constants.
+    if (thrown === undefined)
+      throw new TlaUnsupportedError(
+        `not native yet: the engine stopped before it searched (exit ${result.exitCode})`,
+      );
+    writeFiles();
+    thrown.prints.forEach((text) => (logged.onPrint ?? console.log)(text));
+    throw thrown.kind === "syntax"
+      ? createSanyError(
+          thrown.sany.errors,
+          thrown.sany.isFatal,
+          thrown.sany.parseError,
+          thrown.sany.warnings,
         )
-      : [];
-    const printed = events.reduce((count, event) => {
-      prints.slice(count, event.printsBefore).forEach((text) => print(text));
-      onProgress?.(event.progress);
-      return Math.max(count, event.printsBefore);
-    }, 0);
-    prints.slice(printed).forEach((text) => print(text));
-    return checked;
+      : thrown.kind === "config"
+        ? new TlaConfigError(thrown.message)
+        : thrown.kind === "evaluation"
+          ? new TlaEvaluationError(thrown.message)
+          : new TlaStackOverflowError();
   }
-  // The check stopped before it searched, at a spec or a configuration TLC rejects, after what the
-  // spec printed as TLC computed its constants.
-  const thrown = result.thrown;
-  if (thrown === undefined)
-    throw new TlaUnsupportedError(
-      `not native yet: the engine stopped before it searched (exit ${result.exitCode})`,
-    );
-  thrown.prints.forEach((text) => (logged.onPrint ?? console.log)(text));
-  throw thrown.kind === "syntax"
-    ? createSanyError(
-        thrown.sany.errors,
-        thrown.sany.isFatal,
-        thrown.sany.parseError,
-        thrown.sany.warnings,
+  writeFiles();
+  const print = logged.onPrint ?? console.log;
+  if (!logged.isSanyReported) outcome.sanyWarnings.forEach((text) => print(text));
+  const prints = outcome.prints;
+  const checked = fromNativeOutcome(outcome);
+  const onProgress = logged.onProgress;
+  const events = onProgress
+    ? getNativeProgress(
+        outcome,
+        checked.violations,
+        parseConfig(config),
+        logged.isContinued ?? false,
       )
-    : thrown.kind === "config"
-      ? new TlaConfigError(thrown.message)
-      : thrown.kind === "evaluation"
-        ? new TlaEvaluationError(thrown.message)
-        : new TlaStackOverflowError();
+    : [];
+  const printed = events.reduce((count, event) => {
+    prints.slice(count, event.printsBefore).forEach((text) => print(text));
+    onProgress?.(event.progress);
+    return Math.max(count, event.printsBefore);
+  }, 0);
+  prints.slice(printed).forEach((text) => print(text));
+  return checked;
 };
