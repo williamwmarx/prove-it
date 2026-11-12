@@ -141,7 +141,8 @@ export const getNativeProgress = (
           /^Checking (?:(\d+) branches of )?temporal properties for the (complete|current) state space with ([\d,]+) total distinct states/.exec(
             text,
           );
-        const previous = messages[index - 1];
+        // A check of the complete state space comes once the search ends, with its counts; one
+        // part way through it carries the counts the search had then.
         const statistics = counts
           ? {
               generatedStates: counts[0],
@@ -149,9 +150,12 @@ export const getNativeProgress = (
               queuedStates: counts[2],
               depth: counts[3],
             }
-          : previous?.[0] === MESSAGE_CODE.progress
-            ? getStatistics(previous[2])
-            : undefined;
+          : {
+              generatedStates: outcome.generatedStates,
+              distinctStates: outcome.distinctStates,
+              queuedStates: outcome.queuedStates,
+              depth: outcome.depth,
+            };
         return (
           match &&
           add(
@@ -160,12 +164,7 @@ export const getNativeProgress = (
               branches: Number(match[1] ?? 1),
               isComplete: match[2] === "complete",
               states: toCount(match[3]),
-              statistics: statistics ?? {
-                generatedStates: outcome.generatedStates,
-                distinctStates: outcome.distinctStates,
-                queuedStates: outcome.queuedStates,
-                depth: outcome.depth,
-              },
+              statistics,
             },
             printsBefore,
           )

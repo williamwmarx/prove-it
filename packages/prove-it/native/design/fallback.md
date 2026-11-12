@@ -814,8 +814,11 @@ no full `tlc-stdout`. Recording them is deferred.
   the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
   the native search made, every minute, and a `liveness-started` with `isComplete` false for each
   check part way through it, at the native search's own times. Where the two differ otherwise:
-  - `liveness-initializing` takes `isSymmetric` and `isConstrained` from the configuration, where
-    the TypeScript check drops a constraint or a symmetry that is a constant formula first;
+  - `liveness-initializing` takes `isSymmetric` and `isConstrained` from the configuration, as
+    TLC warns, where the TypeScript check first drops a constraint that is a constant formula and
+    a symmetry whose sets are too small;
+  - a name the configuration lists twice gets the warning event TLC prints, which drops a warning
+    identical to one it printed (`MP.printWarning`), where the TypeScript check reports it twice;
   - with `-nowarning`, the native check reports none of the warnings TLC doesn't print, where the
     TypeScript check still reports a constant-level invariant, a state-level property and a
     symmetry set too small;
