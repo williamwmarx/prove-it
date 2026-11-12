@@ -19,8 +19,11 @@ const CONTINUED_STATUSES = new Map<number, CheckStatus>([
   [MESSAGE_CODE.actionPropertyViolatedBehavior, "property-violation"],
 ]);
 
-// The warnings the events name apart from a warning's code and text.
+// The warnings the events name apart from a warning's code and text, and those of a violation's
+// report, which the result holds.
 const NAMED_WARNINGS = new Set<number>([
+  MESSAGE_CODE.noSpecificationButProperty,
+  MESSAGE_CODE.noFairnessButProperty,
   MESSAGE_CODE.constantLevelInvariant,
   MESSAGE_CODE.stateLevelProperty,
   MESSAGE_CODE.livenessSymmetry,
@@ -160,8 +163,17 @@ export const getNativeProgress = (
           )
         );
       }
-      case MESSAGE_CODE.checkingTemporalEnd:
-        return add({ kind: "liveness-finished" }, printsBefore);
+      case MESSAGE_CODE.checkingTemporalEnd: {
+        // TLC ends a check that found a counterexample after the counterexample, which the
+        // result reports.
+        const started = messages
+          .slice(0, index)
+          .findLastIndex((message) => message[0] === MESSAGE_CODE.checkingTemporal);
+        const isViolated = messages
+          .slice(started, index)
+          .some((message) => message[0] === MESSAGE_CODE.temporalPropertyViolated);
+        return isViolated || add({ kind: "liveness-finished" }, printsBefore);
+      }
     }
     const status = CONTINUED_STATUSES.get(code);
     if (isContinued && status !== undefined) {
