@@ -403,9 +403,10 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
 `prove-it tlapm` declines a module file with a byte that isn't UTF-8 where it reaches what the
 obligations hold (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
 with U+FFFD for each such byte, two different strings would be one and a theorem that they are equal
-proved. Each such byte value reads as a private-use character of its own, which no module read
-holds, one character for one byte so that columns count it as tlapm's, which count bytes, do, and a
-run declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
+proved. Each such byte reads as the lone surrogate U+DC00 plus the byte (Python's surrogateescape),
+which no UTF-8 text or file name holds, one character for one byte so that columns count it as
+tlapm's, which count bytes, do, where a cut-short sequence such as `E2 82` was one U+FFFD; and a run
+declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
 comment, before the module's header or past its end, it changes nothing printed or proved.
 
 Declines to win back: the obligations hold more than they print or prove, such as the theorems of

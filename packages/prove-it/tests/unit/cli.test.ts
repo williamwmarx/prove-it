@@ -1573,6 +1573,36 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     }
   });
 
+  // What a byte that isn't UTF-8 reads as is a character no UTF-8 text holds, so no module's own
+  // characters, however many modules hold such bytes, read as one.
+  it("reads modules with bytes that aren't UTF-8 in comments beside private-use characters", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    const comment = Buffer.concat([
+      Buffer.from("(* "),
+      ...Array.from({ length: 128 }, (_, index) => Buffer.from([0x80 + index, 0x20])),
+      Buffer.from("*)\n"),
+    ]);
+    const names = Array.from({ length: 60 }, (_, index) => `L${index}`);
+    for (const name of names) {
+      writeFileSync(
+        join(directory, `${name}.tla`),
+        Buffer.concat([Buffer.from(`---- MODULE ${name} ----\n`), comment, Buffer.from("====\n")]),
+      );
+    }
+    writeFileSync(
+      join(directory, "P.tla"),
+      '---- MODULE P ----\nS == "\uE000\uE001\uF8FF"\n====\n',
+    );
+    writeFileSync(
+      join(directory, "M.tla"),
+      `---- MODULE M ----\nEXTENDS ${names.join(", ")}, P, TLAPS\nTHEOREM S = "x" OBVIOUS\n====\n`,
+    );
+    const result = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla"]);
+    expect(result.stderr).not.toContain("not native yet");
+    expect(result.stderr).toContain("@!!count:1\n");
+    expect(result.status).toBe(0);
+  });
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(

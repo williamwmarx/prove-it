@@ -243,48 +243,29 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 };
 
 // tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
-// strings would be one, and a theorem that they are equal proved. So each such byte value reads as a
-// private-use character of its own, which no module read holds, one character for one byte, so
-// that columns count it once, as tlapm's, which count bytes, do; and a run declines where one
-// reaches what the obligations hold, a warning or an error. Elsewhere, as in a comment, it can't
-// change what is printed or proved.
+// strings would be one, and a theorem that they are equal proved. So each such byte reads as the
+// lone surrogate U+DC00 plus the byte, as Python's surrogateescape does, which no UTF-8 text or
+// file name holds: one character for one byte, so that columns count it once, as tlapm's, which
+// count bytes, do. A run declines where one is held by the obligations, a warning or an error;
+// elsewhere, as in a comment, it changes nothing printed or proved.
 class NotUtf8Error extends Error {
   constructor(readonly path: string) {
     super(`a byte that isn't UTF-8 outside a comment in ${path}`);
   }
 }
 
-const notUtf8 = {
-  texts: [] as string[],
-  paths: new Map<string, string>(),
-};
+const ESCAPED_BYTE = /[\uDC80-\uDCFF]/u;
+
+// The modules read with an escaped byte, by the byte.
+const notUtf8 = { paths: new Map<string, string>() };
 
 const findNotUtf8 = (text: string) => {
-  for (const character of text) {
-    const path = notUtf8.paths.get(character);
-    if (path !== undefined) return path;
-  }
-  return undefined;
-};
-
-const allocateMarker = (bytes: Buffer, path: string) => {
-  for (let code = 0xe000; code <= 0xf8ff; code++) {
-    const marker = String.fromCharCode(code);
-    if (
-      notUtf8.paths.has(marker) ||
-      notUtf8.texts.some((text) => text.includes(marker)) ||
-      bytes.includes(Buffer.from(marker))
-    )
-      continue;
-    notUtf8.paths.set(marker, path);
-    return marker;
-  }
-  throw new NotUtf8Error(path);
+  const escaped = ESCAPED_BYTE.exec(text)?.[0];
+  return escaped === undefined ? undefined : (notUtf8.paths.get(escaped) ?? "");
 };
 
 const readModule = (path: string) => {
   const bytes = readFileSync(path);
-  const markers = new Map<number, string>();
   const parts: string[] = [];
   let start = 0;
   for (let index = 0; index < bytes.length;) {
@@ -293,20 +274,16 @@ const readModule = (path: string) => {
       index += length;
       continue;
     }
-    if (!markers.has(bytes[index])) markers.set(bytes[index], allocateMarker(bytes, path));
-    parts.push(bytes.toString("utf8", start, index), markers.get(bytes[index]) ?? "");
+    const escaped = String.fromCharCode(0xdc00 + bytes[index]);
+    if (!notUtf8.paths.has(escaped)) notUtf8.paths.set(escaped, path);
+    parts.push(bytes.toString("utf8", start, index), escaped);
     start = ++index;
   }
   parts.push(bytes.toString("utf8", start));
-  const text = parts.join("");
-  const ownMarkers = new Set(markers.values());
-  if ([...text].some((character) => notUtf8.paths.has(character) && !ownMarkers.has(character)))
-    throw new NotUtf8Error(path);
-  notUtf8.texts.push(text);
-  return text;
+  return parts.join("");
 };
 
-// The module a marker of findNotUtf8 comes from, wherever one is held.
+// The module an escaped byte comes from, wherever one is held.
 const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string | undefined => {
   if (typeof value === "string") return findNotUtf8(value);
   if (typeof value !== "object" || value === null || seen.has(value)) return undefined;
@@ -331,6 +308,7 @@ const declineHeldNotUtf8 = (value: unknown) => {
 };
 
 export const runTlapm = async (args: string[]) => {
+  notUtf8.paths.clear();
   try {
     return await runTlapmOrDecline(args);
   } catch (error) {
