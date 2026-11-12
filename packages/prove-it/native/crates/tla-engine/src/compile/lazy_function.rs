@@ -101,10 +101,11 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
         return machine.store.except(function, key, value);
     }
     // TLC reads the function at the key first (`FcnLambdaValue.select`): outside its domain the
-    // EXCEPT changes nothing, and inside it the function's value there is evaluated, and may
-    // fail.
+    // EXCEPT changes nothing, but TLC warns that it was applied to non-existing fields (`Tool`'s
+    // OPCODE_exc), which the engine leaves to the reference interpreter as the store does for
+    // any other function. Inside it the function's value there is evaluated, and may fail.
     if !is_in_domain(machine, function, key)? {
-        return Ok(function);
+        return Err(Bail("EXCEPT outside the domain"));
     }
     apply_lazy(machine, function, key)?;
     let lazy = &machine.lazy_functions[machine.store.lazy_index_of(function) as usize];

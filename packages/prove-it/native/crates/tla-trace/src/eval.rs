@@ -4002,11 +4002,27 @@ impl<'ir> Evaluator<'ir> {
             return self.evaluate(update, &inner);
         };
         let key = self.except_key(step, context)?;
-        // `FcnLambdaValue.takeExcept`: the EXCEPT is kept, whatever the key, and `@` is the
-        // function's value at it.
+        // `FcnLambdaValue.select`, then `takeExcept`: the EXCEPT is kept, and `@` is the
+        // function's value at the key, where an earlier EXCEPT names the key or its domain holds
+        // it. Elsewhere TLC leaves the function as it is and warns, as of any other function.
         if let Value::Lambda(lambda) = value {
             if !rest.is_empty() {
                 return fail("an EXCEPT of a lazy function past its first key");
+            }
+            let mut is_excepted = false;
+            for (excepted, _) in &lambda.excepts {
+                if equals(excepted, &key)? {
+                    is_excepted = true;
+                    break;
+                }
+            }
+            if !is_excepted && !self.member(&key, &lambda.domain)? {
+                self.except_skips += 1;
+                return if self.ir.model.is_warning_enabled {
+                    fail(EXCEPT_OF_MISSING_KEY)
+                } else {
+                    Ok(value.clone())
+                };
             }
             let at = self.apply_lambda(lambda, &key)?;
             let next = self.except(&at, rest, update, context)?;
