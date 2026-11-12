@@ -174,7 +174,9 @@ The interpreter's route and the simulation keep declining.
 
 A failing definition that printed, drew or set a register before it failed still declines. So do
 one that reads the state, TLC's search or the time, and one TLC keeps lazy (`may_be_lazy`, "a
-value TLC computed at startup with effects").
+value TLC computed at startup with effects"). So does an INSTANCE's copy with substitutions, or a
+definition that names one. Its substitute may fail, and the trace leaves out the frames TLC
+reports for a failing substitute (fallback.md, "A failing INSTANCE substitute").
 
 ## Asks
 

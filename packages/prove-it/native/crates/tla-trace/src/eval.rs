@@ -2318,7 +2318,8 @@ impl<'ir> Evaluator<'ir> {
     pub fn set_failed_startup(&mut self, values: &[Id]) {
         for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
             if id == NO_VALUE {
-                self.failed_startup.insert(self.ir.definitions[index as usize]);
+                self.failed_startup
+                    .insert(self.ir.definitions[index as usize]);
             }
         }
     }

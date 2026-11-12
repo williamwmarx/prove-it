@@ -1417,10 +1417,12 @@ impl<'a> Compiler<'a> {
     /// operator without parameters whose body neither reads the state, through the definitions it
     /// names, nor has a value that depends on when or how often TLC evaluates it but by printing,
     /// drawing or setting a register, which the search sees run, nor has a value TLC may keep
-    /// lazy, which may fail only where TLC applies it.
+    /// lazy, which may fail only where TLC applies it. An INSTANCE's copy with substitutions, which
+    /// may fail in a substitute, and one that names such a copy, read what the state may hold.
     pub(crate) fn is_retried_at_use(&self, index: Index) -> bool {
         let definition = self.definition(self.ir.definitions[index as usize]);
         matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && definition.flags & Definition::SUBSTITUTED == 0
             && self.is_repeatable(definition.body, &mut HashSet::new(), true)
             && !self.may_read_state(definition.body, &mut HashSet::new())
             && !self.may_be_lazy(definition.body, &mut HashSet::new())
@@ -1474,7 +1476,12 @@ impl<'a> Compiler<'a> {
 
     // `is_walk_repeatable`, but for Print, PrintT, AssertEq, RandomElement, RandomSubset and
     // TLCSet where `is_effect_seen`.
-    fn is_repeatable(&self, node: NodeId, seen: &mut HashSet<NodeId>, is_effect_seen: bool) -> bool {
+    fn is_repeatable(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<NodeId>,
+        is_effect_seen: bool,
+    ) -> bool {
         let (node, kind) = self.node(node);
         if !seen.insert(node) {
             return true;
@@ -1496,18 +1503,18 @@ impl<'a> Compiler<'a> {
                         name => !matches!(
                             name,
                             "\\cdot"
-                            | "TLCGet"
-                            | "TLCGetOrDefault"
-                            | "TLCGetAndSet"
-                            | "TLCCache"
-                            | "TLCDefer"
-                            | "TLCModelValue"
-                            | "JavaTime"
-                            | "Trace"
-                            | "JsonSerialize"
-                            | "ndJsonSerialize"
-                            | "JsonDeserialize"
-                            | "ndJsonDeserialize"
+                                | "TLCGet"
+                                | "TLCGetOrDefault"
+                                | "TLCGetAndSet"
+                                | "TLCCache"
+                                | "TLCDefer"
+                                | "TLCModelValue"
+                                | "JavaTime"
+                                | "Trace"
+                                | "JsonSerialize"
+                                | "ndJsonSerialize"
+                                | "JsonDeserialize"
+                                | "ndJsonDeserialize"
                         ),
                     },
                     // TLC computes a constant definition once, as it starts.
