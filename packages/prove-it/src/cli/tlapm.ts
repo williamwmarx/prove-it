@@ -262,10 +262,19 @@ const ESCAPED_BYTE = /[\uDC80-\uDCFF]/gu;
 // The modules read with an escaped byte, by the byte.
 const notUtf8 = { paths: new Map<string, string[]>() };
 
+// JSON's spelling of an escaped byte, as the lexer's error writes one it can't read.
+const ESCAPED_BYTE_JSON = /\\u[dD][cC][89a-fA-F][0-9a-fA-F]/g;
+
 // A lone surrogate is an escaped byte only where a module read held that byte: a string's escape,
 // such as a pragma's "\udcfe", makes one too.
 const findNotUtf8 = (text: string) => {
-  for (const [escaped] of text.matchAll(ESCAPED_BYTE)) {
+  const escapes = [
+    ...[...text.matchAll(ESCAPED_BYTE)].map(([escaped]) => escaped),
+    ...[...text.matchAll(ESCAPED_BYTE_JSON)].map(([spelled]) =>
+      String.fromCharCode(Number.parseInt(spelled.slice(2), 16)),
+    ),
+  ];
+  for (const escaped of escapes) {
     const paths = notUtf8.paths.get(escaped);
     if (paths !== undefined) return paths;
   }

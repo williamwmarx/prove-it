@@ -413,7 +413,8 @@ Declines to win back: the obligations hold more than they print or prove, such a
 an extended module, so a byte that isn't UTF-8 in a string there declines, where reading it as
 U+FFFD printed what tlapm prints only because nothing read it. A method pragma's string is read with JSON's escapes, so
 `"\udcfe"` is the same lone surrogate as the byte `FE`, and where a module read holds that byte,
-in a comment or anywhere, it declines too. tla-ts's lexer ends a `\*` comment at a line feed
+in a comment or anywhere, it declines too, as does a string that spells such an escape, `"\udcfe"`,
+which the check takes for the byte as the lexer's error spells it. tla-ts's lexer ends a `\*` comment at a line feed
 alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
 comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
 

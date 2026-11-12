@@ -1653,6 +1653,21 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     },
   );
 
+  // The lexer's error spells a character it can't read as JSON does.
+  it("declines a byte that isn't UTF-8 that is a token of its own", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from("---- MODULE M ----\n\xff\n====\n", "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+    );
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
