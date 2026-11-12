@@ -385,6 +385,12 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
 
 The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
 
+The binary doesn't make TLC's meta directory (`FileUtil.makeMetaDir`), so it goes on where TLC
+can't: with `states` a link to nowhere in the working directory, or a spec's directory that isn't
+writable, TLC stops with "TLC could not make a directory … for the disk files it needs to write"
+(exit 1), where the binary checks the spec, or reports a spec no file holds as SANY's fatal error
+(exit 150). It declines a spec no file holds where `states` is a file or `-metadir` is given.
+
 A module instantiated by the name of a module nested in an EXTENDed module fails to parse where
 SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTENDS Holder` then
 `J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."

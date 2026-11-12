@@ -189,6 +189,22 @@ fn declines_a_spec_no_file_holds_where_tlc_may_not_report_it() {
             &["tlc2.TLC", "-metadir", "m", "Nope"],
         ),
         ("metadir-file", "states", &["tlc2.TLC", "Nope"]),
+        ("metadir-relative", "states", &["tlc2.TLC", "sub/Nope"]),
+        (
+            "in-own-directory",
+            "sub/sub/Nope.tla",
+            &["tlc2.TLC", "sub/Nope"],
+        ),
+        (
+            "path-separator",
+            "Nope.cfg",
+            &[
+                "-Dpath.separator=;",
+                "-DTLA-Library=lib;sub",
+                "tlc2.TLC",
+                "Nope",
+            ],
+        ),
     ] {
         let root = set_up(name);
         let path = root.join(file);
@@ -203,4 +219,19 @@ fn declines_a_spec_no_file_holds_where_tlc_may_not_report_it() {
         assert_eq!(code, Some(1), "{name}");
         std::fs::remove_dir_all(&root).expect("the root is removed");
     }
+}
+
+// TLC makes the meta directory of a relative spec in the working directory, so a file named states
+// beside the spec doesn't stop it.
+#[test]
+fn reports_a_relative_spec_no_file_holds_beside_a_states_file() {
+    let root = set_up("states-beside");
+    std::fs::write(root.join("sub/states"), CONFIG).expect("the file");
+    let (stdout, _, code) = run(&root, &["tlc2.TLC", "sub/Nope"]);
+    assert!(
+        stdout.contains("Cannot find source file for module sub/Nope"),
+        "{stdout}"
+    );
+    assert_eq!(code, Some(150));
+    std::fs::remove_dir_all(&root).expect("the root is removed");
 }

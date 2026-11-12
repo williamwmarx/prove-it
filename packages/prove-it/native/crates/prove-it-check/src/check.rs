@@ -994,7 +994,7 @@ fn check_spec(
         spec_path,
         main_file,
         &directories,
-        &java,
+        java,
         args.first("-metadir"),
     ) {
         return report_not_native(printer, reason);
@@ -2821,13 +2821,17 @@ fn get_missing_spec_decline(
     }
     let platform = host.platform();
     let root = get_stem(platform.file_name(spec_path));
-    let module_file = format!("{root}.tla");
+    // SANY looks in each directory for the module by its name, and for a relative spec by the path
+    // it was given too.
+    let module_files = [format!("{root}.tla"), format!("{main_file}.tla")];
     if [root, platform.file_name(main_file)]
         .iter()
         .any(|name| JAR_MODULES.contains(name))
-        || directories
-            .iter()
-            .any(|directory| host.is_file(Path::new(&platform.join(directory, &module_file))))
+        || directories.iter().any(|directory| {
+            module_files
+                .iter()
+                .any(|file| host.is_file(Path::new(&platform.join(directory, file))))
+        })
         || java.class_path.as_deref().is_some_and(|class_path| {
             class_path.split(platform.delimiter()).any(|entry| {
                 !entry.is_empty() && Some(entry) != get_tools_jar(class_path, platform)
@@ -2837,18 +2841,25 @@ fn get_missing_spec_decline(
     {
         return Some("a spec no file holds, which TLC may find elsewhere");
     }
-    // TLC drops a .tla in another case from a relative spec, and Java's Path rejects a library
-    // path the platform's encoding can't hold.
+    // TLC drops a .tla in another case from a relative spec, warns of a name that holds a line
+    // break, and splits and joins paths by the separators the launch may set, and Java's Path
+    // rejects a library path the platform's encoding can't hold.
     if main_file.len() >= 4 && main_file[main_file.len() - 4..].eq_ignore_ascii_case(".tla")
+        || main_file.chars().any(char::is_control)
+        || java
+            .properties
+            .iter()
+            .any(|name| name == "path.separator" || name == "file.separator")
         || java.libraries.iter().any(|library| !library.is_ascii())
     {
         return Some("the files TLC names for a spec no file holds");
     }
-    let spec_directory = &main_file[..platform.last_separator(main_file).map_or(0, |end| end + 1)];
-    let spec_directory = if spec_directory.is_empty() {
-        "."
-    } else {
-        spec_directory
+    // TLC makes the meta directory in an absolute spec's directory, and in the working directory
+    // for a relative one. A link to nowhere there, which the host reads as nothing, TLC fails at
+    // too (fallback.md).
+    let spec_directory = match platform.last_separator(main_file) {
+        Some(end) if platform.is_absolute(main_file) => &main_file[..=end],
+        _ => ".",
     };
     (metadir.is_some()
         || host.kind(Path::new(spec_directory)) != FileKind::Directory
