@@ -204,7 +204,7 @@ describe("checkSources", () => {
       );
       writeFileSync(join(directory, "Deep.cfg"), "INIT Init\nNEXT Next\n");
       expect(checkInProcess(directory, ["-noGenerateSpecTE", "-deadlock", "Deep.tla"])).toBe(
-        "declined: the engine stopped: recursion too deep",
+        "declined: the engine stopped: recursion deeper than WebAssembly's stack holds",
       );
       rmSync(directory, { recursive: true, force: true });
     },

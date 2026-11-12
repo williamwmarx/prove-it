@@ -82,9 +82,9 @@ platform addon loads.
   TLC's trace from it. A run-time stop the engine doesn't model does the same.
 - **A WebAssembly trap.** The engine's frames are on the host's call stack there, which is
   shallower than the addon's search thread, so a deep recursion can trap. The loader replaces the
-  instance and returns a stop that hands nothing over, and the interpreter searches from the start
-  (src/engine/wasm.ts). This is the one fallback that is not a semantic hand-over; it stays until
-  the engine's recursion no longer runs on the host's stack.
+  instance and returns a stop that hands nothing over (src/engine/wasm.ts). The CLI's interpreter
+  then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
+  does where the engine stops at its recursion bound.
 
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
@@ -161,7 +161,8 @@ Besides the 15 declines, it does the following in the library:
 - **What `getEngineIneligibility` keeps from the engine:** `PROVE_IT_ENGINE=0`, `-dump`, `-continue`,
   a periodic config and TLC 1.7.4. The binary says `not native yet` to `-dump`, `-continue` and
   TLC 1.7.4. The engine doesn't support a periodic config either.
-- **A WebAssembly stack overflow.** The interpreter searches from the start.
+- **A WebAssembly stack overflow.** The library's check throws `WebAssemblyStackError`; the CLI's
+  interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
@@ -723,6 +724,11 @@ search thread doesn't.
   declines the model, so that a recursion never traps there. A trap that a deeper frame still
   causes declines too (`checkSources` in `wasm.ts`). A larger stack in a Worker, which Node alone
   offers, is optional, and an explicit stack in the evaluator isn't worth its size.
+- **The library's answer.** Where the engine as WebAssembly stops at its bound
+  (`recursion deeper than WebAssembly's stack holds`) or traps, the library's check throws
+  `WebAssemblyStackError`, which names the addon and the binary, rather than search again in the
+  interpreter. So a model that recurses between 1,000 and 20,000 calls is checked with the addon
+  and the binary and rejected as WebAssembly: `native.test.ts` pins both answers.
 
 ### The CLI flipped
 
@@ -811,7 +817,8 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
   - WebAssembly fails to compile;
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
-- A WebAssembly stack overflow becomes an error unless S2 lifts it first.
+- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check. The
+  PR that removes `PROVE_IT_ENGINE=0` drops its message's clause that names it.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
 
