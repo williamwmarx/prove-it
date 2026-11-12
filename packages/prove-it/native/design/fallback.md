@@ -388,6 +388,40 @@ record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[f
 fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
 the records inside it") checks it with the TypeScript check.
 
+The adversarial rounds of the extended file's inner modules and of the library's typed errors
+found these, each wrong on main alike:
+
+| Repro | TLC | Native |
+|---|---|---|
+| A root inner module named `Sequences`, `Naturals`, `TLCExt` or `_TLCTrace`, in TLC's default mode, which writes the trace exploration spec | `Multiply-defined module '<X>'` | checks the model |
+| `EXTENDS A, B` where A and B each hold an inner `---- MODULE In ----` | SANY's warning "the declaration of 'In' conflicts with its declaration at …" | no warning |
+| `K == INSTANCE B`, B `EXTENDS A` and holds an inner `In`, as A does | `*** Errors: 1`, the multiply-defined module | `*** Errors: 2`, adding "Substitution error, probably due to error in module being instantiated." |
+| A constant definition `P == PrintT("in")` in a module the spec instantiates | prints `"in"` for the module's definition and again for the instance's | prints it once |
+| `P == PrintT("hi")` with a configuration error, such as `NEXT Nope` | prints `"hi"`, then the error | the error alone |
+| `CONSTANT K = 3000000000` in the configuration | `NumberFormatException: For input string: "3000000000"` | `Integer overflow` |
+| `CONSTANT K <- D` with `CONSTRAINT D`, D a set | `TLC expected a boolean value, but did not find one.` at D's definition | `The constraint of D is equal to {1}` |
+| `CONSTANT K <- Nope` where `K` isn't declared and the spec's `C` is unassigned | `The constant parameter C is not assigned a value by the configuration file.` | `In the configuration file, the identifier K does not appear in the specification.` |
+| A circular dependency SANY finds as it loads the files, with standard modules to load before the cycle closes | stops at the cycle | parses those modules first, as it finds the cycle once it has loaded every file |
+
+The PrintT ones wait on steps 2 and 3 of [startup.md](startup.md); the library leaves those to the
+TypeScript check, which prints first.
+
+Where the front end binds a name to the inner module of an extended file as SANY does
+(`resolveNamesBetweenSpecAndExtention`), it declines what its linking may not follow, each of
+which printed a wrong report on main before:
+
+- `SANY's report of a file extending an inner module that extends another`: a file extends a name
+  bound to an inner module that itself extends a file, which SANY's modules extending that inner
+  module reach;
+- `SANY's report of an inner module named like another module`: a file extends a name that names
+  an inner module and a file or standard module, or two inner modules bind one name, unless SANY
+  reports a circular dependency that doesn't run through the name;
+- `SANY's report of an inner module named like a module SANY analyzes before its file`: an
+  extended file's inner module that SANY reports as multiply defined and the front end's linking
+  doesn't.
+
+Each comes back once linking scopes an inner module's context as SANY does, instead of by name.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
