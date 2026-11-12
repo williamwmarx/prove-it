@@ -7,8 +7,8 @@ use std::rc::Rc;
 use crate::TlcVersion;
 use crate::ast::{Declaration, DefinitionKind, Module, ModuleUnit};
 use crate::config::parse_config;
-use crate::environment::{EnvironmentOptions, get_sany_messages};
-use crate::errors::{FrontError, SanyError};
+use crate::environment::{EnvironmentOptions, get_sany_messages, reject_module_literals};
+use crate::errors::{FrontError, SanyError, SanyReport};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
 use crate::linter::Linter;
@@ -65,6 +65,11 @@ pub struct SanyText {
     /// The Java exception SANY's semantic analysis throws, which TLC reports as a failed parse
     /// (`Assert.fail(EC.TLC_PARSING_FAILED2, ...)`), and which `text` ends with.
     pub exception: Option<String>,
+    /// The errors that make SANY reject the spec, other than an exception, and the warnings
+    /// before them, as the TypeScript check throws them.
+    pub report: Option<SanyReport>,
+    /// Whether SANY printed a warning, of its semantic analysis or of its linter.
+    pub is_warned: bool,
 }
 
 /// How the run reads and names the spec's modules.
@@ -130,6 +135,8 @@ struct Loader<'a> {
     exception: Option<String>,
     /// Whether the loader binds names to the inner modules of the files their modules extend.
     is_binding: bool,
+    report: Option<SanyReport>,
+    is_warned: bool,
     /// The names a module of a file names that SANY binds to an inner module of a file the module
     /// extends, which SANY doesn't read a file for (`resolveNamesBetweenSpecAndExtention`).
     inner_bindings: FastSet<(Rc<str>, Rc<str>)>,
@@ -782,6 +789,8 @@ pub fn get_sany_text_of(
             text: loader.lines.concat(),
             is_failed: loader.is_failed,
             exception: loader.exception,
+            report: loader.report,
+            is_warned: loader.is_warned,
         }),
         Err(Stop::Front(error)) => Err(error),
         // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
@@ -796,6 +805,8 @@ pub fn get_sany_text_of(
             ),
             is_failed: true,
             exception: None,
+            report: None,
+            is_warned: false,
         }),
         // The fatal error follows the messages of the parsing phase.
         Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
@@ -825,6 +836,8 @@ pub fn get_sany_text_of(
                 ),
                 is_failed: true,
                 exception: None,
+                report: None,
+                is_warned: false,
             })
         }
     }
@@ -850,6 +863,8 @@ fn load_spec<'a>(
         is_parse_reported: false,
         is_failed: false,
         exception: None,
+        report: None,
+        is_warned: false,
         is_binding,
         inner_bindings: FastSet::default(),
     };
@@ -1079,6 +1094,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let mut errors: Vec<SanyError> = Vec::new();
     for (name, module_messages) in order.iter().zip(messages) {
         loader.push_progress(format!("Semantic processing of module {name}\n"));
+        let was_failed = !errors.is_empty();
         warnings.extend(module_messages.warnings);
         errors.extend(module_messages.errors);
         if warnings.is_empty() && errors.is_empty() {
@@ -1091,6 +1107,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         let format_message =
             |message: &SanyError| format!("{}\n\n{}", message.location, message.message);
         if !warnings.is_empty() && !options.is_xml_export {
+            loader.is_warned = true;
             loader
                 .lines
                 .push(format!("*** Warnings: {}\n\n", warnings.len()));
@@ -1099,6 +1116,22 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
                     .lines
                     .push(format!("{}\n\n\n\n", format_message(warning)));
             }
+        }
+        // The TypeScript check throws at the first module with errors, with the warnings so far,
+        // unless a module holds a literal TLC can't hold, which it rejects as it loads it.
+        let has_rejected_literal = || {
+            loader
+                .modules
+                .values()
+                .any(|loaded| reject_module_literals(&loaded.module).is_err())
+        };
+        if !was_failed && !errors.is_empty() && !has_rejected_literal() {
+            loader.report = Some(SanyReport {
+                errors: errors.clone(),
+                warnings: warnings.clone(),
+                is_fatal: false,
+                parse_error: None,
+            });
         }
         if !errors.is_empty() {
             loader.lines.push(format!(
@@ -1115,7 +1148,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     loader.is_failed = !errors.is_empty();
     // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY
     // has no linter.
-    if errors.is_empty() && options.version != TlcVersion::V1_7_4 && !options.is_xml_export {
+    if !loader.is_failed && options.version != TlcVersion::V1_7_4 && !options.is_xml_export {
         let linted: Vec<&Rc<str>> = order
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))
@@ -1134,6 +1167,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             loader.lines.push(format!("Linting of module {name}\n"));
         }
         for warning in warnings {
+            loader.is_warned = true;
             loader.lines.push(format!(
                 "{}\n\n{}\n\n\n\n",
                 warning.location, warning.message

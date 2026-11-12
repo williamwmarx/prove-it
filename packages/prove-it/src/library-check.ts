@@ -12,9 +12,19 @@ import {
   toContinuedViolation,
   type Violation,
 } from "./check-result";
-import { checkAllSources, getNativeAddon, loadWasmEngine } from "./engine/native";
+import {
+  checkAllSources,
+  getNativeAddon,
+  loadWasmEngine,
+  type NativeThrown,
+} from "./engine/native";
 import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "./engine/settings";
-import { WebAssemblyStackError } from "./errors";
+import {
+  createSanyError,
+  TlaConfigError,
+  TlaEvaluationError,
+  WebAssemblyStackError,
+} from "./errors";
 import { checkUnlogged, logCheck } from "./parallel";
 
 export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
@@ -49,6 +59,34 @@ const getDeclined = (options: CheckOptions) =>
     ] as const
   ).find((entry) => entry[0])?.[1];
 
+// SANY's error that the TypeScript check reports in words of its own, for which the library leaves
+// it to throw its error.
+const OWN_WORDED_ERROR =
+  /^An operator must be substituted for symbol '\w+', and it must have arity \d+\.$/;
+
+// The error the TypeScript check throws where the native check stops before it searches, if the
+// library knows it: where the spec may print as TLC computes its constants (it names `Print`,
+// `PrintT`, TLCExt's operators that print or IOUtils, or loads a Java override), the TypeScript
+// check prints first.
+const getThrownError = (thrown: NativeThrown, isPrinting: boolean) =>
+  thrown.kind !== "syntax"
+    ? isPrinting
+      ? undefined
+      : thrown.kind === "config"
+        ? new TlaConfigError(thrown.message)
+        : new TlaEvaluationError(thrown.message)
+    : thrown.sany.errors.some((error) => OWN_WORDED_ERROR.test(error.message)) ||
+        // The TypeScript check words a module defined twice its own way where it's a standard
+        // module, and doesn't report it with other errors.
+        thrown.sany.errors.some((error) => error.message.startsWith("Multiply-defined module"))
+      ? undefined
+      : createSanyError(
+          thrown.sany.errors,
+          thrown.sany.isFatal,
+          thrown.sany.parseError,
+          thrown.sany.warnings,
+        );
+
 // The native check's result, why it declined, or undefined where it wasn't run or stopped before
 // it searched.
 const checkWithEngine = (options: CheckOptions) => {
@@ -77,25 +115,29 @@ const checkWithEngine = (options: CheckOptions) => {
     [`${name}.tla`, options.source],
     [`${name}.cfg`, config],
   ]);
+  const answers: unknown[] = [];
   const read = (key: string) => {
     const [kind, ...rest] = key.split(":");
     const path = rest.join(":");
-    return kind === "text"
-      ? texts.get(path)
-      : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,
-        // with no launch, never does.
-        kind === "bytes"
-        ? undefined
-        : kind === "module"
-          ? BUILT_IN_MODULES.has(path)
-            ? undefined
-            : options.loadModule?.(path)
-          : kind === "class"
-            ? options.loadClass?.(path)
-            : // SANY's report names the file of each module it parses, which the result doesn't hold.
-              kind === "file"
-              ? ""
-              : undefined;
+    const answer =
+      kind === "text"
+        ? texts.get(path)
+        : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,
+          // with no launch, never does.
+          kind === "bytes"
+          ? undefined
+          : kind === "module"
+            ? BUILT_IN_MODULES.has(path)
+              ? undefined
+              : options.loadModule?.(path)
+            : kind === "class"
+              ? options.loadClass?.(path)
+              : // SANY's report names the file of each module it parses, which the result doesn't hold.
+                kind === "file"
+                ? ""
+                : undefined;
+    answers.push(answer);
+    return answer;
   };
   const result = checkAllSources(
     addon,
@@ -120,8 +162,17 @@ const checkWithEngine = (options: CheckOptions) => {
     return result.reason;
   }
   // The check stops before it searches at a spec or a configuration TLC rejects, for which the
-  // TypeScript check throws its error.
+  // library throws the TypeScript check's error, or else lets the TypeScript check throw it.
   if (result.outcome === undefined) {
+    // TLC prints what the spec prints as it computes the constants before it reports an error of
+    // the configuration or of evaluating the spec, which the native check doesn't.
+    const isPrinting = answers.some(
+      (answer) =>
+        answer instanceof Uint8Array ||
+        (typeof answer === "string" && /\b(PrintT?|TLCExt|IOUtils)\b/.test(answer)),
+    );
+    const error = result.thrown && getThrownError(result.thrown, isPrinting);
+    if (error !== undefined) throw error;
     reportEngine(
       `native: check takes the TypeScript path: the engine stopped before it searched (exit ${result.exitCode})`,
     );

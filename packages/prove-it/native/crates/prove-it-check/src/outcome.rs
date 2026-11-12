@@ -2,6 +2,8 @@
 //! check prints it: the status, the counts, what the spec printed as TLC searched, and each
 //! violation or error TLC reports with the states it prints after it.
 
+use tla_front::errors::SanyReport;
+
 use crate::plain::Variable;
 
 #[derive(Default)]
@@ -21,6 +23,17 @@ pub struct Outcome {
     /// didn't print SANY's report.
     pub sany_warnings: Vec<String>,
     pub violations: Vec<Reported>,
+    /// Where TLC stops before it searches, the error the library throws, as the TypeScript check
+    /// throws it.
+    pub thrown: Option<Thrown>,
+}
+
+/// `TlaSyntaxError` for the errors SANY reports, `TlaConfigError` or `TlaEvaluationError`.
+#[derive(Clone)]
+pub enum Thrown {
+    Syntax(SanyReport),
+    Config(String),
+    Evaluation(String),
 }
 
 #[derive(Clone, Copy, Default)]
