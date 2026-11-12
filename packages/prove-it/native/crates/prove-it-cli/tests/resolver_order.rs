@@ -304,8 +304,9 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
 #[test]
 fn finds_specs_modules_and_overrides_as_tlc_does() {
     for case in CASES {
-        // A link to /dev/null, which exists only on Unix.
-        if !cfg!(unix) && case.name == "module-device" {
+        // A link to /dev/null, which exists only on Unix, and `..` after a link, which Unix reads
+        // through the link and Windows by name.
+        if !cfg!(unix) && ["module-device", "link-then-parent"].contains(&case.name) {
             continue;
         }
         let created = std::env::temp_dir().join(format!(

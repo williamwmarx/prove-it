@@ -135,7 +135,7 @@ impl<'h> FileDescriber<'h> {
                         "the URL TLC prints on Windows of a standard module in its jar".to_owned(),
                     ),
                     Some(url) => Ok(format!("{} ({url}{file_name})", copy.display())),
-                    None => Ok(copy.display().to_string()),
+                    None => Ok(self.print(&copy)),
                 }
             }
         }
@@ -143,10 +143,13 @@ impl<'h> FileDescriber<'h> {
 }
 
 impl FileDescriber<'_> {
-    /// `directory` and then `name`, as Java's `Path.resolve` joins them on the host.
     fn join(&self, directory: &Path, name: &str) -> PathBuf {
-        let joined = self.platform.join(&directory.to_string_lossy(), name);
-        PathBuf::from(self.platform.get_java_path(&joined))
+        PathBuf::from(self.platform.join(&directory.to_string_lossy(), name))
+    }
+
+    /// A path as Java's `Path` writes it on the host.
+    fn print(&self, path: &Path) -> String {
+        self.platform.get_java_path(&path.display().to_string())
     }
 }
 
