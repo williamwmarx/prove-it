@@ -1381,6 +1381,40 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
     );
   });
+
+  // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
+  // UTF-8, they would be one, and the theorem proved.
+  it.each([
+    ["the module", "M.tla", ""],
+    ["a module it extends", "./Lib.tla", "Lib, "],
+  ])("declines %s when it isn't UTF-8 rather than read two strings alike", (_, path, extended) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    const theorem = Buffer.concat([
+      Buffer.from('THEOREM "'),
+      Buffer.from([0xff]),
+      Buffer.from('" = "'),
+      Buffer.from([0xfe]),
+      Buffer.from('" BY SMT\n'),
+    ]);
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.concat([
+        Buffer.from(`---- MODULE M ----\nEXTENDS ${extended}TLAPS\n`),
+        ...(extended === "" ? [theorem] : []),
+        Buffer.from("====\n"),
+      ]),
+    );
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.concat([Buffer.from("---- MODULE Lib ----\n"), theorem, Buffer.from("====\n")]),
+    );
+    const result = runTlapmIn(directory, ["M.tla"]);
+    expect(result.stderr).toBe(
+      `prove-it: not native yet: a module file tlapm finds but can't read: ${path}\n`,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
 });
 
 // Each file in tlapm-cli is what tlapm 9ed0376 wrote: .stdout and .stderr without options, .strict

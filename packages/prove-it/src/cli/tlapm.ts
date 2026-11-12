@@ -214,7 +214,36 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
+// A module file that isn't UTF-8, which tlapm reads as bytes: read with U+FFFD for each byte that
+// isn't UTF-8, two different strings would be one, and a theorem that they are equal proved.
+class NotUtf8Error extends Error {
+  constructor(readonly path: string) {
+    super(`a module file tlapm finds but can't read: ${path}`);
+  }
+}
+
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+const readModule = (path: string) => {
+  const bytes = readFileSync(path);
+  try {
+    return decoder.decode(bytes);
+  } catch {
+    throw new NotUtf8Error(path);
+  }
+};
+
 export const runTlapm = async (args: string[]) => {
+  try {
+    return await runTlapmOrDecline(args);
+  } catch (error) {
+    if (!(error instanceof NotUtf8Error)) throw error;
+    console.error(`prove-it: not native yet: ${error.message}`);
+    return 1;
+  }
+};
+
+const runTlapmOrDecline = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
   const unsupported =
@@ -274,14 +303,14 @@ export const runTlapm = async (args: string[]) => {
       throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
     }
     return getObligations(
-      modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+      modulePaths.map((path) => ({ file: `./${path}`, source: readModule(path) })),
       (name) => {
         moduleNames.add(name);
         // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
         const file = directories
           .map((directory) => `${directory}/${name}.tla`)
           .find((path) => existsSync(path));
-        if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
+        if (file !== undefined) return { file, source: readModule(file) };
         return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },
       {

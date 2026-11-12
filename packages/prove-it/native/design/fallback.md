@@ -324,6 +324,14 @@ SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTEND
 (exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
 an extended module") checks it with the TypeScript check until the front end matches.
 
+A module file holding a UTF-8-encoded surrogate (`ED A0`–`ED BF` and a byte after) reads otherwise
+than TLC reads it in the CLI of `dist/`. SANY reads a file through Java's
+`InputStreamReader(stream, "UTF-8")` (`TLAplusParser`'s constructor), which replaces each such
+three bytes with one U+FFFD, and the CLI's `readFileSync(path, "utf8")` with three. With
+`"\xED\xA0\x80"` in a string, TLC prints `Len` of it as 1 and the CLI as 3. Every other sequence
+that isn't UTF-8 decodes alike in both (compared over 8,150 sequences of one to four bytes). The
+binary's `read_to_string` gives such a file no text and declines it.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
@@ -391,6 +399,10 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
   the spec rather than where TLC's resolver finds it first; a relative `-config` with an absolute
   spec, which TLC resolves against the spec's directory; a missing configuration named by its
   path rather than its name; and options TLC doesn't know, which it rejects.
+
+`prove-it tlapm` declines a module file that isn't UTF-8 (`a module file tlapm finds but can't
+read`): tlapm reads bytes, and read with U+FFFD for each byte that isn't UTF-8, two different
+strings would be one and a theorem that they are equal proved.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
