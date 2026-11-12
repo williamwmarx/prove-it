@@ -1,39 +1,25 @@
-// Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
+// Proves a module's obligations with Prove It's own backends, in tlapm's order, or with tlapm.
 
-import { getNativeAddon, loadWasmEngine, type NativeProve } from "../engine/native";
-import { getEnvironmentSetting, reportEngine } from "../engine/settings";
+import {
+  getNativeAddon,
+  loadWasmEngine,
+  type NativeAddon,
+  type NativeProve,
+} from "../engine/native";
 import {
   EngineInvariantError,
+  EngineUnavailableError,
   TlapmBugError,
   TlaProofError,
   TlaProverError,
   TlaSyntaxError,
   TlaUnsupportedError,
 } from "../errors";
-import { getObligations, type PrintedObligation } from "../obligations";
-import { type Expr, getChildren, type Hyp, mapHyp, type Sequent } from "../obligations/expression";
-import { formatObligation } from "../obligations/printer";
 import { isWorkerSupported } from "../worker";
 import { createDecidePool, type DecidePool } from "./decide-pool";
 import { decide } from "./deciders";
-import { encodeIsabelle, encodeIsabelleTheory } from "./isabelle/encode";
-import { processObligation } from "./prep/action";
-import { getFingerprint } from "./prep/fingerprint";
-import { findMethods, type Method } from "./prep/methods";
-import {
-  expandDefs,
-  flatten,
-  isTrivial,
-  normalizeExpand,
-  normalizeSequent,
-} from "./prep/normalize";
-import { encodePtl } from "./ptl/encode";
-import { encodeSmt } from "./smt/encode";
-import type { EncodingSession } from "./smt/rewrite";
 import type { TlapmResult } from "./tlapm/tlapm";
-import { TLAPS_MODULE } from "./tlaps-module";
-import type { Decision, Verdict } from "./verdict";
-import { encodeZenon } from "./zenon/encode";
+import type { Decision } from "./verdict";
 
 interface ObligationBase {
   id: number;
@@ -74,392 +60,7 @@ export interface ProveOptions {
   workers?: number;
 }
 
-// What one method concluded about an obligation, as tlapm's toolbox messages report it.
-export interface ProofAttempt {
-  method: Method;
-  isProved: boolean;
-  isReused: boolean;
-  reason?: string;
-  verdict?: Verdict;
-  timeUsedMs?: number;
-}
-
-interface ProofReport {
-  obligation: ProofObligation;
-  attempts: ProofAttempt[];
-}
-
-// Why a method left an obligation unproved: a prover decided so, or tla-ts couldn't try it.
-interface MethodFailure {
-  reason: string;
-  isDecided: boolean;
-}
-
-// The SMT encoder numbers the CASE errors it standardizes across the run, so an obligation it
-// encodes one in waits for every earlier obligation and starts from the count they leave.
-interface ObligationTask {
-  done: Promise<void>;
-  session: { initial: number; current: EncodingSession } | undefined;
-}
-
-// What tlapm keeps across one run's obligations. An obligation waits for the last earlier one with
-// its fingerprint, so obligations prove concurrently as they would in turn.
-interface ProveRun {
-  tasks: ObligationTask[];
-  results: Map<string, Map<string, ProofAttempt>>;
-  isFingerprinted: (obligation: PrintedObligation) => boolean;
-  isProving: boolean;
-  lastByFingerprint: Map<string, Promise<void>>;
-  decide: DecidePool["decide"];
-}
-
-// The text Prep.ship sends a backend after Prep.normalize_expand. It throws a TlaUnsupportedError
-// for what tla-ts can't encode.
-type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-
-// Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
-// Prep.flatten.
-const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
-
-// Prep.gen_smt_solve writes the resource budget before the encoding.
-const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
-  (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
-  encodeSmt(shipFirstOrder(sequent), session);
-
-const ENCODERS: Record<string, Encoder> = {
-  smt: encodeSmtProblem,
-  z3: encodeSmtProblem,
-  zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-  // tlapm names the theory after its temporary file, and tla-ts after the obligation.
-  isabelle: (id, sequent, method) =>
-    encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-  // Pltl.process_obligation is LS4's frontend.
-  ls4: (_id, sequent) => encodePtl(sequent),
-};
-
-// The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
-// only in an obligation that has one after Prep.normalize_expand.
-const hasIncompleteCase = (expression: Expr): boolean =>
-  (expression.kind === "Case" && expression.other === undefined) ||
-  getChildren(expression).some(hasIncompleteCase);
-
-const incompleteCaseHyps = new WeakMap<Hyp, boolean>();
-
-const isIncompleteCaseHyp = (hyp: Hyp) => {
-  const known = incompleteCaseHyps.get(hyp);
-  if (known !== undefined) return known;
-  const expressions: Expr[] = [];
-  mapHyp(
-    hyp,
-    (inner) => {
-      expressions.push(inner);
-      return inner;
-    },
-    "all",
-  );
-  const isIncomplete = expressions.some(hasIncompleteCase);
-  incompleteCaseHyps.set(hyp, isIncomplete);
-  return isIncomplete;
-};
-
 const getModuleName = (source: string) => /-{4,}\s*MODULE\s+(\w+)/.exec(source)?.[1] ?? "Main";
-
-const getObligationBase = (obligation: PrintedObligation): ObligationBase => ({
-  id: obligation.id,
-  location: obligation.location,
-  text: obligation.text,
-});
-
-const getUnprovedReport = (
-  obligation: PrintedObligation,
-  status: "failed" | "unsupported",
-  reason: string,
-  attempts: ProofAttempt[] = [],
-): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
-
-// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
-// Toolbox.normalize, which keeps pragmas, for a reused one.
-export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
-  `${formatObligation(
-    isReused
-      ? normalizeSequent(expandDefs(obligation.sequent, false))
-      : normalizeExpand(obligation),
-  )}\n`;
-
-// The theory of the proofs Isabelle found. tlapm also writes Zenon's proofs there.
-export const encodeProofTheory = (
-  name: string,
-  reports: ProofReport[],
-  obligations: PrintedObligation[],
-) =>
-  encodeIsabelleTheory(
-    name,
-    reports.flatMap((report, index) =>
-      report.attempts
-        .filter(
-          (attempt) =>
-            attempt.method.prover === "isabelle" && attempt.isProved && !attempt.isReused,
-        )
-        .map((attempt) => ({
-          id: report.obligation.id,
-          sequent: shipFirstOrder(normalizeExpand(obligations[index])),
-          tactic: attempt.method.tactic ?? "auto",
-        })),
-    ),
-  );
-
-// The text one backend receives for an obligation, for comparing with tlapm's.
-export const encodeForBackend = (
-  obligation: PrintedObligation,
-  prover: string,
-  session: EncodingSession,
-) => {
-  const encode = ENCODERS[prover];
-  if (!encode) throw new TlaUnsupportedError(`the ${prover} backend`);
-  const methods = findMethods(obligation);
-  const method = methods.provers.find((candidate) => candidate.prover === prover) ?? {
-    prover,
-    timeLimitMs: Infinity,
-  };
-  return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
-};
-
-// The SMT encoder's session for an obligation, from the count of CASE errors every earlier
-// obligation leaves.
-const getSession = async (run: ProveRun, index: number) => {
-  const task = run.tasks[index];
-  if (task.session) return task.session.current;
-  const earlier = run.tasks.slice(0, index);
-  await Promise.all(earlier.map((innerTask) => innerTask.done));
-  const initial = earlier.reduce(
-    (total, innerTask) =>
-      total +
-      (innerTask.session ? innerTask.session.current.caseErrors - innerTask.session.initial : 0),
-    0,
-  );
-  task.session = { initial, current: { caseErrors: initial } };
-  return task.session.current;
-};
-
-// Prep.ship: the provers the step cites, or tlapm's default ones when it cites none, each tried in
-// turn until one proves the obligation. Prep.already_processed reuses what a prover concluded for
-// an earlier obligation with the same fingerprint: a proof, or a failure within at least as much
-// time. Unless the first prover's proof is reused, a trivial obligation needs no prover.
-const proveWithBackends = async (
-  obligation: PrintedObligation,
-  index: number,
-  run: ProveRun,
-  signal: AbortSignal | undefined,
-): Promise<ProofReport> => {
-  if (obligation.kind.kind === "Error")
-    return getUnprovedReport(obligation, "failed", obligation.kind.message);
-  const methods = findMethods(obligation);
-  const fingerprint = getFingerprint(obligation.sequent);
-  const earlier = run.lastByFingerprint.get(fingerprint);
-  run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
-  await earlier;
-  const attempts: ProofAttempt[] = [];
-  const failures: MethodFailure[] = [];
-  const getProvedReport = (prover: string): ProofReport => ({
-    obligation: { ...getObligationBase(obligation), status: "proved", prover },
-    attempts,
-  });
-  // Prep.already_processed, which forgets the fingerprint's results on each call under --nofp.
-  const getPrior = (method: Method) => {
-    if (!run.isFingerprinted(obligation)) run.results.delete(fingerprint);
-    const prior = run.results.get(fingerprint)?.get(method.prover);
-    return prior?.method.tactic === method.tactic ? prior : undefined;
-  };
-  // Fpfile.get_timeout.
-  const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
-  const reuse = (prior: ProofAttempt) =>
-    attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
-  const record = (attempt: ProofAttempt) => {
-    attempts.push(attempt);
-    run.results.set(
-      fingerprint,
-      (run.results.get(fingerprint) ?? new Map()).set(attempt.method.prover, attempt),
-    );
-  };
-  const skip = (method: Method, reason: string) => {
-    attempts.push({ method, isProved: false, isReused: false, reason });
-    failures.push({ reason, isDecided: false });
-  };
-  const firstPrior = getPrior(methods.provers[0]);
-  if (firstPrior?.isProved) {
-    reuse(firstPrior);
-    return getProvedReport(firstPrior.method.prover);
-  }
-  const sequent = normalizeExpand(obligation, methods);
-  // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
-  if (obligation.kind.kind === "Support" && isTrivial(sequent)) {
-    run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
-    return { obligation: { ...getObligationBase(obligation), status: "trivial" }, attempts };
-  }
-  for (const method of methods.provers) {
-    const prior = getPrior(method);
-    if (prior?.isProved) {
-      reuse(prior);
-      return getProvedReport(method.prover);
-    }
-    if (prior && getBudget(prior.method) >= getBudget(method)) {
-      reuse(prior);
-      failures.push({
-        reason: `${method.prover} failed on an obligation with the same fingerprint`,
-        isDecided: true,
-      });
-      continue;
-    }
-    if (!run.isProving) continue;
-    // Prep.prove_with: the Trivial method proves anything.
-    if (method.prover === "trivial") return getProvedReport(method.prover);
-    const encode = ENCODERS[method.prover];
-    if (!encode) {
-      skip(method, `tla-ts has no ${method.prover} backend`);
-      continue;
-    }
-    try {
-      const isCaseNumbered =
-        encode === encodeSmtProblem &&
-        (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
-      const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
-      const text = encode(obligation.id, sequent, method, session);
-      const decision = await run.decide(
-        method.prover,
-        text,
-        { timeLimitMs: method.timeLimitMs, signal },
-        index,
-      );
-      const isProved = decision.verdict === "unsat";
-      record({
-        method,
-        isProved,
-        isReused: false,
-        ...(!isProved && {
-          reason: decision.timeUsedMs >= method.timeLimitMs ? "timeout" : "false",
-        }),
-        verdict: decision.verdict,
-        timeUsedMs: decision.timeUsedMs,
-      });
-      if (isProved) return getProvedReport(method.prover);
-      failures.push({ reason: `${method.prover} answered ${decision.verdict}`, isDecided: true });
-    } catch (error) {
-      if (error instanceof TlaProverError) {
-        record({ method, isProved: false, isReused: false, reason: "false" });
-        failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
-        continue;
-      }
-      if (!(error instanceof TlaUnsupportedError)) throw error;
-      skip(method, `${method.prover} can't encode ${error.message}`);
-    }
-  }
-  return getUnprovedReport(
-    obligation,
-    failures.some((failure) => failure.isDecided) ? "failed" : "unsupported",
-    failures.map((failure) => failure.reason).join(", "),
-    attempts,
-  );
-};
-
-// An error that escapes proveWithBackends: what tla-ts can't handle is unsupported, and what tlapm
-// refuses, as a frontend's soundness check, fails.
-const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
-  if (error instanceof TlaUnsupportedError)
-    return getUnprovedReport(obligation, "unsupported", error.message);
-  if (error instanceof TlaProverError)
-    return getUnprovedReport(obligation, "failed", error.message);
-  throw error;
-};
-
-interface ObligationsOptions {
-  workers?: number;
-  signal?: AbortSignal;
-  onReport?: (report: ProofReport, obligation: PrintedObligation) => void;
-  results?: Map<string, Map<string, ProofAttempt>>;
-  // --nofp and --nofpl.
-  isFingerprinted?: (obligation: PrintedObligation) => boolean;
-  // --noproving.
-  isProving?: boolean;
-  // Decides in place of the backends, for scripts that record or replay what they decide.
-  decide?: DecidePool["decide"];
-}
-
-export const proveObligations = async (
-  obligations: PrintedObligation[],
-  options: ObligationsOptions,
-) => {
-  // Where there is no process.dlopen, as in a browser, the backends that only Rust decides need the
-  // engine as WebAssembly, which takes a promise to compile.
-  await loadWasmEngine();
-  const workerCount = options.workers ?? 1;
-  const pool =
-    workerCount > 1 && isWorkerSupported() && options.decide === undefined
-      ? await createDecidePool(workerCount)
-      : undefined;
-  const onAbort = () => pool?.terminate(options.signal?.reason);
-  options.signal?.addEventListener("abort", onAbort);
-  const run: ProveRun = {
-    tasks: [],
-    results: options.results ?? new Map(),
-    isFingerprinted: options.isFingerprinted ?? (() => true),
-    isProving: options.isProving ?? true,
-    lastByFingerprint: new Map(),
-    decide:
-      options.decide ??
-      pool?.decide ??
-      (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
-  };
-  // A few obligations per worker prove at once, and each reports once every earlier one has.
-  const limit = pool ? workerCount * 4 : 1;
-  const pending: Promise<ProofReport>[] = [];
-  const isSettled: boolean[] = [];
-  const running = new Set<Promise<void>>();
-  const reports: ProofReport[] = [];
-  const reportSettled = async () => {
-    while (isSettled[reports.length]) {
-      options.signal?.throwIfAborted();
-      const report = await pending[reports.length];
-      reports.push(report);
-      options.onReport?.(report, obligations[reports.length - 1]);
-      // HACK: backends on this thread run synchronously, so yield to let an abort land.
-      await new Promise((resolve) => setTimeout(resolve));
-    }
-  };
-  try {
-    for (const [index, obligation] of obligations.entries()) {
-      options.signal?.throwIfAborted();
-      const done = Promise.withResolvers<void>();
-      run.tasks.push({ done: done.promise, session: undefined });
-      const report = proveWithBackends(obligation, index, run, options.signal).catch(
-        (error: unknown) => getErrorReport(obligation, error),
-      );
-      pending.push(report);
-      running.add(done.promise);
-      const settle = () => {
-        isSettled[index] = true;
-        running.delete(done.promise);
-        done.resolve();
-      };
-      void report.then(settle, settle);
-      if (running.size >= limit) await Promise.race(running);
-      await reportSettled();
-    }
-    await Promise.all(running);
-    await reportSettled();
-  } finally {
-    options.signal?.removeEventListener("abort", onAbort);
-    pool?.terminate(new TlaProverError("prove stopped"));
-  }
-  return reports;
-};
-
-const getTlapmObligation = (
-  obligation: PrintedObligation,
-  result: TlapmResult | undefined,
-): ProofObligation => ({
-  ...getObligationBase(obligation),
-  ...(result ?? { status: "unsupported", reason: "tlapm reported no result" }),
-});
 
 const BUG_MESSAGE = new TlapmBugError().message;
 
@@ -499,35 +100,20 @@ const getAnswer = (decision: Promise<Decision>) =>
     },
   );
 
-// Whether the Rust driver reads a text as the TypeScript does: its strings hold only well-formed
-// UTF-16, so neither a lone surrogate nor an escape of one, as a pragma's string may hold.
-const isNativeText = (text: string) =>
-  text.isWellFormed() && !/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(text);
-
 // prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
-// it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is
-// one, and the next starts again from the beginning with them (design/prover.md, section 4c).
-// Where a module isn't well-formed UTF-16, which the Rust driver's strings can't hold, it returns
-// the modules it loaded, for the TypeScript driver to prove with: that is known before any
-// obligation is reported.
+// it needs, which this answers through the engine's decide, in the pool when there is one, and the
+// next starts again from the beginning with them (design/prover.md, section 4c).
+// The engine declines a source or module with a lone surrogate, which its strings can't hold.
 const proveNatively = async (
   options: ProveOptions,
   name: string,
-  native: Exclude<ReturnType<typeof getNativeAddon>, string>,
-  decideWith: DecidePool["decide"] | undefined,
-): Promise<ProveResult | Map<string, (string | undefined)[]>> => {
-  // What loadModule gave for each module, in the order it read it.
-  const loaded = new Map<string, (string | undefined)[]>();
-  if (!isNativeText(options.source)) return loaded;
+  native: NativeAddon,
+): Promise<ProveResult> => {
   const workerCount = options.workers ?? 1;
   const pool =
-    workerCount > 1 && isWorkerSupported() && decideWith === undefined
-      ? await createDecidePool(workerCount)
-      : undefined;
-  const decideText =
-    decideWith ??
-    pool?.decide ??
-    (async (prover, text, decideOptions) => decide(prover, text, decideOptions));
+    workerCount > 1 && isWorkerSupported() ? await createDecidePool(workerCount) : undefined;
+  const decideText: DecidePool["decide"] =
+    pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions));
   const onAbort = () => pool?.terminate(options.signal?.reason);
   options.signal?.addEventListener("abort", onAbort);
   const known = new Map<string, string | undefined>();
@@ -570,10 +156,7 @@ const proveNatively = async (
       const [key] = result.keys;
       if (key !== undefined) {
         const moduleName = key.slice("module:".length, key.lastIndexOf("#"));
-        const source = options.loadModule?.(moduleName);
-        loaded.set(moduleName, [...(loaded.get(moduleName) ?? []), source]);
-        if (source !== undefined && !isNativeText(source)) return loaded;
-        known.set(key, source);
+        known.set(key, options.loadModule?.(moduleName));
         continue;
       }
       // A decision that threw ends the run once no earlier obligation needs a decision, as the
@@ -622,78 +205,73 @@ const proveNatively = async (
   }
 };
 
-// The Rust driver proves where PROVE_IT_PROVER_DRIVER is "rust" and a native engine loads.
-const getNativeDriver = () => {
-  if (getEnvironmentSetting("PROVE_IT_PROVER_DRIVER") !== "rust") return undefined;
-  const native = getNativeAddon();
-  if (typeof native !== "string") return native;
-  reportEngine(`prover: no native engine for the driver: ${native}`);
-  return undefined;
-};
-
-// prove, deciding with decideWith where it is given, for scripts that replay recorded decisions.
-export const proveWith = async (
+// The obligations of the module, as the Rust driver reads them, each with the last result tlapm
+// reported for it.
+const proveWithTlapm = async (
   options: ProveOptions,
-  decideWith?: DecidePool["decide"],
+  name: string,
+  native: NativeAddon,
 ): Promise<ProveResult> => {
-  const name = getModuleName(options.source);
-  if (options.backend !== "tlapm") await loadWasmEngine();
-  const native = options.backend === "tlapm" ? undefined : getNativeDriver();
-  const proved =
-    native === undefined ? undefined : await proveNatively(options, name, native, decideWith);
-  if (proved !== undefined && !(proved instanceof Map)) return proved;
-  // The modules the Rust driver read before it gave way, each read again from what it read.
-  const loadModule = (moduleName: string) => {
-    const reads = proved?.get(moduleName);
-    return reads !== undefined && reads.length > 0
-      ? reads.shift()
-      : options.loadModule?.(moduleName);
-  };
+  if (typeof process === "undefined" || process.versions?.node === undefined)
+    throw new TlaUnsupportedError("The tlapm backend runs only in Node and Bun.");
   const modules = new Map<string, string>();
-  const results = getObligations(
-    [{ file: `${name}.tla`, source: options.source }],
-    (moduleName) => {
-      const source = loadModule(moduleName);
-      if (source !== undefined) modules.set(moduleName, source);
-      const loaded = source ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
-      return loaded === undefined ? undefined : { file: `${moduleName}.tla`, source: loaded };
-    },
-  );
-  const obligations = results.flatMap((result) => result.obligations);
-  const counts = {
-    missingProofCount: results.reduce((total, result) => total + result.summary.absent.length, 0),
-    omittedProofCount: results.reduce((total, result) => total + result.summary.omitted.length, 0),
-  };
-  if (options.backend === "tlapm") {
-    if (typeof process === "undefined" || process.versions?.node === undefined)
-      throw new TlaUnsupportedError("The tlapm backend runs only in Node and Bun.");
+  const known = new Map<string, string | undefined>();
+  for (;;) {
+    const result = native.obligations(`${name}.tla`, options.source, [...known], []);
+    if (result.kind === "error") throw getDriverError(result);
+    if (result.kind === "needed") {
+      // A module's n-th read, `module:<name>#<n>`, and the file it came from, `path:<name>#<n>`,
+      // which is `<name>.tla` as loadModule names none.
+      for (const key of result.keys) {
+        if (!key.startsWith("module:")) {
+          known.set(key, undefined);
+          continue;
+        }
+        const moduleName = key.slice("module:".length, key.lastIndexOf("#"));
+        const source = options.loadModule?.(moduleName);
+        if (source !== undefined) modules.set(moduleName, source);
+        known.set(key, source);
+      }
+      continue;
+    }
+    const getObligation = (
+      obligation: (typeof result.obligations)[number],
+      tlapmResult: TlapmResult | undefined,
+    ): ProofObligation => ({
+      id: obligation.id,
+      location: obligation.location,
+      text: obligation.text,
+      ...(tlapmResult ?? { status: "unsupported", reason: "tlapm reported no result" }),
+    });
+    const byId = new Map(result.obligations.map((obligation) => [obligation.id, obligation]));
     const tlapm = await import("./tlapm/tlapm");
-    const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
     const reported = await tlapm.proveWithTlapm(
       name,
       new Map([[name, options.source], ...modules]),
       {
         signal: options.signal,
-        onResult: (id, result) => {
+        onResult: (id, tlapmResult) => {
           const obligation = byId.get(id);
-          if (obligation) options.onObligation?.(getTlapmObligation(obligation, result));
+          if (obligation) options.onObligation?.(getObligation(obligation, tlapmResult));
         },
       },
     );
     return {
-      obligations: obligations.map((obligation) =>
-        getTlapmObligation(obligation, reported.get(obligation.id)),
+      obligations: result.obligations.map((obligation) =>
+        getObligation(obligation, reported.get(obligation.id)),
       ),
-      ...counts,
+      missingProofCount: result.missingProofCount,
+      omittedProofCount: result.omittedProofCount,
     };
   }
-  const reports = await proveObligations(obligations, {
-    workers: options.workers,
-    decide: decideWith,
-    signal: options.signal,
-    onReport: (report) => options.onObligation?.(report.obligation),
-  });
-  return { obligations: reports.map((report) => report.obligation), ...counts };
 };
 
-export const prove = (options: ProveOptions) => proveWith(options);
+export const prove = async (options: ProveOptions): Promise<ProveResult> => {
+  const name = getModuleName(options.source);
+  await loadWasmEngine();
+  const native = getNativeAddon();
+  if (typeof native === "string") throw new EngineUnavailableError(native);
+  return options.backend === "tlapm"
+    ? proveWithTlapm(options, name, native)
+    : proveNatively(options, name, native);
+};

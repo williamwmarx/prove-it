@@ -79,7 +79,8 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts tests/unit/prove-driver.test.ts
+              bun test tests/unit/prove-workers.test.ts -t "without process.dlopen"
           # Every unit test, with the native engine that bun run test builds searching
           # (tests/setup.ts).
           - task: Test

@@ -111,10 +111,10 @@ pub fn load_module(
     let Some(path) = find_file(host, directories, &format!("{name}.tla")) else {
         return Ok(None);
     };
-    match host.kind(&path) {
-        FileKind::File => host.read_text(&path).map(Some).ok_or(path),
-        _ => Err(path),
+    if !host.kind(&path).is_read_by_tlc() {
+        return Err(path);
     }
+    host.read_text(&path).map(Some).ok_or(path)
 }
 
 /// The Java class that overrides a module, from the first of the directories that has its file, by
@@ -125,7 +125,7 @@ pub fn load_class(
     name: &str,
 ) -> Option<(PathBuf, Vec<u8>)> {
     let path = find_file(host, directories, &format!("{name}.class"))?;
-    if host.kind(&path) != FileKind::File {
+    if !host.kind(&path).is_read_by_tlc() {
         return None;
     }
     let bytes = host.read_bytes(&path)?;

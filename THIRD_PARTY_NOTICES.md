@@ -38,7 +38,7 @@ SOFTWARE.
 
 <https://github.com/tlaplus/tlapm>
 
-The proof obligations (`src/obligations/`), parts of the prover pipeline (`src/prover/`) and tlapm's fingerprints file are ported from tlapm, and `src/prover/tlaps-module.ts` includes tlapm's `library/TLAPS.tla` verbatim. Their Rust port, `native/crates/prover/obligations/` (the obligations, Prep and the backends' encoders), is ported from the same code, and its `src/tlaps_module.rs` includes `library/TLAPS.tla` verbatim too.
+The proof obligations, Prep, the backends' encoders, the prover driver and tlapm's fingerprints file and command line are ported from tlapm, first to TypeScript and then to Rust: `native/crates/prover/` and `native/crates/prove-it-check/src/tlapm.rs`. `native/crates/prover/obligations/src/tlaps_module.rs` includes tlapm's `library/TLAPS.tla` verbatim.
 
 ```
 Copyright (c) 2008 INRIA and Microsoft Corporation
@@ -114,17 +114,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 <https://github.com/ocaml/ocaml>
 
-Seven files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
+Four files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
 
-- `src/prover/tlapm/ocaml-marshal.ts`, ported from `runtime/intern.c` and `runtime/extern.c`
-- `native/crates/prover/obligations/src/marshal.rs`, the Rust port of `src/prover/tlapm/ocaml-marshal.ts`
+- `native/crates/prover/obligations/src/marshal.rs`, ported from `runtime/intern.c` and `runtime/extern.c` through the TypeScript port that preceded it
 - `native/crates/prover/zenon/src/ocaml.rs`, ported from `Hashtbl.hash` (`runtime/hash.c`) and `List.sort` and `List.stable_sort` (`stdlib/list.ml`)
-- `src/obligations/format.ts`, ported from the `Format` module (`stdlib/format.ml`)
-- `src/obligations/action.ts`, whose `getHash` is ported from `runtime/hash.c`
-- `native/crates/prover/obligations/src/format.rs`, the Rust port of `src/obligations/format.ts`
-- `native/crates/prover/obligations/src/action.rs`, whose `get_hash`, between the markers that say so, is the Rust port of `getHash`
+- `native/crates/prover/obligations/src/format.rs`, ported from the `Format` module (`stdlib/format.ml`) through the TypeScript port that preceded it
+- `native/crates/prover/obligations/src/action.rs`, whose `get_hash`, between the markers that say so, is ported from `runtime/hash.c` through the TypeScript port that preceded it
 
-Their source ships in the npm package under `src/`; the Rust ports' is in this repository. Copyright Institut National de Recherche en Informatique et en Automatique (INRIA).
+Their source is in this repository. Copyright Institut National de Recherche en Informatique et en Automatique (INRIA).
 
 ```
 In the following, "the OCaml Core System" refers to all files marked

@@ -70,7 +70,8 @@ describe("prove without process.dlopen", () => {
   );
 });
 
-// As with the addon, the engine as WebAssembly reads two different lone surrogates as two strings.
+// As with the addon, the engine as WebAssembly declines a source with a lone surrogate, which it
+// would read as U+FFFD, so that two different strings would be one.
 describe("prove a lone surrogate without process.dlopen", () => {
   it.if(existsSync(join(DIST, "../prove-it-engine.wasm")))(
     "proves neither string = nor # the other",
@@ -83,8 +84,8 @@ describe("prove a lone surrogate without process.dlopen", () => {
         'Object.defineProperty(process, "dlopen", { value: undefined });',
         `const { prove } = await import(${JSON.stringify(DIST)});`,
         `for (const source of ${JSON.stringify(sources)}) {`,
-        "  const result = await prove({ source });",
-        "  console.log(JSON.stringify(result.obligations.map((o) => [o.status, o.reason ?? null])));",
+        "  const error = await prove({ source }).then(() => undefined, (thrown) => thrown);",
+        "  console.log(JSON.stringify([error?.name, error?.message]));",
         "}",
       ].join("\n");
       const run = spawnSync("bun", ["-e", script], {
@@ -93,8 +94,8 @@ describe("prove a lone surrogate without process.dlopen", () => {
       });
       expect(run.stderr).toBe("");
       const declined = [
-        ["failed", "smt failed: smt declined: the text holds a lone surrogate"],
-        ["trivial", null],
+        "TlaUnsupportedError",
+        "not native yet: the source isn't well-formed UTF-16",
       ];
       expect(
         run.stdout

@@ -1,534 +1,104 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
-import { basename, dirname, join } from "node:path";
-
-import { TlaProofError } from "../errors";
-import { EXIT_STATUS } from "../exit-codes";
 import {
-  formatSummary,
-  getObligations,
-  type ModuleObligations,
-  type PrintedObligation,
-  WHOLE_MODULE,
-} from "../obligations";
-import { getAtPrefix, getLocusText } from "../obligations/expression";
-import { format, renderDoc } from "../obligations/format";
-import type { LineRange } from "../obligations/generate";
-import { printSequent } from "../obligations/printer";
+  cpSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
 import {
-  encodeProofTheory,
-  formatNormalized,
-  type ProofAttempt,
-  proveObligations,
-} from "../prover/prove";
-import {
-  type FingerprintTable,
-  getKnownResults,
-  loadFingerprints,
-  saveHistory,
-} from "../prover/tlapm/cache";
-import { getTlapmPaths } from "../prover/tlapm/tlapm";
-import { TLAPS_MODULE } from "../prover/tlaps-module";
-import { formatTlcDate } from "../tlc/date";
-import { type ParsedArgs, TLAPM_COMMAND, USAGE } from "./options";
-import { getInputPaths } from "./shared";
+  checkAllSources,
+  getNativeAddon,
+  loadWasmEngine,
+  type NativeFileOperation,
+} from "../engine/native";
+import { EngineUnavailableError } from "../errors";
+import { getMachine, NOT_NATIVE_EXIT_CODE, readFileKey } from "./shared";
 
-const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
+// The environment variables tlapm's command line reads: where tlapm is, for its standard library,
+// and where it keeps its cache.
+const TLAPM_VARIABLES = ["PATH", "TLAPM_CACHE_DIR"];
 
-// tlapm searches the current directory, then its standard library at lib/tlapm/stdlib beside
-// bin/tlapm, then each -I directory, the last given first.
-const getLibraryDirectories = (parsed: ParsedArgs) => [
-  ".",
-  ...getTlapmPaths()
-    .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
-    .filter((path) => existsSync(path))
-    .slice(0, 1),
-  ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
-];
+// Each entry's mtimeMs and name, each ended by a NUL, which no name holds.
+const listEntries = (path: string) =>
+  statSync(path, { throwIfNoEntry: false })?.isDirectory()
+    ? readdirSync(path)
+        .map((name) => `${statSync(join(path, name)).mtimeMs}\0${name}\0`)
+        .join("")
+    : undefined;
 
-// What is printed until every module is read, which a decline then drops: a run declines whole.
-const output: { held?: (() => void)[] } = {};
-const print = (write: () => void) => (output.held ? output.held.push(write) : write());
-const printOut = (text: string) => print(() => console.log(text));
-const printErr = (text: string) => print(() => console.error(text));
+// The files the native check reads for tlapm's command line, by key (prove-it-host's check.rs).
+const readKey = (key: string) =>
+  key.startsWith("entries:") ? listEntries(key.slice("entries:".length)) : readFileKey(key);
 
-// A message of tlapm's toolbox protocol, which it writes to stderr.
-const printToolboxMessage = (fields: string[]) =>
-  printErr(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
-
-const printObligationMessage = (obligation: PrintedObligation, status: string, fields: string[]) =>
-  printToolboxMessage([
-    "type:obligation",
-    `id:${obligation.id}`,
-    `loc:${obligation.location}`,
-    `status:${status}`,
-    ...fields,
-  ]);
-
-const TLAPM_VERSION = "9ed0376";
-
-const quoteShellArgument = (arg: string) =>
-  /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
-
-// The most severe first.
-const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
-
-const checkStrictly = (module: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
-  const summary = module.summary;
-  if (!isSummary) {
-    summary.absent.forEach((locus) => console.error(`Missing proof at ${getLocusText(locus)}`));
-    summary.omitted.forEach((locus) => console.error(`Omitted proof at ${getLocusText(locus)}`));
-  }
-  const isIncomplete = summary.absent.length + summary.omitted.length > 0;
-  if (isIncomplete) {
-    console.error(
-      `${getAtPrefix(module.location)}[ERROR]: Proof incomplete in module ${JSON.stringify(module.name)}: ${summary.absent.length} missing, ${summary.omitted.length} omitted proof step(s).`,
-    );
-  }
-  const isEmpty = isTargeted && module.obligations.length === 0;
-  if (isEmpty) {
-    console.error(
-      `${getAtPrefix(module.location)}[ERROR]: No proof obligation found for the selected target.`,
-    );
-  }
-  return [
-    ...(isIncomplete ? [STRICT_EXIT_STATUS.incomplete] : []),
-    ...(isEmpty ? [STRICT_EXIT_STATUS.emptyTarget] : []),
-  ];
-};
-
-const TLAPM_FAILURE_STATUS = 3;
-
-const UNPROVED_ENDING = [
-  ' tlapm ending abnormally with Failure("backend errors: there are unproved obligations")',
-  'Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33',
-  'Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", lines 492-493, characters 12-37',
-  'Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 640, characters 23-43',
-  'Called from Stdlib__List.fold_left in file "list.ml", line 125, characters 24-34',
-  'Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 643, characters 13-40',
-  'Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 659, characters 8-59',
-  "",
-].join("\n");
-
-const generateObligations = (generate: () => ModuleObligations[]) => {
-  try {
-    return generate();
-  } catch (error) {
-    declineHeldNotUtf8([error instanceof Error ? error.message : String(error), error]);
-    if (!(error instanceof TlaProofError)) throw error;
-    printErr(` tlapm ending abnormally with ${error.exception}\n`);
-    return undefined;
+const applyFileOperation = (operation: NativeFileOperation) => {
+  switch (operation[0]) {
+    case "mkdir":
+      return void mkdirSync(operation[1], { recursive: true });
+    case "write":
+      return writeFileSync(operation[1], operation[2]);
+    case "remove":
+      return rmSync(operation[1], { recursive: true, force: true });
+    case "rename":
+      return renameSync(operation[1], operation[2]);
+    case "copy":
+      return cpSync(operation[1], operation[2], { preserveTimestamps: true });
   }
 };
 
-// Toolbox.print_res_aux.
-const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
-  const timeLimitMs = attempt.method.timeLimitMs;
-  const used =
-    attempt.timeUsedMs === undefined
-      ? ""
-      : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / timeLimitMs)}%)`;
-  const times =
-    timeLimitMs === 0
-      ? ""
-      : `time-limit: ${timeLimitMs === Infinity ? "inf" : Number((timeLimitMs / 1000).toPrecision(6))}${used}`;
-  const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
-  const isSmt = attempt.method.prover === "smt" || attempt.method.prover === "z3";
-  const note =
-    isSmt && attempt.reason === "false" && attempt.verdict
-      ? `(* SMT failed with status = ${attempt.verdict}\n *)\n`
-      : "";
-  printObligationMessage(obligation, attempt.isProved ? "proved" : "failed", [
-    `prover:${attempt.method.prover}`,
-    ...(method === "" ? [] : [`meth:${method}`]),
-    ...(attempt.reason === undefined ? [] : [`reason:${attempt.reason}`]),
-    `already:${attempt.isReused}`,
-    ...(attempt.isProved
-      ? []
-      : [
-          `obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation, attempt.isReused)}`,
-        ]),
-  ]);
-};
-
-// Method.Fail, for an error obligation or one no method was tried on.
-const printFailedObligation = (obligation: PrintedObligation, reason: string) =>
-  printObligationMessage(obligation, "failed", [
-    "prover:fail",
-    "meth:time-limit: inf",
-    `reason:${reason}`,
-    "already:false",
-    `obl:${obligation.text}`,
-  ]);
-
-interface ProvingSettings {
-  isToolbox: boolean;
-  isProving: boolean;
-  workers: number;
-  isFingerprinted: (obligation: PrintedObligation) => boolean;
-  fingerprints: FingerprintTable;
-}
-
-// Tlapm_lib.process_obs. Returns whether some obligation failed.
-const proveModule = async (
-  module: ModuleObligations,
-  theoryPath: string,
-  fingerprintsPath: string,
-  settings: ProvingSettings,
-) => {
-  const knownResults = getKnownResults(settings.fingerprints);
-  const reports = await proveObligations(module.obligations, {
-    workers: settings.workers,
-    results: knownResults.results,
-    isFingerprinted: settings.isFingerprinted,
-    isProving: settings.isProving,
-    onReport: (report, obligation) => {
-      if (!settings.isToolbox) return;
-      if (report.obligation.status === "trivial")
-        return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
-      if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
-      report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
-    },
-  });
-  writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
-  console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
-  knownResults.save(fingerprintsPath);
-  console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
-  if (!settings.isProving) return false;
-  const unproved = reports.flatMap((report, index) =>
-    "reason" in report.obligation ? [{ report, obligation: module.obligations[index] }] : [],
-  );
-  if (settings.isToolbox) {
-    unproved
-      .filter(
-        (entry) => entry.report.attempts.length === 0 && entry.obligation.kind.kind !== "Error",
-      )
-      .forEach((entry) => printFailedObligation(entry.obligation, "unexpected error"));
+// Why the run declines where an operation fails, as prove-it-check's FileOperation::get_failure
+// gives it.
+const getFailure = (operation: NativeFileOperation) => {
+  switch (operation[0]) {
+    case "mkdir":
+      return `a directory tlapm can't make: ${operation[1]}`;
+    case "write":
+      return `a file tlapm can't write: ${operation[1]}`;
+    case "remove":
+      return `a file tlapm can't remove: ${operation[1]}`;
+    case "rename":
+      return `a file tlapm can't write: ${operation[2]}`;
+    case "copy":
+      return `a file tlapm can't copy into its history: ${operation[1]}`;
   }
-  unproved
-    .toReversed()
-    .forEach((entry) =>
-      console.error(
-        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent)), 35)}`,
-      ),
-    );
-  const total = `${module.obligations.length} obligation${module.obligations.length > 1 ? "s" : ""}`;
-  console.error(
-    unproved.length === 0
-      ? `${getAtPrefix(module.location)}[INFO]: All ${total} proved.`
-      : `${getAtPrefix(module.location)}[ERROR]: ${unproved.length}/${total} failed.\nThere were backend errors processing module \`${JSON.stringify(module.name)}\`.`,
-  );
-  return unproved.length > 0;
 };
 
-// The length of the well-formed UTF-8 sequence at index (Unicode's table 3-7), or 0.
-const getSequenceLength = (bytes: Uint8Array, index: number) => {
-  const lead = bytes[index];
-  if (lead < 0x80) return 1;
-  const [length, low, high] =
-    lead >= 0xc2 && lead <= 0xdf
-      ? [2, 0x80, 0xbf]
-      : lead === 0xe0
-        ? [3, 0xa0, 0xbf]
-        : lead === 0xed
-          ? [3, 0x80, 0x9f]
-          : lead >= 0xe1 && lead <= 0xef
-            ? [3, 0x80, 0xbf]
-            : lead === 0xf0
-              ? [4, 0x90, 0xbf]
-              : lead === 0xf4
-                ? [4, 0x80, 0x8f]
-                : lead >= 0xf1 && lead <= 0xf3
-                  ? [4, 0x80, 0xbf]
-                  : [0, 0, 0];
-  if (length === 0 || index + length > bytes.length) return 0;
-  if (bytes[index + 1] < low || bytes[index + 1] > high) return 0;
-  for (let next = index + 2; next < index + length; next++)
-    if (bytes[next] < 0x80 || bytes[next] > 0xbf) return 0;
-  return length;
-};
-
-// tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
-// strings would be one, and a theorem that they are equal proved. So each such byte reads as the
-// lone surrogate U+DC00 plus the byte, as Python's surrogateescape does, which no UTF-8 text or
-// file name holds: one character for one byte, so that columns count it once, as tlapm's, which
-// count bytes, do. A run declines where one is held by the obligations, a warning or an error;
-// elsewhere, as in a comment, it changes nothing printed or proved.
-// What tla-ts tlapm can't yet do as tlapm does, which it declines.
-class TlapmDecline extends Error {}
-
-// Which of the modules read with the byte holds the one reached isn't known, so it names them all.
-class NotUtf8Error extends TlapmDecline {
-  constructor(paths: string[]) {
-    super(
-      `a byte that isn't UTF-8 outside a comment in ${paths.length === 1 ? paths[0] : `one of ${paths.join(", ")}`}`,
-    );
-  }
-}
-
-// By code unit, not code point: a string's escape of a high surrogate, such as a pragma's
-// "\ud800", pairs with an escaped byte that follows it.
-const ESCAPED_BYTE = /[\uDC80-\uDCFF]/g;
-
-// The modules read with an escaped byte, by the byte.
-const notUtf8 = { paths: new Map<string, string[]>() };
-
-// JSON's spelling of an escaped byte, as the lexer's error writes one it can't read.
-const ESCAPED_BYTE_JSON = /\\u[dD][cC][89a-fA-F][0-9a-fA-F]/g;
-
-// A lone surrogate is an escaped byte only where a module read held that byte: a string's escape,
-// such as a pragma's "\udcfe", makes one too.
-const findNotUtf8 = (text: string) => {
-  const escapes = [
-    ...[...text.matchAll(ESCAPED_BYTE)].map(([escaped]) => escaped),
-    ...[...text.matchAll(ESCAPED_BYTE_JSON)].map(([spelled]) =>
-      String.fromCharCode(Number.parseInt(spelled.slice(2), 16)),
-    ),
-  ];
-  for (const escaped of escapes) {
-    const paths = notUtf8.paths.get(escaped);
-    if (paths !== undefined) return paths;
-  }
-  return undefined;
-};
-
-const readModule = (path: string) => {
-  const bytes = readFileSync(path);
-  const parts: string[] = [];
-  let start = 0;
-  for (let index = 0; index < bytes.length;) {
-    const length = getSequenceLength(bytes, index);
-    if (length > 0) {
-      index += length;
-      continue;
+// Applies the operations in order, up to the first that fails, and returns why it failed.
+const applyFileOperations = (operations: NativeFileOperation[]) => {
+  for (const operation of operations) {
+    try {
+      applyFileOperation(operation);
+    } catch {
+      return getFailure(operation);
     }
-    const escaped = String.fromCharCode(0xdc00 + bytes[index]);
-    const paths = notUtf8.paths.get(escaped) ?? [];
-    if (!paths.includes(path)) notUtf8.paths.set(escaped, [...paths, path]);
-    parts.push(bytes.toString("utf8", start, index), escaped);
-    start = ++index;
-  }
-  parts.push(bytes.toString("utf8", start));
-  return parts.join("");
-};
-
-// The module an escaped byte comes from, wherever one is held.
-const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string[] | undefined => {
-  if (typeof value === "string") return findNotUtf8(value);
-  if (typeof value !== "object" || value === null || seen.has(value)) return undefined;
-  seen.add(value);
-  const values =
-    value instanceof Map
-      ? [...value.keys(), ...value.values()]
-      : value instanceof Set
-        ? [...value]
-        : Object.values(value);
-  for (const held of values) {
-    const paths = findHeldNotUtf8(held, seen);
-    if (paths !== undefined) return paths;
   }
   return undefined;
 };
 
-const declineHeldNotUtf8 = (value: unknown) => {
-  if (notUtf8.paths.size === 0) return;
-  const paths = findHeldNotUtf8(value);
-  if (paths !== undefined) throw new NotUtf8Error(paths);
-};
-
+// tlapm's command line, which the native engine runs as the binary does: it prints what the binary
+// prints, writes the files it writes, and exits as it does.
 export const runTlapm = async (args: string[]) => {
-  notUtf8.paths.clear();
-  try {
-    return await runTlapmOrDecline(args);
-  } catch (error) {
-    output.held = undefined;
-    if (!(error instanceof TlapmDecline)) throw error;
-    console.error(`prove-it: not native yet: ${error.message}`);
-    return 1;
-  }
-};
-
-const runTlapmOrDecline = async (args: string[]) => {
-  const parsed = TLAPM_COMMAND.parse(args);
-  const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
-  const unsupported =
-    parsed.unknown[0] ??
-    (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined);
-  if (unsupported !== undefined) {
-    console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
-    return 1;
-  }
-  if (parsed.incomplete) {
-    console.error(`Error: option '${parsed.incomplete.name}' needs an argument.`);
-    return 1;
-  }
-  const nonInteger = parsed.options.find(
-    (option) =>
-      TLAPM_INTEGER_OPTIONS.has(option.name) &&
-      option.values.some((value) => !/^-?\d+$/.test(value)),
-  );
-  if (nonInteger) {
-    console.error(`Error: option '${nonInteger.name}' expects an integer.`);
-    return 1;
-  }
-  if (parsed.has("--version")) {
-    console.log(TLAPM_VERSION);
-    return EXIT_STATUS.success;
-  }
-  const files = getInputPaths(parsed.positionals).map((input) => input.path);
-  const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
-  if (modulePaths.length === 0) {
-    console.error(USAGE);
-    return 1;
-  }
-  const isToolbox = parsed.has("--toolbox") || parsed.has("--line");
-  output.held = [];
-  if (isToolbox) {
-    printOut(
-      `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
-    );
-  }
-  // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
-  const lines = parsed.options.reduce<LineRange>((range, option) => {
-    const [start, end] = option.values.map(Number);
-    if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
-    if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
-    return range;
-  }, WHOLE_MODULE);
-  // tlapm also searches each module's directory. Without tlapm, TLAPS is tla-ts's copy.
-  const directories = modulePaths.reduce(
-    (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
-    getLibraryDirectories(parsed),
-  );
-  // tlapm keeps the first of two modules of one name on the command line, from two files, and searches for a module
-  // in an order of its own (M_save.file_search'), which tla-ts doesn't follow, so where either
-  // decides which module is read, it declines.
-  const getRealPath = (path: string) => (existsSync(path) ? realpathSync(path) : path);
-  const sameName = modulePaths.find((path, index) =>
-    modulePaths
-      .slice(0, index)
-      .some(
-        (other) => basename(other) === basename(path) && getRealPath(other) !== getRealPath(path),
-      ),
-  );
-  if (sameName !== undefined)
-    throw new TlapmDecline(`two modules named ${basename(sameName, ".tla")} on the command line`);
-  const moduleNames = new Set<string>();
-  const modules = generateObligations(() => {
-    const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
-    if (missingIndex !== -1) {
-      const missing = files[missingIndex];
-      printErr(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
-      throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
-    }
-    return getObligations(
-      modulePaths.map((path) => ({ file: `./${path}`, source: readModule(path) })),
-      (name) => {
-        moduleNames.add(name);
-        // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
-        const found = directories
-          .map((directory) => `${directory}/${name}.tla`)
-          .filter((path) => existsSync(path));
-        const [file] = found;
-        if (new Set(found.map((path) => realpathSync(path))).size > 1) {
-          throw new TlapmDecline(
-            `a module ${name} found in more than one directory tlapm searches: ${found.join(", ")}`,
-          );
-        }
-        if (file !== undefined) return { file, source: readModule(file) };
-        return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
-      },
-      {
-        lines,
-        onWarning: (warning) => {
-          declineHeldNotUtf8(warning);
-          if (warning.channel === "stdout") return printOut(warning.text);
-          const isToolboxMessage =
-            warning.channel === "toolbox" || warning.channel === "toolboxOnly";
-          if (isToolbox && isToolboxMessage)
-            return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
-          if (warning.channel !== "toolboxOnly") printErr(warning.text);
-        },
-      },
-    );
+  await loadWasmEngine();
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new EngineUnavailableError(addon);
+  const variables = TLAPM_VARIABLES.flatMap((name): [string, string][] => {
+    const value = process.env[name];
+    return value === undefined ? [] : [[name, value]];
   });
-  declineHeldNotUtf8(modules);
-  const held = output.held;
-  output.held = undefined;
-  held.forEach((write) => write());
-  if (!modules) return TLAPM_FAILURE_STATUS;
-  const cacheDirectory =
-    parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
-  const forgottenLines = parsed.get("--nofpl")?.map(Number) ?? [0, 0];
-  const settings: ProvingSettings = {
-    isToolbox,
-    isProving: !parsed.has("--noproving"),
-    workers: Math.max(1, Number(parsed.get("--threads")?.[0] ?? availableParallelism())),
-    isFingerprinted: (obligation) =>
-      !parsed.has("--nofp") &&
-      !(
-        obligation.locus &&
-        obligation.locus.startLine >= forgottenLines[0] &&
-        obligation.locus.endLine <= forgottenLines[1]
-      ),
-    fingerprints: new Map(),
-  };
-  const statuses: number[] = [];
-  for (const [index, module] of modules.entries()) {
-    // Tlapm_lib.mkdir_tlaps.
-    const directory = `${cacheDirectory}/${module.name}.tlaps`;
-    const fingerprintsPath = `${directory}/fingerprints`;
-    const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
-    mkdirSync(directory, { recursive: true });
-    if (parsed.has("--cleanfp") && existsSync(fingerprintsPath)) {
-      rmSync(fingerprintsPath);
-      console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
-    }
-    if (!parsed.has("--cleanfp") && existsSync(loadedPath) && module.summary.total !== 0) {
-      console.log(
-        parsed.has("--nofp")
-          ? `(* will not use fingerprints (because of option \`--nofp\`), but will now load fingerprints from the file \`${loadedPath}\`, in order to overwrite with the new fingerprints, and then save the results at the end. *)`
-          : `(* loading fingerprints in ${JSON.stringify(loadedPath)} *)`,
-      );
-      loadFingerprints(settings.fingerprints, loadedPath, parsed.has("--safefp"));
-    }
-    if (parsed.has("--summary")) console.log(formatSummary(module));
-    if (isToolbox) {
-      module.obligations.forEach((obligation) =>
-        printObligationMessage(
-          obligation,
-          "to be proved",
-          parsed.has("--printallobs") ? [`obl:${obligation.text}`] : [],
-        ),
-      );
-      printToolboxMessage(["type:obligationsnumber", `count:${module.obligations.length}`]);
-    }
-    if (parsed.has("--strict"))
-      statuses.push(
-        ...checkStrictly(module, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
-      );
-    if (!isProcessing) continue;
-    // tlapm's history holds the source of each module read so far.
-    saveHistory(
-      fingerprintsPath,
-      [...moduleNames, ...modules.slice(0, index + 1).map((innerModule) => innerModule.name)].map(
-        (name) => `${name}.tla`,
-      ),
-    );
-    const isFailed = await proveModule(
-      module,
-      `${directory}/${module.name}.thy`,
-      fingerprintsPath,
-      settings,
-    );
-    if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
-    if (isFailed && !parsed.has("--strict") && !isToolbox) {
-      console.error(UNPROVED_ENDING);
-      return TLAPM_FAILURE_STATUS;
-    }
+  const result = checkAllSources(addon, ["tlapm", ...args], getMachine(variables), readKey);
+  if (result.kind === "declined") {
+    console.error(`prove-it: not native yet: ${result.reason}`);
+    return NOT_NATIVE_EXIT_CODE;
   }
-  return (
-    Object.values(STRICT_EXIT_STATUS).find((status) => statuses.includes(status)) ??
-    EXIT_STATUS.success
-  );
+  const failure = applyFileOperations(result.files);
+  if (failure !== undefined) {
+    console.error(`prove-it: not native yet: ${failure}`);
+    return NOT_NATIVE_EXIT_CODE;
+  }
+  process.stdout.write(result.out);
+  process.stderr.write(result.err);
+  return result.exitCode;
 };

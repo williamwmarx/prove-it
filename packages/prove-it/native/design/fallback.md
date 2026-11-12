@@ -264,8 +264,8 @@ Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The 
 "-dumpTrace" lists; the interpreter writes none. It prints `-coverage`'s report and declines the
 cases cli.md's "-coverage" lists: its "Not native" list, the cut, `-continue` carried past a
 violation, and estimates without `-fp` that differ by polynomial.
-`src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
-`src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
+`src/pcal` only validates for SANY, and `src/prover`, the wrapper of the Rust prover driver,
+imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
 `tlc/messages.ts` are shared with the front end and the CLI, so they move too.
 
@@ -676,34 +676,6 @@ Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as 
 `File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
 path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
 run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
-
-`prove-it tlapm` declines a module file with a byte that isn't UTF-8 where it reaches what the
-obligations hold (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
-with U+FFFD for each such byte, two different strings would be one and a theorem that they are equal
-proved. Each such byte reads as the lone surrogate U+DC00 plus the byte (Python's surrogateescape),
-which no UTF-8 text or file name holds, one character for one byte so that columns count it as
-tlapm's, which count bytes, do, where a cut-short sequence such as `E2 82` was one U+FFFD; and a run
-declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
-comment, before the module's header or past its end, it changes nothing printed or proved.
-
-Declines to win back: the obligations hold more than they print or prove, such as the theorems of
-an extended module, so a byte that isn't UTF-8 in a string there declines, where reading it as
-U+FFFD printed what tlapm prints only because nothing read it. A method pragma's string is read with JSON's escapes, so
-`"\udcfe"` is the same lone surrogate as the byte `FE`, and where a module read holds that byte,
-in a comment or anywhere, it declines too, as does a string that spells such an escape, `"\udcfe"`,
-which the check takes for the byte as the lexer's error spells it. The check finds an escaped byte by its UTF-16
-unit, so a character outside the BMP whose low surrogate is `\uDCxx` declines too where a module
-read the byte `xx`. tla-ts's lexer ends a `\*` comment at a line feed
-alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
-comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
-
-`prove-it tlapm` also declines where tlapm's choice of module decides what is proved, until the
-native command follows it: a module found in more than one directory it searches (`a module …
-found in more than one directory tlapm searches`), since tlapm searches `.`, the `-I` directories
-in the order given and its standard library (`M_save.file_search'`), and a module's own directory
-only after them, where tla-ts searched the module's directory first; and two modules of one name on
-the command line, of which tlapm proves the first and tla-ts proved the last. Each proved a theorem
-tlapm fails. A run that declines prints nothing before the decline.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
@@ -1248,3 +1220,136 @@ The engine's search doesn't count TLC's cost model; the replay pass in `tla-trac
 (cli.md, "-coverage"). Counting in the engine was built (branch `engine-coverage`) and not adopted:
 TLC with coverage runs 20 to 35 times as long as the engine's search on record-heavy specs, so the
 times of TLC's report part way through can't be bounded from the engine's.
+
+## tlapm
+
+`prove-it tlapm …` runs natively (`prove-it-check`'s `tlapm.rs`): in the binary, and in the CLI of
+`dist/`, which hands the command line to `checkSources` and applies the file operations its result
+lists (`prove-it-host`'s `files.rs`). There is no TypeScript fallback: where the native command
+declines, the CLI prints the decline and exits with 1, and where no engine loads, it throws
+`EngineUnavailableError`. A run either prints and writes what tlapm does or declines as a whole:
+both hold back what the run prints and writes until it ends (`prove-it-check`'s `overlay.rs`).
+
+### What matches
+
+- Every fixture tlapm 9ed0376 recorded in `tests/fixtures/obligations` and `tests/fixtures/tlapm-cli`
+  (`prove-it-cli/tests/tlapm.rs`, `unit/cli.test.ts`): stdout, stderr and the exit status, with
+  `-N`, `--toolbox`, `--line`, `--printallobs`, `--strict`, `--summary`, `--nofp`, `--cleanfp`, and
+  over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
+  which holds what tlapm's holds but for each result's date and versions. tlapm copies Zenon's
+  stderr to its stdout, and the native command writes Zenon's `exhausted search space` line, which
+  the deleted TypeScript CLI left out. It sends Isabelle's stdout to a file (`Prep.isabelle_prove`), and
+  Isabelle writes nothing to stderr for a proof it doesn't find, so such a failure prints as any
+  other.
+- `scripts/tlapm-conformance.ts` on the 1,873 modules of `tests/conformance/tlapm.json`, run as
+  `record-tlapm.ts` ran tlapm (`-N --printallobs --toolbox 0 0`): every one of the 33,138
+  obligations of the 1,507 modules tlapm accepted prints byte for byte, and the 366 modules it
+  rejected decline.
+
+### Declines
+
+- **What timing decides** (`Schedule.run`): tlapm launches every decision it can, up to
+  `--threads`, before it takes any result, and takes each as it comes back. Where two are in
+  flight together, either can come back first, and the run declines where that changes what tlapm
+  prints or writes: in toolbox mode, where each prints a message as it comes back (`toolbox
+  messages of two decisions in flight at once, …`); a thunk still to be evaluated of an obligation
+  with the fingerprint and prover of a decision in flight, which reuses its result or not as it
+  comes back first or not; an SMT encoding still to be made that numbers CASE errors, whose count
+  the order changes; Zenon's notes of different texts and Isabelle's proofs of different
+  obligations, which tlapm writes as they come; and different results for one fingerprint and
+  prover, of which the fingerprints file keeps the last. With one thread, or where one decision is
+  in flight at a time, the order is tlapm's.
+- **An error tlapm ends with** (`the backtrace tlapm prints as it ends with …`): tlapm prints the
+  exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
+  the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
+  run of tlapm, and the recordings in `tests/fixtures/obligation-errors` leave the backtrace out. A
+  module file that isn't there declines the same way. The deleted TypeScript CLI printed these without the
+  backtrace.
+- **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
+  stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
+  `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
+  - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
+    limit, and an input a back end can't read.
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, and a method
+  whose encoder can't take the obligation (`smt can't encode …`), where tlapm would try it. tlapm
+  has no back end for Cooper either: it fails the method and warns `Cooper's method is not
+  available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
+  tlapm can't run cvc3, the error it prints holds the machine's PATH.
+- **Command lines it doesn't model:** an option outside `src/cli/options.ts`'s list,
+  `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
+  option without its arguments or without an integer (as OCaml's `int_of_string` reads one, with
+  `0x`, `0o`, `0b` and `_`), a negative `--threads` (`Tlapm_args.set_max_threads` raises
+  `Arg.Bad`, proving or not), `--threads` 0 or above 99 where tlapm proves (its scheduler
+  asserts), and so a machine of more than 99 processors without `--threads`, no module, and
+  globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
+  empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
+  module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
+  given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through
+  `Loader`, beside the command line's modules, naming it by its file's name alone. `Loader` hands
+  the lexer the text, which it reads in token mode from the start rather than from the header on,
+  so a module it reads with more than blanks and comments before its header declines.
+- **A byte that isn't UTF-8 where the obligations hold it** (`a byte that isn't UTF-8 outside a
+  comment in …`, naming the first module read that holds that byte): tlapm reads bytes, and read
+  with U+FFFD for each such byte, two different strings would be one and a theorem that they are
+  equal proved. Both the binary and the CLI read a module's bytes (`bytes:` keys) and decode them
+  in `prove_obligations::bytes`: each byte that doesn't start a well-formed sequence (Unicode's
+  Table 3-7) reads as a marker of its own, U+10FF00 plus the byte, the same for each byte value
+  everywhere. The run declines where the obligations (everything they hold), a warning or an error
+  hold a marker; elsewhere, as in a comment, before the module's header or past its end, it prints
+  and proves what it would with U+FFFD. A module whose UTF-8 holds a character from U+10FF80 to
+  U+10FFFF, which it would read alike with a byte, declines (`U+… in …, which Prove It reads a
+  byte that isn't UTF-8 as`). Columns count bytes, as tlapm's do (`Loc`, `pos_cnum - pos_bol`),
+  each marker one.
+- **A cache it can't read or write as tlapm does:** a fingerprints file that doesn't load (tlapm
+  moves it aside). Where tlapm can't make its cache directory or a module's in it
+  (`Tlapm_lib.mkdir_tlaps`, a `Unix.mkdir`, which makes no directory above it), or write the
+  fingerprints file, as where a directory is there, it ends abnormally with a backtrace (`the
+  backtrace tlapm prints as it ends where it can't write …`). An empty cache directory, from
+  `--cache-dir ""` or `TLAPM_CACHE_DIR=`, has tlapm make each module's directory at the root, which
+  Prove It doesn't do. Where the file system refuses an operation the run's reads let it expect,
+  as a directory under `/proc`, the binary and the CLI decline once the run ends (`a directory
+  tlapm can't make: …`, `a file tlapm can't write: …`), with the operations before it applied.
+
+### Declines to win back
+
+Runs the deleted TypeScript CLI printed as tlapm does only by chance:
+- Toolbox mode with more than one thread, where two decisions are in flight together: the
+  TypeScript printed each obligation's messages in order, which tlapm does only where the results
+  happen to come back in that order.
+- A method Prove It can't encode the obligation for (`smt can't encode …`) or has no back end for:
+  the TypeScript left the method out, which printed what tlapm prints only where tlapm's attempt
+  also failed and nothing printed it, as outside toolbox mode.
+- A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
+  theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+
+### Known wrong outputs
+
+- `tlapm/test/fast/language/parse_function_comma_args.tla` #2: Prove It's SMT encoder writes the LET
+  definitions inside the LET, and the SMT back end proves the obligation, where tlapm's
+  `Smtlib.pp_print_expr` writes them outside it and Z3 rejects its input
+  (`scripts/tlapm-deviations.ts`). tlapm reports a failure and Prove It a proof.
+- An obligation a back end decides otherwise than tlapm's, within the same time limit, prints the
+  other status. Run with `--threads 1 --toolbox 0 0` on the 248 modules of `proofs.json` with at
+  most 120 obligations, against the statuses tlapm recorded there (measured 2026-11-12): 242 give
+  every obligation tlapm's status, 5 decline (two `smt can't encode a temporal formula`, one `smt
+  can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
+  `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
+  flight together declines in toolbox mode.
+- A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
+  not for the front end's, which reads the rest of the line as the comment.
+- A TAB before the module header, on the header's line, shifts the columns printed on that line,
+  because the front end expands tabs and tlapm counts bytes.
+- tlapm writes each proof Zenon finds to the theory file (`Prep.save_result`, `Isabelle.thy_write`),
+  with Zenon's input and the command it ran on a temporary file; Prove It's theory holds
+  Isabelle's proofs alone.
+- tlapm warns, on stderr or as a toolbox warning, where it reuses a proof found with a longer time
+  limit than the method's (`Prep.already_processed`'s `success_warning`), which Prove It doesn't.
+- tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
+  (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
+- The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
+  (`tlapm_args.ml`, `init`); no recording holds tlapm's.
+- The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
+  The binary keeps the order in which the run wrote to stdout and stderr; the CLI writes stdout,
+  then stderr. Where both go to one file, neither need interleave them as tlapm, whose stdout is
+  buffered, does.

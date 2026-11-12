@@ -2,9 +2,9 @@
 // has compiled to bytecode ahead of time, so a run neither parses nor compiles the bundle first.
 // With --aot, Bun compiles it to machine code instead (Bun's ahead-of-time compiler, in its canary
 // builds: scripts/ci/bootstrap.sh bun-canary), as dist/prove-it-aot. Then it runs the executable
-// on models that need what it embeds. It embeds the native engine too when
-// scripts/platform-packages.ts has built it for this platform, and checks that the executable loads
-// it.
+// on models that need what it embeds. It embeds the native engine too: the addon when
+// scripts/platform-packages.ts has built it for this platform, or else the engine as WebAssembly
+// when it has built that, and checks that the executable loads it.
 // Usage: bun scripts/build-binary.ts [--aot]
 
 import { spawnSync } from "node:child_process";
@@ -12,7 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { ADDON_FILE } from "../src/engine/native";
+import { ADDON_FILE, WASM_FILE } from "../src/engine/native";
 import { NPM_DIRECTORY, PLATFORMS } from "./platform-packages";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
@@ -21,19 +21,31 @@ const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 // addon and the entries go in a directory of their own.
 const EMBEDDED_DIRECTORY = "dist/embedded";
 
-// The addon goes beside the CLI's entry, where the loader looks for it.
+// The engine goes beside the CLI's entry, where the loader looks for it.
 const addonPath = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, ADDON_FILE);
+const wasmPath = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, WASM_FILE);
 mkdirSync(dirname(addonPath), { recursive: true });
 const builtAddon = PLATFORMS.filter(
   (platform) => platform.os === process.platform && platform.cpu === process.arch,
 )
   .map((platform) => join(NPM_DIRECTORY, platform.name, ADDON_FILE))
   .find((path) => existsSync(path));
+const builtWasm = [join(PACKAGE_DIRECTORY, "dist", WASM_FILE)].find((path) => existsSync(path));
 rmSync(addonPath, { force: true });
-if (builtAddon === undefined) {
+rmSync(wasmPath, { force: true });
+const engine =
+  builtAddon !== undefined
+    ? { from: builtAddon, to: addonPath }
+    : builtWasm !== undefined
+      ? { from: builtWasm, to: wasmPath }
+      : undefined;
+if (engine === undefined) {
   console.error("No native engine is built for this platform, so the executable goes without it");
 } else {
-  copyFileSync(builtAddon, addonPath);
+  if (builtAddon === undefined) {
+    console.error("No addon is built for this platform, so the executable embeds the WebAssembly");
+  }
+  copyFileSync(engine.from, engine.to);
 }
 
 const isAheadOfTime = process.argv.includes("--aot");
@@ -47,11 +59,11 @@ const result = await Bun.build({
     outfile,
     // Bun 1.4.4 doesn't know aot yet; its canary does.
     ...(isAheadOfTime ? ({ aot: true } as object) : {}),
-    assets: builtAddon === undefined ? [] : [addonPath],
+    assets: engine === undefined ? [] : [engine.to],
     autoloadDotenv: false,
     autoloadBunfig: false,
   },
-  // The prover finds its workers and the addon beside itself, as dist does. The bytecode
+  // The prover finds its workers and the engine beside itself, as dist does. The bytecode
   // executable embeds the entries and the addon side by side at its root, and the ahead-of-time
   // one the addon at its path from the package, so the entries go beside it.
   naming: isAheadOfTime ? `${EMBEDDED_DIRECTORY}/[name].[ext]` : "[name].[ext]",
@@ -76,14 +88,19 @@ const result = await Bun.build({
 result.logs.forEach((log) => console.error(log));
 if (!result.success) process.exit(1);
 
-// The executable checks with the addon it embeds, and throws a MissingBuildFileError for a worker
-// it can't find, which tlapm starts with --threads.
+// The executable checks with the addon it embeds, and proves with the engine it embeds, the addon
+// or else the WebAssembly, on tlapm's command line.
 const cacheDirectory = mkdtempSync(join(tmpdir(), "prove-it-binary-"));
 // SANY's report needs the engine, so a check of a model needs the embedded addon.
 const checks = [
   ...(builtAddon === undefined
     ? []
     : [
+        {
+          directory: "tests/fixtures/commit",
+          args: ["-workers", "2", "Commit.cfg"],
+          env: { PROVE_IT_ENGINE: "0" },
+        },
         {
           directory: "tests/fixtures/commit",
           args: ["Commit.cfg"],

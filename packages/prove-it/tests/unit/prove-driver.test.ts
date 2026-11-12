@@ -6,11 +6,18 @@ import { getObligationError, proveInRounds } from "../../scripts/native-prover";
 import { getInputKey, getRecordedAnswer, readInputRecords } from "../../scripts/prover-records";
 import { getDigest } from "../../scripts/tlapm-digest";
 import { prove, type ProveOptions } from "../../src";
-import type { NativeDecideRequest } from "../../src/engine/native";
+import {
+  getNativeAddon,
+  type NativeAddon,
+  type NativeDecideRequest,
+  type NativeProve,
+} from "../../src/engine/native";
+import { instantiateEngine } from "../../src/engine/wasm";
 
-// The Rust driver proves as the TypeScript one does: the same obligations, statuses and reasons,
-// the same reports in the same order, and the same errors. driver.json holds what the TypeScript
-// driver gave on each case, by its name here.
+// The Rust driver proves as the TypeScript one did: the same obligations, statuses and reasons,
+// the same reports in the same order, and the same errors, but where the TypeScript deviated from
+// tlapm (design/prover.md). driver.json holds what the TypeScript driver gave on each case, by its
+// name here.
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
 
 const EXPECTED: Record<string, unknown> = JSON.parse(
@@ -55,8 +62,6 @@ const proveNatively = (
 // What prove reports with the Rust driver and the native backends, as it reports each obligation
 // and in the end, or the error it throws. It aborts once abortAfter obligations are reported.
 const proveWithRust = async (options: ProveOptions, abortAfter?: number) => {
-  const setting = process.env.PROVE_IT_PROVER_DRIVER;
-  process.env.PROVE_IT_PROVER_DRIVER = "rust";
   const controller = new AbortController();
   const streamed: unknown[] = [];
   try {
@@ -75,9 +80,6 @@ const proveWithRust = async (options: ProveOptions, abortAfter?: number) => {
       error: { class: thrown.constructor.name, name: thrown.name, message: thrown.message },
       streamed,
     };
-  } finally {
-    if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
-    else process.env.PROVE_IT_PROVER_DRIVER = setting;
   }
 };
 
@@ -110,6 +112,27 @@ describe("the Rust driver", () => {
   });
 
   // A run's cache is keyed by its source and modules, which a NUL mustn't run together.
+  // The engine's strings can't hold a lone surrogate, and reading it as U+FFFD would prove
+  // "\uD800" = "\uDC00", so the Rust driver declines before it decides anything.
+  it("declines a source that isn't well-formed UTF-16", () => {
+    const decided: string[] = [];
+    const answer: Answer = (request) => {
+      decided.push(request.text);
+      return "unsat 1";
+    };
+    expect<unknown>(
+      proveNatively("M", getModule('THEOREM "\uD800" = "\uDC00" BY SMT'), answer),
+    ).toEqual({
+      error: {
+        class: "TlaUnsupportedError",
+        name: "TlaUnsupportedError",
+        message: "not native yet: the source isn't well-formed UTF-16",
+      },
+      streamed: [],
+    });
+    expect(decided).toEqual([]);
+  });
+
   it("proves again when a loaded module changes, whatever the source holds", () => {
     const source = getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS");
     const answer: Answer = (request) => (request.text.includes("2") ? "sat 1" : "unsat 1");
@@ -223,15 +246,35 @@ describe("the Rust driver", () => {
     );
   });
 
-  // A pragma's string is read as JSON.parse reads it, and one it can't read is tlapm's bug.
-  it("reads a pragma's string with an escape JSON lacks as the TypeScript driver does", () => {
-    expect<unknown>(
-      proveNatively(
-        "M",
-        getModule('THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)', "Naturals, TLAPS"),
-        (request) => (request.text.includes("�") ? "unsat 1" : "unknown 1"),
-      ),
-    ).toEqual(EXPECTED["a pragma's string with an escape JSON lacks"]);
+  // A pragma's string is what tlapm's lexer keeps, each escape as it is written (design/prover.md,
+  // "TypeScript deviations"): a tactic reaches Isabelle so, and a prover is named so.
+  it.each([
+    ["an escape tlapm lacks", 'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)', "by \\q"],
+    [
+      "an escape of a lone surrogate",
+      'F == TRUE (*{ by (prover:"isabelle"; tactic:"\\ud800") }*)\nTHEOREM 1 = 1 BY F',
+      "by \\ud800",
+    ],
+  ])("reads a pragma's string with %s as tlapm does", (_name, body, tactic) => {
+    const texts: string[] = [];
+    const run = proveNatively("M", getModule(body), (request) => {
+      texts.push(request.text);
+      return "unsat 1";
+    });
+    expect(run.result?.obligations[0]).toMatchObject({ status: "proved", prover: "isabelle" });
+    expect(texts.flatMap((text) => text.split("\n")).map((line) => line.trim())).toContain(tactic);
+  });
+
+  it("names a prover by a pragma's string as tlapm reads it", () => {
+    const run = proveNatively(
+      "M",
+      getModule('F == TRUE (*{ by (prover:"\\uD800") }*)\nTHEOREM 1 = 1 BY F'),
+      byProver({}),
+    );
+    expect(run.result?.obligations[0]).toMatchObject({
+      status: "failed",
+      reason: "Unknown prover: \\uD800",
+    });
   });
 });
 
@@ -320,39 +363,34 @@ describe("prove with the Rust driver", () => {
     expect<unknown>({ run, reads }).toEqual(EXPECTED[`reads ${name}`]);
   });
 
-  // The Rust driver gives way on the module that isn't well-formed, after loading the others.
-  it("loads each module once when it gives way to the TypeScript driver", async () => {
+  // A loaded module is read as the source is, and each module is loaded once.
+  it("declines a loaded module that isn't well-formed UTF-16", async () => {
     const loads: string[] = [];
-    let count = 0;
-    const run = await proveWithRust({
-      source: getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS"),
-      loadModule: (name) => {
-        loads.push(name);
-        if (name === "Lib") return `---- MODULE Lib ----\nEXTENDS Lib2\nX == ${++count}\n====\n`;
-        if (name === "Lib2") return '---- MODULE Lib2 ----\nY == "\uD800"\n====';
-        return undefined;
-      },
-    });
-    expect<unknown>({ run, loads }).toEqual(
-      EXPECTED["a module that isn't well-formed UTF-16 among the loaded"],
-    );
-  });
-
-  // A pragma's string is read as JSON.parse reads it. The Rust driver can't hold a lone surrogate,
-  // so it gives way.
-  it.each([
-    [
-      "an escape of a lone surrogate",
-      'F(x) == x (*{ by (prover:"smt"; timeout:"\\ud800") }*)\nTHEOREM 1 = 1 BY F(1)',
-    ],
-    [
-      "a tactic with an escape of a lone surrogate",
-      'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\ud800") }*)',
-    ],
-  ])("reads a pragma's string with %s as the TypeScript driver does", async (name, body) => {
-    expect<unknown>(await proveWithRust({ source: getModule(body, "Naturals, TLAPS") })).toEqual(
-      EXPECTED[`a pragma's string with ${name}`],
-    );
+    const run = (surrogate: string) =>
+      proveWithRust({
+        source: getModule("THEOREM X = Y BY SMT DEF X, Y", "Lib, TLAPS"),
+        loadModule: (name) => {
+          loads.push(name);
+          if (name === "Lib") return '---- MODULE Lib ----\nEXTENDS Lib2\nX == "\uFFFD"\n====\n';
+          if (name === "Lib2") return `---- MODULE Lib2 ----\nY == "${surrogate}"\n====`;
+          return undefined;
+        },
+      });
+    const wellFormed = await run("\uFFFD");
+    expect(wellFormed.error).toBeUndefined();
+    expect(wellFormed.result?.obligations[0]?.text).toContain('Y == "\uFFFD"');
+    const wellFormedLoads = loads.splice(0);
+    for (const surrogate of ["\uD800", "\uDFFF"]) {
+      expect<unknown>(await run(surrogate)).toEqual({
+        error: {
+          class: "TlaUnsupportedError",
+          name: "TlaUnsupportedError",
+          message: "not native yet: the module Lib2 isn't well-formed UTF-16",
+        },
+        streamed: [],
+      });
+      expect(loads.splice(0)).toEqual(wellFormedLoads);
+    }
   });
 
   it("proves with workers as the TypeScript driver does", async () => {
@@ -362,5 +400,74 @@ describe("prove with the Rust driver", () => {
       workers: 2,
     });
     expect<unknown>(run.result).toEqual(EXPECTED["proves HourClock with workers"]);
+  });
+});
+
+// Both bindings hand the engine a string's UTF-16 units, and the engine's prove declines a source or
+// module with a lone surrogate before it decides anything.
+describe("the engine's prove", () => {
+  const WASM =
+    process.env.PROVE_IT_ENGINE_WASM ??
+    join(import.meta.dirname, "../../dist/prove-it-engine.wasm");
+  const getAddon = () => {
+    const addon = getNativeAddon();
+    if (typeof addon === "string") throw new Error(addon);
+    return addon;
+  };
+
+  // Proves in rounds, reading Lib from library and answering every decision unsat, and returns the
+  // last round with the texts decided.
+  const proveAll = (engine: NativeAddon, source: string, library: string) => {
+    const known: [string, string | undefined][] = [];
+    const texts: string[] = [];
+    for (;;) {
+      const result: NativeProve = engine.prove("M.tla", source, known);
+      if (result.kind !== "needed") return { result, texts };
+      for (const key of result.keys)
+        known.push([key, key.startsWith("module:Lib#") ? library : undefined]);
+      for (const request of result.requests) {
+        texts.push(request.text);
+        known.push([`decide:${request.key}`, "unsat 1"]);
+      }
+    }
+  };
+
+  const SOURCE = getModule(
+    'THEOREM "\uFFFD" = Y BY SMT DEF Y\nTHEOREM X BY Zenon DEF X',
+    "Lib, TLAPS",
+  );
+  const LIBRARY =
+    '---- MODULE Lib ----\nX == "\uFFFD\uFFFD" = "\uFFFD\uFFFD"\nY == "\uFFFD"\n====\n';
+
+  const expectDeclined = (engine: NativeAddon) => {
+    const wellFormed = proveAll(engine, SOURCE, LIBRARY);
+    expect(wellFormed.result.kind).toBe("proved");
+    expect(wellFormed.texts.length).toBe(2);
+    const getDeclined = (what: string) => ({
+      result: {
+        kind: "error" as const,
+        name: "TlaUnsupportedError",
+        message: `not native yet: ${what} isn't well-formed UTF-16`,
+      },
+      texts: [],
+    });
+    for (const surrogate of ["\uD800", "\uDC00", "\uDBFF", "\uDFFF"]) {
+      expect(proveAll(engine, SOURCE.replaceAll("\uFFFD", surrogate), LIBRARY)).toEqual(
+        getDeclined("the source"),
+      );
+      expect(proveAll(engine, SOURCE, LIBRARY.replaceAll("\uFFFD", surrogate))).toEqual(
+        getDeclined("the module Lib"),
+      );
+    }
+  };
+
+  it("declines a lone surrogate through the addon", () => {
+    expectDeclined(getAddon());
+  });
+
+  // The build has the engine once `platform-packages.ts build --target wasm32-unknown-unknown`
+  // writes it.
+  it.if(existsSync(WASM))("declines a lone surrogate through WebAssembly", () => {
+    expectDeclined(instantiateEngine(new WebAssembly.Module(readFileSync(WASM))));
   });
 });

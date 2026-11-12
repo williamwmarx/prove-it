@@ -31,7 +31,7 @@ use prove_obligations::reset_caches;
 use prove_obligations::tlaps_module::TLAPS_MODULE;
 
 use crate::hooks::HookResult;
-use crate::sources::{Sources, get_text};
+use crate::sources::{Sources, get_text, is_well_formed};
 use crate::value::HostValue;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,9 +42,15 @@ pub fn prove(arguments: &[HostValue]) -> HookResult {
     let [file, source, known, ..] = arguments else {
         return Err("prove takes a file name, a source and what is known".into());
     };
+    let declined = [(file, "the file name"), (source, "the source")]
+        .into_iter()
+        .find(|(value, _)| !is_well_formed(value));
     let file = get_text(file, "the file name")?;
     let source = get_text(source, "the source")?;
     let sources = Sources::new(known)?;
+    if let Some((_, what)) = declined {
+        return Ok(get_ill_formed(what));
+    }
     on_deep_stack(move || prove_here(file, source, sources))
 }
 
@@ -162,13 +168,19 @@ fn load_run(
     // Each time getObligations reads a module is its own key, as the TypeScript reads a module
     // named like a standard one, or a missing one, again for each module citing it.
     let mut reads: HashMap<String, usize> = HashMap::new();
+    let mut ill_formed = None;
     let modules = get_obligations(
         &[ObligationSource { file, source }],
         &mut |name| {
             let read = reads.entry(name.to_owned()).or_default();
             *read += 1;
+            let key = format!("module:{name}#{read}");
+            if sources.is_ill_formed(&key) {
+                ill_formed.get_or_insert_with(|| format!("the module {name}"));
+                return None;
+            }
             let source = sources
-                .get(format!("module:{name}#{read}"))
+                .get(key)
                 .or_else(|| (name == "TLAPS").then(|| TLAPS_MODULE.to_owned()))?;
             Some(ObligationSource {
                 file: format!("{name}.tla"),
@@ -178,6 +190,9 @@ fn load_run(
         None,
         &mut |_| {},
     );
+    if let Some(what) = ill_formed {
+        return Err(get_ill_formed(&what));
+    }
     if sources.has_needed() {
         return Err(get_needed(sources));
     }
@@ -299,6 +314,14 @@ fn get_report(report: &Report) -> HostValue {
     properties.push(("status", HostValue::text(status)));
     properties.extend(detail.map(|(name, value)| (name, HostValue::text(value))));
     HostValue::Object(properties)
+}
+
+// A lone surrogate, which the engine's strings can't hold: reading it as U+FFFD would make
+// different strings one, and so prove what doesn't hold.
+fn get_ill_formed(what: &str) -> HostValue {
+    get_error(&ObligationError::unsupported(format!(
+        "not native yet: {what} isn't well-formed UTF-16"
+    )))
 }
 
 /// An error the obligations or the driver throw, as `{ kind: "error", name, message }`, with the

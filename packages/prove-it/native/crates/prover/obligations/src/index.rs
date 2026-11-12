@@ -17,8 +17,8 @@ use tla_front::parser::parse_tlapm_module;
 use crate::anonymize::create_anonymizer;
 use crate::errors::{ObligationError, Result, quote_json};
 use crate::expression::{
-    Channel, Locus, ObligationWarning, Sequent, Warn, get_at_prefix, get_error_note,
-    get_locus_position, get_locus_prefix,
+    Channel, Locus, ObligationWarning, Sequent, Warn, get_at_prefix, get_byte_locus,
+    get_error_note, get_locus_position, get_locus_prefix,
 };
 use crate::generate::{LineRange, ModuleSummary, TheoremSummary, create_generator};
 use crate::module::{Mule, compare_names, flatten, get_dependencies, get_standard_modules};
@@ -102,6 +102,7 @@ fn find_units(units: &[u16], needle: &[u16]) -> Option<usize> {
 
 fn format_locus(locus: Option<&Locus>) -> String {
     locus.map_or_else(String::new, |locus| {
+        let locus = get_byte_locus(locus);
         format!(
             "{}:{}:{}:{}",
             locus.start_line, locus.start_column, locus.end_line, locus.end_column
@@ -248,7 +249,7 @@ fn load_mule(
                     "File {}, line {}, character {}\n{}",
                     quote_json(&input.file),
                     failure.line,
-                    failure.column,
+                    crate::bytes::get_byte_column(&input.file, failure.line, failure.column),
                     failure.reason
                 );
                 on_warning(ObligationWarning {

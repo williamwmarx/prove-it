@@ -1,16 +1,16 @@
 //! tlapm's fingerprints file, ported from src/backend/fpfile.ml through `src/prover/tlapm/cache.ts`.
 //!
-//! The TypeScript reads the clock and the package version where it needs them; here the caller
-//! passes them: `version` is what the TypeScript stores as `tla-ts <package version>`, and `now`
-//! the local time the TypeScript takes from `new Date()`.
-
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+//! It reads and writes the file's bytes, which the caller reads and writes where its host keeps
+//! them. The caller also passes the clock and the version: `version` is what Prove It stores as
+//! `tla-ts <package version>`, and `now` the local time.
 
 use prove_obligations::errors::{ObligationError, Result};
 use prove_obligations::marshal::{MarshalValue, block, read_marshaled, write_marshaled};
+use prove_obligations::prep::methods::Method;
+use prove_obligations::ship::ProofAttempt;
 use prove_smt::util::ordered_map::OrderedMap;
+
+use crate::driver::Attempt;
 
 /// One optional result per prover, in V13.str's order, by fingerprint, in the order they were set.
 pub type FingerprintTable = OrderedMap<String, Vec<MarshalValue>>;
@@ -24,24 +24,6 @@ pub struct LocalTime {
     pub hours: i64,
     pub minutes: i64,
     pub seconds: i64,
-}
-
-/// `Method` (prep/methods.ts): a prover with its time limit, its rlimit and its tactic.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Method {
-    pub prover: String,
-    pub time_limit_ms: f64,
-    pub rlimit: Option<f64>,
-    pub tactic: Option<String>,
-}
-
-/// The part of `ProofAttempt` (prove.ts) the fingerprints file keeps.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProofAttempt {
-    pub method: Method,
-    pub is_proved: bool,
-    pub is_reused: bool,
-    pub reason: Option<String>,
 }
 
 const MAGIC_NUMBER: i64 = 20210223;
@@ -64,8 +46,6 @@ const REASONS: [&str; 2] = ["false", "timeout"];
 
 // The fields of V13.str whose version --safefp compares: Zenon's and Isabelle's.
 const CHECKED_VERSIONS: [(usize, usize); 2] = [(1, 3), (2, 4)];
-
-const HISTORY_SIZE: usize = 10;
 
 fn corrupted() -> ObligationError {
     ObligationError::proof("corrupted fingerprint file")
@@ -144,16 +124,15 @@ fn read_bucket(entry: Option<&MarshalValue>, pairs: &mut Vec<(MarshalValue, Mars
     }
 }
 
-/// Fpfile.load_fingerprints. Each bucket lists the latest fingerprint first.
+/// Fpfile.load_fingerprints, from the file's bytes. Each bucket lists the latest fingerprint first.
 pub fn load_fingerprints(
     table: &mut FingerprintTable,
-    path: &Path,
+    bytes: &[u8],
     is_safe: bool,
     version: &str,
 ) -> Result<()> {
-    let bytes = fs::read(path).map_err(|error| ObligationError::proof(error.to_string()))?;
-    let (magic, next) = read_marshaled(&bytes, 0)?;
-    let (contents, _) = read_marshaled(&bytes, next)?;
+    let (magic, next) = read_marshaled(bytes, 0)?;
+    let (contents, _) = read_marshaled(bytes, next)?;
     if magic != MarshalValue::Int(MAGIC_NUMBER)
         || !matches!(&contents, MarshalValue::Block(inner) if inner.tag == 0)
     {
@@ -197,7 +176,7 @@ pub fn load_fingerprints(
     Ok(())
 }
 
-fn decode_result(prover: &str, result: Option<&MarshalValue>) -> Option<ProofAttempt> {
+fn decode_result(prover: &str, result: Option<&MarshalValue>) -> Option<Attempt> {
     let status = get_field(result, 0);
     let outcome = get_field(status, 0)?;
     if *outcome == MarshalValue::Int(1) {
@@ -224,24 +203,32 @@ fn decode_result(prover: &str, result: Option<&MarshalValue>) -> Option<ProofAtt
             .map(|reason| reason.to_string()),
         other => Some(get_text(get_field(Some(other), 0))),
     });
-    Some(ProofAttempt {
-        method: Method {
-            prover: prover.into(),
-            time_limit_ms: seconds * 1000.0,
-            rlimit: None,
-            tactic,
+    Some(Attempt {
+        attempt: ProofAttempt {
+            method: Method {
+                prover: prover.into(),
+                time_limit_ms: seconds * 1000.0,
+                rlimit: None,
+                tactic,
+            },
+            is_proved: *outcome == MarshalValue::Int(0),
+            is_reused: false,
         },
-        is_proved: *outcome == MarshalValue::Int(0),
-        is_reused: false,
         reason: reason.flatten(),
+        verdict: None,
+        time_used_ms: None,
     })
 }
 
 /// Fpfile.fp_writes, whose date counts months from 0. None for a prover the file has no field for.
-fn encode_result(attempt: &ProofAttempt, version: &str, now: LocalTime) -> Option<MarshalValue> {
-    let method = &attempt.method;
+fn encode_result(attempt: &Attempt, version: &str, now: LocalTime) -> Option<MarshalValue> {
+    let method = &attempt.attempt.method;
     let (_, tag) = get_prover(&method.prover)?;
-    let timeout = MarshalValue::Float(method.rlimit.unwrap_or(method.time_limit_ms / 1000.0));
+    let timeout = MarshalValue::Float(
+        method
+            .rlimit
+            .map_or(method.time_limit_ms / 1000.0, |rlimit| rlimit as f64),
+    );
     let argument = match method.prover.as_str() {
         "zenon" => block(0, vec![timeout, MarshalValue::Int(FAIL_METHOD)]),
         "isabelle" => block(
@@ -263,7 +250,7 @@ fn encode_result(attempt: &ProofAttempt, version: &str, now: LocalTime) -> Optio
             }],
         ),
     };
-    let outcome = if attempt.is_proved {
+    let outcome = if attempt.attempt.is_proved {
         MarshalValue::Int(0)
     } else {
         block(0, vec![reason])
@@ -322,75 +309,16 @@ fn encode_table(table: &FingerprintTable) -> MarshalValue {
     )
 }
 
-fn pad(value: i64) -> String {
-    format!("{value:02}")
-}
-
-/// Fpfile.fp_init: copies the fingerprints file and the sources into a new directory of the
-/// history, named by the local time, and keeps the latest ten.
-pub fn save_history(path: &Path, sources: &[PathBuf], now: LocalTime) -> io::Result<()> {
-    let mut history = path.as_os_str().to_owned();
-    history.push(".history");
-    let history = PathBuf::from(history);
-    let directory = history.join(format!(
-        "{}-{}-{}_{}_{}_{}",
-        now.year,
-        pad(now.month + 1),
-        pad(now.day),
-        pad(now.hours),
-        pad(now.minutes),
-        pad(now.seconds),
-    ));
-    fs::create_dir_all(&directory)?;
-    for file in std::iter::once(path).chain(sources.iter().map(PathBuf::as_path)) {
-        if !file.exists() {
-            continue;
-        }
-        let Some(name) = file.file_name() else {
-            continue;
-        };
-        let copy = directory.join(name);
-        fs::copy(file, &copy)?;
-        let modified = fs::metadata(file)?.modified()?;
-        fs::File::options()
-            .write(true)
-            .open(&copy)?
-            .set_modified(modified)?;
-    }
-    let mut entries = fs::read_dir(&history)?
-        .map(|entry| {
-            let path = entry?.path();
-            let modified = fs::metadata(&path)?.modified()?;
-            let since = modified
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            let milliseconds = since.as_secs() as f64 * 1e3 + f64::from(since.subsec_nanos()) / 1e6;
-            Ok((path, milliseconds))
-        })
-        .collect::<io::Result<Vec<_>>>()?;
-    // statSync's mtimeMs: seconds and nanoseconds since the epoch as a double of milliseconds, so
-    // that times the TypeScript sees as equal keep their order here too.
-    entries.sort_by(|left, right| right.1.total_cmp(&left.1));
-    for (old, _) in entries.into_iter().skip(HISTORY_SIZE) {
-        if old.is_dir() {
-            fs::remove_dir_all(&old)?;
-        } else {
-            fs::remove_file(&old)?;
-        }
-    }
-    Ok(())
-}
-
 /// A prover's result for a fingerprint, with the field it was loaded from, which saving keeps
 /// unchanged; a result recorded since has none and is encoded anew.
 #[derive(Clone, Debug)]
 pub struct KnownAttempt {
-    pub attempt: ProofAttempt,
+    pub attempt: Attempt,
     stored: Option<MarshalValue>,
 }
 
 impl KnownAttempt {
-    pub fn new(attempt: ProofAttempt) -> Self {
+    pub fn new(attempt: Attempt) -> Self {
         Self {
             attempt,
             stored: None,
@@ -408,6 +336,7 @@ pub struct KnownAttempts {
 
 /// Fpfile.query: what each prover concluded for each fingerprint. The TypeScript keeps the loaded
 /// fields in maps keyed by the result objects; here each result carries its own.
+#[derive(Clone, Debug, Default)]
 pub struct KnownResults {
     pub results: OrderedMap<String, KnownAttempts>,
 }
@@ -441,15 +370,14 @@ impl KnownResults {
     }
 
     /// Saving them, as fp_writes, add_to_table and fp_close_and_consolidate do, sets the table to
-    /// the results and writes it. Fails on a result of a prover the file has no field for, where
-    /// the TypeScript throws.
+    /// the results and gives the file's bytes. Fails on a result of a prover the file has no field
+    /// for, where the TypeScript throws.
     pub fn save(
         &self,
         table: &mut FingerprintTable,
-        path: &Path,
         version: &str,
         now: LocalTime,
-    ) -> Result<()> {
+    ) -> Result<Vec<u8>> {
         table.clear();
         for (fingerprint, known) in self.results.iter() {
             let mut record = known
@@ -474,13 +402,7 @@ impl KnownResults {
         }
         let mut bytes = write_marshaled(&MarshalValue::Int(MAGIC_NUMBER));
         bytes.extend(write_marshaled(&encode_table(table)));
-        let mut temporary = path.as_os_str().to_owned();
-        temporary.push(".tmp");
-        let write = || -> io::Result<()> {
-            fs::write(&temporary, &bytes)?;
-            fs::rename(&temporary, path)
-        };
-        write().map_err(|error| ObligationError::proof(error.to_string()))
+        Ok(bytes)
     }
 }
 
@@ -501,11 +423,12 @@ mod tests {
     fn encodes_a_result_as_the_typescript_does() {
         let mut count = 0;
         for name in ["failures", "failures-nofp", "twice", "twice-nofp"] {
-            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
                 .join(format!("{name}.fingerprints"));
+            let bytes = std::fs::read(path).expect("a fingerprints file");
             let mut table = FingerprintTable::new();
-            load_fingerprints(&mut table, &path, false, "").expect("a fingerprints file");
+            load_fingerprints(&mut table, &bytes, false, "").expect("a fingerprints file");
             for (_, record) in table.iter() {
                 for (prover, field, _) in PROVERS {
                     let stored = record.get(field);
