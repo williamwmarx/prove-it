@@ -37,9 +37,10 @@ export type NativeCheckSources =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// Where the check stops before it searches, the error the TypeScript check throws: the report of
-// a TlaSyntaxError, or the message of a TlaConfigError or a TlaEvaluationError.
-export type NativeThrown =
+// Where the check stops before it searches, the error the library throws: the report of a
+// TlaSyntaxError, the message of a TlaConfigError or a TlaEvaluationError, or a
+// TlaStackOverflowError; with what the spec printed before it, which the library prints first.
+export type NativeThrown = { prints: string[] } & (
   | {
       kind: "syntax";
       sany: {
@@ -50,7 +51,9 @@ export type NativeThrown =
       };
     }
   | { kind: "config"; message: string }
-  | { kind: "evaluation"; message: string };
+  | { kind: "evaluation"; message: string }
+  | { kind: "stack-overflow" }
+);
 
 // What the check found, where it searched (prove-it-check's outcome.rs): each variable of a state
 // as its name, TLC's text of its value, and the value as plain data in JSON.
@@ -243,7 +246,7 @@ export interface NativeAddon extends NativeStoreHooks {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 26;
+const ABI_VERSION = 27;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

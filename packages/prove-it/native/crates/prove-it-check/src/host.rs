@@ -154,9 +154,20 @@ pub trait Host {
         false
     }
     /// Whether the check may read and write the machine's files, as the Json module's operators
-    /// do (`Settings::is_file_system`).
+    /// do (`Settings::json_files`).
     fn is_file_system(&self) -> bool {
         true
+    }
+    /// For a host that answers for the files itself, the bytes of a file the spec reads, as the
+    /// Json module's operators do, or none where there is none; it learns of one it hasn't read
+    /// yet, which it reads before the check runs again.
+    fn read_spec_file(&self, _path: &str) -> Option<Vec<u8>> {
+        None
+    }
+    /// The files the spec reads that the host has read (`read_spec_file`), each with its bytes, or
+    /// none where there is none.
+    fn spec_files_read(&self) -> Vec<(String, Option<Vec<u8>>)> {
+        Vec::new()
     }
     /// Whether the caller reads the outcome (`Outcome`), as only the library's check does: then the
     /// check keeps the spec's prints and each printed state, with its variables as plain data too.

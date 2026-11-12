@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { expectDeclined, runOnEngine, runTlcNatively } from "../native-check";
+import { check, TlaEvaluationError } from "../../src";
+import { runOnEngine, runTlcNatively } from "../native-check";
 
 const STEP = "Init == x = 0\nNext == x < 2 /\\ x' = x + 1";
 
@@ -138,15 +139,18 @@ describe("CLI exit codes match TLC", () => {
     expect(getExitCode(definitions, "SPECIFICATION Spec\nINVARIANT Inv")).toBe(76);
   });
 
-  it("exits with 255 for a formula too large in disjunctive normal form, which check declines", async () => {
+  it("exits with 255 for a formula too large in disjunctive normal form, which check throws", async () => {
     const definitions = `Init == x = FALSE\nNext == x' \\in BOOLEAN\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in 1..6 : \\A j \\in 1..6 : SF_x(Next)\nProp == <>[](x \\in BOOLEAN)`;
     const config = "SPECIFICATION Spec\nPROPERTY Prop";
-    await expectDeclined(
-      {
+    await expect(
+      check({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
         config,
-      },
-      "the engine stopped before it searched (exit 255)",
+      }),
+    ).rejects.toThrow(
+      new TlaEvaluationError(
+        "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
+      ),
     );
     expect(getExitCode(definitions, config)).toBe(255);
   });

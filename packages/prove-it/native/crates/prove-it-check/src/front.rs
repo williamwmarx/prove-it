@@ -9,9 +9,10 @@ use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::model::{
     LoweredModel, ModelOptions, ModelSources, StartupMessage, lower_front_ranking_of,
+    may_print_constant_definitions,
 };
 use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
-use tla_front::tlc_messages::CodedError;
+use tla_front::tlc_messages::{CodedError, get_rejected_literal};
 
 use crate::host::{Files, Host};
 use crate::host_path::{Platform, get_stem};
@@ -56,13 +57,9 @@ pub struct Front {
     pub initial_label: Option<String>,
     /// SANY's warnings as the library's check prints them (`LoweredModel::sany_warnings`).
     pub sany_warnings: Vec<String>,
+    /// `LoweredModel::is_tlcext_declined`.
+    pub is_tlcext_declined: bool,
 }
-
-/// The errors tla-front raises for a temporal formula TLC can't check (`live.rs`).
-const TEMPORAL_ERRORS: &[&str] = &[
-    "Temporal formula is a tautology (its negation is unsatisfiable).",
-    "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
-];
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
 /// SANY rejects the spec or lowering the model raises an error TLC reports with a code. Otherwise
@@ -109,6 +106,7 @@ pub fn read_front(
                 startup_messages: Vec::new(),
                 initial_label: None,
                 sany_warnings: Vec::new(),
+                is_tlcext_declined: false,
             }));
         }
         let describe = host.get_file_describer(files);
@@ -152,6 +150,7 @@ pub fn read_front(
                     override_messages: lowered.override_messages,
                     initial_label: lowered.initial_label,
                     sany_warnings: lowered.sany_warnings,
+                    is_tlcext_declined: lowered.is_tlcext_declined,
                 }));
             }
             Err(FrontError::NotYet(reason)) => return Err(reason),
@@ -161,15 +160,27 @@ pub fn read_front(
         let coded = error
             .get_coded(is_tool)
             .ok_or("an error tla-front raises that TLC reports without a code")?;
-        // The TypeScript check prints SANY's warnings before it throws. Of the evaluation errors,
-        // it throws those of the temporal formulas as TlaEvaluationError itself, and others as its
-        // subclasses or not at all.
+        // The library prints SANY's warnings before it throws, which it doesn't know here. The
+        // front end raises the error without computing the constant definitions, which TLC
+        // computes first where the error comes after them, and which may print.
         let thrown = match error {
-            _ if sany.is_warned => None,
-            FrontError::Config(message) => Some(Thrown::Config(message)),
-            FrontError::Evaluation(message) if TEMPORAL_ERRORS.contains(&message.as_str()) => {
-                Some(Thrown::Evaluation(message))
+            _ if sany.is_warned || !host.is_plain() => None,
+            // TLC reports a configuration number too big for it as a NumberFormatException, which
+            // the front end words otherwise, and doesn't reject a decimal an INSTANCE substitutes,
+            // which the front end does (fallback.md, "Known wrong outputs").
+            FrontError::Evaluation(message) if message.starts_with("Integer overflow: ") => None,
+            _ if get_rejected_literal(&error).is_some() => None,
+            _ if sources
+                .as_ref()
+                .is_some_and(|sources| may_print_constant_definitions(sources, config_text)) =>
+            {
+                Some(Thrown::NotNative(
+                    "what the spec prints as TLC computes its constants",
+                ))
             }
+            FrontError::Config(message) => Some(Thrown::Config(message)),
+            FrontError::Evaluation(message) => Some(Thrown::Evaluation(message)),
+            FrontError::StackOverflow => Some(Thrown::StackOverflow),
             _ => None,
         };
         Ok(Read::Failed(Failure {

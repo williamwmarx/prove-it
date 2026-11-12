@@ -290,7 +290,7 @@ const NEW_BUILTINS: [&str; 4] = [
 
 /// Whether a definition reaches one of these builtins, past `cached`, and, with
 /// `is_past_kept`, outside a TLCEval, whose value TLC keeps.
-fn reaches_effect(
+pub(crate) fn reaches_effect(
     definition: &Rc<Definition>,
     environment: &Environment,
     cached: Option<&Rc<Definition>>,
@@ -460,8 +460,9 @@ pub struct Lowering<'a> {
     /// The seed TLC seeds its generator with.
     pub random_seed: u64,
     /// Whether the engine declines the TLCExt builtins it checks where it computes them
-    /// (`Builtin::DECLINED`).
-    is_tlcext_declined: bool,
+    /// (`Builtin::DECLINED`), and leaves out of its startup the constant definitions that apply
+    /// them.
+    pub is_tlcext_declined: bool,
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,

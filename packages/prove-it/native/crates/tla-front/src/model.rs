@@ -9,11 +9,11 @@ use crate::ast::SourceRange;
 use crate::config::parse_config;
 use crate::dependencies::create_definition_facts;
 use crate::describe::{Description, Part, UNNAMED_ACTION, describe};
-use crate::environment::{EnvironmentOptions, create_environment};
+use crate::environment::{EnvironmentOptions, create_environment, link_environment};
 use crate::errors::{FrontError, format_range};
 use crate::eval::Evaluator;
 use crate::hash::{FastMap, FastSet};
-use crate::lower::{Lowering, RankedTexts};
+use crate::lower::{Lowering, RankedTexts, is_startup_definition, reaches_effect};
 use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
     Properties, Specification, check_invariants, check_search_config, create_identifier,
@@ -89,6 +89,9 @@ pub struct LoweredModel {
     /// SANY's warnings as the library's check prints them where its caller didn't print SANY's
     /// report (`formatSanyWarnings`), or none.
     pub sany_warnings: Vec<String>,
+    /// `Lowering::is_tlcext_declined`: the engine computes fewer constant definitions as it
+    /// starts than TLC, which may print.
+    pub is_tlcext_declined: bool,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -181,6 +184,40 @@ pub fn lower_front_ranking_of(
         return Ok(lowered);
     }
     lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, ..)| lowered)
+}
+
+/// Whether TLC may print as it computes the constant definitions when it starts
+/// (`processConstantDefns`), before an error lowering the model raises: where a definition it
+/// computes then applies Print, PrintT or AssertEq, or a Java override may print. Not where TLC
+/// stops first, at the configuration or at the rest of `processSpec`.
+pub fn may_print_constant_definitions(sources: &ModelSources, config_text: &str) -> bool {
+    let Ok(config) = parse_config(config_text, TlcVersion::Master) else {
+        return false;
+    };
+    let load_class = |name: &str| (sources.load_class)(name).map(|(_, bytes)| bytes);
+    let Ok(environment) = link_environment(&EnvironmentOptions {
+        source: sources.source,
+        load_module: sources.load_module,
+        config: &config,
+        is_unconfigured: false,
+        version: TlcVersion::Master,
+        is_level_checked: false,
+        load_class: Some(&load_class),
+    }) else {
+        return false;
+    };
+    let facts = create_definition_facts(&environment);
+    !environment.java_overrides.is_empty()
+        || environment.startup_definitions.iter().any(|definition| {
+            is_startup_definition(definition, &environment, &facts)
+                && reaches_effect(
+                    definition,
+                    &environment,
+                    None,
+                    &["Print", "PrintT", "AssertEq"],
+                    false,
+                )
+        })
 }
 
 fn lower_ranked(
@@ -393,6 +430,7 @@ fn lower_ranked(
                 })?
         };
         let branches = lowering.branches;
+        let is_tlcext_declined = lowering.is_tlcext_declined;
         let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
@@ -457,6 +495,7 @@ fn lower_ranked(
         Ok((
             LoweredModel {
                 sany_warnings: environment.printed.clone(),
+                is_tlcext_declined,
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,

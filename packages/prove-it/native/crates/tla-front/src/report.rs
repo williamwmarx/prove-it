@@ -967,14 +967,23 @@ fn get_root_text(
             message,
             parse_error,
         }) => {
-            let fatal = format!(
-                "{}\n\n{message}",
-                location.map_or_else(
-                    || "Unknown location".to_owned(),
-                    |module| format!("In module {module}")
-                )
+            let location = location.map_or_else(
+                || "Unknown location".to_owned(),
+                |module| format!("In module {module}"),
             );
+            let fatal = format!("{location}\n\n{message}");
             let is_tlc_174 = options.version == TlcVersion::V1_7_4;
+            // The TypeScript check throws the fatal error alone, after the report of the module
+            // SANY's parser rejects.
+            let report = (!is_tlc_174 && loader.parse_messages.is_empty()).then(|| SanyReport {
+                errors: vec![SanyError {
+                    location,
+                    message: message.clone(),
+                }],
+                warnings: Vec::new(),
+                is_fatal: true,
+                parse_error: parse_error.clone(),
+            });
             // TLC 1.7.4's ParseException.getShortMessage fails on an error at the first token,
             // which has no image.
             let is_imageless = is_tlc_174
@@ -1034,7 +1043,7 @@ fn get_root_text(
                 ),
                 is_failed: true,
                 exception: None,
-                report: None,
+                report,
                 is_warned: false,
             })
         }

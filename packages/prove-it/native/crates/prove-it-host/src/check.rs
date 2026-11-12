@@ -13,7 +13,7 @@
 //!   learns whether the history's new directory, named by the time, is there from the history's
 //!   entries, and asks for it alone where a run of the same second left one;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
-//!   printed before.
+//!   printed before, or where the library's check can't throw the error TLC reports as TLC does.
 //!
 //! The CLI answers for the machine's files, which the check finds as the binary does: `stat:<path>`,
 //! `"file"`, `"directory"` or `"other"` where the system finds something at the path,
@@ -21,7 +21,8 @@
 //! links followed, `cwd`, the working directory, and `tmpdir`, the system's temporary directory.
 //! tlapm's command line also reads `entries:<path>`, a directory's entries, each as its `mtimeMs`
 //! and its name, each ended by a NUL. The library has no files: it answers `text:<path>` for the
-//! spec and its configuration, `module:<name>` and `class:<name>`.
+//! spec and its configuration, `module:<name>`, `class:<name>`, and `read:<path>` for a file the
+//! spec reads, as the Json module's operators do, through `readFile`.
 //!
 //! `resolveFiles(args, given, request, known)` answers, through the same keys, what the CLI's
 //! TypeScript check asks of where TLC finds the files of the spec `given` on the command line
@@ -208,6 +209,23 @@ impl Host for SourcesHost {
         !self.is_library
     }
 
+    fn read_spec_file(&self, path: &str) -> Option<Vec<u8>> {
+        self.get(format!("read:{path}")).map(String::into_bytes)
+    }
+
+    fn spec_files_read(&self) -> Vec<(String, Option<Vec<u8>>)> {
+        self.sources
+            .get_answered_with("read:")
+            .into_iter()
+            .map(|(key, text)| {
+                (
+                    key["read:".len()..].to_owned(),
+                    text.map(String::into_bytes),
+                )
+            })
+            .collect()
+    }
+
     // The check's writes go back to JavaScript, which writes them: the library's, which answers
     // for files itself, and the CLI's into a directory it said it can write.
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
@@ -353,9 +371,14 @@ fn check(arguments: &[HostValue]) -> HookResult {
     let err = String::from_utf8_lossy(&err);
     // What the binary prints as it declines, which the host checks otherwise: what was printed
     // before it is dropped.
-    if let Some(reason) = err.lines().find_map(|line| line.strip_prefix(NOT_NATIVE))
-        && exit_code == 1
-    {
+    let declined = match &outcome.thrown {
+        Some(Thrown::NotNative(reason)) if outcome.status.is_none() => Some(*reason),
+        _ => err
+            .lines()
+            .find_map(|line| line.strip_prefix(NOT_NATIVE))
+            .filter(|_| exit_code == 1),
+    };
+    if let Some(reason) = declined {
         return Ok(HostValue::Object(vec![
             ("kind", HostValue::text("declined")),
             ("reason", HostValue::text(reason)),
@@ -388,15 +411,24 @@ fn check(arguments: &[HostValue]) -> HookResult {
     ]))
 }
 
-/// Where the check stopped before it searched, the error the library throws:
-/// `{ kind: "syntax", sany }` with the report of `TlaSyntaxError`, or `{ kind: "config" |
-/// "evaluation", message }`; undefined otherwise, and where the spec printed first, which the
-/// library reports with the TypeScript check's error.
+/// Where the check stopped before it searched, the error the library throws, with what the spec
+/// printed before it, which the library prints first: `{ kind: "syntax", sany, prints }` with the
+/// report of `TlaSyntaxError`, `{ kind: "config" | "evaluation", message, prints }`, or
+/// `{ kind: "stack-overflow", prints }`; undefined otherwise.
 fn get_thrown(outcome: &Outcome) -> HostValue {
-    let (Some(thrown), None, true) = (&outcome.thrown, outcome.status, outcome.prints.is_empty())
-    else {
+    let (Some(thrown), None) = (&outcome.thrown, outcome.status) else {
         return HostValue::Undefined;
     };
+    let prints = (
+        "prints",
+        HostValue::Array(
+            outcome
+                .prints
+                .iter()
+                .map(|text| HostValue::text(text))
+                .collect(),
+        ),
+    );
     let get_errors = |errors: &[SanyError]| {
         HostValue::Array(
             errors
@@ -428,15 +460,22 @@ fn get_thrown(outcome: &Outcome) -> HostValue {
                     ),
                 ]),
             ),
+            prints,
         ]),
         Thrown::Config(message) => HostValue::Object(vec![
             ("kind", HostValue::text("config")),
             ("message", HostValue::text(message)),
+            prints,
         ]),
         Thrown::Evaluation(message) => HostValue::Object(vec![
             ("kind", HostValue::text("evaluation")),
             ("message", HostValue::text(message)),
+            prints,
         ]),
+        Thrown::StackOverflow => {
+            HostValue::Object(vec![("kind", HostValue::text("stack-overflow")), prints])
+        }
+        Thrown::NotNative(_) => HostValue::Undefined,
     }
 }
 
