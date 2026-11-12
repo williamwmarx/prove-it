@@ -59,7 +59,68 @@ SANY's report as tla-front writes it, through the addon or the WebAssembly engin
 `src/sany` is deleted, `PROVE_IT_ENGINE=0` means that the interpreter searches, not that no native
 code runs: SANY's report still needs the addon or the WebAssembly engine. Where neither loads, the
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
-the search. Until then, the CLI prints the TypeScript report where no engine loads.
+the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
+its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
+TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34
+and 35), which the TypeScript report printed: whether to port 1.7.4's generator differences or
+retire them with 1.7.4 is open.
+
+SANY's messages come from the port of its generator and levelCheck, which declines a message whose
+shape no recording shows, and else from linking. Linking takes the standard modules as TLC ships
+them, which a spec that replaces one another standard module reads, such as its own Naturals
+under Sequences, may not keep: main's binary printed no errors for a Naturals without `..`, where SANY
+reports 24 (tests/report-cases/38), which the generator now writes. Where the generator declines
+such a spec, linking declines too ("SANY's messages of the standard modules with one of them
+replaced").
+
+Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
+2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
+spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) and review found the
+report wrong or declining for 2,113; each is a case of tla-front's `tests/sany-cases`, recorded in
+`sany-cases.json`, whose `case.json` gives the reason where the front end declines it. All print
+what TLC prints but these, which decline:
+- a module SANY's parser accepts and the front end's rejects (36 cases): a definition of the
+  postfix operator `'` (`a' == a`, `a ' == 1`), proofs nested more than 100 deep, where SANY's
+  parser stops, and mutations whose parse the front end reads otherwise;
+- a module of the CommunityModules that no file beside the spec holds, or a module of TLC's that
+  extends one, such as `_DotTrace` or `_CBORTrace` (155 cases): TLC finds it where
+  CommunityModules.jar is beside tla2tools.jar, and else reports it missing, which the TypeScript
+  report printed;
+- SANY's generator throwing on the root module after a module of the user's (2 cases; main's
+  binary declined);
+- a proof's INSTANCE of a module the spec doesn't otherwise depend on (72 cases), which SANY's
+  ParseUnit.getInstances loads and the front end doesn't yet;
+- a HIDE of an expression SANY's generator leaves null, such as `HIDE 1 + 1` without Naturals,
+  for which SANY throws a NullPointerException (9 cases);
+- a record field named like a definition whose value applies a recursive operator, on which
+  SANY's linter overflows its stack (4 cases);
+- `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
+- a module nested at the top of a module that its extender extends, which
+  ParseUnit.handleExtensions lets the extender's EXTENDS and INSTANCE name, and the front end
+  looks for in a file, where the loader that binds names to inner modules of extended files
+  doesn't bind them unambiguously (12 cases; it prints the other 9 of the 21 as TLC does);
+- LETs nested 100 deep in their definitions, where SANY's generator throws (1 case);
+- brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
+  counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or
+  angle brackets and 900 function constructors. Other forms nested as deep, such as IF or `\A`,
+  are not counted, and may print where TLC overflows (1 case).
+
+Linking declines a parameterized INSTANCE of a standard module, whose operators it gave no
+parameters (`I(p) == INSTANCE Integers` with `I(1)!Int`): main's binary printed that `I!Int`
+requires -1 arguments. Where the binary declines, the CLI falls back to the TypeScript engine,
+which still prints that error after SANY's report, as it prints other errors its linking raises,
+such as for `EXTENDS _JsonTrace`, as SANY's. How TLC finds, reads and names a spec's files, which
+the last run probed, is TLC's resolver's, as main has it; what that run found there is for the
+resolver, not the report.
+
+TLC prints a character of a message outside ASCII as `?` under a locale that isn't UTF-8, where
+Prove It prints the character; the runs above compare under `C.UTF-8`. The CLI's own command line,
+which names several specs, a spec by its configuration file or a glob, is not TLC's.
+
+A message of the generator whose shape no recording shows is printed where linking gives the same
+messages, and where linking can't give them, as the TypeScript report, a port of the same
+generator, printed them; where linking gives others, the report declines ("SANY's messages,
+which linking gives apart from SANY's generator").
 
 ### Decision: the CLI finds a spec's files with the engine
 
@@ -328,6 +389,31 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+#### Action constraints that fail to evaluate
+
+An ACTION_CONSTRAINT that fails to evaluate on a step is native: TLC throws out of
+`Worker.addElement` before it counts the successor as found and reports the error as one of the
+next states (`ModelChecker.doNextFailed`), with the trace to that successor, then the call stack of
+its replay of the expansion with its `CallStackTool` (`ModelChecker.doNext`), as in
+`prove-it-cli/tests/action-constraint-failures` (from the grid of 796 runs: 744 match, 52
+decline, none differ). What still declines:
+- an action constraint that is a literal and no boolean (`AC == "yes"`): TLC fails casting the
+  definition it holds for it, with a ClassCastException whose message names the JVM's classes
+  (`a constraint that is a literal, which TLC fails to cast`), as for a CONSTRAINT;
+- one that fails under `-continue`, or with an ALIAS, `-dumpTrace`, a property TLC checks of each
+  step (`[][A]_v`), or online liveness checking;
+- one after which an atom of the temporal properties fails as TLC adds the state it was
+  expanding to the behavior graphs: TLC then prints the atom's call stack with the trace to the
+  successor, which isn't followed;
+- one whose replay doesn't follow TLC: a successor before it TLC fails to fingerprint, one
+  outside the model that violates an invariant, a next-state relation the evaluator doesn't split
+  into TLC's actions, or a step that no longer fails;
+- one the configuration binds (`= TRUE` outside a module scope, or `<-`), whose definition the
+  search evaluates where TLC holds the value and drops the constraint bound to TRUE (`a failing action constraint the
+  configuration binds`);
+- a CONSTRAINT or a VIEW that fails to evaluate on a successor, as before (`a constraint, a VIEW
+  or an action property that fails on a successor`).
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
@@ -359,6 +445,18 @@ it from one that printed something else. Each is outside the corpus:
   constant definition or an assumption reads TLCExt's registers, or where only those builtins make
   a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
   them where it computes them, as it did before it checked them.
+- an action constraint that applies a constant function outside its domain
+  (`f == [i \in 0..2 |-> i]`, `AC == f[x'] > 0`, the failDom* cases of
+  `prove-it-cli/tests/action-constraint-failures`). TLC words the failure with the `FcnRcdValue` it
+  computed as it started (`Attempted to apply function:`), which the evaluator doesn't build, so
+  the binary declines it (`applied a function outside its domain`), as it did before action
+  constraint failures were native. To win them back, build a constant definition's function as
+  TLC computed it at startup.
+- SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
+  that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
+  which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
+  where the jar was. The report declines it, as the binary did; winning it back takes knowing
+  whether TLC's class path holds the CommunityModules.
 
 A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
 through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
@@ -390,6 +488,14 @@ SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTEND
 `J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."
 (exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
 an extended module") checks it with the TypeScript check until the front end matches.
+
+A module file holding a UTF-8-encoded surrogate (`ED A0`–`ED BF` and a byte after) reads otherwise
+than TLC reads it in the CLI of `dist/`. SANY reads a file through Java's
+`InputStreamReader(stream, "UTF-8")` (`TLAplusParser`'s constructor), which replaces each such
+three bytes with one U+FFFD, and the CLI's `readFileSync(path, "utf8")` with three. With
+`"\xED\xA0\x80"` in a string, TLC prints `Len` of it as 1 and the CLI as 3. Every other sequence
+that isn't UTF-8 decodes alike in both (compared over 8,150 sequences of one to four bytes). The
+binary's `read_to_string` gives such a file no text and declines it.
 
 A membership in a union whose enumerable side holds a value of another type is TRUE where TLC
 fails: TLC tests the enumerable side first, so `ASSUME 1 \in Int \cup {"none"}` stops with
@@ -448,6 +554,41 @@ A file that instantiates or extends its own inner module of the file's name, as 
 holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
 its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
 keys by name. It panicked before. It comes back once the front end scopes contexts as SANY does.
+
+The adversarial rounds of the extended file's inner modules and of the library's typed errors
+found these, each wrong on main alike:
+
+| Repro | TLC | Native |
+|---|---|---|
+| A root inner module named `Sequences`, `Naturals`, `TLCExt` or `_TLCTrace`, in TLC's default mode, which writes the trace exploration spec | `Multiply-defined module '<X>'` | checks the model |
+| `EXTENDS A, B` where A and B each hold an inner `---- MODULE In ----` | SANY's warning "the declaration of 'In' conflicts with its declaration at …" | no warning |
+| `K == INSTANCE B`, B `EXTENDS A` and holds an inner `In`, as A does | `*** Errors: 1`, the multiply-defined module | `*** Errors: 2`, adding "Substitution error, probably due to error in module being instantiated." |
+| `EXTENDS B, A` where B instantiates `In.tla` and A holds an inner `In` | `Multiply-defined module 'In'` at A's | checks the model |
+| A constant definition `P == PrintT("in")` in a module the spec instantiates | prints `"in"` for the module's definition and again for the instance's | prints it once |
+| `P == PrintT("hi")` with a configuration error, such as `NEXT Nope` | prints `"hi"`, then the error | the error alone |
+| `CONSTANT K = 3000000000` in the configuration | `NumberFormatException: For input string: "3000000000"` | `Integer overflow` |
+| `CONSTANT K <- D` with `CONSTRAINT D`, D a set | `TLC expected a boolean value, but did not find one.` at D's definition | `The constraint of D is equal to {1}` |
+| `CONSTANT K <- Nope` where `K` isn't declared and the spec's `C` is unassigned | `The constant parameter C is not assigned a value by the configuration file.` | `In the configuration file, the identifier K does not appear in the specification.` |
+| A circular dependency SANY finds as it loads the files, with standard modules to load before the cycle closes | stops at the cycle | parses those modules first, as it finds the cycle once it has loaded every file |
+
+The PrintT ones wait on steps 2 and 3 of [startup.md](startup.md); the library leaves those to the
+TypeScript check, which prints first.
+
+The front end binds a name to an inner module of an extended file as SANY does
+(`resolveNamesBetweenSpecAndExtention`) only where its first load stops at "Cannot find source
+file" for the name, every module of the spec has a name of its own, at any depth, and the name
+names no file or standard module. There binding by name is SANY's binding by scope. Elsewhere it
+reports what it reported before, which differs from TLC where SANY binds the name:
+
+- where the name also names a file or a standard module, it reads that file, where SANY reads none
+  and uses the inner module;
+- where two modules of the spec share a name, two inner modules or an inner module and a file or
+  standard module, it reports "Cannot find source file";
+- where a file extends a name bound to an inner module that extends another file, it reports
+  "Cannot find source file" too.
+
+Each comes back once the front end scopes an inner module's context as SANY does, instead of by
+name; branch `extended-inner-lexical` holds a version that tracks more of SANY's scopes by name.
 
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
@@ -530,6 +671,34 @@ Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as 
 path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
 run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
 
+`prove-it tlapm` declines a module file with a byte that isn't UTF-8 where it reaches what the
+obligations hold (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
+with U+FFFD for each such byte, two different strings would be one and a theorem that they are equal
+proved. Each such byte reads as the lone surrogate U+DC00 plus the byte (Python's surrogateescape),
+which no UTF-8 text or file name holds, one character for one byte so that columns count it as
+tlapm's, which count bytes, do, where a cut-short sequence such as `E2 82` was one U+FFFD; and a run
+declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
+comment, before the module's header or past its end, it changes nothing printed or proved.
+
+Declines to win back: the obligations hold more than they print or prove, such as the theorems of
+an extended module, so a byte that isn't UTF-8 in a string there declines, where reading it as
+U+FFFD printed what tlapm prints only because nothing read it. A method pragma's string is read with JSON's escapes, so
+`"\udcfe"` is the same lone surrogate as the byte `FE`, and where a module read holds that byte,
+in a comment or anywhere, it declines too, as does a string that spells such an escape, `"\udcfe"`,
+which the check takes for the byte as the lexer's error spells it. The check finds an escaped byte by its UTF-16
+unit, so a character outside the BMP whose low surrogate is `\uDCxx` declines too where a module
+read the byte `xx`. tla-ts's lexer ends a `\*` comment at a line feed
+alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
+comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
+
+`prove-it tlapm` also declines where tlapm's choice of module decides what is proved, until the
+native command follows it: a module found in more than one directory it searches (`a module …
+found in more than one directory tlapm searches`), since tlapm searches `.`, the `-I` directories
+in the order given and its standard library (`M_save.file_search'`), and a module's own directory
+only after them, where tla-ts searched the module's directory first; and two modules of one name on
+the command line, of which tlapm proves the first and tla-ts proved the last. Each proved a theorem
+tlapm fails. A run that declines prints nothing before the decline.
+
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
 (prover.md, "Deviations from Z3", has the gate):
@@ -543,6 +712,20 @@ record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm pr
 | PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
 | Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
 
+These print other than TLC as main does, outside the corpus and the tests; a review of the ALIAS
+cells TLC holds as values found them. Each spec has `VARIABLE x`, `Init == x = 0`,
+`Next == x' = x + 1`, `Inv == x < 2` and `Q == [y |-> x]`:
+
+| Shape | Configuration | TLC | Native |
+|---|---|---|---|
+| An ALIAS substituted by a definition the configuration assigns | `CONSTANT Alias <- Q`, `CONSTANT Q = 3` | "The alias Alias cannot be a constant." at each state | the trace through Q |
+| An ALIAS assigned a value the front end can't normalize, on a run that prints a trace | `CONSTANT Alias = {1, "a"}` | "The alias Alias cannot be a constant." at each state | the trace through the spec's definition |
+| A POSTCONDITION the configuration assigns | `CONSTANT PC = TRUE`, `POSTCONDITION PC` | "The post condition PC cannot be a constant." | another report |
+| An ALIAS whose body is a literal, substituted by a module-scoped `<- [M]` in its module, the root, an extended or an instantiated one | `Alias == 3`, `CONSTANT Alias <- [M] Q` | TLC's unexpected ClassCastException | the plain states |
+| An ALIAS substituted for a definition of a module both extended and instantiated with parameters, which TLC doesn't compute | `Y <- Alias`, with `Alias == 3` | the plain states | "The alias Alias cannot be a constant." |
+| An ALIAS from an INSTANCE with substitutions that the configuration assigns in that module | `INSTANCE N WITH c <- 1`, N's `Alias == [y \|-> c]`, `CONSTANT Alias = [N] 3` | `y = 1` | the plain states |
+| A configuration entry scoped to an inner module, which TLC doesn't count as a module of the spec | `CONSTANT F <- [Inner] Alias` | "the module name Inner is not a module in the specification", exit 151 | the trace, exit 12 |
+
 At the level of inputs, #321 also moved ten `smt` inputs tlapm proves from `unsat` to `unknown`
 that main proved: 0dfd248d2bdad02b, 12a106a46ac87d79, 181f3f94d6c23221, 2f279b8fcc0984d6,
 52c873767bacfb3b, 6181e3d8679eef23, 6f1bb244e72ae33d, 8e48a4022642d1fc, b2ca9ee96f3db516 and
@@ -552,6 +735,15 @@ b2ca9ee96f3db516 (Boulanger #240) loses its obligation; Zenon or Isabelle prove 
 The engine's `decide` declines a text that holds a lone surrogate, so the obligation fails. A string
 that is one would read as U+FFFD, two different strings would be one name, and the axiom that they
 differ would prove anything. No obligation of tlapm's record holds one.
+
+The SMT solver decides only the SMT-LIB tlapm's encoder writes (`script_subset.rs`). Two known
+issues remain within that subset. tlapm's encoder writes neither shape, and no input of the record
+reaches either:
+
+| Repro | Z3 4.8.9 | The port |
+|---|---|---|
+| `(assert (= (* b1 b2 … b12) 1))`, a product of 12 binomials over 24 Int constants | sat at once | runs on: `nlsat::levelwise::add_linear_approximations` reaches `AlgebraicManager::select` and `Rational::floor`, which read neither the deadline nor the step limit |
+| `(assert (distinct c0 … c11999))` over `Idv` | not measured | aborts the process: the rewriter's `mk_not` allocates past the size cap, which preprocessing never reads, and an allocation failure isn't caught |
 
 #### Every reason
 
@@ -770,6 +962,13 @@ Checks the binary answered and now declines, because the answer matched TLC only
   of strings the search made`), and the library's tests assert TLC's output through the interpreter.
   Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
   every successor and every expression in TLC's order, which a later change would have to show.
+- **Live progress during a native check.** The native check reports `onProgress`'s events once it
+  ends, where the TypeScript check reported them as the search reached them. Live delivery would
+  take a callback the check calls as the printer prints: a threadsafe function in the napi binding,
+  since the check runs on its own thread, and an import in the WebAssembly binding. `checkSources`
+  reruns the check from the start each round it needs another file, so the events of a round may
+  go out only once it is the last: the library would hold them until the check returns without
+  asking for more, or the check would ask for every file before it searches.
 
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
@@ -844,9 +1043,33 @@ no full `tlc-stdout`. Recording them is deferred.
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
-- **Native progress events (a blocker for S4).** `check` hands a call with `onProgress` to the
-  TypeScript check, since the native check reports none of the points of the search at which TLC
-  prints a message. It must report them, in `CheckProgress`'s shape, before the interpreter goes.
+- **Native progress events (done).** The native check records each message TLC prints, with its
+  code, its place among the spec's prints and, for a check of the temporal properties part way
+  through the search, the search's counts; `check` turns them into `CheckProgress` events
+  (`src/native-progress.ts`), which it reports once the check ends. On the corpus models the native
+  check answers, the events and their order equal the TypeScript check's (746 of the 762 it answers
+  of 920; of the other 16, six were the report of a violation, fixed since, five the clock's, one
+  a warning below, and four differed in the result or the prints: TLC's recordings side with the
+  native check on Github696b's error and VoteProof's deadlock, where the TypeScript check differs,
+  and the two UserModuleOverride models printed what the property prints as TLC finds the behavior
+  violating it only through the TypeScript check, which the native check's `onPrint` now
+  receives too), but for
+  the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
+  the native search made, every minute, and a `liveness-started` with `isComplete` false for each
+  check part way through it, at the native search's own times. Where the two differ otherwise:
+  - `liveness-initializing` takes `isSymmetric` and `isConstrained` from the configuration, as
+    TLC warns, where the TypeScript check first drops a constraint that is a constant formula and
+    a symmetry whose sets are too small;
+  - a name the configuration lists twice gets the warning event TLC prints, which drops a warning
+    identical to one it printed (`MP.printWarning`), where the TypeScript check reports it twice;
+  - with `-nowarning`, the native check reports none of the warnings TLC doesn't print, where the
+    TypeScript check still reports a constant-level invariant, a state-level property and a
+    symmetry set too small;
+  - what the native engine doesn't print yet has no event either: the warning of an EXCEPT on a
+    record's missing field in an ASSUME or an ALIAS, and what the spec prints as TLC searches for a
+    liveness counterexample;
+  - `PROVE_IT_TEST_LIVE_CHECK_AT` names the state before whose expansion the native search checks,
+    and after whose expansion the TypeScript check does.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the
@@ -944,10 +1167,28 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   `checkSources` returns it as `outcome` (ABI 16): the status, the counts of TLC's statistics, what
   the spec printed, and each violation or error TLC reports, as its message's code and text with
   the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
-- Where the native check declines, stops before it searches (a spec or configuration TLC rejects,
-  which the TypeScript check throws for), or the options ask for what only the TypeScript check
-  does (`onProgress`, `onPause`, `dump`, `systemProperties`, a `ModelConfig`, TLC 1.7.4), the
-  TypeScript check runs and its result converts (`src/check-result.ts`).
+- Where the native check stops before it searches, at a spec or configuration TLC rejects,
+  `checkSources` returns the error the TypeScript check throws for it as `thrown` (ABI 25), and
+  the library throws it: a `TlaSyntaxError` with SANY's report (`createSanyError`), a
+  `TlaConfigError` with the message of tla-front's config error, which keeps `errors.ts`'s, or a
+  `TlaEvaluationError` for a temporal formula TLC can't check or a spec with no next-state action.
+  SANY's report holds the errors of the first module with errors and the warnings so far, which
+  the TypeScript check throws. The library leaves the error to the TypeScript check where the two
+  may differ:
+  - a fatal error of SANY's parsing phase, as the TypeScript check loads modules as it links them;
+  - a module with a literal TLC can't hold, which the TypeScript check rejects as it loads it;
+  - the arity of an instance's substitution, and a module defined twice, which it words its own
+    way or doesn't report;
+  - other evaluation errors, which it throws as its subclasses or not at all;
+  - a stop after SANY or the spec printed, and a configuration or evaluation error in a spec that
+    may print as TLC computes its constants (one that names `Print`, `PrintT`, TLCExt or IOUtils,
+    or loads a Java override), which it prints first.
+- Where the native check declines, stops before it searches without `thrown`, or the options ask
+  for what only the TypeScript check does (`onPause`, a `dump` as `dot`, TLC 1.7.4), the
+  TypeScript check runs and its result converts (`src/check-result.ts`). A `ModelConfig` goes to
+  the native check as the configuration file that holds it (`formatConfig`), and a plain `dump` as
+  `-dump`, whose file `checkSources` returns among its `writes` for `writeFile`.
+  `systemProperties` go to the native check as a Java launch's `-D`, as the binary reads them.
 - `Value` and `formatValue` are no longer exported.
 - A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
   trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against
@@ -958,7 +1199,9 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
 
 Of the 387 calls of the library's `check` in `bun run test` at the change, 199 ran natively. Of
 the 188 others, 114 stopped before the search, 44 were declined and 30 asked for the TypeScript
-check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check.
+check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check. With
+`thrown`, 104 of the 115 calls at 9cd662c6 that stop before the search throw the TypeScript check's
+error natively, and 11 leave it to the TypeScript check.
 
 ### What changes for users
 

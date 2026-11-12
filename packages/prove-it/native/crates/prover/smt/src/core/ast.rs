@@ -19,7 +19,7 @@ use crate::util::hash::{
     ast_array_hash, bytes_hash, combine_hash, get_composite_hash, mk_mix, string_hash,
 };
 use crate::util::hashtable::ObjMap;
-use crate::util::rlimit::ResourceLimit;
+use crate::util::rlimit::{MAX_SIZE, ResourceLimit, StopReason};
 
 /// An expression: an index into the manager's tables, -1 for Z3's null pointer.
 pub type Expr = i32;
@@ -454,6 +454,20 @@ pub struct AstManager {
     pub limit: ResourceLimit,
 }
 
+// The first slot an application's table probes: its hash mixed (murmur3's fmix32), since the
+// hashes of constants and of an operator over consecutive handles are consecutive, and linear
+// probing over runs of them took quadratic time. Nothing iterates the table, so only the time
+// changes.
+fn get_home_slot(hash: i32, mask: usize) -> usize {
+    let mut mixed = hash as u32;
+    mixed ^= mixed >> 16;
+    mixed = mixed.wrapping_mul(0x85eb_ca6b);
+    mixed ^= mixed >> 13;
+    mixed = mixed.wrapping_mul(0xc2b2_ae35);
+    mixed ^= mixed >> 16;
+    mixed as usize & mask
+}
+
 impl AstManager {
     pub fn new(limit: ResourceLimit) -> AstManager {
         let mut manager = AstManager {
@@ -545,6 +559,11 @@ impl AstManager {
 
     pub fn get_ref_count(&self, expr: Expr) -> i32 {
         self.ref_counts[expr as usize]
+    }
+
+    /// The expressions the manager has made: a deleted one keeps its place in the tables.
+    pub fn get_num_nodes(&self) -> usize {
+        self.kinds.len()
     }
 
     /// get_num_asts: the live expressions, declarations and sorts, with Z3's own expressions.
@@ -1328,6 +1347,9 @@ impl AstManager {
         hash: u32,
     ) -> Expr {
         let id = self.kinds.len();
+        if id > MAX_SIZE {
+            self.limit.stop(StopReason::Heap);
+        }
         self.hashes.push(hash);
         self.kinds.push(kind);
         self.decls.push(decl);
@@ -1377,7 +1399,7 @@ impl AstManager {
             hash = hash.wrapping_mul(GOLDEN_MULTIPLIER).wrapping_add(*arg);
         }
         let mask = self.app_handles.len() - 1;
-        let mut slot = hash as usize & mask;
+        let mut slot = get_home_slot(hash, mask);
         while self.app_handles[slot] != -1 {
             let candidate = self.app_handles[slot];
             if self.app_hashes[slot] == hash
@@ -1432,7 +1454,7 @@ impl AstManager {
 
     fn insert_app(&mut self, hash: i32, id: Expr) {
         let mask = self.app_handles.len() - 1;
-        let mut slot = hash as usize & mask;
+        let mut slot = get_home_slot(hash, mask);
         while self.app_handles[slot] != -1 {
             slot = (slot + 1) & mask;
         }

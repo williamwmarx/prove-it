@@ -6,16 +6,16 @@ use std::rc::Rc;
 
 use crate::ast::{
     Bound, BoundPattern, Declaration, Definition, DefinitionKind, ExceptPathStep, Expr,
-    ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier, SourceRange,
+    ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier,
 };
 use crate::lexer::TokenKind;
-use crate::sany::nodes::{Decimal, Label, LetIn, NodeId, NodeKind, SanyLocation};
+use crate::sany::nodes::{Decimal, DefKind, Label, LetIn, NodeId, NodeKind, SanyLocation};
 use crate::sany::source::{
     TokenSpan, find_name_tokens, find_token, get_expression_span, get_matching_index,
     get_parenthesized_span, get_span_location, get_token_index, get_token_location,
     get_token_source, is_token,
 };
-use crate::sany::{Result, not_yet};
+use crate::sany::{Result, not_yet, not_yet_unlinkable};
 
 use super::{
     BoundSymbols, LabelGoal, LocalContext, ModuleGenerator, OpApplBinding, get_bound_groups,
@@ -350,59 +350,14 @@ impl ModuleGenerator<'_> {
         }
     }
 
-    /// `getRecursiveDeclarations` (generator.ts 1299–1324): the declarations of a RECURSIVE
-    /// statement from the token at `start`, which the syntax tree of a LET leaves out.
-    pub(super) fn get_recursive_declarations(&self, start: usize) -> Vec<Rc<Declaration>> {
-        let file = &self.file;
-        let mut declarations = Vec::new();
-        let mut index = start;
-        while file
-            .tokens
-            .get(index)
-            .is_some_and(|token| token.kind == TokenKind::Identifier)
-        {
-            let end = if is_token(file, index + 1, "(") {
-                get_matching_index(file, index + 1)
-            } else {
-                index
-            };
-            let arity = file
-                .tokens
-                .get(index + 1..end)
-                .unwrap_or_default()
-                .iter()
-                .filter(|token| &*token.text == "_")
-                .count();
-            let position = self.get_token_position(index);
-            declarations.push(Rc::new(Declaration {
-                name: file.tokens[index].text.clone(),
-                arity,
-                location: Location {
-                    line: position.line,
-                    column: position.column,
-                    range: Some(SourceRange {
-                        module: file.name.clone(),
-                        start: position,
-                        end: self.get_token_position(end),
-                    }),
-                },
-            }));
-            if !is_token(file, end + 1, ",") {
-                break;
-            }
-            index = end + 2;
-        }
-        declarations
-    }
-
     /// `getLetUnits` (generator.ts 1326–1354): the units of a LET in source order, with its
     /// RECURSIVE statements found among its tokens. `expression` is a `Let`.
     pub(super) fn get_let_units(&self, expression: &Expr) -> Vec<LetUnit> {
         let ExpressionKind::Let {
             definitions,
             instances,
+            recursive,
             body,
-            ..
         } = &expression.kind
         else {
             return Vec::new();
@@ -425,16 +380,36 @@ impl ModuleGenerator<'_> {
             .collect();
         let let_start = get_expression_span(file, expression).start;
         let body_start = get_parenthesized_span(file, get_expression_span(file, body)).start;
-        let recursives: Vec<(LetUnit, TokenSpan)> = (let_start + 1..body_start)
+        let statements: Vec<usize> = (let_start + 1..body_start)
             .filter(|&index| {
                 let is_in_unit = units
                     .iter()
                     .any(|(_, span)| span.start <= index && index <= span.end);
                 is_token(file, index, "RECURSIVE") && !is_in_unit
             })
-            .map(|index| {
+            .collect();
+        // Each RECURSIVE statement declares the parser's declarations from its keyword to the next
+        // statement's, or to the body.
+        let get_place = |index: usize| {
+            let position = self.get_token_position(index);
+            (position.line, position.column)
+        };
+        let recursives: Vec<(LetUnit, TokenSpan)> = statements
+            .iter()
+            .enumerate()
+            .map(|(order, &index)| {
+                let start = get_place(index);
+                let end = get_place(statements.get(order + 1).copied().unwrap_or(body_start));
+                let declarations = recursive
+                    .iter()
+                    .filter(|declaration| {
+                        let place = (declaration.location.line, declaration.location.column);
+                        start < place && place < end
+                    })
+                    .cloned()
+                    .collect();
                 (
-                    LetUnit::Recursive(self.get_recursive_declarations(index + 1)),
+                    LetUnit::Recursive(declarations),
                     TokenSpan {
                         start: index,
                         end: index,
@@ -455,6 +430,10 @@ impl ModuleGenerator<'_> {
         let (let_in, context) = self.with_context(LocalContext::default(), |generator| {
             generator.state.cur_level += 1;
             let level = generator.state.cur_level as usize;
+            // Generator.unresolvedCnt holds MaxLetInLevel, 100, levels.
+            if level >= 100 {
+                return not_yet_unlinkable("LETs nested 100 deep");
+            }
             let counts = &mut generator.state.unresolved_count;
             if counts.len() <= level {
                 counts.resize(level + 1, 0);
@@ -615,7 +594,7 @@ impl ModuleGenerator<'_> {
     }
 
     /// `{ ...createNullNode(), isAbsent: true }`.
-    fn create_absent_node(&mut self) -> NodeId {
+    pub(super) fn create_absent_node(&mut self) -> NodeId {
         let node = self.create_null_node();
         if let NodeKind::OpAppl(application) = &mut self.spec.graph.node_mut(node).kind {
             application.is_absent = true;
@@ -896,6 +875,21 @@ impl ModuleGenerator<'_> {
                     return Ok(function_node);
                 }
                 self.check_recursion(function_node);
+                // A user-defined function applied to two or more arguments takes as many as its
+                // definition binds; a tuple of bound symbols is one.
+                if let Some((name, parameters)) = self.get_function_parameters(function_node)
+                    && args.len() >= 2
+                    && parameters != args.len()
+                {
+                    self.add_error(
+                        &location,
+                        format!(
+                            "Function '{name}' is defined with {parameters} parameters, but is applied to {} arguments.",
+                            args.len()
+                        ),
+                    );
+                    return Ok(self.create_null_node());
+                }
                 let argument = if let [argument] = args.as_slice() {
                     self.generate_expression(argument)?
                 } else {
@@ -999,6 +993,46 @@ impl ModuleGenerator<'_> {
     }
 
     /// `generateLabel` (generator.ts 1713–1782). `expression` is a `Label`.
+    /// The name of the function `node` applies and how many parameters its definition binds,
+    /// where it applies a user-defined function (`$NonRecursiveFcnSpec` or `$RecursiveFcnSpec`).
+    fn get_function_parameters(&self, node: NodeId) -> Option<(Name, usize)> {
+        let graph = &self.spec.graph;
+        let NodeKind::OpAppl(application) = graph.kind(node) else {
+            return None;
+        };
+        let definition = graph.op_def(application.operator)?;
+        if definition.def_kind != DefKind::UserDefined {
+            return None;
+        }
+        let NodeKind::OpAppl(body) = graph.kind(definition.body?) else {
+            return None;
+        };
+        let is_function = graph.op_def(body.operator).is_some_and(|operator| {
+            matches!(
+                &*operator.name,
+                "$NonRecursiveFcnSpec" | "$RecursiveFcnSpec"
+            )
+        });
+        if !is_function {
+            return None;
+        }
+        let tuples = body.tuple_ors.as_deref().unwrap_or_default();
+        let parameters = body
+            .bounded
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(index, symbols)| {
+                if tuples.get(index).copied().unwrap_or(false) {
+                    1
+                } else {
+                    symbols.len()
+                }
+            });
+        Some((definition.name.clone(), parameters.sum()))
+    }
+
     pub(super) fn generate_label(&mut self, expression: &Expr) -> Result<NodeId> {
         let ExpressionKind::Label {
             name, params, body, ..

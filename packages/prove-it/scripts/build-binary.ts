@@ -8,26 +8,22 @@
 // Usage: bun scripts/build-binary.ts [--aot]
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { ADDON_FILE } from "../src/engine/native";
-import { createSanySnapshot } from "../src/sany/snapshot";
 import { NPM_DIRECTORY, PLATFORMS } from "./platform-packages";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 // The ahead-of-time executable embeds a file at its path from the package, and fails to build
 // (CorruptedCompiledProgram) when an entry it embeds there is also on disk, as dist's are, so the
-// snapshot and the entries go in a directory of their own.
+// addon and the entries go in a directory of their own.
 const EMBEDDED_DIRECTORY = "dist/embedded";
-const SNAPSHOT_PATH = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, "sany-snapshot.json");
 
-mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
-writeFileSync(SNAPSHOT_PATH, JSON.stringify(createSanySnapshot()));
-
-// The addon goes beside the snapshot, where the loader looks for it.
+// The addon goes beside the CLI's entry, where the loader looks for it.
 const addonPath = join(PACKAGE_DIRECTORY, EMBEDDED_DIRECTORY, ADDON_FILE);
+mkdirSync(dirname(addonPath), { recursive: true });
 const builtAddon = PLATFORMS.filter(
   (platform) => platform.os === process.platform && platform.cpu === process.arch,
 )
@@ -51,14 +47,13 @@ const result = await Bun.build({
     outfile,
     // Bun 1.4.4 doesn't know aot yet; its canary does.
     ...(isAheadOfTime ? ({ aot: true } as object) : {}),
-    // The CLI reads the snapshot from beside itself, where the executable embeds it.
-    assets: [SNAPSHOT_PATH, ...(builtAddon === undefined ? [] : [addonPath])],
+    assets: builtAddon === undefined ? [] : [addonPath],
     autoloadDotenv: false,
     autoloadBunfig: false,
   },
-  // The library finds its workers and the snapshot beside itself, as dist does. The bytecode
-  // executable embeds the entries and the snapshot side by side at its root, and the ahead-of-time
-  // one the snapshot at its path from the package, so the entries go beside it.
+  // The library finds its workers and the addon beside itself, as dist does. The bytecode
+  // executable embeds the entries and the addon side by side at its root, and the ahead-of-time
+  // one the addon at its path from the package, so the entries go beside it.
   naming: isAheadOfTime ? `${EMBEDDED_DIRECTORY}/[name].[ext]` : "[name].[ext]",
   // An ahead-of-time binary holds machine code rather than bytecode.
   bytecode: !isAheadOfTime,
@@ -67,7 +62,7 @@ const result = await Bun.build({
     // HACK: the bytecode executable bundles each entry into one module, whose URL every module it
     // holds shares, while the ahead-of-time one keeps a module for each source file, at its path
     // from the package in Bun's embedded file system, /$bunfs/root. Each module would look for the
-    // workers and the snapshot beside its own source file, so they all take the URL of the CLI's
+    // workers and the addon beside its own source file, so they all take the URL of the CLI's
     // entry instead.
     ...(isAheadOfTime && {
       "import.meta.url": JSON.stringify(`file:///$bunfs/root/${EMBEDDED_DIRECTORY}/cli.js`),
@@ -81,19 +76,19 @@ const result = await Bun.build({
 result.logs.forEach((log) => console.error(log));
 if (!result.success) process.exit(1);
 
-// The executable throws a MissingBuildFileError for the snapshot or a worker it can't find: every
-// check reads the snapshot, the interpreter starts its workers with -workers when the engine is
-// off, and tlapm starts the prover's with --threads.
+// The executable throws a MissingBuildFileError for a worker it can't find: the interpreter starts
+// its workers with -workers when the engine is off, and tlapm starts the prover's with --threads.
 const cacheDirectory = mkdtempSync(join(tmpdir(), "prove-it-binary-"));
+// SANY's report needs the engine, so a check of a model needs the embedded addon.
 const checks = [
-  {
-    directory: "tests/fixtures/commit",
-    args: ["-workers", "2", "Commit.cfg"],
-    env: { PROVE_IT_ENGINE: "0" },
-  },
   ...(builtAddon === undefined
     ? []
     : [
+        {
+          directory: "tests/fixtures/commit",
+          args: ["-workers", "2", "Commit.cfg"],
+          env: { PROVE_IT_ENGINE: "0" },
+        },
         {
           directory: "tests/fixtures/commit",
           args: ["Commit.cfg"],

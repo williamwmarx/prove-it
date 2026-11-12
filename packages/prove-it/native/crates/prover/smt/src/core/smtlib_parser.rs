@@ -812,6 +812,7 @@ impl<'a> SmtlibParser<'a> {
         let mut results = Vec::new();
         self.enter(m, sexpr, &mut frames, &mut results)?;
         while let Some(frame) = frames.last_mut() {
+            m.limit.check_time()?;
             if frame.next < frame.list.len() {
                 let current = frame.list[frame.next];
                 frame.next += 1;
@@ -852,6 +853,7 @@ pub fn parse_smtlib(
     let mut assertions = Vec::new();
     let mut has_check_sat = false;
     for command in commands {
+        m.limit.check_time()?;
         let list = parser.expect_list(Some(command))?;
         let name = parser.expect_symbol(list.first().copied())?;
         match name {

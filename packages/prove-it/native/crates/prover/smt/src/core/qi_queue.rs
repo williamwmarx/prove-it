@@ -408,6 +408,11 @@ impl QiQueue {
         Ok(instance)
     }
 
+    /// The instances queued to be made now or delayed to the final check.
+    pub fn get_num_entries(&self) -> usize {
+        self.new_entries.len() + self.delayed_entries.len()
+    }
+
     pub fn has_work(&self) -> bool {
         !self.new_entries.is_empty()
     }

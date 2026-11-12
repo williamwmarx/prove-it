@@ -1,0 +1,3 @@
+---- MODULE M ----
+A == Undef
+====

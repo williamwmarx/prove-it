@@ -1,0 +1,5 @@
+---- MODULE Spec ----
+VARIABLE v
+THEOREM T1 == TRUE
+PROOF BY MODULE Naturals
+====

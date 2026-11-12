@@ -3,17 +3,15 @@
 //! against a term, backtracking through the choices of BIND, CONTINUE and CHOOSE, and reports each
 //! match.
 //!
-//! The interpreter keeps the context and its `onMatch`. It runs with the context borrowed for
-//! reading, and the code trees it runs are its matcher's (`Mam::code`), read through the context.
-//! `onMatch` is always the quantifier manager's `addInstance`, which writes to the context, so a
-//! YIELD records its match in `matches`, in order, and the matcher hands them to
-//! `qmanager_add_instance` when the run returns (`e_matching.rs`).
+//! The interpreter keeps the context and its `onMatch`, which is always the quantifier manager's
+//! `addInstance`: a YIELD hands its match to `qmanager_add_instance` at once, as Z3's on_match
+//! does, so a run that finds the same instance many times keeps none of them. The code trees it
+//! runs are its matcher's (`Mam::code`), which the matcher lends it for the run (`e_matching.rs`).
 
 use std::collections::HashSet;
 
-use crate::core::ast::{Decl, Expr, OP_ITE};
+use crate::core::ast::{Decl, OP_ITE};
 use crate::core::context::Context;
-use crate::core::e_matching::MamKind;
 use crate::core::enode::EnodeId;
 use crate::core::mam_compiler::{
     CodeTrees, InstrId, Instruction, JOINT_GROUND, JOINT_NESTED, JOINT_VAR, Joint, OP_BIND,
@@ -21,16 +19,6 @@ use crate::core::mam_compiler::{
     OP_INIT, OP_IS_CGR, OP_NOOP, OP_PFILTER, OP_YIELD, TreeId, set_at,
 };
 use crate::util::error::SmtError;
-
-/// A match a YIELD reported: the quantifier, its bindings in `Interpreter::match_bindings`, and the
-/// largest generation of a term the match went through.
-#[derive(Clone, Copy, Debug)]
-pub struct PendingMatch {
-    pub quantifier: Expr,
-    pub start: usize,
-    pub len: usize,
-    pub max_generation: u32,
-}
 
 /// The terms a CONTINUE goes through: all the terms with its label, or the parents a joint gave.
 #[derive(Clone, Debug)]
@@ -74,9 +62,8 @@ pub struct Interpreter {
     max_generation: u32,
     // The arguments of a GET_CGR.
     args: Vec<EnodeId>,
-    /// The matches of the run, which the matcher hands to `onMatch`.
-    pub matches: Vec<PendingMatch>,
-    pub match_bindings: Vec<EnodeId>,
+    // The bindings of a YIELD.
+    bindings: Vec<EnodeId>,
 }
 
 impl Interpreter {
@@ -409,12 +396,11 @@ impl Interpreter {
     /// an instruction fails. It returns false when the search is canceled.
     pub fn execute_core(
         &mut self,
-        context: &Context,
-        mam: MamKind,
+        context: &mut Context,
+        code: &CodeTrees,
         tree: TreeId,
         node: EnodeId,
     ) -> Result<bool, SmtError> {
-        let code = &context.qmanager.mam(mam).code;
         self.max_generation = context.get_generation(node);
         set_at(&mut self.registers, 0, Some(node), None);
         self.top = 0;
@@ -500,20 +486,19 @@ impl Interpreter {
                 }
                 OP_YIELD => {
                     let num_bindings = instr.regs.len();
-                    let start = self.match_bindings.len();
+                    self.bindings.clear();
                     for index in 0..num_bindings {
                         let binding = self
                             .get_register(instr.regs[num_bindings - index - 1])
                             .ok_or_else(missing_register)?;
-                        self.match_bindings.push(binding);
+                        self.bindings.push(binding);
                         self.update_max_generation(context, binding);
                     }
-                    self.matches.push(PendingMatch {
-                        quantifier: instr.quantifier,
-                        start,
-                        len: num_bindings,
-                        max_generation: self.max_generation,
-                    });
+                    context.qmanager_add_instance(
+                        instr.quantifier,
+                        &self.bindings,
+                        self.max_generation,
+                    )?;
                 }
                 OP_GET_ENODE => {
                     set_at(&mut self.registers, instr.oreg as usize, instr.enode, None);
@@ -560,19 +545,19 @@ impl Interpreter {
     /// term once.
     pub fn execute(
         &mut self,
-        context: &Context,
-        mam: MamKind,
+        context: &mut Context,
+        code: &CodeTrees,
         tree: TreeId,
     ) -> Result<bool, SmtError> {
-        let code = context.qmanager.mam(mam).code.tree(tree);
-        let mut seen = code.is_filtering_candidates.then(HashSet::new);
-        for node in &code.candidates {
+        let code_tree = code.tree(tree);
+        let mut seen = code_tree.is_filtering_candidates.then(HashSet::new);
+        for node in &code_tree.candidates {
             if seen.as_ref().is_some_and(|seen| seen.contains(node))
                 || !context.enode_arena.is_cgr(*node)
             {
                 continue;
             }
-            if context.check_canceled() || !self.execute_core(context, mam, tree, *node)? {
+            if context.check_canceled() || !self.execute_core(context, code, tree, *node)? {
                 return Ok(false);
             }
             if let Some(seen) = seen.as_mut() {

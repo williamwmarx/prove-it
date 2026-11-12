@@ -89,20 +89,19 @@ describe("the deciders' steps and statistics", () => {
   });
 });
 
-// Z3 takes steps parsing up to a malformed term, so a step limit can stop it before the error, which
-// is why prover-inputs.ts records an input that fails without a step limit.
+// An input in the commands and symbols tlapm writes, with an ill-sorted application, which Z3
+// reports as an error and reads past. The SMT solver checks sorts before any step, as it decides
+// only the SMT-LIB tlapm writes, so it declines the input whatever the step limit.
 describe("a malformed input", () => {
-  const text = "(declare-const x Int)\n(assert (= (+ x 1) x))\n(assert (foo x))\n(check-sat)";
+  const text =
+    "(set-logic UFNIA)\n(declare-fun smt__x () Int)\n(declare-fun smt__p (Int) Bool)\n" +
+    "(assert (= (+ smt__x 1) smt__x))\n(assert (smt__p true))\n(check-sat)";
 
-  it("fails without a step limit", () => {
-    expect(decide("smt", text)).toMatchObject({ kind: "error" });
-  });
-
-  it("is unknown when the step limit stops it first", () => {
-    expect(decide("smt", text, 0)).toMatchObject({
+  it.each([undefined, 0])("is declined with a step limit of %p", (stepLimit) => {
+    expect(decide("smt", text, stepLimit)).toEqual({
       kind: "decided",
       verdict: "unknown",
-      statistics: { stop: "steps" },
+      statistics: { stop: "unsupported", steps: 0 },
     });
   });
 });

@@ -1,15 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
 import { check, type CheckOptions } from "../../src";
+import { checkWithInterpreter } from "../native-check";
 
 // What check passes to onPrint, with the TypeScript check answering where `isInterpreted` asks
-// for it: onProgress takes the TypeScript path.
+// for it.
 const getPrinted = async (options: CheckOptions, isInterpreted: boolean) => {
   const printed: string[] = [];
-  await check({
+  await (isInterpreted ? checkWithInterpreter : check)({
     ...options,
     onPrint: (text) => printed.push(text),
-    ...(isInterpreted && { onProgress: () => {} }),
   });
   return printed;
 };

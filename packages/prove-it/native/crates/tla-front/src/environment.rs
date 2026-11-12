@@ -61,6 +61,9 @@ pub struct Environment {
     pub builtins: OrderedMap<Name, Builtin>,
     /// The configuration's substitutions, by the key of what it substitutes for.
     pub substitutions: OrderedMap<Name, Name>,
+    /// The names of the definitions the configuration substitutes for anything but a declared
+    /// constant of the root module, as written, so in any module.
+    pub substitutes_for_definitions: Vec<Name>,
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
     /// The values the configuration assigns operators with parameters, by key, which TLC gives
@@ -296,7 +299,7 @@ fn get_substitutions(instances: &[Rc<Instance>]) -> Vec<Expr> {
         .collect()
 }
 
-fn reject_module_literals(module: &Module) -> Result<()> {
+pub(crate) fn reject_module_literals(module: &Module) -> Result<()> {
     let mut expressions: Vec<Expr> = Vec::new();
     for definition in &module.definitions {
         if let DefinitionKind::Function { bounds } = &definition.kind {
@@ -377,7 +380,7 @@ struct Collected {
 }
 
 /// SANY's messages for a module: its warnings and its errors.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModuleMessages {
     pub warnings: Vec<SanyError>,
     pub errors: Vec<SanyError>,
@@ -1399,6 +1402,11 @@ impl Linker<'_> {
             self.get_standard_symbols(&instance.module)
         };
         if let Some(standard_symbols) = standard_symbols {
+            if !instance.params.is_empty() {
+                return Err(FrontError::NotYet(
+                    "an INSTANCE of a standard module with parameters".to_owned(),
+                ));
+            }
             return Ok(get_standard_instance_symbols(instance, &standard_symbols));
         }
         let linked = match nested {
@@ -2422,6 +2430,15 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         definitions,
         builtins,
         substitutions,
+        substitutes_for_definitions: config
+            .substitutions
+            .iter()
+            .filter(|substitution| {
+                substitution.module.is_some()
+                    || !(declared_constants.iter()).any(|constant| **constant == *substitution.name)
+            })
+            .map(|substitution| Rc::from(substitution.target.as_str()))
+            .collect(),
         constants,
         operator_constants,
         variables,

@@ -11,11 +11,9 @@
 //! The closures the matcher pushes on its own trail are the enum `MamTrail`, and those it and its
 //! compiler push on the context's trail are `MamClosure`.
 //!
-//! The TypeScript's `onMatch` is the quantifier manager's `addInstance`, the only one it makes.
-//! The interpreter runs with the context borrowed for reading, so it keeps the matches a run
-//! yields, in order, and `mam_execute`/`mam_execute_core` hand them to `qmanager_add_instance` once
-//! the run returns. Nothing a match reads changes in between: `addInstance` only touches the
-//! fingerprints and the instance queue, which the interpreter never reads, and takes no step.
+//! The TypeScript's `onMatch` is the quantifier manager's `addInstance`, the only one it makes, and
+//! the interpreter calls `qmanager_add_instance` on each match. `mam_execute`/`mam_execute_core`
+//! lend it the matcher's code trees for the run, which `addInstance` never reads.
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -1116,18 +1114,17 @@ impl Context {
         second.plbls_high |= plbls_high;
     }
 
-    /// The interpreter's execute, with its matches handed to the quantifier manager.
+    /// The interpreter's execute, with the matcher's interpreter and code trees.
     fn mam_execute(&mut self, mam: MamKind, tree: TreeId) -> Result<bool, SmtError> {
         let mut interpreter = mem::take(&mut self.qmanager.mam_mut(mam).interpreter);
-        let result = interpreter.execute(self, mam, tree);
-        let flushed = self.mam_add_matches(&mut interpreter);
+        let code = mem::take(&mut self.qmanager.mam_mut(mam).code);
+        let result = interpreter.execute(self, &code, tree);
         self.qmanager.mam_mut(mam).interpreter = interpreter;
-        let result = result?;
-        flushed?;
-        Ok(result)
+        self.qmanager.mam_mut(mam).code = code;
+        result
     }
 
-    /// The interpreter's execute_core, with its matches handed to the quantifier manager.
+    /// The interpreter's execute_core, with the matcher's interpreter and code trees.
     fn mam_execute_core(
         &mut self,
         mam: MamKind,
@@ -1135,33 +1132,10 @@ impl Context {
         node: EnodeId,
     ) -> Result<bool, SmtError> {
         let mut interpreter = mem::take(&mut self.qmanager.mam_mut(mam).interpreter);
-        let result = interpreter.execute_core(self, mam, tree, node);
-        let flushed = self.mam_add_matches(&mut interpreter);
+        let code = mem::take(&mut self.qmanager.mam_mut(mam).code);
+        let result = interpreter.execute_core(self, &code, tree, node);
         self.qmanager.mam_mut(mam).interpreter = interpreter;
-        let result = result?;
-        flushed?;
-        Ok(result)
-    }
-
-    /// onMatch for each match of the run, in the order the interpreter found them.
-    fn mam_add_matches(&mut self, interpreter: &mut Interpreter) -> Result<(), SmtError> {
-        let matches = mem::take(&mut interpreter.matches);
-        let bindings = mem::take(&mut interpreter.match_bindings);
-        let mut result = Ok(());
-        for found in &matches {
-            result = self.qmanager_add_instance(
-                found.quantifier,
-                &bindings[found.start..found.start + found.len],
-                found.max_generation,
-            );
-            if result.is_err() {
-                break;
-            }
-        }
-        interpreter.matches = matches;
-        interpreter.matches.clear();
-        interpreter.match_bindings = bindings;
-        interpreter.match_bindings.clear();
+        self.qmanager.mam_mut(mam).code = code;
         result
     }
 

@@ -27,7 +27,7 @@ use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
-use crate::outcome::{Counts, Reported, ReportedState};
+use crate::outcome::{Counts, Reported, ReportedState, Thrown};
 use crate::resolve::{Config, find_config, find_spec, get_module_directories};
 use crate::simulation::{Simulating, check_simulation, get_simulation, print_banner};
 use crate::stack::{alongside, on_search_stack};
@@ -289,8 +289,8 @@ pub(crate) enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// behavior graphs of how many states in all.
-    LivenessStarted(u64, u64),
+    /// behavior graphs of how many states in all, and the search's counts then.
+    LivenessStarted(u64, u64, Statistics),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
     Print(Option<String>),
@@ -548,8 +548,17 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, states));
+    fn liveness_started(&mut self, branches: u64, expanded: u64, states: u64, counts: [u64; 3]) {
+        let [generated, distinct, depth] = counts;
+        let statistics = Statistics {
+            generated,
+            distinct,
+            queued: distinct.saturating_sub(expanded),
+            depth,
+        };
+        let _ = self
+            .sender
+            .send(Event::LivenessStarted(branches, states, statistics));
     }
 
     fn liveness_finished(&mut self) {
@@ -1025,6 +1034,18 @@ fn check_spec(
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
+    // The directories the run may write into after the search: the spec's, for the trace
+    // exploration spec, and each dump's.
+    let platform = printer.host.platform();
+    if is_trace_spec_written(args, spec_path, platform) {
+        let (directory, _, _) = te_spec::get_files_place(main_file, started);
+        printer.host.prepare_write(Path::new(&directory));
+    }
+    for path in dumps.get_paths() {
+        if let Some(end) = platform.last_separator(path) {
+            printer.host.prepare_write(Path::new(&path[..end.max(1)]));
+        }
+    }
     // Everything the check reads, it has read by now: a host still missing some answers it first.
     if !printer.host.is_complete() {
         return NOT_NATIVE;
@@ -1131,6 +1152,7 @@ fn check_spec(
             }
         }
     }
+    let is_sany_warned = front.is_sany_warned;
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
         printer.is_trace_recorded = is_trace_recorded(args, spec_path, printer.host.platform());
@@ -1354,8 +1376,9 @@ fn check_spec(
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, states) => {
+                    Event::LivenessStarted(branches, states, statistics) => {
                         checking = Some(print_liveness_check(printer, branches, states, "current"));
+                        printer.count_message(statistics.counts());
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {
@@ -1767,11 +1790,12 @@ fn check_spec(
                 // TLC stops with no statistics, before it would search, as at an error the
                 // library throws, so the outcome has no status.
                 ViolationKind::NoNextState => {
-                    printer.print(
-                        code::NO_NEXT_ACTION,
-                        Level::Error,
-                        "No next state actions defined to generate successor states from.",
-                    );
+                    let message =
+                        "No next state actions defined to generate successor states from.";
+                    printer.print(code::NO_NEXT_ACTION, Level::Error, message);
+                    if !is_sany_warned {
+                        printer.set_thrown(Some(Thrown::Evaluation(message.to_owned())));
+                    }
                     print_finished(printer, start);
                     Ok(NO_NEXT_ACTION)
                 }
@@ -1792,7 +1816,9 @@ fn check_spec(
                         && (dumps.has_command_line_dumps()
                             || !config.postconditions.is_empty()
                                 && match site {
-                                    ErrorSite::Invariant(_) => false,
+                                    ErrorSite::Invariant(_) | ErrorSite::ActionConstraint(_) => {
+                                        false
+                                    }
                                     ErrorSite::Next => {
                                         ir.model.check_deadlock
                                             && violation.counts.generated != initial_generated
@@ -1812,6 +1838,28 @@ fn check_spec(
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
+                // TLC holds a name the configuration binds as its value, and drops an action
+                // constraint bound to TRUE (`SpecProcessor.processModelConstraints`), where the
+                // search evaluated the definition. A binding scoped to a module (`= [M] TRUE`)
+                // leaves TLC evaluating the definition.
+                ViolationKind::Error {
+                    site: ErrorSite::ActionConstraint(position),
+                } if config
+                    .action_constraints
+                    .get(position as usize)
+                    .is_some_and(|name| {
+                        config
+                            .constants
+                            .iter()
+                            .any(|constant| constant.module.is_none() && &constant.name == name)
+                            || config
+                                .substitutions
+                                .iter()
+                                .any(|substitution| &substitution.name == name)
+                    }) =>
+                {
+                    Err("a failing action constraint the configuration binds".to_string())
+                }
                 ViolationKind::Error { site } => 'failure: {
                     let added = match violation.added.as_ref().map(|_| format_added(&violation)) {
                         Some(Err(why)) => break 'failure Err(why.to_string()),
@@ -1829,6 +1877,9 @@ fn check_spec(
                             ErrorSite::Init => Site::Init,
                             ErrorSite::Next => Site::Next,
                             ErrorSite::Invariant(position) => Site::Invariant(position),
+                            ErrorSite::ActionConstraint(position) => {
+                                Site::ActionConstraint(position)
+                            }
                             ErrorSite::InitialConstraint(position) => {
                                 Site::InitialConstraint(position)
                             }
@@ -2324,7 +2375,8 @@ pub(crate) fn print_violation(
         for line in first_output.clone().chain(&trace.trace_output) {
             printer.printed(line);
         }
-        // What the atoms print as TLC finds the properties the lasso it rebuilt violates.
+        // What the atoms print as TLC finds the properties the lasso it rebuilt violates, as it
+        // checks them rather than as it rebuilds the trace.
         for line in &lasso_printed {
             printer.printed(line);
         }
@@ -2793,6 +2845,7 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
         print_finished(printer, start);
         return SPEC_PARSE_ERROR;
     }
+    printer.set_thrown(failure.thrown.clone());
     print_sany(printer, &failure.sany);
     for warning in &failure.warnings {
         print_startup_message(printer, warning);

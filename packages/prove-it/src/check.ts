@@ -452,6 +452,15 @@ export const getIrStartup = (
         isStartupDefinition(definition, environment),
       ),
     ),
+    substitutesForDefinitions: new Set(
+      config.substitutions
+        .filter(
+          (substitution) =>
+            substitution.module !== undefined ||
+            !specification.rootConstants.some((constant) => constant.name === substitution.name),
+        )
+        .map((substitution) => substitution.target),
+    ),
     predicates: getConstantPredicates(config, environment),
     symmetry:
       symmetry?.kind === "Operator"

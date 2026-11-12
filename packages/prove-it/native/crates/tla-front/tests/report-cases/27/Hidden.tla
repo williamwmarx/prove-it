@@ -1,0 +1,3 @@
+---- MODULE Hidden ----
+HIDE bar
+====

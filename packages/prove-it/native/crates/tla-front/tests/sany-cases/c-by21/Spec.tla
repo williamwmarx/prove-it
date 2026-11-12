@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+THEOREM TRUE
+BY
+THEOREM FALSE
+BY
+====

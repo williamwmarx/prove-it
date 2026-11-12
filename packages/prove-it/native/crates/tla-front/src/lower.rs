@@ -71,6 +71,24 @@ pub fn is_startup_definition(
         && facts.is_constant_level(definition, environment)
 }
 
+/// Whether TLC holds a definition as the value of its literal body (`IrDefinition::LITERAL`).
+fn is_held_literal(definition: &Rc<Definition>, environment: &Environment) -> bool {
+    // A theorem's or an assumption's name, which has no body range, isn't one of TLC's definitions.
+    matches!(
+        definition.kind,
+        DefinitionKind::Operator {
+            body_range: Some(_),
+            ..
+        }
+    ) && matches!(
+        definition.body.kind,
+        ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+    ) && !environment.is_substituted(definition)
+        && !environment
+            .substitutes_for_definitions
+            .contains(&definition.name)
+}
+
 /// The builtins whose effects show each time TLC evaluates them again: they print, set a
 /// register, draw at random, or read the clock or TLC's registers. Reading a file or the process's
 /// environment again reads the same.
@@ -826,6 +844,10 @@ impl<'a> Lowering<'a> {
             IrDefinition::NORMALIZED
         } else {
             0
+        } | if is_held_literal(definition, self.environment) {
+            IrDefinition::LITERAL
+        } else {
+            0
         };
         let id = self.open(&definition.location);
         let name = self.get_text(&definition.name);
@@ -1386,6 +1408,30 @@ impl<'a> Lowering<'a> {
             .view
             .as_deref()
             .map(|name| self.config_name(name).root);
+        // TLC holds a name the configuration assigns as its value, which it rejects as the ALIAS
+        // (`Spec.getAliasSpec`), unless the configuration also substitutes for it, which TLC applies
+        // after (`SpecProcessor.processSpec`): the IR keeps it as a constant, which the trace
+        // printer finds, where the front end normalizes the value. An assignment scoped to a
+        // module (`= [N] v`) reaches only that module's definitions, which the front end doesn't
+        // tell apart, so only an unscoped one counts.
+        if let Some(name) = config.alias.as_deref()
+            && (config.constants.iter())
+                .any(|constant| constant.name == name && constant.module.is_none())
+            && !self.environment.substitutions.contains_key(name)
+            && (self.environment.definitions.get(name)).is_some_and(|definition| {
+                !matches!(
+                    definition.kind,
+                    DefinitionKind::Operator {
+                        body_range: None,
+                        ..
+                    }
+                )
+            })
+            && let Some(value) = self.environment.constants.get(name).cloned()
+            && self.normalize(&value).is_ok()
+        {
+            self.get_constant_index(&Rc::from(name), &value)?;
+        }
         let alias = config
             .alias
             .as_deref()

@@ -1,0 +1,3 @@
+---- MODULE Inner ----
+CONSTANT o
+====

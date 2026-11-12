@@ -4,10 +4,11 @@
 // it, or declines it before producing any state, and the interpreter checks what it declines.
 
 import type { CheckProgress, CheckStatus } from "../check";
-import { EngineInvariantError } from "../errors";
+import { EngineInvariantError, type SanyError } from "../errors";
 import type { ProofObligation } from "../prover/prove";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
+import type { TlcVersion } from "../tlc/version";
 import {
   createStateDecoder,
   FALSE_TAG,
@@ -110,12 +111,28 @@ export type NativeCheckSources =
       exitCode: number;
       out: string;
       err: string;
+      thrown: NativeThrown | undefined;
       outcome: NativeCheckOutcome | undefined;
       // Each file the library's check wrote, in order, which the library writes.
       writes: { path: string; bytes: Uint8Array; isAppended: boolean }[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
+
+// Where the check stops before it searches, the error the TypeScript check throws: the report of
+// a TlaSyntaxError, or the message of a TlaConfigError or a TlaEvaluationError.
+export type NativeThrown =
+  | {
+      kind: "syntax";
+      sany: {
+        errors: SanyError[];
+        warnings: SanyError[];
+        isFatal: boolean;
+        parseError: string | undefined;
+      };
+    }
+  | { kind: "config"; message: string }
+  | { kind: "evaluation"; message: string };
 
 // What the check found, where it searched (prove-it-check's outcome.rs): each variable of a state
 // as its name, TLC's text of its value, and the value as plain data in JSON.
@@ -128,6 +145,16 @@ export interface NativeCheckOutcome {
   prints: string[];
   // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
   sanyWarnings: string[];
+  // TLC's messages as the check printed them: each one's code, level and text, how many of
+  // `prints` came before it, and the search's counts (generated, distinct, queued, depth) where
+  // TLC checks the temporal properties part way through the search.
+  messages: [
+    code: number,
+    level: number,
+    text: string,
+    printsBefore: number,
+    counts: [number, number, number, number] | undefined,
+  ][];
   violations: {
     code: number;
     headline: string;
@@ -300,8 +327,10 @@ export interface NativeAddon extends NativeStoreHooks {
   ) => NativeCheckSources;
   sanyText: (
     root: string,
-    source: string,
+    source: string | null,
     fileName: string | undefined,
+    version: TlcVersion,
+    rootExtendees: string[],
     known: [string, string | undefined][],
   ) => NativeSanyText;
   resolveFiles: (
@@ -480,7 +509,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 24;
+const ABI_VERSION = 25;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

@@ -1,0 +1,4 @@
+---- MODULE Spec ----
+THEOREM TRUE
+BY DEF MODULE Nope
+====

@@ -280,10 +280,9 @@ fn run_files(test: &str, files: &[(&str, &str)], args: &[&str]) -> (String, Path
 }
 
 #[test]
-fn declines_a_module_of_the_users_that_a_trace_module_uses() {
+fn reports_a_module_of_the_users_that_a_trace_module_uses() {
     // SANY analyzes `_JsonTrace` with the spec, and a Json beside the spec in place of the
-    // standard one fails TLC's run, though the spec doesn't use it (TLC at d8fb231 reports
-    // "Unknown operator: `JsonSerialize'." in _JsonTrace).
+    // standard one fails TLC's run, though the spec doesn't use it (TLC at d8fb231).
     let (text, directory) = run_files(
         "users-json",
         &[
@@ -297,7 +296,8 @@ fn declines_a_module_of_the_users_that_a_trace_module_uses() {
         &["-tool", "-modelcheck", "-dumpTrace", "json", "M.json", "M"],
     );
     assert!(
-        text.contains("not native yet: SANY's report of a module of the user's that the trace exploration spec uses"),
+        text.contains("\n\nUnknown operator: `JsonSerialize'.\n")
+            && text.contains("Parsing or semantic analysis failed."),
         "{text}"
     );
     assert!(!directory.join("M.json").exists());

@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync, writeSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { arch, availableParallelism, EOL, release, type } from "node:os";
 import { basename, delimiter, dirname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -33,8 +41,6 @@ import { describeRange } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
 import { SANY_174_STANDARD_MODULES } from "../sany/modules";
-import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
-import { readSanySnapshot } from "../sany/snapshot";
 import type { StateDump } from "../state-graph";
 import {
   getFailureHeadline,
@@ -61,11 +67,12 @@ import {
 import type { TlcVersion } from "../tlc/version";
 import { formatState } from "../values";
 import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
-import { getNativeSanyReport } from "./sany-text";
+import { getNativeSanyReport, type SanyModuleOrigin } from "./sany-text";
 import {
   getInputPaths,
   getMachine,
   type JavaProperties,
+  NOT_NATIVE_EXIT_CODE,
   printError,
   readFileKey,
   reportErrors,
@@ -539,15 +546,24 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
 // turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
 // -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
-const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
+const getFlags = (args: ParsedArgs) => {
   const flags = [...args.unknown, ...args.options.map((option) => option.name)];
-  const hasFlag = (name: string, alias = name) =>
+  return (name: string, alias = name) =>
     flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
-  const isSpecGenerated =
-    hasFlag("-generateSpecTE") ||
-    (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue"));
-  return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
 };
+
+// Whether TLC writes the trace exploration spec of an error trace.
+const isTraceSpecWritten = (args: ParsedArgs, version: TlcVersion) => {
+  const hasFlag = getFlags(args);
+  return (
+    version !== "1.7.4" &&
+    (hasFlag("-generateSpecTE") ||
+      (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue")))
+  );
+};
+
+const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) =>
+  isTraceSpecWritten(args, version) && !getFlags(args)("-noGenerateSpecTEBin", "-noTEBin");
 
 // Where TLC finds the files of the spec it was `given`, as the binary finds them (prove-it-host's
 // resolveFiles), throwing where the binary declines what TLC does. `resolverLine` is the Java launch
@@ -712,42 +728,33 @@ const checkSpec = async (
   const describeFile = (name: string, origin: SanyModuleOrigin) =>
     files.getText(`file:${origin}:${name}`);
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for, as
-  // tla-front writes them where it does. It doesn't write TLC 1.7.4's, nor the trace exploration
-  // spec's TLC parses with the spec, which the TypeScript report does.
-  const nativeSany =
-    version === "master" && !isRecorded && existsSync(specPath)
-      ? getNativeSanyReport(specPath, readFileSync(specPath, "utf8"), version, {
-          fileName: specName,
-          loadModule,
-          describeFile,
-        })
-      : undefined;
-  if (nativeSany) writeOutput(1, nativeSany.text);
-  const sany =
-    nativeSany ??
-    getSanyReport(
-      specPath,
-      // TLC 1.7.4's SANY reports each module it can't find as it looks for it.
-      version === "1.7.4"
-        ? (name: string) => {
-            const text = loadModule(name);
-            if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) {
-              console.error(files.getText(`missing:${name}.tla`));
+  // tla-front writes them. TLC 1.7.4 prints to its error stream where SANY doesn't find a module,
+  // as SANY looks for it.
+  const isFound = existsSync(specPath);
+  // SANY reads a root module no file holds from its standard modules.
+  const sany = getNativeSanyReport(
+    specPath,
+    isFound ? readFileSync(specPath, "utf8") : null,
+    version,
+    {
+      fileName: specName,
+      loadModule:
+        version === "1.7.4"
+          ? (name: string) => {
+              const text = loadModule(name);
+              if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) {
+                console.error(files.getText(`missing:${name}.tla`));
+              }
+              return text;
             }
-            return text;
-          }
-        : loadModule,
-      {
-        fileName: specName,
-        describeFile,
-        version,
-        // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-        rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
-        precomputed: version === "master" ? readSanySnapshot() : undefined,
-        onPrint: (text) => writeOutput(1, text),
-        onPrintError: (text) => writeOutput(2, text),
-      },
-    );
+          : loadModule,
+      describeFile,
+      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+      rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+    },
+  );
+  if ("declined" in sany) return declineNatively(sany.declined);
+  writeOutput(1, sany.text);
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, findClass);
     printParsingFailed();
@@ -791,6 +798,16 @@ const checkSpec = async (
       },
       sany.readings,
     );
+    // TLC writes the trace exploration spec of a trace of two states or more and prints its path,
+    // which only the native check writes.
+    if (
+      isTraceSpecWritten(args, version) &&
+      !fileName.includes("_TTrace") &&
+      [result.violation, result.failure].some((error) => (error?.trace.length ?? 0) > 1)
+    ) {
+      console.error("prove-it: not native yet: the trace exploration spec of an error trace");
+      return NOT_NATIVE_EXIT_CODE;
+    }
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
@@ -857,9 +874,18 @@ export const checkNatively = async (commandLine: string[]) => {
   reportEngine(
     `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
   );
+  // What the check wrote, in its order, into the directories the CLI said it can write.
+  result.writes.forEach((write) =>
+    (write.isAppended ? appendFileSync : writeFileSync)(write.path, write.bytes),
+  );
   process.stdout.write(result.out);
   process.stderr.write(result.err);
   return result.exitCode;
+};
+
+const declineNatively = (reason: string) => {
+  console.error(`prove-it: not native yet: ${reason}`);
+  return NOT_NATIVE_EXIT_CODE;
 };
 
 export const checkSpecs = async (
@@ -868,6 +894,11 @@ export const checkSpecs = async (
   java: JavaProperties,
   isTlcLaunch = false,
 ) => {
+  // Only the native check writes -dumpTrace's files, such as where it can't write them.
+  if (args.includes("-dumpTrace")) {
+    console.error("prove-it: not native yet: -dumpTrace");
+    return NOT_NATIVE_EXIT_CODE;
+  }
   const parsed = CHECK_COMMAND.parse(args);
   const isConfigured = parsed.has("-config");
   const specPaths = getSpecPaths(parsed);

@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+THEOREM TRUE
+<*>a. TRUE OBVIOUS
+<*>a. TRUE OBVIOUS
+<*> QED OBVIOUS
+====

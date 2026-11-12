@@ -70,3 +70,94 @@ fn orders_the_strings_it_makes_as_tlc() {
         std::fs::remove_dir_all(run).expect("removed");
     }
 }
+
+// What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
+fn get_untimed(text: &str) -> String {
+    let start = text.find("Starting... (").expect("the start");
+    let end = text.find("Finished in ").expect("the end");
+    text[start..end]
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            ![
+                "Finished computing initial states",
+                "Progress(",
+                "Checking ",
+                "Finished checking temporal properties",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+// Checks a fixture of tests/string-order as Stop with the arguments and returns its output, its
+// untimed text, and the dump `-dump dumped` wrote, if any.
+fn check_fixture(
+    test: &str,
+    (spec, config): (&str, &str),
+    args: &[&str],
+) -> (Output, String, Option<String>) {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
+    let read = |name: &str| std::fs::read_to_string(directory.join(name)).expect("a fixture");
+    let run = std::env::temp_dir().join(format!("prove-it-strings-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&run).expect("a directory");
+    std::fs::write(run.join("Stop.tla"), read(spec)).expect("the spec");
+    std::fs::write(run.join("Stop.cfg"), read(config)).expect("the configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(args)
+        .arg("Stop")
+        .current_dir(&run)
+        .output()
+        .expect("the binary runs");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let dump = std::fs::read_to_string(run.join("dumped.dump")).ok();
+    std::fs::remove_dir_all(run).expect("removed");
+    (output, get_untimed(&text), dump)
+}
+
+// tests/string-order/trace-modules: strings the root module writes only as literals, in functions,
+// records, sets, sequences and nested values, with strings only the configuration names and field
+// names of records, as TLC printed them at d8fb231 on 1 and 4 workers. SANY interns each token's
+// image as it parses a module (SyntaxTreeNode.java 227), a string literal's with its quotes, and
+// the literal's text only in semantic analysis (StringNode.java 39), after every module is parsed
+// (SANY.java 192-196); TLC compares strings by when it interned them (UniqueString.java 227-231).
+// Recording the trace, TLC adds `_TLCTrace` to the root module's EXTENDS (TraceExplorationSpec.java
+// 70, ParameterizedSpecObj.java 76-85), whose modules name `e`, `b` and `Len` as identifiers, so
+// with -noTE `"z"` comes before `"e"`, as the spec writes them, and without it after.
+// tests/string-order/model-values: an untyped model value comes before any other value
+// (ModelValue.java 166), and model values in the order the configuration names them, which TLC
+// reads before SANY parses (Spec.java 100, ModelValue.java 91).
+#[test]
+fn orders_strings_by_the_tokens_of_the_modules_tlc_parses() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
+    let read = |name: &str| std::fs::read_to_string(directory.join(name)).expect("a fixture");
+    for workers in ["1", "4"] {
+        for name in ["trace-modules", "model-values"] {
+            let (output, untimed, _) = check_fixture(
+                &format!("{name}-{workers}"),
+                (&format!("{name}.tla"), &format!("{name}.cfg")),
+                &["-workers", workers, "-noTE"],
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(12),
+                "{name} {workers}: {untimed}"
+            );
+            assert_eq!(untimed, read(&format!("{name}.txt")), "{name} {workers}");
+        }
+        let (output, untimed, dump) = check_fixture(
+            &format!("recorded-{workers}"),
+            ("trace-modules.tla", "trace-modules-recorded.cfg"),
+            &["-workers", workers, "-dump", "dumped"],
+        );
+        assert_eq!(output.status.code(), Some(0), "{workers}: {untimed}");
+        assert_eq!(untimed, read("trace-modules-recorded.txt"), "{workers}");
+        assert_eq!(
+            dump.as_deref(),
+            Some(read("trace-modules-recorded.dump").as_str()),
+            "{workers}"
+        );
+    }
+}

@@ -347,4 +347,56 @@ describe("the native engine", () => {
     },
     SPAWN_LIMIT_MS,
   );
+
+  // The engine as WebAssembly writes SANY's report on its module's stack, which holds the nesting
+  // the front end writes before it declines, as the addon's report thread does.
+  it.if(WASM !== undefined && ADDON !== undefined)(
+    "writes SANY's report of a deeply nested module as WebAssembly as the addon does",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-report-"));
+      const nest = (depth: number) =>
+        Array.from({ length: depth }).reduce<string>(
+          (body, _, index) => `LET a${index} == ${body} IN a${index}`,
+          "TRUE",
+        );
+      const specs = {
+        Lets99: nest(99),
+        Lets110: nest(110),
+        Parens1100: `${"(".repeat(1100)}TRUE${")".repeat(1100)}`,
+      };
+      try {
+        const report = (name: string, env: Record<string, string | undefined>) => {
+          const run = spawnSync("bun", [SOURCE_CLI, `${name}.cfg`], {
+            cwd: directory,
+            encoding: "utf8",
+            env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined, ...env },
+          });
+          return {
+            status: run.status,
+            lines: `${run.stdout}${run.stderr}`
+              .split("\n")
+              .filter((line) => /not native yet|distinct states found|Error/.test(line)),
+          };
+        };
+        Object.entries(specs).forEach(([name, body]) => {
+          writeFileSync(
+            join(directory, `${name}.tla`),
+            `---- MODULE ${name} ----\nVARIABLE x\nB == ${body}\nInit == x = 0 /\\ B\nNext == x' = x\n====\n`,
+          );
+          writeFileSync(join(directory, `${name}.cfg`), "INIT Init\nNEXT Next\n");
+        });
+        const wasm = Object.keys(specs).map((name) => report(name, { PROVE_IT_ENGINE_WASM: WASM }));
+        expect(wasm.map(({ status }) => status)).toEqual([0, 1, 0]);
+        expect(wasm[1].lines).toEqual([
+          "prove-it: not native yet: SANY's report of LETs nested 100 deep",
+        ]);
+        expect(wasm).toEqual(
+          Object.keys(specs).map((name) => report(name, { PROVE_IT_ENGINE_ADDON: ADDON })),
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    SPAWN_LIMIT_MS,
+  );
 });

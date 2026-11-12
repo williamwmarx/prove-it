@@ -15,6 +15,7 @@ use tla_front::tlc_messages::CodedError;
 
 use crate::host::{Files, Host};
 use crate::host_path::{Platform, get_stem};
+use crate::outcome::Thrown;
 use crate::stack::on_search_stack;
 
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
@@ -31,6 +32,8 @@ pub struct Failure {
     pub warnings: Vec<StartupMessage>,
     pub error: Option<CodedError>,
     pub exception: Option<String>,
+    /// The error the library throws for it.
+    pub thrown: Option<Thrown>,
 }
 
 /// The model to check, and what TLC prints after the banner and before it computes the initial
@@ -42,6 +45,8 @@ pub struct Front {
     pub defined_names: Vec<String>,
     /// None for the IR a test names, which has no source to report on.
     pub sany: Option<String>,
+    /// Whether SANY printed a warning, which the TypeScript check prints before an error it throws.
+    pub is_sany_warned: bool,
     /// What TLC prints of the Java overrides it loads, right after `Starting...`.
     pub override_messages: Vec<StartupMessage>,
     /// What TLC prints itself after the constant definitions and before the assumptions (the
@@ -52,6 +57,12 @@ pub struct Front {
     /// SANY's warnings as the library's check prints them (`LoweredModel::sany_warnings`).
     pub sany_warnings: Vec<String>,
 }
+
+/// The errors tla-front raises for a temporal formula TLC can't check (`live.rs`).
+const TEMPORAL_ERRORS: &[&str] = &[
+    "Temporal formula is a tautology (its negation is unsatisfiable).",
+    "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+];
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
 /// SANY rejects the spec or lowering the model raises an error TLC reports with a code. Otherwise
@@ -93,6 +104,7 @@ pub fn read_front(
                 ir,
                 defined_names: Vec::new(),
                 sany: None,
+                is_sany_warned: false,
                 override_messages: Vec::new(),
                 startup_messages: Vec::new(),
                 initial_label: None,
@@ -118,6 +130,7 @@ pub fn read_front(
                 warnings: Vec::new(),
                 error: None,
                 exception: sany.exception,
+                thrown: sany.report.map(Thrown::Syntax),
             }));
         }
         // TLC's seed as the generator's 64 bits.
@@ -133,6 +146,7 @@ pub fn read_front(
                 return Ok(Read::Model(Front {
                     ir: lowered.ir,
                     defined_names: lowered.defined_names,
+                    is_sany_warned: sany.is_warned,
                     sany: Some(sany.text),
                     startup_messages: lowered.startup_messages?,
                     override_messages: lowered.override_messages,
@@ -147,11 +161,23 @@ pub fn read_front(
         let coded = error
             .get_coded(is_tool)
             .ok_or("an error tla-front raises that TLC reports without a code")?;
+        // The TypeScript check prints SANY's warnings before it throws. Of the evaluation errors,
+        // it throws those of the temporal formulas as TlaEvaluationError itself, and others as its
+        // subclasses or not at all.
+        let thrown = match error {
+            _ if sany.is_warned => None,
+            FrontError::Config(message) => Some(Thrown::Config(message)),
+            FrontError::Evaluation(message) if TEMPORAL_ERRORS.contains(&message.as_str()) => {
+                Some(Thrown::Evaluation(message))
+            }
+            _ => None,
+        };
         Ok(Read::Failed(Failure {
             sany: sany.text,
             warnings,
             error: Some(coded),
             exception: None,
+            thrown,
         }))
     })();
     if unreadable.get() {

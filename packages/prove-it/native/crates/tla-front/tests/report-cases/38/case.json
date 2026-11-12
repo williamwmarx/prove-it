@@ -1,0 +1,5 @@
+{
+  "root": "RReplacedNaturals",
+  "version": "master",
+  "test": "analyzes the modules that depend on a standard module the specification replaces"
+}

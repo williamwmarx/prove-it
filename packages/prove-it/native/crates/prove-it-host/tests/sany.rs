@@ -42,6 +42,8 @@ fn write(source: &str, read: impl Fn(&str) -> Option<String>) -> (HostValue, Vec
             HostValue::text("Main"),
             HostValue::text(source),
             HostValue::text("Main"),
+            HostValue::text("master"),
+            HostValue::Array(Vec::new()),
             HostValue::Array(entries),
         ])
         .expect("a result");
@@ -80,10 +82,9 @@ fn writes_the_report_once_it_has_the_modules_and_files_it_names() {
 
 #[test]
 fn declines_what_tla_front_does_not_write() {
-    let (result, _) = write(
-        "---- MODULE Main ----\nUSE MODULE Inner\n---- MODULE Inner ----\n====\n====\n",
-        |_| Some("Main.tla".to_owned()),
-    );
+    let (result, _) = write("---- MODULE Main ----\na' == a\n====\n", |_| {
+        Some("Main.tla".to_owned())
+    });
     assert_eq!(text(&get(&result, "kind")), "declined");
 }
 

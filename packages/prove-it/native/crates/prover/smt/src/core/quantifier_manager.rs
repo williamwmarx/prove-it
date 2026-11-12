@@ -106,6 +106,11 @@ impl DefaultQuantifierManager {
         !self.quantifiers.is_empty()
     }
 
+    /// The instances the matchers found: a fingerprint of each, and the entries of those queued.
+    pub fn get_num_found(&self) -> usize {
+        self.fingerprints.len() + self.qi_queue.get_num_entries()
+    }
+
     pub fn get_generation(&self, quantifier: Expr) -> u32 {
         self.generations.get(&quantifier).copied().unwrap_or(0)
     }

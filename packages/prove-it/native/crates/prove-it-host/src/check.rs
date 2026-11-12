@@ -2,9 +2,10 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err, outcome, writes }`, what the binary prints to stdout
-//!   and stderr, its exit code, what the check found where it searched, as the library reports it
-//!   (`get_outcome`), and each file the library's check wrote, in order, as
+//! - `{ kind: "checked", exitCode, out, err, thrown, outcome, writes }`, what the binary prints to
+//!   stdout and stderr, its exit code, what the check found where it searched, as the library
+//!   reports it (`get_outcome`), or else, where it stopped before it searched, the error the
+//!   library throws (`get_thrown`), and each file the library's check wrote, in order, as
 //!   `{ path, bytes, isAppended }`;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
 //!   everything before it searches, so a round never searches;
@@ -36,12 +37,13 @@ use prove_it_check::host_path::Platform;
 use prove_it_check::resolve::{self, Config, Resolved};
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{
-    FileDescriber, FileDescription, FileKind, Files, Host, Machine, Outcome, Output,
+    FileDescriber, FileDescription, FileKind, Files, Host, Machine, Outcome, Output, Thrown,
 };
 use tla_engine::clock::Instant;
+use tla_front::errors::SanyError;
 
 use crate::hooks::HookResult;
-use crate::sources::{Sources, get_text};
+use crate::sources::{Sources, get_strings, get_text};
 use crate::value::HostValue;
 
 /// How the binary starts the line on stderr that declines a model.
@@ -63,6 +65,16 @@ struct SourcesHost {
 }
 
 impl SourcesHost {
+    /// Whether the CLI can write into the directory (`writable:<directory>`), the working
+    /// directory for a path without one.
+    fn is_writable(&self, directory: Option<&Path>) -> bool {
+        let directory = directory
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .map_or_else(|| self.current_dir(), Path::to_path_buf);
+        self.get(format!("writable:{}", directory.display()))
+            .is_some()
+    }
+
     fn get(&self, key: String) -> Option<String> {
         self.sources.get(key)
     }
@@ -180,16 +192,24 @@ impl Host for SourcesHost {
         !self.is_library
     }
 
-    // The library answers for files itself, so the check's writes go back to it.
+    // The check's writes go back to JavaScript, which writes them: the library's, which answers
+    // for files itself, and the CLI's into a directory it said it can write.
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
-        if self.is_library {
+        let is_written = self.is_library || self.is_writable(path.parent());
+        if is_written {
             self.writes.borrow_mut().push((
                 path.display().to_string(),
                 bytes.to_vec(),
                 is_appended,
             ));
         }
-        self.is_library
+        is_written
+    }
+
+    fn prepare_write(&self, directory: &Path) {
+        if !self.is_library {
+            self.is_writable(Some(directory));
+        }
     }
 
     fn is_plain(&self) -> bool {
@@ -213,13 +233,6 @@ fn get_number(value: &HostValue, what: &str) -> Result<f64, String> {
     match value {
         HostValue::Number(number) => Ok(*number),
         _ => Err(format!("{what} must be a number")),
-    }
-}
-
-fn get_strings(value: &HostValue, what: &str) -> Result<Vec<String>, String> {
-    match value {
-        HostValue::Array(items) => items.iter().map(|item| get_text(item, what)).collect(),
-        _ => Err(format!("{what} must be an array of strings")),
     }
 }
 
@@ -327,6 +340,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("exitCode", HostValue::Number(f64::from(exit_code))),
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
+        ("thrown", get_thrown(&outcome)),
         ("outcome", get_outcome(outcome)),
         (
             "writes",
@@ -345,6 +359,58 @@ fn check(arguments: &[HostValue]) -> HookResult {
             ),
         ),
     ]))
+}
+
+/// Where the check stopped before it searched, the error the library throws:
+/// `{ kind: "syntax", sany }` with the report of `TlaSyntaxError`, or `{ kind: "config" |
+/// "evaluation", message }`; undefined otherwise, and where the spec printed first, which the
+/// library reports with the TypeScript check's error.
+fn get_thrown(outcome: &Outcome) -> HostValue {
+    let (Some(thrown), None, true) = (&outcome.thrown, outcome.status, outcome.prints.is_empty())
+    else {
+        return HostValue::Undefined;
+    };
+    let get_errors = |errors: &[SanyError]| {
+        HostValue::Array(
+            errors
+                .iter()
+                .map(|error| {
+                    HostValue::Object(vec![
+                        ("location", HostValue::text(&error.location)),
+                        ("message", HostValue::text(&error.message)),
+                    ])
+                })
+                .collect(),
+        )
+    };
+    match thrown {
+        Thrown::Syntax(report) => HostValue::Object(vec![
+            ("kind", HostValue::text("syntax")),
+            (
+                "sany",
+                HostValue::Object(vec![
+                    ("errors", get_errors(&report.errors)),
+                    ("warnings", get_errors(&report.warnings)),
+                    ("isFatal", HostValue::Bool(report.is_fatal)),
+                    (
+                        "parseError",
+                        report
+                            .parse_error
+                            .as_ref()
+                            .map_or(HostValue::Undefined, |text| HostValue::text(text)),
+                    ),
+                ]),
+            ),
+        ]),
+        Thrown::Config(message) => HostValue::Object(vec![
+            ("kind", HostValue::text("config")),
+            ("message", HostValue::text(message)),
+        ]),
+        Thrown::Evaluation(message) => HostValue::Object(vec![
+            ("kind", HostValue::text("evaluation")),
+            ("message", HostValue::text(message)),
+        ]),
+    }
 }
 
 /// The outcome the library reads, or undefined where the check stopped before it searched.
@@ -409,6 +475,35 @@ fn get_outcome(outcome: Outcome) -> HostValue {
             ),
         ),
         ("violations", HostValue::Array(violations.collect())),
+        (
+            "messages",
+            HostValue::Array(
+                outcome
+                    .messages
+                    .iter()
+                    .map(|message| {
+                        HostValue::Array(vec![
+                            HostValue::Number(f64::from(message.code)),
+                            HostValue::Number(f64::from(message.level)),
+                            HostValue::text(&message.text),
+                            HostValue::Number(message.prints_before as f64),
+                            message.counts.map_or(HostValue::Undefined, |counts| {
+                                HostValue::Array(
+                                    [
+                                        counts.generated,
+                                        counts.distinct,
+                                        counts.queued,
+                                        counts.depth,
+                                    ]
+                                    .map(|count| HostValue::Number(count as f64))
+                                    .into(),
+                                )
+                            }),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ])
 }
 

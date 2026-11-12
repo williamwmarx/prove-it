@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getSteadyLines } from "../../scripts/normalize-output";
@@ -20,18 +20,12 @@ const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
-const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
-  spawnSync("bun", [CLI, ...args], {
-    cwd: join(FIXTURES, directory),
-    encoding: "utf8",
-    env: env && { ...process.env, ...env },
-  });
-
 const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
 
-// tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
+// tlapm keeps its cache in the directory it runs in, and TLC writes the trace exploration spec
+// beside the spec, so each run works in a copy of the fixtures.
 const copyFixtures = (directory: string) => {
   const copy = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
   copies.push(copy);
@@ -39,13 +33,25 @@ const copyFixtures = (directory: string) => {
   return copy;
 };
 
+const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
+  spawnSync("bun", [CLI, ...args], {
+    cwd: join(FIXTURES, directory),
+    encoding: "utf8",
+    env: env && { ...process.env, ...env },
+  });
+
 const runTlapmIn = (directory: string, args: string[]) =>
   spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const runTlapm = (directory: string, args: string[]) => runTlapmIn(copyFixtures(directory), args);
 
+// TLC writes the trace exploration spec of an error beside the spec, so the spec is checked in a
+// copy of the fixtures.
 const runCli = (directory: string, name: string, args: string[] = []) =>
-  runCliWith(directory, [`${name}.tla`, ...args]);
+  spawnSync("bun", [CLI, `${name}.tla`, ...args], {
+    cwd: copyFixtures(directory),
+    encoding: "utf8",
+  });
 
 const getCheckedSpecs = (output: string) =>
   output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
@@ -137,6 +143,7 @@ const TLC_REPORTS = [
       "3 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lasso_TTrace__.tla",
     ],
   ],
   [
@@ -168,29 +175,7 @@ const TLC_REPORTS = [
       "4 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "Finished in _ at (_)",
-    ],
-  ],
-  [
-    "SafetyProperty",
-    12,
-    [
-      "Starting... (_)",
-      "Implied-temporal checking--satisfiability problem has 1 branches.",
-      "Computing initial states...",
-      "Finished computing initial states: 1 distinct state generated at _.",
-      "Error: Temporal property Bounded was violated.",
-      "",
-      "Error: The following behavior constitutes a counter-example:",
-      "",
-      "State 1: <Initial predicate>",
-      "x = 0",
-      "",
-      "State 2: <Next line 5, col 9 to line 5, col 27 of module SafetyProperty>",
-      "x = 1",
-      "",
-      "3 states generated, 3 distinct states found, 1 states left on queue.",
-      "The depth of the complete state graph search is 3.",
-      "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lassos_TTrace__.tla",
     ],
   ],
   [
@@ -216,6 +201,7 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedInvariant_TTrace__.tla",
     ],
   ],
   [
@@ -266,6 +252,7 @@ const TLC_REPORTS = [
       "2 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedAssert_TTrace__.tla",
     ],
   ],
   [
@@ -491,6 +478,29 @@ describe("the CLI reports results like TLC", () => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
+  // The engine hands the search over at a deadlock it doesn't report, and TLC prints the path of
+  // the counterexample's trace exploration spec, "Trace exploration spec path:
+  // ./SafetyProperty_TTrace__.tla", which only the native check writes.
+  it("declines SafetyProperty, whose trace exploration spec the interpreter doesn't write", () => {
+    const result = runCli("cli-output", "SafetyProperty");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toEndWith(
+      "prove-it: not native yet: the trace exploration spec of an error trace\n",
+    );
+  });
+
+  // TLC prints that the postcondition of _JsonTrace failed, with the message of the Java
+  // exception it caught, "WaterJugs.cfg/x.json (Not a directory)".
+  it("declines a -dumpTrace file it can't write", () => {
+    const result = runCli("water-jugs", "WaterJugs", [
+      "-dumpTrace",
+      "json",
+      "WaterJugs.cfg/x.json",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("prove-it: not native yet: -dumpTrace\n");
   });
 
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
@@ -1381,6 +1391,408 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
     );
   });
+
+  // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
+  // UTF-8, they would be one, and the theorem proved: ED A0 80 and ED B0 80 encode U+D800 and
+  // U+DC00, which a lossy decode reads as three U+FFFD each.
+  const NOT_UTF8 = [
+    ["\\xff = \\xfe", [0xff], [0xfe], "="],
+    ["U+D800 = U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "="],
+    ["U+D800 # U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "#"],
+  ] as const;
+  it.each(
+    NOT_UTF8.flatMap(([name, ...strings]) => [
+      ["the module", name, "M.tla", "", ...strings] as const,
+      ["a module it extends", name, "./Lib.tla", "Lib, ", ...strings] as const,
+    ]),
+  )("declines %s that isn't UTF-8: %s", (_, _name, path, extended, left, right, operator) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    const definitions = Buffer.concat([
+      Buffer.from('L == "'),
+      Buffer.from(left),
+      Buffer.from('"\nR == "'),
+      Buffer.from(right),
+      Buffer.from('"\n'),
+    ]);
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.concat([
+        Buffer.from(`---- MODULE M ----\nEXTENDS ${extended}TLAPS\n`),
+        ...(extended === "" ? [definitions] : []),
+        Buffer.from(`THEOREM L ${operator} R BY SMT DEF L, R\n====\n`),
+      ]),
+    );
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.concat([Buffer.from("---- MODULE Lib ----\n"), definitions, Buffer.from("====\n")]),
+    );
+    const result = runTlapmIn(directory, ["M.tla"]);
+    expect(result.stderr).toBe(
+      `prove-it: not native yet: a byte that isn't UTF-8 outside a comment in ${path}\n`,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  // tlapm's lexer skips what comes before a module's header and what a comment holds, so a byte
+  // that isn't UTF-8 there reads as it did, one U+FFFD for one byte.
+  it.each([
+    ["before the header", [0xe9, 0x0a], ""],
+    ["after a pragma's opening before the header", [0x28, 0x2a, 0x7b, 0x20, 0xe9, 0x0a], ""],
+    ["in a line comment", [], "\\* caf\xe9\n"],
+    ["in a nested comment", [], "(* (* caf\xe9 *) \xff *)\n"],
+    // The lexer the obligations are read with ends a `\*` comment at a line feed alone, where
+    // tlapm's ends it at a carriage return too.
+    ["after a carriage return in a line comment", [], "\\* abc\r\xe9\n"],
+    ["after a pragma's opening in a line comment", [], "\\* (*{ \xe9\n"],
+    ["after a pragma's opening in a nested comment", [], "(* (*{ \xe9 }*) *)\n"],
+  ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside) => {
+    const getModule = (byte: number) =>
+      Buffer.concat([
+        Buffer.from(before.map((value) => (value === 0xe9 ? byte : value))),
+        Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\n", "latin1"),
+        Buffer.from(inside.replaceAll("\xe9", String.fromCharCode(byte)), "latin1"),
+        Buffer.from("THEOREM 1 = 1 OBVIOUS\n====\n"),
+      ]);
+    const run = (byte: number) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(join(directory, "M.tla"), getModule(byte));
+      return runTlapmIn(directory, ["-N", "M.tla"]);
+    };
+    const read = run(0xe9);
+    expect(read.stderr).not.toContain("not native yet");
+    expect(read).toMatchObject({ status: 0, stdout: run(0x65).stdout, stderr: run(0x65).stderr });
+  });
+
+  // tlapm's columns count bytes, so a comment holding two bytes of a three-byte sequence puts what
+  // follows it on the line two columns on.
+  it("counts each byte that isn't UTF-8 in a comment as a column", () => {
+    const run = (comment: Buffer) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        Buffer.concat([
+          Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "),
+          comment,
+          Buffer.from(" 1 = 1 OBVIOUS\n====\n"),
+        ]),
+      );
+      return runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla"]);
+    };
+    const truncated = run(Buffer.from([0x28, 0x2a, 0xe2, 0x82, 0x2a, 0x29]));
+    expect(truncated.stderr).toContain("loc:3:22:3:29");
+    expect(truncated.stderr).toBe(run(Buffer.from("(*ab*)")).stderr);
+  });
+
+  // tlapm's parser asks for no token past the first module's `====`, so its lexer never reads
+  // what follows; a nested module's `====` doesn't end it.
+  it.each([
+    ["after the module's end", "THEOREM TRUE OBVIOUS\n====\n\xff\n", false],
+    ["after the module's end, in a string", 'THEOREM TRUE OBVIOUS\n====\n"\xff"\n', false],
+    [
+      "in a string in a nested module the module doesn't use",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nTHEOREM TRUE OBVIOUS\n====\n',
+      false,
+    ],
+    [
+      "in a string in a nested module the module uses",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nI == INSTANCE Inner\nTHEOREM I!S = "a" OBVIOUS\n====\n',
+      true,
+    ],
+    [
+      "after a nested module's end",
+      '---- MODULE Inner ----\n====\nS == "\xff"\nTHEOREM TRUE OBVIOUS\n====\n',
+      true,
+    ],
+    [
+      "in a nested module's comment",
+      "---- MODULE Inner ----\n(* \xff *)\n====\nTHEOREM TRUE OBVIOUS\n====\n",
+      false,
+    ],
+  ])("reads a byte that isn't UTF-8 %s as tlapm lexes it", (_, body, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(`---- MODULE M ----\nEXTENDS TLAPS\n${body}`, "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
+
+  // A theorem of an extended module isn't proved, but the obligations hold it, and a byte there
+  // declines too (fallback.md lists it).
+  it("declines a byte that isn't UTF-8 in a theorem of a module it extends", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.from('---- MODULE Lib ----\nTHEOREM "\xff" = "\xfe" OBVIOUS\n====\n', "latin1"),
+    );
+    writeFileSync(
+      join(directory, "M.tla"),
+      "---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM TRUE OBVIOUS\n====\n",
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in ./Lib.tla\n",
+    );
+    expect(result.status).toBe(1);
+  });
+
+  // Each was read by the obligations in a way a token-level judge missed or over-read.
+  it.each([
+    [
+      "in an old pragma whose string holds its close",
+      '---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM TRUE OBVIOUS (*{ by (isabelle "a}*)(*\xff*)(*") }*)\n====\n',
+      true,
+    ],
+    [
+      "in a comment a string's value is read from after a tab",
+      '\t---- MODULE M ---- EXTENDS TLAPS THEOREM "a"(*\xff\xff\xff\xff"*) = "b"(*\xfe\xfe\xfe\xfe"*) BY SMT\n====\n',
+      true,
+    ],
+    [
+      "after a comment that opens like a pragma and doesn't close",
+      "---- MODULE M ----\nx == 1 (*{ note *)\n(* \xff *)\n====\n",
+      false,
+    ],
+    [
+      "in a pragma no obligation reads",
+      "---- MODULE M ----\nx == 1 = (*{ \xff }*) 1\n====\n",
+      false,
+    ],
+  ])("judges a byte that isn't UTF-8 %s by what the obligations hold", (_, text, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(join(directory, "M.tla"), Buffer.from(text, "latin1"));
+    const result = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "--printallobs", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
+
+  // What a byte that isn't UTF-8 reads as is a character no UTF-8 text holds, so no module's own
+  // characters, however many modules hold such bytes, read as one.
+  it("reads modules with bytes that aren't UTF-8 in comments beside private-use characters", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    const comment = Buffer.concat([
+      Buffer.from("(* "),
+      ...Array.from({ length: 128 }, (_, index) => Buffer.from([0x80 + index, 0x20])),
+      Buffer.from("*)\n"),
+    ]);
+    const names = Array.from({ length: 60 }, (_, index) => `L${index}`);
+    for (const name of names) {
+      writeFileSync(
+        join(directory, `${name}.tla`),
+        Buffer.concat([Buffer.from(`---- MODULE ${name} ----\n`), comment, Buffer.from("====\n")]),
+      );
+    }
+    writeFileSync(
+      join(directory, "P.tla"),
+      '---- MODULE P ----\nS == "\uE000\uE001\uF8FF"\n====\n',
+    );
+    writeFileSync(
+      join(directory, "M.tla"),
+      `---- MODULE M ----\nEXTENDS ${names.join(", ")}, P, TLAPS\nTHEOREM S = "x" OBVIOUS\n====\n`,
+    );
+    const result = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla"]);
+    expect(result.stderr).not.toContain("not native yet");
+    expect(result.stderr).toContain("@!!count:1\n");
+    expect(result.status).toBe(0);
+  });
+
+  // Which module holds the byte reached isn't known where more than one was read with it.
+  it("names every module read with a byte that isn't UTF-8 that is reached", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(
+        '---- MODULE M ----\nEXTENDS Lib, TLAPS\n(* \xff *)\nTHEOREM S = "a" BY DEF S\n====\n',
+        "latin1",
+      ),
+    );
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.from('---- MODULE Lib ----\nS == "\xff"\n====\n', "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in one of M.tla, ./Lib.tla\n",
+    );
+    expect(result.status).toBe(1);
+  });
+
+  // A pragma's string reads escapes as JSON does, so "\udcfe" is a lone surrogate no byte read made;
+  // where a module read holds that byte too, it declines (fallback.md lists it).
+  it.each([
+    ["no module holds", "\\* \xff\n", false],
+    ["a module holds", "\\* \xfe\n", true],
+  ])(
+    "judges a pragma's escape of a lone surrogate that %s as the byte",
+    (_, comment, isDeclined) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        Buffer.from(
+          `---- MODULE M ----\nEXTENDS TLAPS\n${comment}THEOREM TRUE OBVIOUS (*{ by (isabelle "\\udcfe") }*)\n====\n`,
+          "latin1",
+        ),
+      );
+      const result = runTlapmIn(directory, ["-N", "M.tla"]);
+      if (isDeclined) {
+        expect(result.stderr).toBe(
+          "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+        );
+        expect(result.status).toBe(1);
+      } else {
+        expect(result.stderr).not.toContain("not native yet");
+        expect(result.status).toBe(0);
+      }
+    },
+  );
+
+  // The lexer's error spells a character it can't read as JSON does.
+  it("declines a byte that isn't UTF-8 that is a token of its own", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from("---- MODULE M ----\n\xff\n====\n", "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+    );
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  // An escaped byte is found as a UTF-16 unit, whether a string's escape pairs it with a high
+  // surrogate or not; a character whose low surrogate is one declines only where a byte was read.
+  it.each([
+    [
+      "after a pragma's escape of a high surrogate",
+      '---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM TRUE OBVIOUS (*{ by (isabelle "\\ud800\xff") }*)\n====\n',
+      true,
+    ],
+    [
+      "nowhere, beside a character outside the BMP",
+      '---- MODULE M ----\nEXTENDS TLAPS\nS == "\xf0\x9f\x83\xbf"\nTHEOREM S = S OBVIOUS\n====\n',
+      false,
+    ],
+  ])("judges a byte that isn't UTF-8 %s by its UTF-16 unit", (_, text, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(join(directory, "M.tla"), Buffer.from(text, "latin1"));
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
+
+  // tlapm decides which of two modules of one name it reads in ways tla-ts doesn't follow yet.
+  const writeFiles = (files: Record<string, string>) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(directory, path)), { recursive: true });
+      writeFileSync(join(directory, path), text);
+    }
+    return directory;
+  };
+  const MAIN =
+    "---- MODULE Main ----\nEXTENDS Defs, Naturals, TLAPS\nTHEOREM X = 2 BY DEF X\n====\n";
+  const getDefs = (value: number) => `---- MODULE Defs ----\nX == ${value}\n====\n`;
+
+  it.each([
+    [
+      "in two -I directories",
+      { "Main.tla": MAIN, "I1/Defs.tla": getDefs(1), "I2/Defs.tla": getDefs(2) },
+      ["-I", "I1", "-I", "I2", "Main.tla"],
+      "I2/Defs.tla, I1/Defs.tla",
+    ],
+    [
+      "beside the spec and in the current directory",
+      { "sub/Main.tla": MAIN, "Defs.tla": getDefs(1), "sub/Defs.tla": getDefs(2) },
+      ["sub/Main.tla"],
+      "sub/Defs.tla, ./Defs.tla",
+    ],
+  ])("declines a module found %s", (_, files, args, found) => {
+    for (const options of [["-N"], ["-N", "--toolbox", "0", "0"]]) {
+      const result = runTlapmIn(writeFiles(files), [...options, ...args]);
+      expect(result.stderr).toBe(
+        `prove-it: not native yet: a module Defs found in more than one directory tlapm searches: ${found}\n`,
+      );
+      expect(result.stdout).toBe("");
+      expect(result.status).toBe(1);
+    }
+  });
+
+  it("declines two modules of one name on the command line", () => {
+    const directory = writeFiles({
+      "d1/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 3 OBVIOUS\n====\n",
+      "d2/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 OBVIOUS\n====\n",
+    });
+    for (const options of [[], ["-N"]]) {
+      const result = runTlapmIn(directory, [...options, "d1/M.tla", "d2/M.tla"]);
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: two modules named M on the command line\n",
+      );
+      expect(result.stdout).toBe("");
+      expect(result.status).toBe(1);
+    }
+  });
+
+  it("reads a module named twice on the command line as it did", () => {
+    const directory = writeFiles({
+      "M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 OBVIOUS\n====\n",
+    });
+    const twice = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla", "./M.tla"]);
+    expect(twice.stderr).not.toContain("not native yet");
+    expect(twice.status).toBe(0);
+  });
+
+  it("reads a module found in one directory as it did", () => {
+    const run = (files: Record<string, string>, args: string[]) =>
+      runTlapmIn(writeFiles(files), ["-N", "--toolbox", "0", "0", ...args]);
+    const beside = run({ "sub/Main.tla": MAIN, "sub/Defs.tla": getDefs(2) }, ["sub/Main.tla"]);
+    expect(beside.status).toBe(0);
+    expect(beside.stderr).toContain("@!!type:obligationsnumber\n@!!count:1\n");
+    const included = run({ "Main.tla": MAIN, "I1/Defs.tla": getDefs(1) }, ["-I", "I1", "Main.tla"]);
+    expect(included.status).toBe(0);
+    expect(included.stderr).toBe(beside.stderr);
+  });
+
+  it("declines a byte that isn't UTF-8 in a pragma", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(
+        '---- MODULE M ----\nEXTENDS TLAPS\nF == TRUE (*{ by (prover:"\xff") }*)\nTHEOREM 1 = 1 BY F\n====\n',
+        "latin1",
+      ),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+    );
+    expect(result.status).toBe(1);
+  });
 });
 
 // Each file in tlapm-cli is what tlapm 9ed0376 wrote: .stdout and .stderr without options, .strict
@@ -1629,7 +2041,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
 
   it("names a property an instance exports as written, as TLC does", () => {
     const getViolation = (config: string) =>
-      runCliWith("instance-property", ["-nowarning", "-config", config, "Main.tla"])
+      runCli("instance-property", "Main", ["-nowarning", "-config", config])
         .stdout.split("\n")
         .find((line) => line.endsWith(" is violated."));
     // PSafe == A!Safe names A!Safe, but A!Safe2 == Safe names Safe inside the instance.

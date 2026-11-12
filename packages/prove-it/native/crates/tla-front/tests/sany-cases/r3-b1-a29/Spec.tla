@@ -1,0 +1,5 @@
+---- MODULE Spec ----
+VARIABLE x
+THEOREM t1 == ASSUME NEW TEMPORAL tt, x' = 1 PROVE tt
+THEOREM t2 == ASSUME NEW ACTION aa PROVE [](aa)
+====
