@@ -3,7 +3,7 @@
 // files. Where it declines the model, or the options ask for what only the TypeScript check does,
 // the TypeScript check checks it and its result converts.
 
-import type { CheckOptions as SearchOptions } from "./check";
+import type { CheckOptions as SearchOptions, OutputLine, TraceStep } from "./check";
 import {
   type CheckProgress,
   type CheckResult,
@@ -49,7 +49,8 @@ const getDeclined = (options: CheckOptions) =>
     ] as const
   ).find((entry) => entry[0])?.[1];
 
-// The native check's result, or undefined where it declines.
+// The native check's result, why it declined, or undefined where it wasn't run or stopped before
+// it searched.
 const checkWithEngine = (options: CheckOptions) => {
   const declined = getDeclined(options);
   const name = getModuleName(options.source);
@@ -116,7 +117,7 @@ const checkWithEngine = (options: CheckOptions) => {
   if (result.kind === "declined") {
     if (isWebAssemblyStack(result.reason)) throw new WebAssemblyStackError();
     reportEngine(`native: check declined: ${result.reason}`);
-    return undefined;
+    return result.reason;
   }
   // The check stops before it searches at a spec or a configuration TLC rejects, for which the
   // TypeScript check throws its error.
@@ -135,7 +136,38 @@ const checkWithEngine = (options: CheckOptions) => {
 
 // What the TypeScript check finds, converted. With -continue it reports each violation it goes on
 // past as it finds it.
-const checkWithInterpreter = async (options: CheckOptions) => {
+// A violation or a failure of the TypeScript check, with its trace.
+interface Traced {
+  trace: TraceStep[];
+  traceOutput?: OutputLine[];
+}
+
+// What the spec printed as TLC rebuilt and printed a trace, then after it, as the native check
+// reports it.
+const getTracePrints = (reported: Traced | undefined) =>
+  [
+    ...(reported?.trace ?? []).flatMap((step) => step.output ?? []),
+    ...(reported?.traceOutput ?? []),
+  ].filter((line) => typeof line === "string");
+
+// What the native check declines where the TypeScript check places the trace's prints otherwise
+// than TLC, or prints other values in them: a printing ALIAS, a printing temporal property, and
+// TLCExt's Trace (native/design/fallback.md, "Interpreter limits").
+const MISPLACED_TRACE_PRINTS = [
+  "an ALIAS that prints",
+  "prints it doesn't place in TLC's order",
+  "TLCExt's Trace",
+];
+
+// The TypeScript check's result. Where the native check declined for `declined`, the trace's prints
+// go to onPrint as the native check reports them, but where the TypeScript check misplaces them;
+// where the native check didn't run, as with onProgress, they don't, as before.
+const checkWithInterpreter = async (options: CheckOptions, declined: string | undefined) => {
+  const isTracePrinted =
+    declined !== undefined && !MISPLACED_TRACE_PRINTS.some((reason) => declined.includes(reason));
+  const print = (line: string) => {
+    if (isTracePrinted) (options.onPrint ?? console.log)(line);
+  };
   const isTool = options.isTool ?? false;
   const version = options.version ?? "master";
   const continued: Violation[] = [];
@@ -146,6 +178,9 @@ const checkWithInterpreter = async (options: CheckOptions) => {
       onProgress || options.isContinued
         ? (progress) => {
             if (progress.kind !== "violation") return onProgress?.(progress);
+            // TLC prints each violation's trace as it reports it, without rebuilding it once more
+            // after it, and goes on.
+            getTracePrints({ trace: progress.violation.trace }).forEach((line) => print(line));
             const reported = toContinuedViolation(
               progress.status,
               progress.violation,
@@ -157,6 +192,11 @@ const checkWithInterpreter = async (options: CheckOptions) => {
           }
         : undefined,
   });
+  // Under -continue each violation's trace printed as it was reported.
+  [
+    ...(options.isContinued ? [] : getTracePrints(result.violation)),
+    ...getTracePrints(result.failure),
+  ].forEach((line) => print(line));
   return fromSearchResult(result, continued, isTool, version);
 };
 
@@ -170,5 +210,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     loadClass: readers.loadClass,
     readFile: readers.readFile,
   };
-  return checkWithEngine(logged) ?? checkWithInterpreter(logged);
+  const native = checkWithEngine(logged);
+  return typeof native === "object" ? native : checkWithInterpreter(logged, native);
 };
