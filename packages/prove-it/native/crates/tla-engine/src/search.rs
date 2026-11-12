@@ -494,6 +494,9 @@ pub enum ErrorSite {
     /// Evaluating the invariant at this position of the model's invariants on the trace's last
     /// state, a successor of the state before it.
     Invariant(u32),
+    /// Evaluating the action constraint at this position of the model's action constraints on the
+    /// trace's last step, to a successor of the state before it that isn't counted as found.
+    ActionConstraint(u32),
     /// Evaluating the constraint at this position of the model's constraints on an initial state,
     /// the violation's one state.
     InitialConstraint(u32),
@@ -1514,6 +1517,42 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         Ok(())
     }
 
+    // Whether every action constraint holds of the step to the successor. TLC reports one that
+    // fails to evaluate with the trace to the successor, which it hasn't counted as found
+    // (`Worker.addElement`, `ModelChecker.doNextFailed`).
+    fn holds_action_constraints(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+    ) -> Outcome<bool> {
+        for (position, constraint) in context.action_constraints.iter().enumerate() {
+            match crate::context::holds(machine, constraint) {
+                Ok(true) => {}
+                Ok(false) => return Ok(false),
+                Err(bail) => {
+                    if self.violation.is_none() && !self.is_continued && !is_engine_limit(bail.0) {
+                        self.violation = Some(Found {
+                            kind: ViolationKind::Error {
+                                site: ErrorSite::ActionConstraint(position as u32),
+                            },
+                            parent: Some(self.expanding),
+                            last: Some(self.successor.clone()),
+                            fingerprint: None,
+                            random: None,
+                            replayed: None,
+                            counts: StopCounts {
+                                depth: self.depth.max(1),
+                                ..self.stop_counts(false)
+                            },
+                        });
+                    }
+                    return Err(bail);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     // Checks the successor that is the machine's next state; its fingerprint is `known` when the
     // pipeline computed it already.
     fn check_successor(
@@ -1586,7 +1625,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     .map_or(&self.successor, |_| &self.key);
                 machine.is_successor_seen = Some(self.states.find(key, fingerprint).is_ok());
             }
-            let holds = holds_all(machine, &context.action_constraints);
+            let holds = self.holds_action_constraints(machine, context);
             machine.is_successor_seen = None;
             holds?
         };
@@ -4543,7 +4582,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 Some(Found {
                     kind:
                         ViolationKind::Error {
-                            site: ErrorSite::Next,
+                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_),
                         },
                     ..
                 }) if online.is_some()
@@ -4568,11 +4607,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     // TLC's worker adds a state whose next states failed to the behavior graphs
                     // too, with the successors Next gave before it failed and the stuttering step
                     // (`Worker#doNextCheckLiveness`), and prints the call stack of the first check
-                    // that fails there in place of Next's.
+                    // that fails there in place of Next's. An action constraint that fails to
+                    // evaluate fails Next so (`Worker.addElement`).
                     let is_next_failure = matches!(
                         found.kind,
                         ViolationKind::Error {
-                            site: ErrorSite::Next
+                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_)
                         }
                     );
                     if is_deadlock || is_next_failure {
@@ -4683,6 +4723,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                     initial_states,
                                     unanswered,
                                 );
+                            }
+                            // An atom that fails after an action constraint did isn't reported.
+                            if matches!(
+                                found.kind,
+                                ViolationKind::Error {
+                                    site: ErrorSite::ActionConstraint(_)
+                                }
+                            ) {
+                                return None;
                             }
                             let extra = atom_extra(&context, &search, unanswered)?;
                             found.kind = ViolationKind::Error {

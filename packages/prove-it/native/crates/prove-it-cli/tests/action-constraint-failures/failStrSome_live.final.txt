@@ -1,0 +1,29 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+"a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <IncX line 6, col 9 to line 6, col 42 of module M>
+/\ x = 1
+/\ y = 0
+
+State 3: <IncX line 6, col 9 to line 6, col 42 of module M>
+/\ x = 2
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 12, column 7 to line 12, column 39 in M
+1. Line 12, column 22 to line 12, column 29 in M
+
+
+4 states generated, 3 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 2.
