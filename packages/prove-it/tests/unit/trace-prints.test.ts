@@ -66,6 +66,38 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
     ]);
   });
 
+  const DEADLOCKING = [
+    "EXTENDS Naturals, TLC",
+    "VARIABLE x",
+    'Init == x = 0 /\\ PrintT(<<"init", x>>)',
+    'Next == x < 1 /\\ x\' = x + 1 /\\ PrintT(<<"next", x>>)',
+    "Spec == Init /\\ [][Next]_x",
+    "Live == [](x = 0 => [](x # 1))",
+  ].join("\n");
+
+  it("prints the trace of a deadlock -continue ends at as TLC does", async () => {
+    const source = `---- MODULE D ----\n${DEADLOCKING}\n====`;
+    expect(
+      await getPrinted({ source, config: "INIT Init\nNEXT Next", isContinued: true }, false),
+    ).toEqual([
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+    ]);
+  });
+
+  it("prints the trace of the temporal property a deadlocked state violates as TLC does", async () => {
+    const source = `---- MODULE L ----\n${DEADLOCKING}\n====`;
+    expect(
+      await getPrinted({ source, config: "SPECIFICATION Spec\nPROPERTY Live" }, false),
+    ).toEqual([
+      ...['<<"init", 0>>', '<<"next", 0>>', '<<"next", 0>>'],
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+      ...['<<"init", 0>>', '<<"next", 0>>'],
+    ]);
+  });
+
   // The TypeScript check places these prints otherwise than TLC, or prints other values in them, so
   // where the native check declines them it reports what the TypeScript check printed as it
   // searched, as where the native check doesn't run (fallback.md, "Interpreter limits").

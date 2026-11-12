@@ -162,6 +162,8 @@ const checkWithInterpreter = async (options: CheckOptions, declined: string | un
   const isTool = options.isTool ?? false;
   const version = options.version ?? "master";
   const continued: Violation[] = [];
+  // The traces -continue reported as the search went on, whose prints went to onPrint then.
+  const reportedTraces = new Set<Traced>();
   const onProgress = options.onProgress;
   const result = await checkUnlogged({
     ...options,
@@ -171,6 +173,7 @@ const checkWithInterpreter = async (options: CheckOptions, declined: string | un
             if (progress.kind !== "violation") return onProgress?.(progress);
             // TLC prints each violation's trace as it reports it, without rebuilding it once more
             // after it, and goes on.
+            reportedTraces.add(progress.violation);
             getTracePrints({ trace: progress.violation.trace }).forEach((line) => print(line));
             const reported = toContinuedViolation(
               progress.status,
@@ -183,11 +186,12 @@ const checkWithInterpreter = async (options: CheckOptions, declined: string | un
           }
         : undefined,
   });
-  // Under -continue each violation's trace printed as it was reported.
-  [
-    ...(options.isContinued ? [] : getTracePrints(result.violation)),
-    ...getTracePrints(result.failure),
-  ].forEach((line) => print(line));
+  // Every trace the result carries but one -continue reported as it went on: the violation, a
+  // temporal property the deadlocked state violates too, and a failure.
+  [result.violation, result.additionalViolation, result.failure]
+    .filter((traced) => traced === undefined || !reportedTraces.has(traced))
+    .flatMap(getTracePrints)
+    .forEach((line) => print(line));
   return fromSearchResult(result, continued, isTool, version);
 };
 
