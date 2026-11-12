@@ -63,6 +63,16 @@ struct SourcesHost {
 }
 
 impl SourcesHost {
+    /// Whether the CLI can write into the directory (`writable:<directory>`), the working
+    /// directory for a path without one.
+    fn is_writable(&self, directory: Option<&Path>) -> bool {
+        let directory = directory
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .map_or_else(|| self.current_dir(), Path::to_path_buf);
+        self.get(format!("writable:{}", directory.display()))
+            .is_some()
+    }
+
     fn get(&self, key: String) -> Option<String> {
         self.sources.get(key)
     }
@@ -180,16 +190,24 @@ impl Host for SourcesHost {
         !self.is_library
     }
 
-    // The library answers for files itself, so the check's writes go back to it.
+    // The check's writes go back to JavaScript, which writes them: the library's, which answers
+    // for files itself, and the CLI's into a directory it said it can write.
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
-        if self.is_library {
+        let is_written = self.is_library || self.is_writable(path.parent());
+        if is_written {
             self.writes.borrow_mut().push((
                 path.display().to_string(),
                 bytes.to_vec(),
                 is_appended,
             ));
         }
-        self.is_library
+        is_written
+    }
+
+    fn prepare_write(&self, directory: &Path) {
+        if !self.is_library {
+            self.is_writable(Some(directory));
+        }
     }
 
     fn is_plain(&self) -> bool {

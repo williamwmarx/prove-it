@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync, writeSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { arch, availableParallelism, EOL, release, type } from "node:os";
 import { basename, delimiter, dirname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -856,6 +864,10 @@ export const checkNatively = async (commandLine: string[]) => {
   }
   reportEngine(
     `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+  );
+  // What the check wrote, in its order, into the directories the CLI said it can write.
+  result.writes.forEach((write) =>
+    (write.isAppended ? appendFileSync : writeFileSync)(write.path, write.bytes),
   );
   process.stdout.write(result.out);
   process.stderr.write(result.err);

@@ -20,18 +20,12 @@ const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
-const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
-  spawnSync("bun", [CLI, ...args], {
-    cwd: join(FIXTURES, directory),
-    encoding: "utf8",
-    env: env && { ...process.env, ...env },
-  });
-
 const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
 
-// tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
+// tlapm keeps its cache in the directory it runs in, and TLC writes the trace exploration spec
+// beside the spec, so each run works in a copy of the fixtures.
 const copyFixtures = (directory: string) => {
   const copy = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
   copies.push(copy);
@@ -39,13 +33,25 @@ const copyFixtures = (directory: string) => {
   return copy;
 };
 
+const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
+  spawnSync("bun", [CLI, ...args], {
+    cwd: join(FIXTURES, directory),
+    encoding: "utf8",
+    env: env && { ...process.env, ...env },
+  });
+
 const runTlapmIn = (directory: string, args: string[]) =>
   spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const runTlapm = (directory: string, args: string[]) => runTlapmIn(copyFixtures(directory), args);
 
+// TLC writes the trace exploration spec of an error beside the spec, so the spec is checked in a
+// copy of the fixtures.
 const runCli = (directory: string, name: string, args: string[] = []) =>
-  runCliWith(directory, [`${name}.tla`, ...args]);
+  spawnSync("bun", [CLI, `${name}.tla`, ...args], {
+    cwd: copyFixtures(directory),
+    encoding: "utf8",
+  });
 
 const getCheckedSpecs = (output: string) =>
   output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
@@ -137,6 +143,7 @@ const TLC_REPORTS = [
       "3 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lasso_TTrace__.tla",
     ],
   ],
   [
@@ -168,6 +175,7 @@ const TLC_REPORTS = [
       "4 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lassos_TTrace__.tla",
     ],
   ],
   [
@@ -216,6 +224,7 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedInvariant_TTrace__.tla",
     ],
   ],
   [
@@ -266,6 +275,7 @@ const TLC_REPORTS = [
       "2 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedAssert_TTrace__.tla",
     ],
   ],
   [
@@ -1629,7 +1639,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
 
   it("names a property an instance exports as written, as TLC does", () => {
     const getViolation = (config: string) =>
-      runCliWith("instance-property", ["-nowarning", "-config", config, "Main.tla"])
+      runCli("instance-property", "Main", ["-nowarning", "-config", config])
         .stdout.split("\n")
         .find((line) => line.endsWith(" is violated."));
     // PSafe == A!Safe names A!Safe, but A!Safe2 == Safe names Safe inside the instance.
