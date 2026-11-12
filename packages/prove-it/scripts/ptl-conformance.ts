@@ -3,12 +3,11 @@ import { join } from "node:path";
 
 import { getNativeAddon } from "../src/engine/native";
 import { TlaUnsupportedError } from "../src/errors";
-import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getLs4Digest,
   getLs4Verdict,
-  getModuleObligations,
+  getModuleEncodings,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
 } from "./proof-records";
@@ -48,7 +47,7 @@ readProofRecords()
     );
     const outcome = (() => {
       try {
-        return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
+        return getModuleEncodings(join(CORPORA_DIRECTORY, record.id), [...ids], "ls4");
       } catch (error) {
         return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       }
@@ -58,18 +57,13 @@ readProofRecords()
       console.log(`error      ${record.id}\n  ${outcome}`);
       return;
     }
-    const encoded = outcome
-      .filter((obligation) => ids.has(obligation.id))
-      .map((obligation) => {
-        try {
-          return {
-            id: obligation.id,
-            text: encodeForBackend(obligation, "ls4", { caseErrors: 0 }),
-          };
-        } catch (error) {
-          if (error instanceof TlaUnsupportedError) return { id: obligation.id, text: undefined };
-          throw error;
-        }
+    const encoded = [...outcome.obligations.keys()]
+      .filter((id) => ids.has(id))
+      .map((id) => {
+        const text = outcome.encodings.get(id);
+        if (!(text instanceof Error)) return { id, text };
+        if (text instanceof TlaUnsupportedError) return { id, text: undefined };
+        throw text;
       });
     const refused = encoded.filter((item) => item.text === undefined).length;
     const printed = encoded.flatMap((item) =>

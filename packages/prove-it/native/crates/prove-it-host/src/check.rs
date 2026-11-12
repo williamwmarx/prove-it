@@ -10,10 +10,15 @@
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
 //!   printed before.
 //!
-//! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
-//! at a path the command line names (the spec and its configuration), `bytes:<path>`, the bytes of
-//! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
-//! module, both as a Uint8Array. `machine` gives what TLC's banner and dates describe, and what the
+//! The CLI answers for the machine's files, which the check finds as the binary does: `stat:<path>`,
+//! `"file"` or `"directory"` where the system finds something at the path, `bytes:<path>`, the bytes
+//! of a file there as a Uint8Array, `realpath:<path>`, its path with its links followed, `cwd`, the
+//! working directory, and `tmpdir`, the system's temporary directory. The library has no files: it
+//! answers `text:<path>` for the spec and its configuration, `module:<name>` and `class:<name>`.
+//!
+//! `resolveFiles(args, given, request, known)` answers, through the same keys, what the CLI's
+//! TypeScript check asks of where TLC finds the files of the spec `given` on the command line
+//! `args` (`resolve_files`). `machine` gives what TLC's banner and dates describe, and what the
 //! check may use of it:
 //! `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isLibrary]`, with
 //! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, `variables` the environment's
@@ -25,10 +30,13 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use prove_it_check::host_path::Platform;
+use prove_it_check::resolve::{self, Config, Resolved};
 use prove_it_check::zone::{Zone, parse_rule};
-use prove_it_check::{FileDescription, Files, Host, Machine, Outcome, Output};
+use prove_it_check::{
+    FileDescriber, FileDescription, FileKind, Files, Host, Machine, Outcome, Output,
+};
 use tla_engine::clock::Instant;
-use tla_front::report::ModuleOrigin;
 
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_text};
@@ -55,55 +63,93 @@ impl SourcesHost {
     }
 }
 
-fn get_origin(origin: ModuleOrigin) -> &'static str {
-    match origin {
-        ModuleOrigin::File => "file",
-        ModuleOrigin::RootFile => "root file",
-        ModuleOrigin::Standard => "standard",
-    }
-}
-
 impl Host for SourcesHost {
-    // A path there that isn't a file, such as a directory, TLC finds but can't read.
-    fn is_file(&self, path: &Path) -> bool {
-        self.read_text(path).is_some()
-            || self
-                .get(format!("unreadable:{}", path.display()))
-                .is_some_and(|found| !found.is_empty())
+    // The library names its files by the spec's name alone. The CLI answers for paths: what is
+    // there, its bytes and its real path, which the check reads next of a file it finds, so they
+    // come in the same round.
+    // The engine as WebAssembly runs on whatever host JavaScript does, which names its platform.
+    fn platform(&self) -> Platform {
+        if self.is_library || !cfg!(target_arch = "wasm32") {
+            return Platform::NATIVE;
+        }
+        self.get("platform".to_string())
+            .map_or(Platform::NATIVE, |name| Platform::from_node(&name))
+    }
+
+    fn kind(&self, path: &Path) -> FileKind {
+        let path = path.display();
+        if self.is_library {
+            return match self.get(format!("text:{path}")) {
+                Some(_) => FileKind::File,
+                None => FileKind::Absent,
+            };
+        }
+        let _ = self.platform();
+        let _ = self.sources.get_bytes(format!("bytes:{path}"));
+        let _ = self.get(format!("realpath:{path}"));
+        match self.get(format!("stat:{path}")).as_deref() {
+            Some("directory") => FileKind::Directory,
+            Some(_) => FileKind::File,
+            None => FileKind::Absent,
+        }
+    }
+
+    fn real_path(&self, path: &Path) -> Option<PathBuf> {
+        if self.is_library {
+            return Some(path.to_path_buf());
+        }
+        self.get(format!("realpath:{}", path.display()))
+            .map(PathBuf::from)
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        if self.is_library {
+            return PathBuf::new();
+        }
+        self.get("cwd".into())
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    }
+
+    fn temp_dir(&self) -> PathBuf {
+        self.get("tmpdir".into())
+            .map(PathBuf::from)
+            .unwrap_or_default()
     }
 
     fn read_text(&self, path: &Path) -> Option<String> {
-        self.get(format!("text:{}", path.display()))
+        if self.is_library {
+            return self.get(format!("text:{}", path.display()));
+        }
+        // As the CLI read a file before, with readFileSync's UTF-8, and TLC reads text not in it.
+        Some(String::from_utf8_lossy(&self.read_bytes(path)?).into_owned())
     }
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
         self.sources.get_bytes(format!("bytes:{}", path.display()))
     }
 
-    fn load_module(&self, _directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
-        match self
-            .get(format!("unreadable-module:{name}"))
-            .filter(|path| !path.is_empty())
-        {
-            Some(path) => Err(PathBuf::from(path)),
-            None => Ok(self.get(format!("module:{name}"))),
+    fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
+        if self.is_library {
+            return Ok(self.get(format!("module:{name}")));
         }
+        resolve::load_module(self, directories, name)
     }
 
-    fn load_class(&self, _directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
-        let bytes = self.sources.get_bytes(format!("class:{name}"))?;
-        let path = self
-            .get(format!("class-path:{name}"))
-            .filter(|path| !path.is_empty())
-            .unwrap_or_else(|| format!("{name}.class"));
-        Some((PathBuf::from(path), bytes))
+    fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
+        if self.is_library {
+            let bytes = self.sources.get_bytes(format!("class:{name}"))?;
+            return Some((PathBuf::from(format!("{name}.class")), bytes));
+        }
+        resolve::load_class(self, directories, name)
     }
 
-    fn get_file_describer<'h>(&'h self, _files: &Files) -> FileDescription<'h> {
-        Box::new(move |name, origin| {
-            self.get(format!("file:{}:{name}", get_origin(origin)))
-                .unwrap_or_default()
-        })
+    fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {
+        if self.is_library {
+            return Box::new(|_, _| String::new());
+        }
+        let describer = FileDescriber::new(files, self);
+        Box::new(move |name, origin| describer.describe(name, origin))
     }
 
     fn get_variable(&self, name: &str) -> Option<String> {
@@ -137,8 +183,10 @@ impl Host for SourcesHost {
         !self.sources.has_needed()
     }
 
-    // `module:`, `class:` and `file:` name a module by its name alone, which several specs in
-    // different directories could each resolve to another file.
+    // The library names a module by its name alone, which several specs in different directories
+    // could each resolve to another file. For the CLI, a spec that declines after another one fails
+    // would end in the other's exit code, which `check` doesn't take for a decline, so the
+    // TypeScript check checks each spec.
     fn is_checking_several(&self) -> bool {
         false
     }
@@ -328,6 +376,121 @@ fn get_outcome(outcome: Outcome) -> HostValue {
         ),
         ("violations", HostValue::Array(violations.collect())),
     ])
+}
+
+/// `resolveFiles(args, given, request, known)`: one of `{ kind: "needed", keys }`,
+/// `{ kind: "declined", reason }`, or for the request (`resolve_files`):
+///
+/// - `spec`: `{ kind: "spec", path, name, directories, config, missingConfig, unreadable, missing }`,
+///   with the configuration's path or the name TLC says it doesn't find, a file TLC finds but can't
+///   read, and what TLC prints where it doesn't find the spec;
+/// - `module:<name>`: `{ kind: "module", text }`, or `{ kind: "unreadable", path }`;
+/// - `class:<name>`: `{ kind: "class", path, bytes }`;
+/// - `file:<origin>:<name>` and `missing:<file name>`: `{ kind: "text", text }`.
+pub fn resolve_files(arguments: &[HostValue]) -> HookResult {
+    let [args, given, request, known] = arguments else {
+        return Err(
+            "resolveFiles takes the arguments, the spec, the request and what is known".into(),
+        );
+    };
+    let args = get_strings(args, "the arguments")?;
+    let host = SourcesHost {
+        sources: Sources::new(known)?,
+        machine: Machine {
+            system: String::new(),
+            release: String::new(),
+            arch: String::new(),
+            cores: 1,
+            memory_megabytes: 0,
+            pid: 0,
+        },
+        now: UNIX_EPOCH,
+        started: Instant::now(),
+        zone: Zone::UTC,
+        variables: Vec::new(),
+        is_library: false,
+    };
+    let resolved = resolve::resolve_files(
+        &args,
+        &get_text(given, "the spec")?,
+        &get_text(request, "the request")?,
+        &host,
+    );
+    if let Some(needed) = host.sources.get_needed() {
+        return Ok(needed);
+    }
+    let path = |path: &Path| HostValue::text(&path.to_string_lossy());
+    let optional =
+        |text: Option<String>| text.map_or(HostValue::Undefined, |text| HostValue::text(&text));
+    Ok(HostValue::Object(match resolved {
+        Resolved::Spec {
+            path: spec,
+            name,
+            directories,
+            config,
+            unreadable,
+            missing,
+        } => {
+            let (config, missing_config) = match config {
+                Config::Found(found) => (path(&found), HostValue::Undefined),
+                Config::Missing(name) => (HostValue::Undefined, HostValue::text(&name)),
+                Config::NotNative(reason) => {
+                    return Ok(HostValue::Object(vec![
+                        ("kind", HostValue::text("declined")),
+                        ("reason", HostValue::text(reason)),
+                    ]));
+                }
+            };
+            vec![
+                ("kind", HostValue::text("spec")),
+                ("path", HostValue::text(&spec)),
+                ("name", HostValue::text(&name)),
+                (
+                    "directories",
+                    HostValue::Array(
+                        directories
+                            .iter()
+                            .map(|directory| HostValue::text(directory))
+                            .collect(),
+                    ),
+                ),
+                ("config", config),
+                ("missingConfig", missing_config),
+                (
+                    "unreadable",
+                    unreadable.map_or(HostValue::Undefined, |found| path(&found)),
+                ),
+                ("missing", optional(missing)),
+            ]
+        }
+        Resolved::Module(Ok(text)) => vec![
+            ("kind", HostValue::text("module")),
+            ("text", optional(text)),
+        ],
+        Resolved::Module(Err(found)) => vec![
+            ("kind", HostValue::text("unreadable")),
+            ("path", path(&found)),
+        ],
+        Resolved::Class(class) => {
+            let (found, bytes) = class.map_or(
+                (HostValue::Undefined, HostValue::Undefined),
+                |(found, bytes)| (path(&found), HostValue::Uint8s(bytes)),
+            );
+            vec![
+                ("kind", HostValue::text("class")),
+                ("path", found),
+                ("bytes", bytes),
+            ]
+        }
+        Resolved::Text(text) => vec![
+            ("kind", HostValue::text("text")),
+            ("text", HostValue::text(&text)),
+        ],
+        Resolved::NotNative(reason) => vec![
+            ("kind", HostValue::text("declined")),
+            ("reason", HostValue::text(&reason)),
+        ],
+    }))
 }
 
 #[cfg(test)]

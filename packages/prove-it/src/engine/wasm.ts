@@ -49,8 +49,10 @@ interface Exports {
   prove_it_check: Call;
   prove_it_decide: Call;
   prove_it_prove: Call;
+  prove_it_obligations: Call;
+  prove_it_fingerprint: Call;
   prove_it_sany_text: Call;
-  prove_it_sany_xml: Call;
+  prove_it_resolve_files: Call;
   prove_it_check_sources: Call;
   prove_it_store_perform: Call;
   prove_it_store_decode: Call;
@@ -307,13 +309,21 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       >,
     prove: (file, source, known) =>
       callCurrent("prove_it_prove", [file, source, known]) as ReturnType<NativeAddon["prove"]>,
+    obligations: (file, source, known, encode) =>
+      callCurrent("prove_it_obligations", [file, source, known, encode]) as ReturnType<
+        NativeAddon["obligations"]
+      >,
+    fingerprint: (file, source, known) =>
+      callCurrent("prove_it_fingerprint", [file, source, known]) as ReturnType<
+        NativeAddon["fingerprint"]
+      >,
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]
       >,
-    sanyXml: (root, source, fileName, flags, known) =>
-      callCurrent("prove_it_sany_xml", [root, source, fileName, flags, known]) as ReturnType<
-        NativeAddon["sanyXml"]
+    resolveFiles: (args, given, request, known) =>
+      callCurrent("prove_it_resolve_files", [args, given, request, known]) as ReturnType<
+        NativeAddon["resolveFiles"]
       >,
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as

@@ -1,0 +1,66 @@
+[
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test216.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite",
+    "spec": "test216.tla",
+    "config": "test216.cfg",
+    "style": "TLC test suite, five modules",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test63.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite",
+    "spec": "test63.tla",
+    "config": "test63.cfg",
+    "style": "TLC test suite, two modules",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/locks_auxiliary_vars/LockHS.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/locks_auxiliary_vars",
+    "spec": "LockHS.tla",
+    "config": "LockHS.cfg",
+    "style": "lock with auxiliary variables, three modules",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/ewd998/EWD998ChanID.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/ewd998",
+    "spec": "EWD998ChanID.tla",
+    "config": "EWD998ChanID.cfg",
+    "style": "EWD998, two modules and a library module",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/Echo/MCEcho.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/Echo",
+    "spec": "MCEcho.tla",
+    "config": "MCEcho.cfg",
+    "style": "echo algorithm, a model module",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "examples/specifications/byzpaxos/Consensus.cfg",
+    "directory": "tests/conformance/.corpora/examples/specifications/byzpaxos",
+    "spec": "Consensus.tla",
+    "config": "Consensus.cfg",
+    "style": "Paxos consensus, library modules",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test1.cfg",
+    "directory": "tests/conformance/.corpora/tlc/tlatools/org.lamport.tlatools/test-model/suite",
+    "spec": "test1.tla",
+    "config": "test1.cfg",
+    "style": "TLC test suite, one module",
+    "isUsingLibrary": true
+  },
+  {
+    "id": "tlapm/examples/Dekker/Dekker.cfg",
+    "directory": "tests/conformance/.corpora/tlapm/examples/Dekker",
+    "spec": "Dekker.tla",
+    "config": "Dekker.cfg",
+    "style": "Dekker mutex, a library module",
+    "isUsingLibrary": true
+  }
+]

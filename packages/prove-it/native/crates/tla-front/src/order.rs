@@ -491,6 +491,15 @@ fn missing_module_error(name: &str, importer: &str) -> FrontError {
     FrontError::Syntax(error)
 }
 
+/// A module's context, which a module that names its own module while the front end builds its
+/// context, such as a file instantiating its inner module of the file's name, finds unbuilt: the
+/// front end keys contexts by name where SANY scopes the inner module's.
+fn get_built(table: &RefCell<SymbolTable>) -> Result<std::cell::Ref<'_, SymbolTable>> {
+    table
+        .try_borrow()
+        .map_err(|_| FrontError::NotYet("a module that names a module of its own name".to_owned()))
+}
+
 impl<'a> TlcOrder<'a> {
     pub fn new(
         source: &'a str,
@@ -858,7 +867,8 @@ impl<'a> TlcOrder<'a> {
         let unit = self.get_parsed(name)?;
         let module = unit.get_module(self.version)?;
         for extended in &module.extends {
-            let entries = self.get_context(Some(extended))?.borrow().inserted.clone();
+            let extended = self.get_context(Some(extended))?;
+            let entries = get_built(&extended)?.inserted.clone();
             for entry in entries {
                 if !entry.is_local {
                     table.borrow_mut().put(entry);
@@ -994,10 +1004,8 @@ impl<'a> TlcOrder<'a> {
             units.push((
                 instance.location.position(),
                 Box::new(move |order, table| {
-                    let instancee = order
-                        .get_context(Some(&instance.module))?
-                        .borrow()
-                        .enumerate();
+                    let context = order.get_context(Some(&instance.module))?;
+                    let instancee = get_built(&context)?.enumerate();
                     let prefix = instance
                         .name
                         .as_ref()

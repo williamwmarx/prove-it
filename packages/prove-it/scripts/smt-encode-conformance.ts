@@ -7,11 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaUnsupportedError } from "../src";
-import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
   getInputDigest,
-  getModuleObligations,
+  getModuleEncodings,
   printResults,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
@@ -127,16 +126,6 @@ interface Result {
   actual?: string;
 }
 
-// The encoding, or why tla-ts can't encode the obligation.
-const getEncoding = (encode: () => string) => {
-  try {
-    return { kind: "smt", text: encode() } as const;
-  } catch (error) {
-    if (!(error instanceof TlaUnsupportedError)) throw error;
-    return { kind: "unsupported", reason: error.message } as const;
-  }
-};
-
 // The first command that differs once names are canonical.
 const findDifference = (expected: string, actual: string) => {
   const left = canonicalize(parse(expected));
@@ -152,35 +141,36 @@ const results = readProofRecords()
     record.obligations.some((obligation) => obligation.status !== "trivial" && "smt" in obligation),
   )
   .flatMap((record): Result[] => {
-    const obligations = new Map(
-      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
-        obligation.id,
-        obligation,
-      ]),
+    const recorded = record.obligations.flatMap((expected) =>
+      expected.status === "trivial" || !("smt" in expected) || !expected.smt
+        ? []
+        : [{ id: expected.id, input: expected.smt.input }],
     );
     // tlapm counts some names across the obligations it encodes, in order.
-    const session = { caseErrors: 0 };
-    return record.obligations.flatMap((expected): Result[] => {
-      if (expected.status === "trivial" || !("smt" in expected) || !expected.smt) return [];
+    const encodings = getModuleEncodings(
+      join(CORPORA_DIRECTORY, record.id),
+      recorded.map((expected) => expected.id),
+      "smt",
+      (obligation) => obligation.kind !== "Error",
+    ).encodings;
+    return recorded.map((expected): Result => {
       const base = { module: record.id, id: expected.id };
-      const obligation = obligations.get(expected.id);
-      if (!obligation || obligation.kind.kind === "Error")
-        return [{ ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" }];
-      const encoded = getEncoding(() => encodeForBackend(obligation, "smt", session));
-      if (encoded.kind === "unsupported")
-        return [{ ...base, verdict: "unsupported", reason: encoded.reason }];
-      if (getInputDigest(encoded.text) === expected.smt.input)
-        return [{ ...base, verdict: "match" }];
+      const text = encodings.get(expected.id);
+      if (text === undefined)
+        return { ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" };
+      if (text instanceof Error) {
+        if (!(text instanceof TlaUnsupportedError)) throw text;
+        return { ...base, verdict: "unsupported", reason: text.message };
+      }
+      if (getInputDigest(text) === expected.input) return { ...base, verdict: "match" };
       const deviation = getDeviation(record.id, expected.id);
-      if (deviation) return [{ ...base, verdict: "deviation", reason: deviation }];
+      if (deviation) return { ...base, verdict: "deviation", reason: deviation };
       const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.smt`);
-      if (!existsSync(inputPath)) return [{ ...base, verdict: "mismatch" }];
-      const difference = findDifference(readFileSync(inputPath, "utf8"), encoded.text);
-      return [
-        difference
-          ? { ...base, verdict: "mismatch", ...difference }
-          : { ...base, verdict: "names" },
-      ];
+      if (!existsSync(inputPath)) return { ...base, verdict: "mismatch" };
+      const difference = findDifference(readFileSync(inputPath, "utf8"), text);
+      return difference
+        ? { ...base, verdict: "mismatch", ...difference }
+        : { ...base, verdict: "names" };
     });
   });
 
