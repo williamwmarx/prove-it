@@ -20,18 +20,12 @@ const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
-const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
-  spawnSync("bun", [CLI, ...args], {
-    cwd: join(FIXTURES, directory),
-    encoding: "utf8",
-    env: env && { ...process.env, ...env },
-  });
-
 const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
 
-// tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
+// tlapm keeps its cache in the directory it runs in, and TLC writes the trace exploration spec
+// beside the spec, so each run works in a copy of the fixtures.
 const copyFixtures = (directory: string) => {
   const copy = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
   copies.push(copy);
@@ -39,13 +33,25 @@ const copyFixtures = (directory: string) => {
   return copy;
 };
 
+const runCliWith = (directory: string, args: string[], env?: Record<string, string>) =>
+  spawnSync("bun", [CLI, ...args], {
+    cwd: join(FIXTURES, directory),
+    encoding: "utf8",
+    env: env && { ...process.env, ...env },
+  });
+
 const runTlapmIn = (directory: string, args: string[]) =>
   spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const runTlapm = (directory: string, args: string[]) => runTlapmIn(copyFixtures(directory), args);
 
+// TLC writes the trace exploration spec of an error beside the spec, so the spec is checked in a
+// copy of the fixtures.
 const runCli = (directory: string, name: string, args: string[] = []) =>
-  runCliWith(directory, [`${name}.tla`, ...args]);
+  spawnSync("bun", [CLI, `${name}.tla`, ...args], {
+    cwd: copyFixtures(directory),
+    encoding: "utf8",
+  });
 
 const getCheckedSpecs = (output: string) =>
   output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
@@ -137,6 +143,7 @@ const TLC_REPORTS = [
       "3 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lasso_TTrace__.tla",
     ],
   ],
   [
@@ -168,29 +175,7 @@ const TLC_REPORTS = [
       "4 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "Finished in _ at (_)",
-    ],
-  ],
-  [
-    "SafetyProperty",
-    12,
-    [
-      "Starting... (_)",
-      "Implied-temporal checking--satisfiability problem has 1 branches.",
-      "Computing initial states...",
-      "Finished computing initial states: 1 distinct state generated at _.",
-      "Error: Temporal property Bounded was violated.",
-      "",
-      "Error: The following behavior constitutes a counter-example:",
-      "",
-      "State 1: <Initial predicate>",
-      "x = 0",
-      "",
-      "State 2: <Next line 5, col 9 to line 5, col 27 of module SafetyProperty>",
-      "x = 1",
-      "",
-      "3 states generated, 3 distinct states found, 1 states left on queue.",
-      "The depth of the complete state graph search is 3.",
-      "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lassos_TTrace__.tla",
     ],
   ],
   [
@@ -216,6 +201,7 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedInvariant_TTrace__.tla",
     ],
   ],
   [
@@ -266,6 +252,7 @@ const TLC_REPORTS = [
       "2 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedAssert_TTrace__.tla",
     ],
   ],
   [
@@ -491,6 +478,29 @@ describe("the CLI reports results like TLC", () => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
+  // The engine hands the search over at a deadlock it doesn't report, and TLC prints the path of
+  // the counterexample's trace exploration spec, "Trace exploration spec path:
+  // ./SafetyProperty_TTrace__.tla", which only the native check writes.
+  it("declines SafetyProperty, whose trace exploration spec the interpreter doesn't write", () => {
+    const result = runCli("cli-output", "SafetyProperty");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toEndWith(
+      "prove-it: not native yet: the trace exploration spec of an error trace\n",
+    );
+  });
+
+  // TLC prints that the postcondition of _JsonTrace failed, with the message of the Java
+  // exception it caught, "WaterJugs.cfg/x.json (Not a directory)".
+  it("declines a -dumpTrace file it can't write", () => {
+    const result = runCli("water-jugs", "WaterJugs", [
+      "-dumpTrace",
+      "json",
+      "WaterJugs.cfg/x.json",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("prove-it: not native yet: -dumpTrace\n");
   });
 
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
@@ -1629,7 +1639,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
 
   it("names a property an instance exports as written, as TLC does", () => {
     const getViolation = (config: string) =>
-      runCliWith("instance-property", ["-nowarning", "-config", config, "Main.tla"])
+      runCli("instance-property", "Main", ["-nowarning", "-config", config])
         .stdout.split("\n")
         .find((line) => line.endsWith(" is violated."));
     // PSafe == A!Safe names A!Safe, but A!Safe2 == Safe names Safe inside the instance.

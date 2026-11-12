@@ -20,7 +20,8 @@ const replaceTimes = (output: string) =>
         ? line
             .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
             .replace(/ in (?:\d+ms|\d+s|\d+min \d+s|\d+h \d+min|\d+d \d+h) at /g, " in _ at ")
-        : line,
+        : // The trace exploration spec is named by the second the run started.
+          line.replace(/^(Trace exploration spec path: .*_TTrace_)\d+(\.tla)$/, "$1_$2"),
     )
     .join("\n");
 

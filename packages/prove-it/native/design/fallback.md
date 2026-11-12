@@ -1139,9 +1139,11 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
     may print as TLC computes its constants (one that names `Print`, `PrintT`, TLCExt or IOUtils,
     or loads a Java override), which it prints first.
 - Where the native check declines, stops before it searches without `thrown`, or the options ask
-  for what only the TypeScript check does (`onProgress`, `onPause`, `dump`, `systemProperties`, a
-  `ModelConfig`, TLC 1.7.4), the TypeScript check runs and its result converts
-  (`src/check-result.ts`).
+  for what only the TypeScript check does (`onPause`, a `dump` as `dot`, TLC 1.7.4), the
+  TypeScript check runs and its result converts (`src/check-result.ts`). A `ModelConfig` goes to
+  the native check as the configuration file that holds it (`formatConfig`), and a plain `dump` as
+  `-dump`, whose file `checkSources` returns among its `writes` for `writeFile`.
+  `systemProperties` go to the native check as a Java launch's `-D`, as the binary reads them.
 - `Value` and `formatValue` are no longer exported.
 - A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
   trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against

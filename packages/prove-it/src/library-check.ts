@@ -17,7 +17,7 @@ import {
   toContinuedViolation,
   type Violation,
 } from "./check-result";
-import { parseConfig } from "./config";
+import { formatConfig, parseConfig } from "./config";
 import {
   checkAllSources,
   getNativeAddon,
@@ -59,8 +59,11 @@ const getDeclined = (options: CheckOptions) =>
     [
       [isTypeScriptCheckAsked(), "a setting only the TypeScript check honours"],
       [options.version === "1.7.4", "TLC 1.7.4"],
-      [options.dump !== undefined, "-dump"],
-      [options.systemProperties !== undefined, "system properties"],
+      [Boolean(options.dump?.dot), "-dump dot"],
+      [
+        Boolean(options.dump) && typeof options.dump?.path !== "string",
+        "a -dump path that isn't a string",
+      ],
       [options.onPause !== undefined, "onPause"],
     ] as const
   ).find((entry) => entry[0])?.[1];
@@ -98,16 +101,28 @@ const getThrownError = (thrown: NativeThrown, isPrinting: boolean) =>
 const checkWithEngine = (options: CheckOptions) => {
   const declined = getDeclined(options);
   const name = getModuleName(options.source);
-  const config = options.config;
+  const config =
+    declined !== undefined || typeof options.config === "string"
+      ? options.config
+      : formatConfig(options.config);
   if (declined !== undefined || name === undefined || typeof config !== "string") {
     reportEngine(
-      `native: check takes the TypeScript path: ${declined ?? (name === undefined ? "a spec without a module header" : "a configuration given as a ModelConfig")}`,
+      `native: check takes the TypeScript path: ${declined ?? (name === undefined ? "a spec without a module header" : "a ModelConfig no configuration file holds")}`,
     );
     return undefined;
   }
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
+  // The system properties go in front of TLC's class as a Java launch's -D, as the binary reads
+  // them.
+  const launch = options.systemProperties
+    ? [
+        ...[...options.systemProperties].map((property) => `-D${property[0]}=${property[1]}`),
+        "tlc2.TLC",
+      ]
+    : [];
   const args = [
+    ...launch,
     ...(options.isTraceRecorded ? [] : ["-noGenerateSpecTE"]),
     ...(options.seed === undefined ? [] : ["-seed", String(options.seed)]),
     ...(options.workers === undefined ? [] : ["-workers", String(options.workers)]),
@@ -115,6 +130,7 @@ const checkWithEngine = (options: CheckOptions) => {
     ...(options.isTool ? ["-tool"] : []),
     ...(options.isWarningEnabled === false ? ["-nowarning"] : []),
     ...(options.isContinued ? ["-continue"] : []),
+    ...(options.dump ? ["-dump", options.dump.path] : []),
     `${name}.tla`,
   ];
   const texts = new Map([
@@ -184,6 +200,19 @@ const checkWithEngine = (options: CheckOptions) => {
     );
     return undefined;
   }
+  // The check names the -dump file as TLC does, with .dump added; the library writes it at the
+  // path the caller gave, with what each write appended.
+  const written = new Map<string, string>();
+  const decoder = new TextDecoder();
+  result.writes.forEach((write) =>
+    written.set(
+      write.path,
+      (write.isAppended ? (written.get(write.path) ?? "") : "") + decoder.decode(write.bytes),
+    ),
+  );
+  written.forEach((text, path) =>
+    options.writeFile?.(options.dump ? options.dump.path : path, text),
+  );
   const print = options.onPrint ?? console.log;
   // The TypeScript check prints SANY's warnings as it links the spec, where the caller didn't.
   if (!options.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));

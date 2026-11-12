@@ -5,9 +5,6 @@ import { EngineUnavailableError } from "../errors";
 import { readSanyText, type SanyReading } from "../sany/source";
 import type { TlcVersion } from "../tlc/version";
 
-// The exit code of a run the CLI declines.
-export const NOT_NATIVE_EXIT_CODE = 1;
-
 // Where SANY reads a module from: a file of its own, the file of the root module, which holds the
 // root module's inner modules too, or the files of its standard modules.
 export type SanyModuleOrigin = "file" | "root file" | "standard";
