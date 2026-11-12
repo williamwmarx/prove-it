@@ -213,6 +213,9 @@ struct Run<'a> {
     waiting_fingerprints: Vec<String>,
     texts: HashMap<String, String>,
     requests: Vec<Request>,
+    // Whether a prover's results for a fingerprint merge as tlapm's table merges them, as the
+    // scheduler's do, or the last replaces the one held, as the TypeScript's rounds do.
+    is_merged: bool,
 }
 
 // What proving an obligation came to this round.
@@ -622,16 +625,18 @@ impl Run<'_> {
             .get_or_insert_with(fingerprint, KnownAttempts::default)
             .attempts;
         let prover = attempt.attempt.method.prover.clone();
-        let is_greater = attempts.get(&prover).is_none_or(|held| {
-            let (new, old) = (&attempt.attempt, &held.attempt.attempt);
-            let (new_budget, old_budget) = (get_budget(&new.method), get_budget(&old.method));
-            match (new.is_proved, old.is_proved) {
-                (true, false) => true,
-                (false, true) => false,
-                (true, true) => old_budget > new_budget,
-                (false, false) => new_budget > old_budget,
-            }
-        });
+        let is_merged = self.is_merged;
+        let is_greater = !is_merged
+            || attempts.get(&prover).is_none_or(|held| {
+                let (new, old) = (&attempt.attempt, &held.attempt.attempt);
+                let (new_budget, old_budget) = (get_budget(&new.method), get_budget(&old.method));
+                match (new.is_proved, old.is_proved) {
+                    (true, false) => true,
+                    (false, true) => false,
+                    (true, true) => old_budget > new_budget,
+                    (false, false) => new_budget > old_budget,
+                }
+            });
         if is_greater {
             attempts.insert(prover, KnownAttempt::new(attempt));
         }
@@ -722,6 +727,7 @@ impl<'a> Prover<'a> {
                 waiting_fingerprints: Vec::new(),
                 texts: HashMap::new(),
                 requests: Vec::new(),
+                is_merged: true,
             },
         }
     }
@@ -824,6 +830,7 @@ pub fn prove_obligations_with(
         waiting_fingerprints: Vec::new(),
         texts: HashMap::new(),
         requests: Vec::new(),
+        is_merged: false,
     };
     let mut round = Round::default();
     for (position, obligation) in obligations.iter().enumerate() {
