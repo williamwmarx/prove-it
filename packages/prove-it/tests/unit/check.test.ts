@@ -2942,6 +2942,27 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // TLC sorts the record r as it compares it with itself, and prints "<<[fld2 |-> 2, fld1 |-> 1]>>",
+  // fld2 first since it interned fld2 first; a record built in place prints as written.
+  it("declines ToString of a record TLC may have sorted, and writes one built in place", async () => {
+    const options = (body: string) => ({
+      source: `---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\n${body}\n====`,
+      config: "",
+    });
+    await expectDeclined(
+      options(
+        "ASSUME PrintT(ToString(LET r == <<[fld1 |-> 1, fld2 |-> 2]>> IN IF r = r THEN r ELSE r))",
+      ),
+      getAssumptionDeclined("ToString of a record TLC may have sorted"),
+    );
+    const prints: string[] = [];
+    await checkOnEngine({
+      ...options("ASSUME PrintT(ToString(<<1, [fld1 |-> 1, fld2 |-> 2]>>))"),
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["[fld2 |-> 0]", '"<<1, [fld1 |-> 1, fld2 |-> 2]>>"']);
+  });
+
   it("declines a TLCEval argument TLC can't sort, inside an instance that substitutes or not", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';

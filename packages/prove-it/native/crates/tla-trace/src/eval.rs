@@ -31,9 +31,9 @@ use crate::sets::{
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
     Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with,
-    failing_comparisons, find_key, from_store, is_enumerable, lambda_as_function,
-    mark_unnormalized, note_sorted, set_of, sorted_function, take_is_record_built, unnormalized,
-    unsorted_failure, written_function,
+    failing_comparisons, find_key, from_store, holds_record_out_of_order, is_enumerable,
+    lambda_as_function, mark_unnormalized, note_sorted, set_of, sorted_function,
+    take_is_record_built, unnormalized, unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -1254,6 +1254,24 @@ impl<'ir> Evaluator<'ir> {
             stack.values.insert(node, value.clone());
         }
         result
+    }
+
+    // Whether an expression builds its value in place, from records, tuples, set enumerations,
+    // `:>` and `@@` of numbers and strings, so that nothing compared it before.
+    fn is_built_here(&self, node: NodeId) -> bool {
+        match &self.ir.nodes.arena[node as usize].kind {
+            NodeKind::Number(_) | NodeKind::String(_) => true,
+            NodeKind::Record(fields) => fields.iter().all(|&(_, value)| self.is_built_here(value)),
+            NodeKind::Tuple(items) | NodeKind::SetEnumeration(items) => {
+                items.iter().all(|&item| self.is_built_here(item))
+            }
+            NodeKind::Apply { name, args } => {
+                !name.is_local
+                    && matches!(self.name(name.text), ":>" | "@@")
+                    && args.iter().all(|&arg| self.is_built_here(arg))
+            }
+            _ => false,
+        }
     }
 
     // The nodes whose value TLC's `CallStackTool` gives a source (`SOURCED_KINDS` and
@@ -5330,6 +5348,18 @@ impl<'ir> Evaluator<'ir> {
             "ToString" => {
                 arity(1)?;
                 let value = self.operand(&operands[0])?;
+                // TLC sorts a record's fields in place wherever it compares the record, and
+                // shares a LET definition's value and a constant definition's, which it sorts as
+                // it starts, between their uses, which the evaluator doesn't follow: a record
+                // ToString reaches through one prints as written only where that is its sorted
+                // order.
+                let is_built_here = match &operands[0] {
+                    Operand::Node(node, _) => self.is_built_here(*node),
+                    Operand::Value(_) => false,
+                };
+                if !is_built_here && holds_record_out_of_order(&value) {
+                    return fail("ToString of a record TLC may have sorted");
+                }
                 let checked = check_unchecked(&value);
                 if let Err(EvalError {
                     message: Some(message),
