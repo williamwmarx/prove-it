@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,19 @@ const directory = mkdtempSync(join(tmpdir(), "prove-it-stop-at-"));
 
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
+// Specs that violate an invariant, deadlock, end in an error and succeed. TLC writes the trace
+// exploration spec of an error beside the spec, so they are checked in a copy of the fixtures.
+const MODELS = [
+  ["water-jugs", "WaterJugs"],
+  ["counter", "Counter"],
+  ["cli-output", "FailedInvariant"],
+  ["commit", "Commit"],
+];
+
+MODELS.forEach((model) =>
+  cpSync(join(FIXTURES, model[0]), join(directory, model[0]), { recursive: true }),
+);
+
 const run = (
   fixture: string,
   name: string,
@@ -21,7 +34,7 @@ const run = (
   environment: Record<string, string> = {},
 ) => {
   const result = spawnSync("bun", [CLI, `${name}.tla`, ...args], {
-    cwd: join(FIXTURES, fixture),
+    cwd: join(directory, fixture),
     encoding: "utf8",
     env: {
       ...process.env,
@@ -41,14 +54,6 @@ const getExpanded = (fixture: string, name: string) => {
   run(fixture, name, [], { PROVE_IT_STATE_LOG: path });
   return JSON.parse(readFileSync(path, "utf8").split("\n")[0]).expanding;
 };
-
-// Specs that violate an invariant, deadlock, end in an error and succeed.
-const MODELS = [
-  ["water-jugs", "WaterJugs"],
-  ["counter", "Counter"],
-  ["cli-output", "FailedInvariant"],
-  ["commit", "Commit"],
-];
 
 describe("PROVE_IT_STOP_AT", () => {
   it.each(MODELS)(

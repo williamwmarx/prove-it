@@ -1,4 +1,12 @@
-import { existsSync, globSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  globSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { arch, availableParallelism, release, tmpdir, totalmem, type } from "node:os";
 import { delimiter } from "node:path";
 
@@ -31,9 +39,19 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
       : [{ path: arg, isGlobbed: false }],
   );
 
+const isWritable = (path: string) => {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 // What the native check reads of the machine's files, by the keys prove-it-host's `check` names:
 // what is at a path, a file's bytes, the path with its links followed, the working directory, the
-// temporary directory and the platform, whose rules the engine as WebAssembly names paths by. A path the system can't follow, as a loop of links, has none, and a file
+// temporary directory, the platform, whose rules the engine as WebAssembly names paths by, and
+// whether the CLI can write into a directory. A path the system can't follow, as a loop of links, has none, and a file
 // it can't read, as a socket, has no bytes, as the binary reads them.
 export const readFileKey = (key: string) => {
   const [kind, ...rest] = key.split(":");
@@ -43,6 +61,7 @@ export const readFileKey = (key: string) => {
   if (kind === "tmpdir") return tmpdir();
   if (!existsSync(path)) return undefined;
   const isDirectory = statSync(path).isDirectory();
+  if (kind === "writable") return isDirectory && isWritable(path) ? "directory" : undefined;
   if (kind === "stat") return isDirectory ? "directory" : "file";
   if (kind === "realpath") return realpathSync.native(path);
   if (kind !== "bytes" || isDirectory) return undefined;
