@@ -700,7 +700,9 @@ no full `tlc-stdout`. Recording them is deferred.
   code, its place among the spec's prints and, for a check of the temporal properties part way
   through the search, the search's counts; `check` turns them into `CheckProgress` events
   (`src/native-progress.ts`), which it reports once the check ends. On the corpus models the native
-  check answers, the events and their order equal the TypeScript check's (CORPUS_COUNT), but for
+  check answers, the events and their order equal the TypeScript check's (746 of the 762 it answers
+  of 920; of the other 16, six were the report of a violation, fixed since, five the clock's, one
+  a warning below, and four differ in the result or the prints, not in the events), but for
   the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
   the native search made, every minute, and a `liveness-started` with `isComplete` false for each
   check part way through it, at the native search's own times. Where the two differ otherwise:
