@@ -439,6 +439,15 @@ decline, none differ). What still declines:
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a configuration error in what the configuration names for the search (CONSTRAINT,
+  ACTION_CONSTRAINT and the like), where a constant definition prints: TLC prints what the
+  constant definitions print first (`processConstantDefns`), which the front end, raising the
+  error as it reads the configuration, doesn't; it declines it ("an error in what the
+  configuration names for the search, after what the constant definitions print"), which main
+  answered without the prints.
+- a variable `x = D` assigns in the initial predicate or a step, D a startup definition that
+  failed outside a Java method: TLC reports the failure as a state it fails to fingerprint (see
+  the known wrong output below); the trace evaluator declines it.
 - a SYMMETRY definition with parameters, whose body TLC evaluates without them
   (`Tool.getSymmetryPerms`), failing at the first parameter it reads or going on with the value.
   The front end reported that it isn't a set of permutations, which TLC never prints for one; it
@@ -492,6 +501,12 @@ read past an INSTANCE. Eight adversarial rounds kept finding edges in it (nested
 substitute a bare name, operator arguments naming an INSTANCE's copy), so it waits there.
 
 #### Known wrong outputs
+
+A failure of a value TLC builds in the initial predicate, as in `Init == x = (DOMAIN <<1>> =
+TRUE)`, TLC reports as a state it fails to fingerprint ("TLC was unable to fingerprint", with the
+value's frames and the reason), where the native checker reports the failure with nested frames:
+the value has a source there (`FingerprintException.getNewHead`). On main alike; found by the
+startup fuzz of PR 366.
 
 The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
 in an order other than the one in which TLC holds the sets' elements unnormalized, so a failure

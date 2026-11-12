@@ -408,7 +408,7 @@ pub struct Evaluator<'ir> {
     cache: HashMap<(NodeId, bool), Value>,
     /// The startup definitions that failed as TLC started, which it evaluates again where they are
     /// used (`processConstantDefns` swallows what one throws).
-    failed_startup: HashSet<NodeId>,
+    pub(crate) failed_startup: HashSet<NodeId>,
     /// The startup definitions the search found failing as TLC started.
     searched_failing: HashSet<NodeId>,
     /// The value the search computed of each constant definition whose body is a CHOOSE over a
@@ -607,7 +607,7 @@ const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
 const BUILT_FUNCTION: &str = "building a function a definition defines";
 const LAZY_BODY: &str = "the body of a function TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
-const JAVA_METHOD_FAILED: u32 = 2154;
+pub(crate) const JAVA_METHOD_FAILED: u32 = 2154;
 
 const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
