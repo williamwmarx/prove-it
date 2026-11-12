@@ -337,24 +337,72 @@ fn proves_and_prints_what_tlapm_prints() {
     );
 }
 
-// The pool decides on one thread or four, and the obligations are reported in order either way.
+// With one thread, tlapm launches one decision at a time; with four, it prints each result as it
+// comes back, in an order that depends on timing, which declines.
 #[test]
 fn prints_each_provers_result_in_toolbox_mode() {
-    for threads in ["1", "4"] {
-        for name in ["Failures", "Twice"] {
-            let args = ["--threads", threads, "--toolbox", "0", "0"];
-            let output = run(
-                "tlapm-cli",
-                &[&args[..], &[&format!("{name}.tla")]].concat(),
-            );
-            assert_eq!(output.status.code(), Some(0), "{name} {threads}");
-            assert_eq!(
-                without_time_used(&stderr(&output)),
-                without_time_used(&read_recording("tlapm-cli", &format!("{name}.toolbox"))),
-                "{name} {threads}"
-            );
-        }
+    for name in ["Failures", "Twice"] {
+        let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
+        let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
+        assert_eq!(output.status.code(), Some(0), "{name}");
+        assert_eq!(
+            without_time_used(&stderr(&output)),
+            without_time_used(&read_recording("tlapm-cli", &format!("{name}.toolbox"))),
+            "{name}"
+        );
+        let output = run("tlapm-cli", &[&["--threads", "4"], &args[..]].concat());
+        assert_eq!(
+            (output.status.code(), stderr(&output)),
+            (
+                Some(1),
+                format!(
+                    "{NOT_NATIVE}toolbox messages of two decisions in flight at once, whose order depends on timing\n"
+                )
+            ),
+            "{name}"
+        );
     }
+}
+
+// tlapm evaluates an obligation's methods as its scheduler starts them (Prep.already_processed in
+// Schedule.run's thunks), and launches every decision it can before it takes a result: with two
+// threads, the second of two obligations with one fingerprint starts while the first's Zenon runs,
+// and runs Zenon itself, where with one it reuses the first's failure.
+#[test]
+fn reuses_a_result_when_tlapm_has_it() {
+    let module = "---- MODULE D ----\nEXTENDS Naturals, TLAPS\nTHEOREM A1 == 1 + 1 = 2\n  BY Zenon\nTHEOREM A2 == 1 + 1 = 2\n  BY Zenon\n====\n";
+    let note = "Zenon error: exhausted search space without finding a proof\n";
+    for (threads, notes) in [("1", 1), ("2", 2)] {
+        let directory = write_files(&[("D.tla", module)]);
+        let output = run_in(&directory, &["--threads", threads, "D.tla"]);
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(stdout(&output).matches(note).count(), notes, "{threads}");
+    }
+    let directory = write_files(&[("D.tla", module)]);
+    let output = run_in(
+        &directory,
+        &["--threads", "1", "--toolbox", "0", "0", "D.tla"],
+    );
+    assert_eq!(stderr(&output).matches("@!!already:true").count(), 1);
+}
+
+// With the default methods, the second of two obligations with one fingerprint evaluates Zenon's
+// thunk once SMT fails, before or after the first's Zenon comes back, as timing has it.
+#[test]
+fn declines_a_reuse_timing_decides() {
+    let module = "---- MODULE D ----\nEXTENDS Naturals, TLAPS\nCONSTANT x\nTHEOREM A1 == x = x + 0\n  OBVIOUS\nTHEOREM A2 == x = x + 0\n  OBVIOUS\n====\n";
+    let directory = write_files(&[("D.tla", module)]);
+    let output = run_in(&directory, &["--threads", "2", "D.tla"]);
+    assert_eq!(
+        (output.status.code(), stdout(&output), stderr(&output)),
+        (
+            Some(1),
+            String::new(),
+            format!(
+                "{NOT_NATIVE}two obligations with one fingerprint, where the order decisions come back in decides what one reuses\n"
+            )
+        )
+    );
 }
 
 // A copy of the fixtures whose cache holds the fingerprints tlapm wrote.

@@ -854,6 +854,17 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 
 ### Declines
 
+- **What timing decides** (`Schedule.run`): tlapm launches every decision it can, up to
+  `--threads`, before it takes any result, and takes each as it comes back. Where two are in
+  flight together, either can come back first, and the run declines where that changes what tlapm
+  prints or writes: in toolbox mode, where each prints a message as it comes back (`toolbox
+  messages of two decisions in flight at once, …`); a thunk still to be evaluated of an obligation
+  with the fingerprint and prover of a decision in flight, which reuses its result or not as it
+  comes back first or not; an SMT encoding still to be made that numbers CASE errors, whose count
+  the order changes; Zenon's notes of different texts and Isabelle's proofs of different
+  obligations, which tlapm writes as they come; and different results for one fingerprint and
+  prover, of which the fingerprints file keeps the last. With one thread, or where one decision is
+  in flight at a time, the order is tlapm's.
 - **An error tlapm ends with** (`the backtrace tlapm prints as it ends with …`): tlapm prints the
   exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
   the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
@@ -908,8 +919,10 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 
 ### Declines to win back
 
-Runs origin/main's TypeScript CLI printed as tlapm does only because nothing read what it got
-wrong:
+Runs origin/main's TypeScript CLI printed as tlapm does only by chance:
+- Toolbox mode with more than one thread, where two decisions are in flight together: the
+  TypeScript printed each obligation's messages in order, which tlapm does only where the results
+  happen to come back in that order.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
 
@@ -927,6 +940,8 @@ wrong:
   within the method's 60 s.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
+- tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
+  (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.

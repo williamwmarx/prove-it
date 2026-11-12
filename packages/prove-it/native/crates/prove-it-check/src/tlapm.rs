@@ -9,14 +9,14 @@
 //! runs in place.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::channel;
 
 use prove_it_prover::driver::{
-    Answer, Attempt, Cache, Report, Round, Settings, Status, prove_obligations_with,
+    Answer, Attempt, Cache, Prover, Report, Settings, Status, Step, Task,
 };
 use prove_it_prover::tlapm_cache::{FingerprintTable, KnownResults, LocalTime, load_fingerprints};
 use prove_it_prover::{Cancel, DecideError, Limits, Statistic, Verdict};
@@ -1539,13 +1539,12 @@ fn decide(job: Job, cancel: &Cancel) -> Decided {
     (job.key, decided)
 }
 
-/// Where the driver's decisions are made: `submit` hands one over, `receive` waits for one made,
-/// and `poll` takes one made without waiting.
+/// Where the driver's decisions are made: `submit` hands one over, and `receive` waits for one
+/// made.
 struct Pool<'p> {
     capacity: usize,
     submit: Box<dyn FnMut(Job) + 'p>,
     receive: Box<dyn FnMut() -> Decided + 'p>,
-    poll: Box<dyn FnMut() -> Option<Decided> + 'p>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1591,7 +1590,6 @@ fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> R
             capacity: threads,
             submit: Box::new(|job| jobs.send(job).expect("the decide threads")),
             receive: Box::new(|| answers.borrow().recv().expect("a decide thread")),
-            poll: Box::new(|| answers.borrow().try_recv().ok()),
         };
         let result = work(&mut pool);
         drop(pool);
@@ -1602,11 +1600,11 @@ fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> R
 }
 
 #[cfg(target_arch = "wasm32")]
-fn with_pool<T>(_threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> Run<T> {
+fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> Run<T> {
     let cancel: Cancel = Arc::new(|| false);
     let waiting = std::cell::RefCell::new(std::collections::VecDeque::new());
     let mut pool = Pool {
-        capacity: 1,
+        capacity: threads,
         submit: Box::new(|job| waiting.borrow_mut().push_back(job)),
         receive: Box::new(|| {
             let job = waiting
@@ -1615,7 +1613,6 @@ fn with_pool<T>(_threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> 
                 .expect("a decision submitted");
             decide(job, &cancel)
         }),
-        poll: Box::new(|| None),
     };
     work(&mut pool)
 }
@@ -1634,7 +1631,7 @@ fn prove_module(
 ) -> Run<bool> {
     let is_proving = settings.is_proving;
     let round = with_pool(threads, |pool| {
-        prove_in_rounds(io, module, &settings, pool, is_toolbox, is_proving)
+        prove_scheduled(io, module, &settings, pool, is_toolbox, is_proving)
     })?;
     let attempts: Vec<Vec<ProofAttempt>> = round
         .reports
@@ -1726,73 +1723,357 @@ fn prove_module(
     Ok(!unproved.is_empty())
 }
 
-// The driver's rounds, each with every decision made so far: each round's new reports are
-// printed, and its requests go to the pool, the earliest obligation's first, as many as it has
-// threads; the next round starts once a decision is made, with every other made by then.
-fn prove_in_rounds(
+/// What proving a module came to: each obligation's report, in order, and what each prover
+/// concluded for each fingerprint, which the fingerprints file saves.
+struct Proved {
+    reports: Vec<Report>,
+    results: KnownResults,
+}
+
+/// A decision in flight: its task and the fingerprint and prover whose result it saves.
+struct Running {
+    key: String,
+    task: Task,
+    fingerprint: String,
+    prover: String,
+}
+
+// Schedule.run: the tasks in order, each started as a thread is free, its thunks evaluated up to
+// the decision it launches, and the rest of a task whose decision fails put first, until all are
+// done. tlapm launches all it can before it takes any result, and takes them as they come, so
+// where two decisions are in flight together, which comes first depends on timing; the run
+// declines where that changes what tlapm prints or writes (`check_race`, `check_notes`).
+fn prove_scheduled(
     io: &Io<'_>,
     module: &ModuleObligations,
     settings: &Settings,
     pool: &mut Pool<'_>,
     is_toolbox: bool,
     is_proving: bool,
-) -> Run<Round> {
-    let mut answers: HashMap<String, Answer> = HashMap::new();
-    let mut in_flight: HashSet<String> = HashSet::new();
+) -> Run<Proved> {
+    let obligations = &module.obligations;
     let mut cache = Cache::default();
-    let mut reported = 0;
+    let mut prover = Prover::new(obligations, &mut cache, settings);
+    let mut reports: Vec<Option<Report>> = vec![None; obligations.len()];
+    let mut printed = vec![0; obligations.len()];
+    let mut waiting: VecDeque<Task> = (0..obligations.len()).map(Task::new).collect();
+    let mut running: Vec<Running> = Vec::new();
+    let mut race = Race::default();
     loop {
-        let round = prove_obligations_with(
-            &module.obligations,
-            &|key| answers.get(key).cloned(),
-            &mut cache,
-            settings,
-        )
-        .map_err(|error| get_obligation_error(&error))?;
-        for report in &round.reports[reported..] {
-            let obligation = &module.obligations[reported];
-            check_report(report, is_proving)?;
-            if is_toolbox {
-                io.err(format_report(report, obligation)?);
-            }
-            reported += 1;
-        }
-        if let Some(error) = &round.error {
-            return Err(get_obligation_error(error));
-        }
-        if round.requests.is_empty() {
-            return Ok(round);
-        }
-        let mut waiting: Vec<_> = round
-            .requests
-            .into_iter()
-            .filter(|request| !in_flight.contains(&request.key))
-            .collect();
-        waiting.sort_by_key(|request| request.priority);
-        for request in waiting
-            .into_iter()
-            .take(pool.capacity.saturating_sub(in_flight.len()))
+        while running.len() < pool.capacity
+            && let Some(mut task) = waiting.pop_front()
         {
-            in_flight.insert(request.key.clone());
-            (pool.submit)(Job {
-                key: request.key,
-                prover: request.prover,
-                text: request.text,
-                time_limit_ms: request.time_limit_ms,
-            });
-        }
-        let mut decided = vec![(pool.receive)()];
-        while let Some(more) = (pool.poll)() {
-            decided.push(more);
-        }
-        for (key, answer) in decided {
-            in_flight.remove(&key);
-            let (answer, note) = answer.map_err(Decline)?;
-            if let Some(note) = note {
-                io.out(note.to_owned());
+            let position = task.position;
+            let step = prover
+                .step(&mut task)
+                .map_err(|error| get_obligation_error(&error))?;
+            match step {
+                Step::Settled(report) => {
+                    print_settled(
+                        io,
+                        &report,
+                        &obligations[position],
+                        &mut printed[position],
+                        is_toolbox,
+                        is_proving,
+                    )?;
+                    reports[position] = Some(report);
+                }
+                Step::Decide(request) => {
+                    print_attempts(
+                        io,
+                        task.attempts(),
+                        &obligations[position],
+                        &mut printed[position],
+                        is_toolbox,
+                    )?;
+                    let (fingerprint, _) = prover
+                        .get_methods(position)
+                        .map_err(|error| get_obligation_error(&error))?;
+                    (pool.submit)(Job {
+                        key: request.key.clone(),
+                        prover: request.prover.clone(),
+                        text: request.text,
+                        time_limit_ms: request.time_limit_ms,
+                    });
+                    running.insert(
+                        0,
+                        Running {
+                            key: request.key,
+                            task,
+                            fingerprint,
+                            prover: request.prover,
+                        },
+                    );
+                }
+                Step::Blocked => return Err(Decline("a round's wait in tlapm's scheduler".into())),
             }
-            answers.insert(key, answer);
         }
+        if running.is_empty() {
+            break;
+        }
+        if running.len() > 1 {
+            if is_toolbox {
+                return decline(
+                    "toolbox messages of two decisions in flight at once, whose order depends on timing",
+                );
+            }
+            race.check(&mut prover, &running, &waiting, obligations.len())?;
+        }
+        let (key, decided) = (pool.receive)();
+        let index = running
+            .iter()
+            .position(|running| running.key == key)
+            .ok_or_else(|| Decline("a decision no task asked for".into()))?;
+        let Running {
+            mut task,
+            fingerprint,
+            prover: name,
+            ..
+        } = running.remove(index);
+        let (answer, note) = decided.map_err(Decline)?;
+        if let Some(note) = note {
+            io.out(note.to_owned());
+        }
+        race.record(&task, &fingerprint, &name, &answer, note);
+        let position = task.position;
+        match prover
+            .answer(&mut task, answer)
+            .map_err(|error| get_obligation_error(&error))?
+        {
+            Some(report) => {
+                print_settled(
+                    io,
+                    &report,
+                    &obligations[position],
+                    &mut printed[position],
+                    is_toolbox,
+                    is_proving,
+                )?;
+                reports[position] = Some(report);
+            }
+            None => {
+                print_attempts(
+                    io,
+                    task.attempts(),
+                    &obligations[position],
+                    &mut printed[position],
+                    is_toolbox,
+                )?;
+                waiting.push_front(task);
+            }
+        }
+    }
+    race.check_outcomes()?;
+    let reports = reports
+        .into_iter()
+        .map(|report| report.ok_or_else(|| Decline("an obligation the scheduler left".into())))
+        .collect::<Run<Vec<Report>>>()?;
+    Ok(Proved {
+        reports,
+        results: prover.into_results(),
+    })
+}
+
+// The toolbox messages of the attempts not printed yet, as Toolbox.print_old_res prints a reused
+// one and print_new_res a new one.
+fn print_attempts(
+    io: &Io<'_>,
+    attempts: &[Attempt],
+    obligation: &PrintedObligation,
+    printed: &mut usize,
+    is_toolbox: bool,
+) -> Run<()> {
+    for attempt in &attempts[(*printed).min(attempts.len())..] {
+        if let Some(reason) = attempt
+            .is_skipped()
+            .then_some(attempt.reason.as_deref())
+            .flatten()
+        {
+            return decline(format!(
+                "a method Prove It can't try as tlapm does: {reason}"
+            ));
+        }
+        if is_toolbox {
+            io.err(format_attempt(obligation, attempt)?);
+        }
+    }
+    *printed = attempts.len();
+    Ok(())
+}
+
+fn print_settled(
+    io: &Io<'_>,
+    report: &Report,
+    obligation: &PrintedObligation,
+    printed: &mut usize,
+    is_toolbox: bool,
+    is_proving: bool,
+) -> Run<()> {
+    check_report(report, is_proving)?;
+    if report.status == Status::Trivial || matches!(obligation.kind, ObligationKind::Error(_)) {
+        if is_toolbox {
+            io.err(format_report(report, obligation)?);
+        }
+        return Ok(());
+    }
+    print_attempts(io, &report.attempts, obligation, printed, is_toolbox)
+}
+
+/// What decides whether the order in which decisions in flight together come back changes what
+/// tlapm prints or writes. Any two decisions of different tasks can come back in either order
+/// once two are ever in flight together.
+#[derive(Default)]
+struct Race {
+    is_racing: bool,
+    // Each obligation's fingerprint and provers, once a race needs them.
+    heads: Vec<(String, Vec<String>)>,
+    numbering: HashMap<usize, bool>,
+    // What Zenon wrote that tlapm copies, and the tasks that wrote it.
+    notes: HashMap<&'static str, HashSet<usize>>,
+    // The tasks whose Isabelle proof tlapm writes to the theory as it comes back.
+    theorems: HashSet<usize>,
+    // What decisions in flight together concluded for one fingerprint and prover.
+    outcomes: HashMap<(String, String), Vec<(usize, bool)>>,
+}
+
+impl Race {
+    // Two decisions are in flight: the result either saves may be read by a thunk of another task
+    // with the same fingerprint that is still to be evaluated, and the CASE count an SMT encoding
+    // starts from may change with the order the thunks are evaluated in.
+    fn check(
+        &mut self,
+        prover: &mut Prover<'_>,
+        running: &[Running],
+        waiting: &VecDeque<Task>,
+        count: usize,
+    ) -> Run<()> {
+        self.is_racing = true;
+        if self.heads.is_empty() {
+            for position in 0..count {
+                let head = prover
+                    .get_methods(position)
+                    .map_err(|error| get_obligation_error(&error))?;
+                self.heads.push(head);
+            }
+        }
+        // The thunks still to be evaluated, by task: those after each decision in flight, and those
+        // of each task waiting.
+        let pending: Vec<(usize, usize)> = running
+            .iter()
+            .map(|running| (running.task.position, prover.get_next(&running.task)))
+            .chain(
+                waiting
+                    .iter()
+                    .map(|task| (task.position, prover.get_next(task))),
+            )
+            .collect();
+        for decision in running {
+            for (position, next) in &pending {
+                let (fingerprint, provers) = &self.heads[*position];
+                if *position != decision.task.position
+                    && *fingerprint == decision.fingerprint
+                    && provers[(*next).min(provers.len())..].contains(&decision.prover)
+                {
+                    return decline(
+                        "two obligations with one fingerprint, where the order decisions come back in decides what one reuses",
+                    );
+                }
+            }
+        }
+        let mut numbered = Vec::new();
+        for (position, next) in &pending {
+            let provers = &self.heads[*position].1;
+            if !provers[(*next).min(provers.len())..]
+                .iter()
+                .any(|later| matches!(later.as_str(), "smt" | "z3"))
+            {
+                continue;
+            }
+            let is_numbering = match self.numbering.get(position) {
+                Some(is_numbering) => *is_numbering,
+                None => {
+                    let is_numbering = prover
+                        .is_numbering(*position)
+                        .map_err(|error| get_obligation_error(&error))?;
+                    self.numbering.insert(*position, is_numbering);
+                    is_numbering
+                }
+            };
+            if is_numbering {
+                numbered.push(*position);
+            }
+        }
+        let is_running = |position: &usize| {
+            running
+                .iter()
+                .any(|decision| decision.task.position == *position)
+        };
+        if numbered.len() > 1 && numbered.iter().any(is_running) {
+            return decline(
+                "CASE errors the SMT encoder numbers in the order decisions come back in",
+            );
+        }
+        Ok(())
+    }
+
+    fn record(
+        &mut self,
+        task: &Task,
+        fingerprint: &str,
+        prover: &str,
+        answer: &Answer,
+        note: Option<&'static str>,
+    ) {
+        let position = task.position;
+        if let Some(note) = note {
+            self.notes.entry(note).or_default().insert(position);
+        }
+        let is_proved = matches!(
+            answer,
+            Answer::Decided {
+                verdict: Verdict::Unsat,
+                ..
+            }
+        );
+        if is_proved && prover == "isabelle" {
+            self.theorems.insert(position);
+        }
+        self.outcomes
+            .entry((fingerprint.to_owned(), prover.to_owned()))
+            .or_default()
+            .push((position, is_proved));
+    }
+
+    // Where decisions were ever in flight together: Zenon's notes of different texts, which tlapm
+    // copies as they come, Isabelle's proofs, which it writes to the theory as they come, and
+    // different results of one fingerprint and prover, of which the fingerprints file keeps the
+    // last.
+    fn check_outcomes(&self) -> Run<()> {
+        if !self.is_racing {
+            return Ok(());
+        }
+        let tasks: HashSet<usize> = self.notes.values().flatten().copied().collect();
+        if self.notes.len() > 1 && tasks.len() > 1 {
+            return decline(
+                "Zenon's notes, which tlapm copies in the order decisions come back in",
+            );
+        }
+        if self.theorems.len() > 1 {
+            return decline(
+                "Isabelle's proofs, which tlapm writes in the order decisions come back in",
+            );
+        }
+        for outcomes in self.outcomes.values() {
+            let tasks: HashSet<usize> = outcomes.iter().map(|(position, _)| *position).collect();
+            let results: HashSet<bool> = outcomes.iter().map(|(_, is_proved)| *is_proved).collect();
+            if tasks.len() > 1 && results.len() > 1 {
+                return decline(
+                    "results of one fingerprint, of which the fingerprints file keeps the one that comes back last",
+                );
+            }
+        }
+        Ok(())
     }
 }
 

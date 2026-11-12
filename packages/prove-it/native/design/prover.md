@@ -1278,11 +1278,18 @@ is next.
 
 - P6c, `prove-it tlapm` native (this entry's PR): `prove-it-check`'s `tlapm.rs` ports
   `src/cli/tlapm.ts` onto the driver, and the TypeScript CLI hands the command line to the engine.
-  - **The run:** the obligations, the driver's rounds and the printing run on a thread of their own
+  - **The run:** the obligations, the scheduler and the printing run on a thread of their own
     with a 256 MB stack, which reaches the host and the output through calls to the thread that
-    holds them (`Io`). Decisions run on a pool of `--threads` std threads with 256 MB stacks, the
-    earliest obligation's first, as many in flight as there are threads; the next round starts once
-    one is made. In WebAssembly everything runs in place, one decision at a time.
+    holds them (`Io`). The scheduler is tlapm's `Schedule.run`: each obligation is a task of
+    `Prep.ship`'s thunks, one per method, evaluated as the scheduler starts it (the driver's
+    `Prover::step`, which reads the results saved so far as `Prep.already_processed` does); it
+    starts tasks while fewer than `--threads` decisions are in flight, takes a decision's answer
+    (`Prover::answer`, which saves it) and puts the rest of a task whose method failed first. Toolbox
+    messages print as tlapm prints them, a reused or trivial result as its thunk is evaluated and a
+    new one as it comes back. Where two decisions are in flight together, which comes back first is
+    timing, and the run declines where that changes what tlapm prints or writes (`Race`). Decisions
+    run on a pool of `--threads` std threads with 256 MB stacks; in WebAssembly, in place, one at a
+    time, in the order the scheduler launched them.
   - **The driver** gained `Settings`: the results the fingerprints file holds, which it reuses and
     adds to (`Round::results`, which the file saves), `--nofp` and `--nofpl`, which forget an
     obligation's fingerprint at each method as `Prep.already_processed` does, and `--noproving`.

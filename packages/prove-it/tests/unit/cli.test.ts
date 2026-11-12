@@ -1428,6 +1428,31 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(runTlapmIn(beside, ["-N", "sub/Main.tla"]).stderr).toBe(warning("Defs.tla"));
   });
 
+  // tlapm evaluates an obligation's methods as its scheduler starts them, and launches every
+  // decision it can before it takes a result: with two threads, the second of two obligations with
+  // one fingerprint runs Zenon itself, where with one it reuses the first's failure. With two in
+  // flight, which toolbox message comes first depends on timing.
+  it("reuses a result when tlapm has it", () => {
+    const module =
+      "---- MODULE D ----\nEXTENDS Naturals, TLAPS\nTHEOREM A1 == 1 + 1 = 2\n  BY Zenon\nTHEOREM A2 == 1 + 1 = 2\n  BY Zenon\n====\n";
+    const note = /^Zenon error: exhausted search space without finding a proof$/gm;
+    const one = runTlapmIn(writeModules({ "D.tla": module }), ["--threads", "1", "D.tla"]);
+    expect(one.stdout.match(note)?.length).toBe(1);
+    const two = runTlapmIn(writeModules({ "D.tla": module }), ["--threads", "2", "D.tla"]);
+    expect(two.stdout.match(note)?.length).toBe(2);
+    const toolbox = runTlapmIn(writeModules({ "D.tla": module }), [
+      "--threads",
+      "2",
+      "--toolbox",
+      "0",
+      "0",
+      "D.tla",
+    ]);
+    expect(toolbox.stderr).toBe(
+      "prove-it: not native yet: toolbox messages of two decisions in flight at once, whose order depends on timing\n",
+    );
+  });
+
   // Tlapm_args gathers the command line's modules last first into a map by name, so the first of
   // two with one name is the one tlapm proves.
   it("proves the first of two modules with one name", () => {
