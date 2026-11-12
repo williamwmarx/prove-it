@@ -86,6 +86,15 @@ platform addon loads.
   (src/engine/wasm.ts). This is the one fallback that is not a semantic hand-over; it stays until
   the engine's recursion no longer runs on the host's stack.
 
+### Interpreter limits
+
+Where the native check declines, the library's `check()` passes the TypeScript check's prints of
+a violation's trace to `onPrint` as TLC prints them, but for three shapes, where the TypeScript
+check places them otherwise than TLC or prints other values in them: an ALIAS that prints, a
+temporal property that prints, and TLCExt's `Trace`. There `onPrint` gets what the TypeScript
+check printed as it searched, as where the native check doesn't run (`onProgress`, `onPause`, a
+`dot` dump, TLC 1.7.4). `tests/unit/trace-prints.test.ts` pins them; they go with the interpreter.
+
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
 

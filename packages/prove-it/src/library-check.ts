@@ -41,7 +41,8 @@ const getDeclined = (options: CheckOptions) =>
     ] as const
   ).find((entry) => entry[0])?.[1];
 
-// The native check's result, or undefined where it declines.
+// The native check's result, why it declined, or undefined where it wasn't run or stopped before
+// it searched.
 const checkWithEngine = (options: CheckOptions) => {
   const declined = getDeclined(options);
   const name = getModuleName(options.source);
@@ -107,7 +108,7 @@ const checkWithEngine = (options: CheckOptions) => {
   );
   if (result.kind === "declined") {
     reportEngine(`native: check declined: ${result.reason}`);
-    return undefined;
+    return result.reason;
   }
   // The check stops before it searches at a spec or a configuration TLC rejects, for which the
   // TypeScript check throws its error.
@@ -140,8 +141,24 @@ const getTracePrints = (reported: Traced | undefined) =>
     ...(reported?.traceOutput ?? []),
   ].filter((line) => typeof line === "string");
 
-const checkWithInterpreter = async (options: CheckOptions) => {
-  const print = options.onPrint ?? console.log;
+// What the native check declines where the TypeScript check places the trace's prints otherwise
+// than TLC, or prints other values in them: a printing ALIAS, a printing temporal property, and
+// TLCExt's Trace (native/design/fallback.md, "Interpreter limits").
+const MISPLACED_TRACE_PRINTS = [
+  "an ALIAS that prints",
+  "prints it doesn't place in TLC's order",
+  "TLCExt's Trace",
+];
+
+// The TypeScript check's result. Where the native check declined for `declined`, the trace's prints
+// go to onPrint as the native check reports them, but where the TypeScript check misplaces them;
+// where the native check didn't run, as with onProgress, they don't, as before.
+const checkWithInterpreter = async (options: CheckOptions, declined: string | undefined) => {
+  const isTracePrinted =
+    declined !== undefined && !MISPLACED_TRACE_PRINTS.some((reason) => declined.includes(reason));
+  const print = (line: string) => {
+    if (isTracePrinted) (options.onPrint ?? console.log)(line);
+  };
   const isTool = options.isTool ?? false;
   const version = options.version ?? "master";
   const continued: Violation[] = [];
@@ -184,5 +201,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     loadClass: readers.loadClass,
     readFile: readers.readFile,
   };
-  return checkWithEngine(logged) ?? checkWithInterpreter(logged);
+  const native = checkWithEngine(logged);
+  return typeof native === "object" ? native : checkWithInterpreter(logged, native);
 };
