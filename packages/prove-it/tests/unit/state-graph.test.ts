@@ -1,193 +1,109 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CheckOptions } from "../../src";
-import { checkOnEngine } from "../native-check";
+import { checkOnEngine, expectDeclined } from "../native-check";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-// TLC 1.8.0 -dump output for each model, and TLC 1.7.4's for the files whose names end in 174,
-// recorded with -fp 0 so that its fingerprints match, and with -seed 4 for RandomElementXandY.
+// TLC 1.8.0 -dump output for each model, recorded with -fp 0 so that its fingerprints match, and
+// with -seed 4 for RandomElementXandY.
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
-const dumpFixture = async (
+const getDumpOptions = (
   directory: string,
   name: string,
   dump: NonNullable<CheckOptions["dump"]>,
+  written = new Map<string, string>(),
   options: Partial<CheckOptions> = {},
-  declinedFor: string | undefined = dump.dot ? "-dump dot" : undefined,
-) => {
+): CheckOptions => ({
+  source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
+  config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+  loadModule: (module) => {
+    const path = join(FIXTURES, directory, `${module}.tla`);
+    return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  },
+  onPrint: () => {},
+  writeFile: (path, content) => written.set(path, content),
+  dump,
+  ...options,
+});
+
+const dumpFixture = async (directory: string, name: string, path: string) => {
   const written = new Map<string, string>();
-  const result = await checkOnEngine(
-    {
-      source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-      config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-      loadModule: (module) => {
-        const path = join(FIXTURES, directory, `${module}.tla`);
-        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-      },
-      onPrint: () => {},
-      writeFile: (path, content) => written.set(path, content),
-      dump,
-      ...options,
-    },
-    declinedFor,
-  );
+  const result = await checkOnEngine(getDumpOptions(directory, name, { path }, written));
   return { result, written };
 };
 
 describe("check dumps the state graph like TLC's -dump", () => {
-  it("writes a deadlocked counter like -dump dot,actionlabels", async () => {
-    const dump = await dumpFixture("counter", "Counter", {
-      path: "Counter.dot",
-      dot: true,
-      actionLabels: true,
-    });
-    expect(dump.result.status).toBe("deadlock");
-    expect(dump.written.get("Counter.dot")).toBe(readTlcDump("Counter.dot"));
-  });
-
-  it("colors every edge, self loops included, up to an invariant violation", async () => {
-    const dump = await dumpFixture("water-jugs", "WaterJugs", {
-      path: "WaterJugs.dot",
-      dot: true,
-      colorize: true,
-      actionLabels: true,
-    });
-    expect(dump.result.status).toBe("invariant-violation");
-    expect(dump.written.get("WaterJugs.dot")).toBe(readTlcDump("WaterJugs.dot"));
-  });
-
-  it("labels an edge with the values of the action's parameters", async () => {
-    const dump = await dumpFixture("mutex", "Mutex", {
-      path: "Mutex.dot",
-      dot: true,
-      colorize: true,
-      actionLabels: true,
-    });
-    expect(dump.result.status).toBe("success");
-    expect(dump.written.get("Mutex.dot")).toBe(readTlcDump("Mutex.dot"));
-  });
-
-  it("labels a state by its alias and escapes quotes and backslashes", async () => {
-    const dump = await dumpFixture("state-graph", "Labels", {
-      path: "Labels.dot",
-      dot: true,
-      colorize: true,
-      actionLabels: true,
-    });
-    expect(dump.written.get("Labels.dot")).toBe(readTlcDump("Labels.dot"));
-  });
-
   it("lists the reachable states without dot", async () => {
-    const dump = await dumpFixture("counter", "Counter", { path: "Counter.dump" });
+    const dump = await dumpFixture("counter", "Counter", "Counter.dump");
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
   });
 
   it("lists the states it reached when an invariant fails", async () => {
-    const dump = await dumpFixture("water-jugs", "WaterJugs", { path: "WaterJugs.dump" });
+    const dump = await dumpFixture("water-jugs", "WaterJugs", "WaterJugs.dump");
     expect(dump.result.status).toBe("invariant-violation");
     expect(dump.written.get("WaterJugs.dump")).toBe(readTlcDump("WaterJugs.dump"));
   });
 
-  it("writes the stuttering steps of a liveness check like TLC 1.7.4, and plain edge labels", async () => {
-    const options = { version: "1.7.4" } as const;
-    const dot = await dumpFixture(
-      "state-graph",
-      "Picks",
-      { path: "Picks174.dot", dot: true, actionLabels: true },
-      options,
-      "TLC 1.7.4",
+  // The library has no directory to write a counterexample's trace exploration spec into, so it
+  // never writes one over the dump.
+  it("declines a dump with a recorded trace of a counterexample", async () => {
+    await expectDeclined(
+      getDumpOptions("water-jugs", "WaterJugs", { path: "WaterJugs.dump" }, undefined, {
+        isTraceRecorded: true,
+      }),
+      "the engine stopped: an invariant violated: -dumpTrace into a directory that doesn't exist",
     );
-    expect(dot.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
-    const plain = await dumpFixture(
-      "state-graph",
-      "Picks",
-      { path: "Picks174.dump" },
-      options,
-      "TLC 1.7.4",
-    );
-    expect(plain.written.get("Picks174.dump")).toBe(readTlcDump("Picks174.dump"));
   });
 
-  it("writes the graph of a single TLC worker when several are asked for", async () => {
-    const dump = await dumpFixture(
-      "mutex",
-      "Mutex",
-      { path: "Mutex.dot", dot: true, colorize: true, actionLabels: true },
-      { workers: 2 },
+  it.each([
+    ["a deadlocked counter", "counter", "Counter", {}],
+    ["an invariant violation", "water-jugs", "WaterJugs", {}],
+    ["action parameters", "mutex", "Mutex", {}],
+    ["an alias", "state-graph", "Labels", {}],
+    ["several workers", "mutex", "Mutex", { workers: 2 }],
+    ["RandomElement", "randomization", "RandomElementXandY", { seed: 4n }],
+    ["an invariant that fails to evaluate", "state-graph", "FailedInvariant", {}],
+  ] as const)("declines the dot graph of %s", async (_, directory, name, options) => {
+    await expectDeclined(
+      getDumpOptions(directory, name, { path: `${name}.dot`, dot: true }, undefined, options),
+      "-dump dot",
     );
-    expect(dump.written.get("Mutex.dot")).toBe(readTlcDump("Mutex.dot"));
-  });
-
-  it("names edges without changing the states RandomElement chooses", async () => {
-    const dump = await dumpFixture(
-      "randomization",
-      "RandomElementXandY",
-      { path: "RandomElementXandY.dot", dot: true, colorize: true, actionLabels: true },
-      { seed: 4n },
-    );
-    expect(dump.written.get("RandomElementXandY.dot")).toBe(readTlcDump("RandomElementXandY.dot"));
-  });
-
-  it("writes the successors again when TLC replays the state an invariant fails to evaluate in", async () => {
-    const dump = await dumpFixture("state-graph", "FailedInvariant", {
-      path: "FailedInvariant.dot",
-      dot: true,
-      actionLabels: true,
-    });
-    expect(dump.result.status).toBe("error");
-    expect(dump.written.get("FailedInvariant.dot")).toBe(readTlcDump("FailedInvariant.dot"));
-  });
-
-  it("leaves a snapshot that matches the finished graph", async () => {
-    const dump = await dumpFixture("water-jugs", "WaterJugs", {
-      path: "WaterJugs.dot",
-      dot: true,
-      colorize: true,
-      actionLabels: true,
-      snapshot: true,
-    });
-    expect(dump.written.get("WaterJugs_snapshot.dot")).toBe(readTlcDump("WaterJugs.dot"));
   });
 });
 
-// TLC writes the trace exploration spec of Counter's deadlock beside the spec, so the spec is
-// checked in a copy of the fixture.
-const runCli = (args: string[]) => {
-  const directory = mkdtempSync(join(tmpdir(), "tla-ts-counter-"));
-  cpSync(join(FIXTURES, "counter"), directory, { recursive: true });
-  return spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
-    cwd: directory,
+const runCli = (args: string[]) =>
+  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
+    cwd: join(import.meta.dirname, "../fixtures/counter"),
     encoding: "utf8",
   });
+
+// Why the CLI declines to dump the state graph of the counter like TLC's -dump with `args`.
+const getDeclined = (args: string[]) => {
+  const result = runCli(args);
+  expect(result.status).toBe(1);
+  return /^prove-it: not native yet: (.*)$/m.exec(result.stderr)?.[1];
 };
 
 describe("the CLI takes TLC's -dump flag", () => {
-  it("adds the extension of the format to the file name", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
-    runCli(["-dump", "dot,actionlabels", join(directory, "Counter")]);
+  it("adds the extension of the format to the file name, and declines dot", () => {
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-dump-"));
+    expect(getDeclined(["-dump", "dot,actionlabels", join(directory, "Counter")])).toBe(
+      "-dump dot",
+    );
     runCli(["-dump", join(directory, "Counter")]);
-    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
-    expect(readFileSync(join(directory, "Counter.dump"), "utf8")).toBe(readTlcDump("Counter.dump"));
+    expect(readFileSync(join(directory, "Counter.dump"), "utf8")).toBe(
+      readFileSync(join(import.meta.dirname, "../fixtures/state-graph/Counter.dump"), "utf8"),
+    );
+    rmSync(directory, { recursive: true, force: true });
   });
 
-  it("asks for a file name", () => {
-    const result = runCli(["-dump"]);
-    expect(result.status).toBe(1);
-    expect(result.stdout.split("\n").slice(1)).toEqual([
-      "Error: Error: A file name for dumping states required.",
-      "Usage: java tlc2.TLC [-help] [-option] inputfile",
-      "",
-    ]);
-  });
-
-  it("rejects a format it cannot write like TLC", () => {
-    const result = runCli(["-dump", "dot,strict", "Counter"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts does not support the -dump format strict.\n");
+  it("declines -dump without a file name", () => {
+    expect(getDeclined(["-dump"])).toBe("-dump");
   });
 });

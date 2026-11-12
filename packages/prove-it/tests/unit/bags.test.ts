@@ -2,37 +2,24 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkNatively, getAssumptionFailure } from "../native-check";
+import { checkOnEngine, expectDeclined, getAssumptionFailure } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/bags");
 
-const checkBagsFixture = async (name: string, onPrint?: (text: string) => void) => {
-  const { result, declined } = await checkNatively({
+const checkBagsFixture = (name: string, onPrint?: (text: string) => void) =>
+  checkOnEngine({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
     onPrint,
   });
-  expect(declined).toBeUndefined();
-  return result;
-};
 
-// The bodies the engine declines, with its reason, which the TypeScript check answers until the
-// engine does.
-const DECLINED: Record<string, string> = {
-  'ASSUME PrintT(SubBag(<<"a">>))':
-    "an assumption that fails to evaluate: evaluating the assumption again: SubBag's >=, which may be Naturals' or Integers'",
-};
+// A module with Bags with the body at line 7.
+const getBagsModule = (body: string) => ({
+  source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
+  config: "CONSTANT C = C\nINIT Init\nNEXT Next",
+});
 
-// A check of the body at line 7 of a module with Bags, which the engine answers unless it is one
-// of DECLINED.
-const checkBags = async (body: string) => {
-  const { result, declined } = await checkNatively({
-    source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
-    config: "CONSTANT C = C\nINIT Init\nNEXT Next",
-  });
-  expect(declined).toBe(DECLINED[body]);
-  return result;
-};
+const checkBags = (body: string) => checkOnEngine(getBagsModule(body));
 
 const getPassedLines = (numbers: number[]) => numbers.map((number) => `"Test ${number} OK"  TRUE`);
 
@@ -107,12 +94,18 @@ describe("the Bags module matches TLC", () => {
       "The second argument of BagOfAll should be a function with a finite domain, but instead it is:\n1",
     ],
     ["<<2147483647>> (+) <<1>>", "Overflow when computing 2147483647+1"],
-    ['SubBag(<<"a">>)', 'The first argument of >= should be an integer, but instead it is:\n"a"'],
   ])("rejects %s", async (expression, message) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(7, `PrintT(${expression})`, message),
+    );
+  });
+
+  it("declines SubBag of a bag of strings, whose >= may be Naturals' or Integers'", async () => {
+    await expectDeclined(
+      getBagsModule('ASSUME PrintT(SubBag(<<"a">>))'),
+      "an assumption that fails to evaluate: evaluating the assumption again: SubBag's >=, which may be Naturals' or Integers'",
     );
   });
 

@@ -1,17 +1,16 @@
 import { describe, expect, it } from "bun:test";
 
-import { checkOnEngine, getAssumptionFailure } from "../native-check";
+import { checkOnEngine, expectDeclined, getAssumptionFailure } from "../native-check";
 
-const checkPrinting = async (body: string, config = "", declinedFor?: string) => {
+const getSource = (body: string) => `---- MODULE M ----\nEXTENDS Integers, TLC\n${body}\n====`;
+
+const checkPrinting = async (body: string, config = "") => {
   const printed: string[] = [];
-  const result = await checkOnEngine(
-    {
-      source: `---- MODULE M ----\nEXTENDS Integers, TLC\n${body}\n====`,
-      config,
-      onPrint: (text) => printed.push(text),
-    },
-    declinedFor,
-  );
+  const result = await checkOnEngine({
+    source: getSource(body),
+    config,
+    onPrint: (text) => printed.push(text),
+  });
   return { result, printed };
 };
 
@@ -126,50 +125,27 @@ describe("line breaking matches TLC's pretty printer", () => {
   });
 });
 
-// TLC's text of these depends on how it built the function, which the engine doesn't follow.
-const BUILT = "printing a value whose text depends on how TLC built it";
-
 describe("functions over infinite domains print like TLC", () => {
   it.each([
     [
       "ASSUME PrintT([n \\in Nat |-> n])",
       "[n \\in Nat |-> <expression line 3, col 30 to line 3, col 30 of module M>]",
-      undefined,
-    ],
-    [
-      "ASSUME PrintT([n, m \\in Nat |-> n])",
-      "[n \\in Nat |-> <expression line 3, col 33 to line 3, col 33 of module M>]",
-      BUILT,
-    ],
-    [
-      "ASSUME PrintT([n \\in Nat, m \\in 1..2 |-> n])",
-      "[n \\in Nat, m \\in 1..2 |-> <expression line 3, col 42 to line 3, col 42 of module M>]",
-      BUILT,
-    ],
-    [
-      "ASSUME PrintT([<<a, b>> \\in Nat \\X Nat |-> a])",
-      "[<<a, b>> \\in (Nat \\X Nat) |-> <expression line 3, col 44 to line 3, col 44 of module M>]",
-      BUILT,
     ],
     [
       "ASSUME PrintT([n \\in Nat |->\n  n + 1])",
       "[n \\in Nat |-> <expression line 4, col 3 to line 4, col 7 of module M>]",
-      undefined,
     ],
     [
       "ASSUME PrintT([[n \\in Int |-> n] EXCEPT ![1] = 5])",
       "[n \\in Int |-> <expression line 3, col 31 to line 3, col 31 of module M>]",
-      undefined,
     ],
     [
       "f[n \\in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]\nASSUME PrintT(f)",
       "[n \\in Nat |-> <expression line 3, col 17 to line 3, col 45 of module M>]",
-      undefined,
     ],
     [
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
       '"[n \\\\in Nat \\\\ ({1}) |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
-      undefined,
     ],
     // TLC builds a \cup with a set enumeration as the second operand as that enumeration's cup,
     // so it comes first (OPCODE_cup in Tool.java), and parenthesizes each operand that is
@@ -177,19 +153,28 @@ describe("functions over infinite domains print like TLC", () => {
     [
       "ASSUME PrintT(ToString([n \\in Nat \\cup {0} |-> n]))",
       '"[n \\\\in ({0}) \\\\cup Nat |-> <expression line 3, col 48 to line 3, col 48 of module M>]"',
-      undefined,
     ],
     [
       "ASSUME PrintT(ToString([n \\in {1} \\cup Nat |-> n]))",
       '"[n \\\\in ({1}) \\\\cup Nat |-> <expression line 3, col 48 to line 3, col 48 of module M>]"',
-      undefined,
     ],
     [
       "ASSUME PrintT(ToString([n \\in (Nat \\ {1}) \\cup {0} |-> n]))",
       '"[n \\\\in ({0}) \\\\cup (Nat \\\\ ({1})) |-> <expression line 3, col 56 to line 3, col 56 of module M>]"',
-      undefined,
     ],
-  ])("prints %s with its parameters and body location", async (body, text, declinedFor) => {
-    expect((await checkPrinting(body, "", declinedFor)).printed).toEqual([text]);
+  ])("prints %s with its parameters and body location", async (body, text) => {
+    expect((await checkPrinting(body)).printed).toEqual([text]);
+  });
+
+  // TLC's text of these depends on how it built the function, which the engine doesn't follow.
+  it.each([
+    "ASSUME PrintT([n, m \\in Nat |-> n])",
+    "ASSUME PrintT([n \\in Nat, m \\in 1..2 |-> n])",
+    "ASSUME PrintT([<<a, b>> \\in Nat \\X Nat |-> a])",
+  ])("declines %s", async (body) => {
+    await expectDeclined(
+      { source: getSource(body), config: "" },
+      "printing a value whose text depends on how TLC built it",
+    );
   });
 });

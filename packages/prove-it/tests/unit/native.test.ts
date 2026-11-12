@@ -1,7 +1,5 @@
-// The native engine searches the model, and where it can't be loaded check throws
-// EngineUnavailableError, which names PROVE_IT_ENGINE=0, the interpreter, except in the CLI, which
-// finds a spec's files only with the engine. The model is lowered to
-// the engine IR only once the engine has loaded. Each check runs in a process of its own, since a
+// The native engine checks the model, and where it can't be loaded check throws
+// EngineUnavailableError and the CLI exits 255. Each check runs in a process of its own, since a
 // process loads the engine once. The tests that load it run where the addon was built, with
 // PROVE_IT_ENGINE_ADDON naming it (tests/setup.ts), and those of the engine as WebAssembly where
 // PROVE_IT_ENGINE_WASM names the module it built.
@@ -33,98 +31,46 @@ const checkCommit = (runtime: string, cli: string, env: Record<string, string | 
       ...process.env,
       PROVE_IT_ENGINE_ADDON: undefined,
       PROVE_IT_ENGINE_WASM: undefined,
-      PROVE_IT_ENGINE: "debug",
       ...env,
     },
   });
 
-// A state log leaves the check to the TypeScript check, which the CLI runs in place of the
-// binary's and which searches the engine IR. Where the log can't be created, the engine writes
-// none.
-const getEngineLines = (runtime: string, cli: string, env: Record<string, string | undefined>) => {
-  const run = checkCommit(runtime, cli, {
-    PROVE_IT_STATE_LOG: join(COMMIT, "missing", "states.jsonl"),
-    ...env,
-  });
-  // The status with what the run wrote to stderr, so that a crash on any platform says why.
+// The status with what the run wrote to stderr, so that a crash on any platform says why, and
+// whether it found the model's states.
+const expectChecked = (run: ReturnType<typeof checkCommit>) => {
   expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
-  return run.stderr.split("\n").filter((line) => line.startsWith("[engine] "));
+  expect(run.stdout).toContain("251 distinct states found");
 };
 
 describe("the native engine", () => {
-  // PROVE_IT_ENGINE=0 leaves the search to the interpreter, but the CLI finds the spec's files, as
-  // TLC's resolver does, only with the engine.
-  it.if(ADDON !== undefined)(
-    "leaves only the search to the interpreter with PROVE_IT_ENGINE=0",
-    () => {
-      const run = checkCommit("bun", SOURCE_CLI, {
-        PROVE_IT_ENGINE: "0",
-        PROVE_IT_ENGINE_ADDON: ADDON,
-      });
-      expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
-      expect(run.stdout).toContain("251 distinct states found");
-    },
-    SPAWN_LIMIT_MS,
-  );
-
-  it(
-    "leaves a run that dumps the IR or logs the states to the TypeScript check, which writes them",
-    () => {
-      const directory = mkdtempSync(join(tmpdir(), "prove-it-native-debug-"));
-      try {
-        const ir = join(directory, "Commit.ir");
-        const stateLog = join(directory, "Commit.jsonl");
-        const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
-          cwd: COMMIT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PROVE_IT_ENGINE: "debug",
-            PROVE_IT_IR_DUMP: ir,
-            PROVE_IT_STATE_LOG: stateLog,
-          },
-        });
-        expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
-        expect(run.stderr).not.toContain("native: checkSources");
-        expect([existsSync(ir), existsSync(stateLog)]).toEqual([true, true]);
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
-      }
-    },
-    SPAWN_LIMIT_MS,
-  );
-
   it.each([
     ["PROVE_IT_MEMO", "off"],
     ["PROVE_IT_EPOCH_CHECK", "1"],
     ["PROVE_IT_FP_VERIFY", "1"],
     ["PROVE_IT_LIVE_CHECK", "1"],
   ])(
-    "leaves a run with the engine's self-check %s to the TypeScript check",
+    "checks the model with the engine's self-check %s",
     (name, value) => {
-      const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
-        cwd: COMMIT,
-        encoding: "utf8",
-        env: { ...process.env, PROVE_IT_ENGINE: "debug", [name]: value },
-      });
-      expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
-      expect(run.stderr).not.toContain("native: checkSources");
+      expectChecked(
+        checkCommit("bun", SOURCE_CLI, {
+          PROVE_IT_ENGINE_ADDON: ADDON,
+          PROVE_IT_ENGINE_WASM: WASM,
+          [name]: value,
+        }),
+      );
     },
     SPAWN_LIMIT_MS,
   );
 
-  // Only the engine finds the spec's files, so no setting checks without it, and the message names
-  // none.
-  it.each(["debug", "0"])(
-    "exits 255 where it can't load the engine named, with PROVE_IT_ENGINE=%s",
-    (setting) => {
-      const run = checkCommit("bun", SOURCE_CLI, {
-        PROVE_IT_ENGINE: setting,
-        PROVE_IT_ENGINE_ADDON: MISSING,
-      });
+  it(
+    "exits 255 where it can't load the engine named",
+    () => {
+      const run = checkCommit("bun", SOURCE_CLI, { PROVE_IT_ENGINE_ADDON: MISSING });
       expect(run.status).toBe(255);
       expect(run.stderr).toContain(`The native engine is unavailable: can't load ${MISSING}: `);
-      expect(run.stderr).not.toContain("PROVE_IT_ENGINE=0");
+      expect(run.stderr).toContain(
+        ". Install @atemp/prove-it with its optional dependencies on a supported platform.",
+      );
     },
     SPAWN_LIMIT_MS,
   );
@@ -132,22 +78,13 @@ describe("the native engine", () => {
   // An install without the platform package, as on a platform none is built for or with optional
   // dependencies left out, checks with the engine as WebAssembly the package ships beside the CLI,
   // here a copy of dist/ that no package resolves from.
-  it.if(existsSync(join(BUILT_CLI, "../prove-it-engine.wasm"))).each(
-    ["bun", "node"].flatMap((runtime) => [
-      [runtime, "debug"],
-      [runtime, "0"],
-    ]),
-  )(
-    "checks in %s with the engine as WebAssembly where no addon is installed, with PROVE_IT_ENGINE=%s",
-    (runtime, setting) => {
+  it.if(existsSync(join(BUILT_CLI, "../prove-it-engine.wasm"))).each(["bun", "node"])(
+    "checks in %s with the engine as WebAssembly where no addon is installed",
+    (runtime) => {
       const directory = mkdtempSync(join(tmpdir(), "prove-it-no-addon-"));
       try {
         cpSync(join(BUILT_CLI, ".."), directory, { recursive: true });
-        const run = checkCommit(runtime, join(directory, "cli.js"), { PROVE_IT_ENGINE: setting });
-        expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
-        expect(run.stdout).toContain("251 distinct states found");
-        expect(run.stderr).not.toContain("unavailable");
-        if (setting === "debug") expect(run.stderr).toContain("native: checkSources: exit 0");
+        expectChecked(checkCommit(runtime, join(directory, "cli.js"), {}));
       } finally {
         rmSync(directory, { recursive: true, force: true });
       }
@@ -187,16 +124,14 @@ describe("the native engine", () => {
   );
 
   it.if(ADDON !== undefined)(
-    "searches natively by default on more than one thread",
+    "checks the model on more than one thread",
     () => {
-      const lines = getEngineLines("bun", SOURCE_CLI, {
-        PROVE_IT_WORKERS: "2",
-        PROVE_IT_SHARED_LEVEL: "1",
-        PROVE_IT_ENGINE_ADDON: ADDON,
-      });
-      expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
-      expect(lines).toContainEqual(
-        expect.stringMatching(/^\[engine\] checked 251 states on 2 threads /),
+      expectChecked(
+        checkCommit("bun", SOURCE_CLI, {
+          PROVE_IT_WORKERS: "2",
+          PROVE_IT_SHARED_LEVEL: "1",
+          PROVE_IT_ENGINE_ADDON: ADDON,
+        }),
       );
     },
     SPAWN_LIMIT_MS,
@@ -206,16 +141,9 @@ describe("the native engine", () => {
     ["bun", SOURCE_CLI],
     ["node", BUILT_CLI],
   ])(
-    "decodes the IR and searches the model in %s",
+    "checks the model with the addon in %s",
     (runtime, cli) => {
-      const lines = getEngineLines(runtime, cli, {
-        PROVE_IT_ENGINE_ADDON: ADDON,
-      });
-      expect(lines).toEqual([
-        expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
-        expect.stringMatching(/^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/),
-        expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
-      ]);
+      expectChecked(checkCommit(runtime, cli, { PROVE_IT_ENGINE_ADDON: ADDON }));
     },
     SPAWN_LIMIT_MS,
   );
@@ -225,16 +153,14 @@ describe("the native engine", () => {
     ["bun", SOURCE_CLI],
     ["node", BUILT_CLI],
   ])(
-    "searches the model with the engine as WebAssembly in %s",
+    "checks the model with the engine as WebAssembly in %s",
     (runtime, cli) => {
-      const lines = getEngineLines(runtime, cli, {
-        PROVE_IT_WORKERS: "2",
-        PROVE_IT_SHARED_LEVEL: "1",
-        PROVE_IT_ENGINE_WASM: WASM,
-      });
-      expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
-      expect(lines).toContainEqual(
-        expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
+      expectChecked(
+        checkCommit(runtime, cli, {
+          PROVE_IT_WORKERS: "2",
+          PROVE_IT_SHARED_LEVEL: "1",
+          PROVE_IT_ENGINE_WASM: WASM,
+        }),
       );
     },
     SPAWN_LIMIT_MS,
@@ -244,11 +170,12 @@ describe("the native engine", () => {
   it.if(WASM !== undefined)(
     "checks the model as WebAssembly where it can't write the state log",
     () => {
-      const lines = getEngineLines("bun", SOURCE_CLI, {
-        PROVE_IT_ENGINE_WASM: WASM,
-        PROVE_IT_STATE_LOG: join(COMMIT, "missing", "states.jsonl"),
-      });
-      expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: complete: /));
+      expectChecked(
+        checkCommit("bun", SOURCE_CLI, {
+          PROVE_IT_ENGINE_WASM: WASM,
+          PROVE_IT_STATE_LOG: join(COMMIT, "missing", "states.jsonl"),
+        }),
+      );
     },
     SPAWN_LIMIT_MS,
   );
@@ -296,51 +223,6 @@ describe("the native engine", () => {
         expect(runDeep({ PROVE_IT_ENGINE_WASM: WASM })).toBe(
           `${JSON.stringify([rejected, rejected, rejected])}\n`,
         );
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
-      }
-    },
-    SPAWN_LIMIT_MS,
-  );
-
-  // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
-  // interpreter searches again from the start, after the search had printed.
-  it.if(WASM !== undefined)(
-    "prints once what it printed before the engine as WebAssembly stopped recursing",
-    () => {
-      const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-stack-"));
-      try {
-        writeFileSync(
-          join(directory, "Deep.tla"),
-          [
-            "---- MODULE Deep ----",
-            "EXTENDS Naturals, TLC",
-            "VARIABLE x",
-            "RECURSIVE Sum(_)",
-            "Sum(k) == IF k = 0 THEN 0 ELSE 1 + Sum(k - 1)",
-            'Init == PrintT("init") /\\ x = 0',
-            "Next == x < 2 /\\ PrintT(x) /\\ x' = IF x = 1 THEN Sum(3000) - 2998 ELSE x + 1",
-            "====",
-          ].join("\n"),
-        );
-        writeFileSync(join(directory, "Deep.cfg"), "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n");
-        const runDeep = (env: Record<string, string>) =>
-          spawnSync("bun", [SOURCE_CLI, "Deep.cfg"], {
-            cwd: directory,
-            encoding: "utf8",
-            env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined, ...env },
-          });
-        const printed = (stdout: string) =>
-          stdout.split("\n").filter((line) => /^("init"|\d+)$/.test(line));
-        const native = runDeep({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_WASM: WASM ?? "" });
-        // WebAssembly's frames are on the host's stack, so its engine stops recursing at 1,000
-        // calls and hands the search over, where the addon would go on.
-        expect(native.stderr).toContain(
-          "native: stopped: recursion deeper than WebAssembly's stack holds",
-        );
-        const interpreter = runDeep({ PROVE_IT_ENGINE: "0" });
-        expect(printed(native.stdout)).toEqual(['"init"', "0", "1"]);
-        expect(printed(native.stdout)).toEqual(printed(interpreter.stdout));
       } finally {
         rmSync(directory, { recursive: true, force: true });
       }

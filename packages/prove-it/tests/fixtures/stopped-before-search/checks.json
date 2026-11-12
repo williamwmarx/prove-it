@@ -1791,42 +1791,13 @@
   {
     "test": "modules.test.ts:225",
     "options": {
-      "source": "---- MODULE M ----\n---- MODULE Inner ----\nCONSTANT C(_)\nD(a) == C(a)\n====\nC(a, b) == a\nINSTANCE Inner\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====",
-      "config": "INIT Init\nNEXT Next",
-      "isTool": false,
-      "isContinued": false,
-      "isWarningEnabled": true
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "An operator must be substituted for symbol 'C', and it must have arity 1 in the instance of Inner at line 7, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "modules.test.ts:225",
-    "options": {
       "source": "---- MODULE M ----\nI == INSTANCE Inner\n  ---- MODULE Inner ----\n  A == 1\n  ====\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====",
       "config": "INIT Init\nNEXT Next",
       "isTool": false,
       "isContinued": false,
       "isWarningEnabled": true
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module Inner imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module Inner imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "modules.test.ts:225",
@@ -1944,11 +1915,7 @@
         "CycleB": "---- MODULE CycleB ----\nEXTENDS CycleA\n===="
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Circular dependency among .tla files; dependency cycle is: CycleA.tla --> CycleB.tla --> CycleA.tla"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "modules.test.ts:260",
@@ -1962,21 +1929,7 @@
         "test": "---- MODULE Foo ----\nA == 1\n===="
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unknown location\n\nFile name 'test' does not match the name 'Foo' of the top level module it contains.",
-      "sany": {
-        "errors": [
-          {
-            "location": "Unknown location",
-            "message": "File name 'test' does not match the name 'Foo' of the top level module it contains."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "modules.test.ts:279",
@@ -2128,11 +2081,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == (1 + \n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unexpected \"====\" at line 6, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "parse error in module",
@@ -2143,22 +2092,7 @@
         "A": "---- MODULE A ----\nQ == ((\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCould not parse module A from file A.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Could not parse module A from file A.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nEncountered \"====\" at line 3, column 1 and token \"(\" \n\nResidual stack trace follows:\nExtendableExpr starting at line 3, column 1.\nExpression starting at line 3, column 1.\nExtendableExpr starting at line 2, column 7.\nExpression starting at line 2, column 7.\nExtendableExpr starting at line 2, column 6.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "missing module",
@@ -2166,21 +2100,7 @@
       "source": "---- MODULE M ----\nEXTENDS A\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module A imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module A imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "missing deep module",
@@ -2191,21 +2111,7 @@
         "A": "---- MODULE A ----\nEXTENDS B\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module B imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module B imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "file name mismatch",
@@ -2216,21 +2122,7 @@
         "A": "---- MODULE Z ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unknown location\n\nFile name 'A' does not match the name 'Z' of the top level module it contains.",
-      "sany": {
-        "errors": [
-          {
-            "location": "Unknown location",
-            "message": "File name 'A' does not match the name 'Z' of the top level module it contains."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "warning + error",
@@ -2268,11 +2160,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == [](x' = x)'\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Precedence conflict between [] and ' at line 5, column 18"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "level error2",
@@ -2307,11 +2195,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 2\nThe keyword NEXT was not followed by an identifier."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "config missing const",
@@ -2369,11 +2253,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\nASSUME PrintT(1)\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": []
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "const print then no next",
@@ -2381,13 +2261,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\nD == PrintT(5)\n====\n",
       "config": "CONSTANT C <- D\nINIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "5"
-    ]
+    "declined": "a configuration substitute with effects, which TLC evaluates at every use: C <- D"
   },
   {
     "test": "dup def",
@@ -2425,11 +2299,7 @@
         "A": "---- MODULE A ----\nEXTENDS M\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Circular dependency among .tla files; dependency cycle is: M.tla --> A.tla --> M.tla"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "instance missing subst",
@@ -2440,25 +2310,7 @@
         "N": "---- MODULE N ----\nCONSTANT F, G\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 5, col 1 to line 5, col 15 of module M\n\nSubstitution missing for symbol F declared at line 2, col 10 to line 2, col 10 of module N \nand instantiated in module M.\n\nline 5, col 1 to line 5, col 15 of module M\n\nSubstitution missing for symbol G declared at line 2, col 13 to line 2, col 13 of module N \nand instantiated in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 5, col 1 to line 5, col 15 of module M",
-            "message": "Substitution missing for symbol F declared at line 2, col 10 to line 2, col 10 of module N \nand instantiated in module M."
-          },
-          {
-            "location": "line 5, col 1 to line 5, col 15 of module M",
-            "message": "Substitution missing for symbol G declared at line 2, col 13 to line 2, col 13 of module N \nand instantiated in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "instance subst nonexistent",
@@ -2495,11 +2347,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nS == \"abc\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unterminated string at line 5, column 10"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "bad char root",
@@ -2507,11 +2355,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nS == 1 ` 2\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unexpected character \"`\" at line 5, column 8"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "parse err root tool",
@@ -2520,11 +2364,7 @@
       "config": "INIT Init\nNEXT Next\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unexpected \"====\" at line 6, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "warn in A, err in M",
@@ -2619,21 +2459,7 @@
         "N": "---- MODULE N ----\nQ == z\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module N\n\nUnknown operator: `z'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module N",
-            "message": "Unknown operator: `z'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "parse err in inner module",
@@ -2641,11 +2467,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n---- MODULE I ----\nQ == ((\n====\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Unexpected \"====\" at line 7, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "unknown op in inner module",
@@ -2704,21 +2526,7 @@
         "A": "---- MODULE A ----\nEXTENDS Naturals, Integers\nQ(a) == LET a == 1 IN a\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module Zz imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module Zz imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "recursive undeclared",
@@ -2886,11 +2694,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nS == {1}\n====\n",
       "config": "INIT Init\nNEXT Next\nSYMMETRY S\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The symmetry values must be function records."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "multi-line cfg err",
@@ -2898,11 +2702,7 @@
       "source": "---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT C = {1, \n 2\nINIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting }, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "model value unknown op",
@@ -3098,21 +2898,7 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module Zz imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module Zz imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "warn + config err",
@@ -3124,13 +2910,7 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "*** Warnings: 1\n\nline 2, col 1 to line 2, col 6 of module C\n\nWarning: the definition of 'Q' conflicts with \nits definition at line 2, col 1 to line 2, col 6 of module B.\n\n\n"
-    ]
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "warn + no next",
@@ -3142,13 +2922,7 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "*** Warnings: 1\n\nline 2, col 1 to line 2, col 6 of module C\n\nWarning: the definition of 'Q' conflicts with \nits definition at line 2, col 1 to line 2, col 6 of module B.\n\n\n"
-    ]
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "warn + const subst err",
@@ -3194,21 +2968,7 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "err A inst then missing B",
@@ -3219,21 +2979,7 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "inst A err, ext B missing",
@@ -3244,21 +2990,7 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A ext C missing, A err",
@@ -3269,21 +3001,7 @@
         "A": "---- MODULE A ----\nEXTENDS C\nQ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module C imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module C imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A err, B parse err",
@@ -3295,21 +3013,7 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module A\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module A",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A err, B name mismatch",
@@ -3321,21 +3025,7 @@
         "B": "---- MODULE Bx ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module A\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module A",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "inst err then ext err",
@@ -3347,21 +3037,7 @@
         "B": "---- MODULE B ----\nR == z\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module B\n\nUnknown operator: `z'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module B",
-            "message": "Unknown operator: `z'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "ext err then inst err",
@@ -3373,21 +3049,7 @@
         "B": "---- MODULE B ----\nR == z\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module B\n\nUnknown operator: `z'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module B",
-            "message": "Unknown operator: `z'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "inst A then inst B errs order",
@@ -3399,21 +3061,7 @@
         "B": "---- MODULE B ----\nR == z\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module B\n\nUnknown operator: `z'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module B",
-            "message": "Unknown operator: `z'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "inst B before A",
@@ -3425,21 +3073,7 @@
         "B": "---- MODULE B ----\nEXTENDS A\nR == z\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module A\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module A",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "let instance err",
@@ -3652,13 +3286,7 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "*** Warnings: 1\n\nline 2, col 1 to line 2, col 6 of module C\n\nWarning: the definition of 'Q' conflicts with \nits definition at line 2, col 1 to line 2, col 6 of module B.\n\n\n"
-    ]
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "warn + config err nowarning",
@@ -3671,13 +3299,7 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "*** Warnings: 1\n\nline 2, col 1 to line 2, col 6 of module C\n\nWarning: the definition of 'Q' conflicts with \nits definition at line 2, col 1 to line 2, col 6 of module B.\n\n\n"
-    ]
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "warn + sem err nowarning",
@@ -3762,22 +3384,7 @@
       "source": "---- MODULE M ----\nEXTENDS T\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n---- MODULE T ----\nQ == ==\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module T\n\nCould not parse module T from file T.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module T",
-            "message": "Could not parse module T from file T.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "trailing module sem err",
@@ -3810,21 +3417,7 @@
         "A": "---- MODULE A ----\nZ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module A\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module A",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A parse err then T",
@@ -3835,22 +3428,7 @@
         "A": "---- MODULE A ----\nZ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCould not parse module A from file A.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Could not parse module A from file A.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "inst A err then ext? parse err B",
@@ -3862,21 +3440,7 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module A\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module A",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "B parse err, A err (inst)",
@@ -3888,22 +3452,7 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A err, A extends B parse",
@@ -3915,22 +3464,7 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root err then B parse",
@@ -3941,22 +3475,7 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "let inst A parse err, ext C err",
@@ -3968,21 +3487,7 @@
         "C": "---- MODULE C ----\nR == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module C\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module C",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "print const then config err",
@@ -4002,13 +3507,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K <- D\nINIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "printT const then eval err",
@@ -4016,13 +3515,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K <- D\nINIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "a configuration substitute with effects, which TLC evaluates at every use: K <- D"
   },
   {
     "test": "printT assume then no next",
@@ -4030,13 +3523,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "printT const+ no next",
@@ -4044,13 +3531,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K <- D\nINIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "a configuration substitute with effects, which TLC evaluates at every use: K <- D"
   },
   {
     "test": "printT const then eval err in const",
@@ -4084,11 +3565,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": []
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "const def print + config err",
@@ -4096,13 +3573,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "const def print + no next",
@@ -4110,13 +3581,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "const def print + inv undefined",
@@ -4124,13 +3589,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nINVARIANT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The invariant Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "const def print + eval err in def",
@@ -4164,13 +3623,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K = 1\nINIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "const = print? model value + bad cfg",
@@ -4178,13 +3631,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(K)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K = 1\nINIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "1"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print in cfg rhs def",
@@ -4192,13 +3639,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"a\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K <- D\nINIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"a\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print in const subst 2",
@@ -4206,14 +3647,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"a\") /\\ PrintT(\"b\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "CONSTANT K <- D\nINIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"a\"",
-      "\"b\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print def + missing const value",
@@ -4221,11 +3655,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nCONSTANT K\nD == PrintT(\"a\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The constant parameter K is not assigned a value by the configuration file."
-    },
-    "prints": []
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print def + init undefined",
@@ -4233,13 +3663,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"a\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Nope\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The initial predicate Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"a\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print def + spec temporal bad",
@@ -4247,43 +3671,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"a\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "SPECIFICATION Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The name Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"a\""
-    ]
-  },
-  {
-    "test": "inner same as extended",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS In\n---- MODULE In ----\nQ == 1\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n",
-      "modules": {
-        "In": "---- MODULE In ----\nQ == 2\n====\n"
-      }
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 4, col 1 to line 4, col 6 of module M\n\nOperator Q already defined or declared.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 4, col 1 to line 4, col 6 of module M",
-            "message": "Operator Q already defined or declared."
-          }
-        ],
-        "warnings": [
-          {
-            "location": "line 4, col 1 to line 4, col 6 of module M",
-            "message": "Multiple declarations or definitions for symbol Q.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module In."
-          }
-        ],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "inner same as instanced",
@@ -4389,11 +3777,7 @@
       "source": "---- MODULE M ----\n---- MODULE M ----\nQ == 1\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Expected an identifier but found end of input at line 5, column 1"
-    },
-    "prints": []
+    "declined": "an error tla-front raises that TLC reports without a code"
   },
   {
     "test": "cycle",
@@ -4404,11 +3788,7 @@
         "A": "---- MODULE A ----\nEXTENDS M\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Circular dependency among .tla files; dependency cycle is: M.tla --> A.tla --> M.tla"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "cycle + earlier err",
@@ -4420,21 +3800,7 @@
         "B": "---- MODULE B ----\nZ == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 6 of module B\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 6 of module B",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "instance arity + other err",
@@ -4445,21 +3811,7 @@
         "A": "---- MODULE A ----\nCONSTANT F(_)\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 3, col 6 to line 3, col 6 of module M\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 3, col 6 to line 3, col 6 of module M",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "instance missing subst",
@@ -4590,11 +3942,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 1.5\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 5, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "decimal literal in A, err M",
@@ -4605,11 +3953,7 @@
         "A": "---- MODULE A ----\nR == 1.5\n====\n"
       }
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 2, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "redef warn + err",
@@ -4651,11 +3995,7 @@
         "A": "---- MODULE A ----\nR == y\n====\n"
       }
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 6, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root decimal + root sem err",
@@ -4663,11 +4003,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 1.5\nW == y\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 5, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root bigint + sem err",
@@ -4675,11 +4011,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 99999999999999999999\nW == y\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle a number this big: 99999999999999999999 at line 5, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A decimal + B missing",
@@ -4690,21 +4022,7 @@
         "A": "---- MODULE A ----\nR == 1.5\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root decimal + B missing",
@@ -4712,21 +4030,7 @@
       "source": "---- MODULE M ----\nEXTENDS B\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 1.5\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root decimal + config err",
@@ -4734,11 +4038,7 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 1.5\n\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 5, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "A decimal + config err",
@@ -4749,11 +4049,7 @@
         "A": "---- MODULE A ----\nR == 1.5\n====\n"
       }
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC can't handle real numbers: 1.5 at line 2, column 6"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "sem err in A only, inner M dup",
@@ -4789,21 +4085,7 @@
         "In": "---- MODULE In ----\nQ == 2\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 9, col 6 to line 9, col 6 of module M\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 9, col 6 to line 9, col 6 of module M",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "extends In + inner In only",
@@ -4839,21 +4121,7 @@
         "In": "---- MODULE In ----\nQ == 2\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 9, col 6 to line 9, col 6 of module M\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 9, col 6 to line 9, col 6 of module M",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "extends In + err before inner",
@@ -4864,21 +4132,7 @@
         "In": "---- MODULE In ----\nQ == 2\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 3, col 6 to line 3, col 6 of module M\n\nUnknown operator: `y'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 3, col 6 to line 3, col 6 of module M",
-            "message": "Unknown operator: `y'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root sem err then inst missing",
@@ -4886,21 +4140,7 @@
       "source": "---- MODULE M ----\nZ == y\nI == INSTANCE B\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root sem err then let inst missing",
@@ -4908,21 +4148,7 @@
       "source": "---- MODULE M ----\nZ == y\nVARIABLE x\nInit == x = 0\nNext == x' = x\nW == LET I == INSTANCE B IN 1\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A sem err, A inst missing",
@@ -4933,21 +4159,7 @@
         "A": "---- MODULE A ----\nZ == y\nI == INSTANCE B\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module B imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module B imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A sem err, A let inst missing",
@@ -4958,21 +4170,7 @@
         "A": "---- MODULE A ----\nZ == y\nW == LET I == INSTANCE B IN 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module B imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module B imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A inner inst missing, M err",
@@ -4983,21 +4181,7 @@
         "A": "---- MODULE A ----\n---- MODULE N ----\nI == INSTANCE B\n====\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module B imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module B imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root sem err then inst parse err",
@@ -5008,22 +4192,7 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root sem err then ext parse err",
@@ -5034,22 +4203,7 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A sem err then A inst parse err",
@@ -5061,22 +4215,7 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A ext parse err after M let",
@@ -5088,22 +4227,7 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module B\n\nCould not parse module B from file B.tla",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module B",
-            "message": "Could not parse module B from file B.tla"
-          }
-        ],
-        "warnings": [],
-        "isFatal": true,
-        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root inner inst missing",
@@ -5111,21 +4235,7 @@
       "source": "---- MODULE M ----\n---- MODULE N ----\nI == INSTANCE B\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root inner ext missing",
@@ -5133,21 +4243,7 @@
       "source": "---- MODULE M ----\n---- MODULE N ----\nEXTENDS B\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module B imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module B imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A inner ext missing",
@@ -5158,21 +4254,7 @@
         "A": "---- MODULE A ----\n---- MODULE N ----\nEXTENDS B\n====\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module A\n\nCannot find source file for module B imported in module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module A",
-            "message": "Cannot find source file for module B imported in module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "pcal diverged + config err",
@@ -5252,13 +4334,7 @@
       "config": "INIT Init\nNEXT Nope\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print in A const def + config err",
@@ -5269,13 +4345,7 @@
         "A": "---- MODULE A ----\nEXTENDS TLC\nD == PrintT(\"inA\")\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"inA\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "print const def + eval err in Init-def? cfg CONSTRAINT undefined",
@@ -5283,13 +4353,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLC\nD == PrintT(\"hi\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTRAINT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The constraint Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"hi\""
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "asserteq const def + config err",
@@ -5297,15 +4361,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLCExt\nD == AssertEq(1, 2)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"Assertion failed\"",
-      "1",
-      "2"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "asserteq assume + config err",
@@ -5313,11 +4369,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLCExt\nASSUME AssertEq(1, 2) \\/ TRUE\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": []
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "asserteq const def + inv undefined",
@@ -5325,15 +4377,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLCExt\nD == AssertEq(1, 2)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nINVARIANT Nope\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The invariant Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"Assertion failed\"",
-      "1",
-      "2"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "asserteq const def + no next",
@@ -5341,15 +4385,7 @@
       "source": "---- MODULE M ----\nEXTENDS TLCExt\nD == AssertEq(1, 2)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": [
-      "\"Assertion failed\"",
-      "1",
-      "2"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "pause const def + config err",
@@ -5370,15 +4406,7 @@
       "config": "INIT Init\nNEXT Nope\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"Assertion failed\"",
-      "1",
-      "2"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "asserteq in A const def + config err",
@@ -5389,15 +4417,7 @@
         "A": "---- MODULE A ----\nEXTENDS TLCExt\nD == AssertEq(1, 2)\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": [
-      "\"Assertion failed\"",
-      "1",
-      "2"
-    ]
+    "declined": "what the spec prints as TLC computes its constants"
   },
   {
     "test": "i1 + config err",
@@ -5409,11 +4429,7 @@
         "B": "---- MODULE B ----\n---- MODULE In ----\nQ == 2\n====\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "unused inner inst of bad B",
@@ -5425,21 +4441,7 @@
         "B": "---- MODULE B ----\nZ == undefinedThing\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 19 of module B\n\nUnknown operator: `undefinedThing'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 19 of module B",
-            "message": "Unknown operator: `undefinedThing'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "unused let inst of bad B in A",
@@ -5476,21 +4478,7 @@
         "B": "---- MODULE B ----\nZ == undefinedThing\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 19 of module B\n\nUnknown operator: `undefinedThing'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 19 of module B",
-            "message": "Unknown operator: `undefinedThing'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root inner inst bad B + root err",
@@ -5501,21 +4489,7 @@
         "B": "---- MODULE B ----\nZ == undefinedThing\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 19 of module B\n\nUnknown operator: `undefinedThing'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 19 of module B",
-            "message": "Unknown operator: `undefinedThing'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root err before inner inst bad B",
@@ -5526,21 +4500,7 @@
         "B": "---- MODULE B ----\nZ == undefinedThing\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 2, col 6 to line 2, col 19 of module B\n\nUnknown operator: `undefinedThing'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 2, col 6 to line 2, col 19 of module B",
-            "message": "Unknown operator: `undefinedThing'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "A ext bound inner In with err",
@@ -5552,21 +4512,7 @@
         "In": "---- MODULE In ----\nQ == 1\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 3, col 6 to line 3, col 7 of module A\n\nUnknown operator: `qq'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 3, col 6 to line 3, col 7 of module A",
-            "message": "Unknown operator: `qq'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "SANY's report of a module nested in a module its extender extends"
   },
   {
     "test": "A inner In err, M inst In file ok",
@@ -5578,21 +4524,7 @@
         "In": "---- MODULE In ----\nZ == undefinedThing\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 4, col 6 to line 4, col 7 of module M\n\nUnknown operator: `ww'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 4, col 6 to line 4, col 7 of module M",
-            "message": "Unknown operator: `ww'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "SANY's report of a module nested in a module its extender extends"
   },
   {
     "test": "CONSTANT K = 3000000000 |  :: ",
@@ -5600,11 +4532,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = {1, 3000000000} |  :: ",
@@ -5612,11 +4540,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = {1, 3000000000}\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S(a) == a",
@@ -5624,11 +4548,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\nS(a) == a\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nSYMMETRY S\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The symmetry function S must specify a set of permutations."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S == {1}",
@@ -5636,11 +4556,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\nS == {1}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nSYMMETRY S\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The symmetry values must be function records."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S == 1 \\div 0",
@@ -5648,11 +4564,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\nS == 1 \\div 0\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nSYMMETRY S\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "The second argument of \\div is 0."
-    },
-    "prints": []
+    "declined": "the engine declined: division by zero"
   },
   {
     "test": "CONSTANT K <- D |  :: D == x",
@@ -5682,11 +4594,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\nD == TLCGet(\"foo\")\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K <- D\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The configuration file substitutes constant K with non-constant D - specifically: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nTLCGet(foo) was undefined."
-    },
-    "prints": []
+    "declined": "TLCGet, which the constant evaluator doesn't compute"
   },
   {
     "test": "CONSTANT K <- D |  :: D == TLCGet(7)",
@@ -5766,11 +4674,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = [a |-> 1]\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting ], but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "CONSTANT K <- Nope |  :: ",
@@ -5802,11 +4706,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(1) = 3000000000\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = 1 | F(3000000000) = 1 |  :: ",
@@ -5814,11 +4714,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(3000000000) = 1\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = -3000000000 | F(1) = 2 |  :: ",
@@ -5826,11 +4722,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = -3000000000\nF(1) = 2\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 4\nIt was expecting = or <-, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
@@ -5839,11 +4731,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
@@ -5852,11 +4740,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isWarningEnabled": false
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
@@ -5865,11 +4749,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isContinued": true
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 3000000000 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "CONSTANT K = 2147483648 | F(1) = 2 |  :: ",
@@ -5877,11 +4757,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 2147483648\nF(1) = 2\n"
     },
-    "error": {
-      "name": "TlaModuleError",
-      "message": "Integer overflow: 2147483648 is outside TLC's 32-bit range"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 75)"
   },
   {
     "test": "\"INIT Init\\nNEXT Nope\\n\"{}",
@@ -6450,11 +5326,7 @@
       "source": "---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCHECK_DEADLOCK 3\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting TRUE or FALSE, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCHECK_DEADLOCK 3\\n\"{\"isTool\":true}",
@@ -6463,11 +5335,7 @@
       "config": "INIT Init\nNEXT Next\nCHECK_DEADLOCK 3\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting TRUE or FALSE, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCHECK_DEADLOCK 3\\n\"{\"isWarningEnabled\":false}",
@@ -6476,11 +5344,7 @@
       "config": "INIT Init\nNEXT Next\nCHECK_DEADLOCK 3\n",
       "isWarningEnabled": false
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting TRUE or FALSE, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCHECK_DEADLOCK 3\\n\"{\"isContinued\":true}",
@@ -6489,11 +5353,7 @@
       "config": "INIT Init\nNEXT Next\nCHECK_DEADLOCK 3\n",
       "isContinued": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nIt was expecting TRUE or FALSE, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nINIT Init\\n\"{}",
@@ -6501,11 +5361,7 @@
       "source": "---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nINIT Init\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nThe keyword INIT appeared twice."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nINIT Init\\n\"{\"isTool\":true}",
@@ -6514,11 +5370,7 @@
       "config": "INIT Init\nNEXT Next\nINIT Init\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nThe keyword INIT appeared twice."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nINIT Init\\n\"{\"isWarningEnabled\":false}",
@@ -6527,11 +5379,7 @@
       "config": "INIT Init\nNEXT Next\nINIT Init\n",
       "isWarningEnabled": false
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nThe keyword INIT appeared twice."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nINIT Init\\n\"{\"isContinued\":true}",
@@ -6540,11 +5388,7 @@
       "config": "INIT Init\nNEXT Next\nINIT Init\n",
       "isContinued": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 3\nThe keyword INIT appeared twice."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"SPECIFICATION Spec\\nINIT Init\\n\"{}",
@@ -6654,11 +5498,7 @@
       "source": "---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT C = {1\n"
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 4\nIt was expecting }, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCONSTANT C = {1\\n\"{\"isTool\":true}",
@@ -6667,11 +5507,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT C = {1\n",
       "isTool": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 4\nIt was expecting }, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCONSTANT C = {1\\n\"{\"isWarningEnabled\":false}",
@@ -6680,11 +5516,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT C = {1\n",
       "isWarningEnabled": false
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 4\nIt was expecting }, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"INIT Init\\nNEXT Next\\nCONSTANT C = {1\\n\"{\"isContinued\":true}",
@@ -6693,11 +5525,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT C = {1\n",
       "isContinued": true
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "TLC found an error in the configuration file at line 4\nIt was expecting }, but did not find it."
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 151)"
   },
   {
     "test": "\"\"{}",
@@ -7195,36 +6023,7 @@
         "B": "---- MODULE B ----\nEXTENDS A\n---- MODULE In ----\nQ == 2\n====\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 3, col 1 to line 5, col 4 of module B\n\nMultiply-defined module 'In': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 4, col 4 of module A.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 3, col 1 to line 5, col 4 of module B",
-            "message": "Multiply-defined module 'In': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 4, col 4 of module A."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
-  },
-  {
-    "test": "B inner Naturals + ext Naturals",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS B\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n",
-      "modules": {
-        "B": "---- MODULE B ----\nEXTENDS Naturals\n---- MODULE Naturals ----\nQ == 2\n====\n\n====\n"
-      }
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "B inner Naturals + ext Naturals + M err",
@@ -7235,23 +6034,7 @@
         "B": "---- MODULE B ----\nEXTENDS Naturals\n---- MODULE Naturals ----\nQ == 2\n====\n\n====\n"
       }
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "root inner Naturals + ext Naturals",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root inner Naturals + ext Naturals + err",
@@ -7259,21 +6042,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Naturals ----\nQ == 2\n====\nW == ww\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 6, col 6 to line 6, col 7 of module M\n\nUnknown operator: `ww'.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 6, col 6 to line 6, col 7 of module M",
-            "message": "Unknown operator: `ww'."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "root inner A, ext A",
@@ -7425,149 +6194,12 @@
     "prints": []
   },
   {
-    "test": "ext Sequences inner Sequences ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS Sequences\n---- MODULE Sequences ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Sequences' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext TLC inner TLC ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS TLC\n---- MODULE TLC ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'TLC' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext TLC inner Naturals ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS TLC\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext FiniteSets inner FiniteSets ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS FiniteSets\n---- MODULE FiniteSets ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'FiniteSets' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext Integers inner Naturals ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS Integers\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext Bags inner Bags ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS Bags\n---- MODULE Bags ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Bags' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext TLCExt inner TLCExt ",
-    "options": {
-      "source": "---- MODULE M ----\nEXTENDS TLCExt\n---- MODULE TLCExt ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'TLCExt' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext  inner Naturals LOCAL INSTANCE Naturals\n",
-    "options": {
-      "source": "---- MODULE M ----\nLOCAL INSTANCE Naturals\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
-    "test": "ext  inner Naturals I == INSTANCE Naturals\n",
-    "options": {
-      "source": "---- MODULE M ----\nI == INSTANCE Naturals\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n"
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
-  },
-  {
     "test": "ext A inner Naturals ",
     "options": {
       "source": "---- MODULE M ----\nEXTENDS A\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "In module M\n\nCannot find source file for module A imported in module M.",
-      "sany": {
-        "errors": [
-          {
-            "location": "In module M",
-            "message": "Cannot find source file for module A imported in module M."
-          }
-        ],
-        "warnings": [],
-        "isFatal": true
-      }
-    },
-    "prints": []
-  },
-  {
-    "test": "B ext Naturals, inner Naturals; M inst B",
-    "options": {
-      "source": "---- MODULE M ----\nI == INSTANCE A\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
-      "config": "INIT Init\nNEXT Next\n",
-      "modules": {
-        "A": "---- MODULE A ----\nEXTENDS Sequences\n---- MODULE Naturals ----\nQ == 2\n====\n\n====\n"
-      }
-    },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "Multiply-defined module 'Naturals' at line 3, column 1"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "<>(x' = x) / INIT Init|NEXT Next|PROPERTY P|{}",
@@ -7627,25 +6259,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == []<>(x' > x) /\\ <>(x' = x)\nSpec == Init /\\ [][Next]_x /\\ []<>(x' > x) /\\ <>(x' = x)\n\n====\n",
       "config": "INIT Init\nNEXT Next\nPROPERTY P\n"
     },
-    "error": {
-      "name": "TlaSyntaxError",
-      "message": "line 6, col 8 to line 6, col 17 of module M\n\n<> followed by action not of form <<A>>_v.\n\nline 7, col 33 to line 7, col 42 of module M\n\n<> followed by action not of form <<A>>_v.",
-      "sany": {
-        "errors": [
-          {
-            "location": "line 6, col 8 to line 6, col 17 of module M",
-            "message": "<> followed by action not of form <<A>>_v."
-          },
-          {
-            "location": "line 7, col 33 to line 7, col 42 of module M",
-            "message": "<> followed by action not of form <<A>>_v."
-          }
-        ],
-        "warnings": [],
-        "isFatal": false
-      }
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 150)"
   },
   {
     "test": "[]TRUE / SPECIFICATION Spec|{}",
@@ -7653,11 +6267,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == []TRUE\nSpec == Init /\\ [][Next]_x /\\ []TRUE\n\n====\n",
       "config": "SPECIFICATION Spec\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC cannot handle the temporal formula line 7, col 33 to line 7, col 36 of module M"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "<>(x' = x) / SPECIFICATION Spec|{}",
@@ -7691,11 +6301,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == [](x = 0)\nSpec == Init /\\ [][Next]_x /\\ [](x = 0)\n\n====\n",
       "config": "SPECIFICATION Spec\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "TLC cannot handle the temporal formula line 7, col 34 to line 7, col 38 of module M"
-    },
-    "prints": []
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "<>(x' = x) / INIT Init|NEXT Next|PROPERTY P|{\"isTool\":true}",
@@ -7853,11 +6459,7 @@
         "In": "---- MODULE In ----\nEXTENDS TLC\nQ == 1\nD == PrintT(\"file\")\n====\n"
       }
     },
-    "error": {
-      "name": "TlaConfigError",
-      "message": "The next state action Nope specified in the configuration file\nis not defined in the specification."
-    },
-    "prints": []
+    "declined": "SANY's report of a module nested in a module its extender extends"
   },
   {
     "test": "FALSE / INIT Init|{}",
@@ -7940,11 +6542,7 @@
       "config": "INIT Init\n",
       "isContinued": true
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": []
+    "declined": "-continue to a search that stops"
   },
   {
     "test": "x = 0 / INIT Init|PROPERTY Inv|{}",
@@ -7988,11 +6586,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nInv == x < 1\nNext == x' = x\nSpec == Init\n\n====\n",
       "config": "INIT Init\nPOSTCONDITION Inv\n"
     },
-    "error": {
-      "name": "TlaEvaluationError",
-      "message": "No next state actions defined to generate successor states from."
-    },
-    "prints": []
+    "declined": "the engine declined: a model without a next-state relation"
   },
   {
     "test": "x = 0 / INIT Init|{\"workers\":2}",

@@ -373,12 +373,6 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
     );
   });
 
-  // TLC 1.7.4's SANY gave SUBSET, UNION, and DOMAIN the precedence 10-13.
-  it("accepts SUBSET and DOMAIN before an operator of precedence 8 or 9 in TLC 1.7.4", () => {
-    const source = "---- MODULE Test ----\nF == SUBSET a \\cup b\nG == DOMAIN a .. b\n====\n";
-    expect(getSanyParseError(source, "1.7.4")).toBeUndefined();
-  });
-
   // The modules and messages come from SANY.
   it.each([
     [

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { check, TlaConfigError, TlaEvaluationError } from "../../src";
-import { checkOnEngine } from "../native-check";
+import { checkOnEngine, expectDeclined } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/specifications");
 
@@ -66,12 +66,11 @@ describe("SPECIFICATION matches TLC", () => {
   });
 
   it.each(["TemporalExists", "TemporalForall"])(
-    "rejects the temporal quantifier of %s",
+    "declines the temporal quantifier of %s",
     async (name) => {
-      await expect(checkSpecification(`SPECIFICATION ${name}`)).rejects.toThrow(
-        new TlaConfigError(
-          "TLC does not support temporal existential, nor universal, quantification over state variables.",
-        ),
+      await expectDeclined(
+        getOptions(`SPECIFICATION ${name}`),
+        "temporal quantification in the specification",
       );
     },
   );

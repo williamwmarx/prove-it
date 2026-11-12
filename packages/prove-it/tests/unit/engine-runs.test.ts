@@ -8,24 +8,17 @@ const SCRIPTS = join(import.meta.dirname, "../../scripts");
 
 const FIXTURE = join(import.meta.dirname, "../fixtures/cli-output");
 
-const checkModel = (environment: Record<string, string>) =>
-  spawnSync(
-    "bun",
-    [join(SCRIPTS, "check-model.ts"), join(FIXTURE, "Success.tla"), join(FIXTURE, "Success.cfg")],
-    { encoding: "utf8", env: { ...process.env, ...environment } },
-  );
-
 describe("the engine in the conformance scripts", () => {
   it("checks a model with the engine", () => {
-    const result = checkModel({ PROVE_IT_ENGINE: "debug" });
+    const result = spawnSync(
+      "bun",
+      [join(SCRIPTS, "check-model.ts"), join(FIXTURE, "Success.tla"), join(FIXTURE, "Success.cfg")],
+      { encoding: "utf8" },
+    );
     expect(JSON.parse(result.stdout)).toMatchObject({
       status: "success",
       generatedStates: 10,
       distinctStates: 6,
-    });
-    expect(classifyEngineLine(getEngineLine(result.stderr))).toEqual({
-      engine: "completed",
-      reason: undefined,
     });
   });
 
