@@ -41,6 +41,8 @@ const ROWS: &[(&str, bool)] = &[
     ("[a |-> @, b |-> 1].a", true),
     // An application holds the function's range, not the argument.
     ("[x \\in {@} |-> 1][@]", false),
+    ("[y \\in Nat |-> y][0]", false),
+    ("[y \\in {@} |-> y][@]", true),
     ("<<@, 1>>[2]", false),
     ("<<@, 1>>[1 + 1]", true),
     // Constructors, CHOOSE, filters, maps, LET and the sequence and set operators carry it.

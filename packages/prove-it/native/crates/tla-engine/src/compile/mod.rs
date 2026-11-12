@@ -1999,6 +1999,19 @@ impl<'a> Compiler<'a> {
             NodeKind::Subexpression(_) => return true,
             _ => {}
         }
+        // A function written there and applied holds its body's value, with the names its
+        // constructor binds bound.
+        if let NodeKind::FunctionApplication { function, .. } = kind
+            && let constructor @ NodeKind::FunctionConstruction { body, .. } =
+                self.node(*function).1
+        {
+            let (_, bound, _) = self.binders(constructor);
+            let depth = scope.len();
+            scope.extend(bound);
+            let is_read = self.reads_unsized_name(*body, scope, seen);
+            scope.truncate(depth);
+            return is_read;
+        }
         // Only an operand whose value the expression's value may hold, which, where the expression
         // binds no names, may be one an operand holds (`carried_children`).
         let carried = self.carried_children(kind);
