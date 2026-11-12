@@ -1,0 +1,343 @@
+553
+51 exit 0->75 | tlc:  | ours: N:N Attempted to check equality of string "replaced by tlcN.module.Tra
+    tlc/standard/transitive_closure/chain#init tlc/standard/transitive_closure/chain#invariant tlc/standard/transitive_closure/chain#property tlc/standard/transitive_closure/colon_greater_edge#init tlc/standard/transitive_closure/colon_greater_edge#invariant tlc/standard/transitive_closure/colon_greater_edge#property
+37 exit 75->75 | tlc: N:N  | ours: N:N Attempted to check equality of string "replaced by tlcN.module.Tra
+    tlc/standard/transitive_closure/element_bad_after_good#init tlc/standard/transitive_closure/element_bad_after_good#invariant tlc/standard/transitive_closure/element_bad_after_good#property tlc/standard/transitive_closure/element_empty_tuple#init tlc/standard/transitive_closure/element_empty_tuple#invariant tlc/standard/transitive_closure/element_empty_tuple#property
+30 exit 75->75 | tlc: N:N  | ours: N:N Attempted to check equality of string "replaced by tlcN.module.Ran
+    tlc/standard/randomization/sss_first_negative#init tlc/standard/randomization/sss_first_negative#invariant tlc/standard/randomization/sss_first_negative#property tlc/standard/randomization/sss_first_string#init tlc/standard/randomization/sss_first_string#invariant tlc/standard/randomization/sss_first_string#property
+26 exit 75->75 | tlc: N:N The error occurred when TLC was evaluating the nested | ours: N:N TLC was unable to fingerprint.
+    tlc/expressions/functions/recursive/compare_forces_every_branch#init tlc/generated/state_space/membership/branch/space_membership__branch__invariant_non_boolean tlc/generated/state_space/membership/case/space_membership__case__invariant_non_boolean tlc/generated/state_space/membership/composition/space_membership__composition__invariant_non_boolean tlc/generated/state_space/membership/disjunction/space_membership__disjunction__invariant_non_boolean tlc/generated/state_space/membership/enabled_guard/space_membership__enabled_guard__invariant_non_boolean
+26 exit 0->75 | tlc:  | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/any_set/user_module_gets_any_override#next tlc/standard/randomization/sss_exponent#next tlc/standard/randomization/sss_hex_float#next tlc/standard/randomization/sss_k_max_allowed#next tlc/standard/randomization/sss_prob_one#next tlc/standard/randomization/sss_prob_zero#next
+24 exit 0->75 | tlc:  | ours: N:N Attempted to check equality of string "replaced by tlcN.module.Ran
+    tlc/standard/randomization/sss_exponent#init tlc/standard/randomization/sss_exponent#invariant tlc/standard/randomization/sss_exponent#property tlc/standard/randomization/sss_hex_float#init tlc/standard/randomization/sss_hex_float#invariant tlc/standard/randomization/sss_hex_float#property
+22 exit 151->151 | tlc: N:N The configuration file substitutes for c with the undefined identi | ours: N:N The configuration file substitutes for c with the undefined identi
+    tlc/generated/config_values/override/string/cfg_override__string__cardinality tlc/generated/config_values/override/string/cfg_override__string__add tlc/generated/config_values/override/string/cfg_override__string__choose tlc/generated/config_values/override/string/cfg_override__string__equal_integer tlc/generated/config_values/override/string/cfg_override__string__equal_itself tlc/generated/config_values/override/string/cfg_override__string__equal_string
+15 exit 0->0 | tlc: N:N The subscript of the next-state relation specified by the specific | ours: <none>
+    tlc/errors/TLC_CANT_HANDLE_SUBSCRIPT/subscript_with_if tlc/temporal/next_subscript/arithmetic_with_override tlc/temporal/next_subscript/boolean_subscript tlc/temporal/next_subscript/both_missing_in_declaration_order tlc/temporal/next_subscript/constant_subscript tlc/temporal/next_subscript/constant_definition_subscript
+12 exit 255->75 | tlc: N:N TLC threw an unexpected exception. | ours: N:N Integer overflow: N is outside TLC's N-bit range
+    tlc/config/values/int_too_big tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__add tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__cardinality tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__equal_integer tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__choose tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__equal_itself
+11 exit 0->0 | tlc: N:N The EXCEPT was applied to non-existing fields of the value at | ours: 
+    tlc/expressions/except/missing_field_warns#assume tlc/expressions/except/missing_function_key_warns#assume tlc/expressions/except/missing_intermediate_warns#assume tlc/expressions/except/missing_lazy_key_warns#assume tlc/expressions/except/missing_lazy_key_warns#init tlc/expressions/except/missing_lazy_key_warns#next
+8 exit 75->75 | tlc: N:N Overflow when computing the number of elements in: | ours: Overflow when computing the number of elements in:
+    tlc/expressions/sets/subset/size_overflow#init tlc/expressions/sets/subset/size_overflow#next tlc/expressions/sets/subset/size_overflow#invariant tlc/expressions/sets/subset/size_overflow#property tlc/standard/finite_sets/card_subset_too_big#init tlc/standard/finite_sets/card_subset_too_big#next
+8 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module sss
+    tlc/standard/randomization/sss_exponent#assume tlc/standard/randomization/sss_hex_float#assume tlc/standard/randomization/sss_k_max_allowed#assume tlc/standard/randomization/sss_prob_one#assume tlc/standard/randomization/sss_prob_zero#assume tlc/standard/randomization/sss_prob_zero_decimal#assume
+8 exit 10->10 | tlc: N:N Attempted to apply TransitiveClosure to a set containing | ours: Attempted to check equality of string "replaced by tlcN.module.Transit
+    tlc/standard/transitive_closure/element_bad_after_good#assume tlc/standard/transitive_closure/element_empty_tuple#assume tlc/standard/transitive_closure/element_int#assume tlc/standard/transitive_closure/element_long_tuple#assume tlc/standard/transitive_closure/element_record#assume tlc/standard/transitive_closure/element_short_tuple#assume
+8 exit 255->75 | tlc: N:N Attempted to apply TransitiveClosure to a set containing | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/transitive_closure/element_bad_after_good#next tlc/standard/transitive_closure/element_empty_tuple#next tlc/standard/transitive_closure/element_int#next tlc/standard/transitive_closure/element_long_tuple#next tlc/standard/transitive_closure/element_record#next tlc/standard/transitive_closure/element_short_tuple#next
+7 exit 151->151 | tlc: N:N TLC cannot handle this conjunct of the spec: | ours: N:N TLC cannot handle the action-level conjunct of the specification S
+    tlc/errors/TLC_CANT_HANDLE_CONJUNCT/action_conjunct_in_spec tlc/temporal/spec_shape/angle_action_no_box tlc/temporal/spec_shape/disjunctive_action_no_box tlc/temporal/spec_shape/named_action_conjunct_no_box tlc/temporal/spec_shape/only_action tlc/temporal/spec_shape/primed_equation_no_box
+7 exit 0->0 | tlc: N:N TLC could not determine if the subscript of the next-state relatio | ours: <none>
+    tlc/errors/TLC_CANT_HANDLE_SUBSCRIPT/numeral_subscript_warns_instead tlc/errors/TLC_CANT_HANDLE_SUBSCRIPT/string_subscript_warns_instead tlc/imported/tlc/tool/Github687specATest/Github687spec tlc/temporal/next_subscript/numeral_in_tuple tlc/temporal/next_subscript/parenthesized_numeral tlc/temporal/next_subscript/parenthesized_string
+7 exit 0->0 | tlc: N:N Implied-temporal checking is a tautology. | ours: <none>
+    tlc/imported/tlc/tool/Github1198aTest/Github1198 tlc/imported/tlc/tool/Github1198bTest/Github1198 tlc/imported/tlc/tool/Github1198cTest/Github1198 tlc/temporal/fairness/tautology_warning_conjunction tlc/temporal/fairness/tautology_warning_named_conjunct tlc/temporal/fairness/tautology_warning_nested_name
+5 exit 0->150 | tlc:  | ours: | Semantic errors:
+    tlc/expressions/operators/recursive/operator_parameter_last_param_plain#assume tlc/expressions/operators/recursive/operator_parameter_last_param_plain#init tlc/expressions/operators/recursive/operator_parameter_last_param_plain#next tlc/expressions/operators/recursive/operator_parameter_last_param_plain#invariant tlc/expressions/operators/recursive/operator_parameter_last_param_plain#property
+5 exit 150->150 | tlc: | *** Errors: N | ours: | *** Errors: N
+    tlc/expressions/operators/recursive/operator_parameter_last_rejected#assume tlc/expressions/operators/recursive/operator_parameter_last_rejected#init tlc/expressions/operators/recursive/operator_parameter_last_rejected#next tlc/expressions/operators/recursive/operator_parameter_last_rejected#invariant tlc/expressions/operators/recursive/operator_parameter_last_rejected#property
+5 exit 0->0 | tlc: | ANY | ours: | "replaced by tlcN.module.AnySet"
+    tlc/standard/any_set/user_module_any_prints_name#init tlc/standard/any_set/user_module_any_prints_name#next tlc/standard/any_set/user_module_any_prints_name#invariant tlc/standard/any_set/user_module_any_prints_name#assume tlc/standard/any_set/user_module_any_prints_name#property
+5 exit 10->10 | tlc: N:N The second argument of RandomSubsetSetProbability should be a stri | ours: Attempted to check equality of string "replaced by tlcN.module.Randomi
+    tlc/standard/randomization/sss_second_above_one#assume tlc/standard/randomization/sss_second_below_zero#assume tlc/standard/randomization/sss_second_empty#assume tlc/standard/randomization/sss_second_non_string#assume tlc/standard/randomization/sss_second_unparsable#assume
+5 exit 255->75 | tlc: N:N The second argument of RandomSubsetSetProbability should be a stri | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/randomization/sss_second_above_one#next tlc/standard/randomization/sss_second_below_zero#next tlc/standard/randomization/sss_second_empty#next tlc/standard/randomization/sss_second_non_string#next tlc/standard/randomization/sss_second_unparsable#next
+5 exit 0->0 | tlc: | {{N, N}, {N, N}, {N, N}, {N, N}} | ours: | "replaced by tlcN.module.Randomization"
+    tlc/standard/randomization/sss_seeded#assume tlc/standard/randomization/sss_seeded#init tlc/standard/randomization/sss_seeded#invariant tlc/standard/randomization/sss_seeded#next tlc/standard/randomization/sss_seeded#property
+5 exit 0->0 | tlc: | {N, N, N} | ours: | N..N
+    tlc/standard/tlc_eval/interval_becomes_enumerated#assume tlc/standard/tlc_eval/interval_becomes_enumerated#init tlc/standard/tlc_eval/interval_becomes_enumerated#next tlc/standard/tlc_eval/interval_becomes_enumerated#invariant tlc/standard/tlc_eval/interval_becomes_enumerated#property
+5 exit 0->0 | tlc: | {<<N, N>>, <<N, N>>, <<N, N>>} | ours: | "replaced by tlcN.module.TransitiveClosure"
+    tlc/standard/transitive_closure/result_print_order#assume tlc/standard/transitive_closure/result_print_order#next tlc/standard/transitive_closure/result_print_order#init tlc/standard/transitive_closure/result_print_order#invariant tlc/standard/transitive_closure/result_print_order#property
+4 exit 12->12 | tlc: N:N The variable x was changed while it is specified as UNCHANGED at | ours: <none>
+    tlc/checker/unchanged/warning_during_trace_replay tlc/errors/TLC_UNCHANGED_VARIABLE_CHANGED/enabled_operator tlc/errors/TLC_UNCHANGED_VARIABLE_CHANGED/enabled_prime_then_unchanged tlc/errors/TLC_UNCHANGED_VARIABLE_CHANGED/enabled_tuple
+4 exit 75->75 | tlc: N:N While working on the initial state: | ours: N:N 
+    tlc/expressions/functions/lazy/len_of_nat_function#invariant tlc/expressions/functions/lazy/len_of_nat_function#property tlc/standard/sequences/len_infinite_function#property tlc/standard/sequences/len_infinite_function#invariant
+4 exit 75->75 | tlc: N. Line N, column N to line N, column N in diff_lazy_reaches_right | ours: <none>
+    tlc/expressions/sets/binary/diff_lazy_reaches_right#init tlc/expressions/sets/binary/diff_lazy_reaches_right#next tlc/expressions/sets/binary/diff_lazy_reaches_right#invariant tlc/expressions/sets/binary/diff_lazy_reaches_right#property
+4 exit 75->75 | tlc: N:N TLC was unable to fingerprint. | ours: N:N The error occurred when TLC was evaluating the nested
+    tlc/expressions/sets/function_set/enumerate_nat_domain#init tlc/expressions/sets/function_set/enumerate_nat_domain#next tlc/expressions/sets/function_set/enumerate_nat_domain#invariant tlc/expressions/sets/function_set/enumerate_nat_domain#property
+4 exit 10->10 | tlc: N:N Overflow when computing the number of elements in: | ours: Overflow when computing the number of elements in:
+    tlc/expressions/sets/record_set/size_overflow#assume tlc/expressions/sets/subset/size_overflow#assume tlc/standard/finite_sets/card_record_set_too_big#assume tlc/standard/finite_sets/card_subset_too_big#assume
+4 exit 75->75 | tlc: N:N The second argument of \div is N. | ours: The second argument of \div is N.
+    tlc/standard/tlc_eval/argument_error#init tlc/standard/tlc_eval/argument_error#next tlc/standard/tlc_eval/argument_error#property tlc/standard/tlc_eval/argument_error#invariant
+4 exit 10->10 | tlc: N:N The argument of TLCGet should be a nonnegative integer, but instea | ours: The argument of TLCGet should be a nonnegative integer, but instead it
+    tlc/standard/tlc_get_set/get_bool_index#assume tlc/standard/tlc_get_set/get_set_index#assume tlc/standard/tlc_get_set/get_tuple_index#assume tlc/standard/tlc_get_set/register_negative_get#assume
+4 exit 10->10 | tlc: N:N Applying TransitiveClosure to the following value, | ours: Attempted to check equality of string "replaced by tlcN.module.Transit
+    tlc/standard/transitive_closure/non_enumerable_int#assume tlc/standard/transitive_closure/non_enumerable_nat#assume tlc/standard/transitive_closure/non_enumerable_string#assume tlc/standard/transitive_closure/non_enumerable_tuple#assume
+4 exit 255->75 | tlc: N:N Applying TransitiveClosure to the following value, | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/transitive_closure/non_enumerable_int#next tlc/standard/transitive_closure/non_enumerable_nat#next tlc/standard/transitive_closure/non_enumerable_string#next tlc/standard/transitive_closure/non_enumerable_tuple#next
+3 exit 11->11 | tlc: N:N The variable x was changed while it is specified as UNCHANGED at | ours: <none>
+    tlc/checker/unchanged/tuple_warning_names_component tlc/checker/unchanged/warning_per_disjunct tlc/checker/unchanged/warning_with_unassigned_variable
+3 exit 255->151 | tlc: N:N TLC threw an unexpected exception. | ours: N:N TLC found an error in the configuration file at line N
+    tlc/config/values/int_binary_rejected tlc/config/values/int_hex_rejected tlc/config/values/int_octal_rejected
+3 exit 151->151 | tlc: N:N The specification contains more than one conjunct of the form [][N | ours: N:N The specification Spec must contain at most one [][Next]_vars
+    tlc/errors/TLC_CANT_HANDLE_TOO_MANY_NEXT_STATE_RELS/two_boxes tlc/temporal/spec_shape/two_boxes tlc/temporal/spec_shape/two_identical_boxes
+3 exit 75->75 | tlc: <none> | ours: N. Line N, column N to line N, column N in nat_with_string_set_incompa
+    tlc/expressions/arithmetic/number_sets/nat_with_string_set_incomparable#init tlc/expressions/arithmetic/number_sets/nat_with_string_set_incomparable#invariant tlc/expressions/arithmetic/number_sets/nat_with_string_set_incomparable#property
+3 exit 75->0 | tlc: N:N Attempted to check equality of string "a" with non-string: | ours: <none>
+    tlc/expressions/sets/binary/cup_nat_integer_reaches_string#init tlc/expressions/sets/binary/cup_nat_integer_reaches_string#invariant tlc/expressions/sets/binary/cup_nat_integer_reaches_string#property
+3 exit 75->0 | tlc: N:N Attempted to construct a set with too many elements (>N). | ours: 
+    tlc/expressions/sets/enum/too_many_elements#init tlc/expressions/sets/enum/too_many_elements#invariant tlc/expressions/sets/enum/too_many_elements#property
+3 exit 0->75 | tlc:  | ours: N:N Attempted to check if the value:
+    tlc/standard/any_set/user_module_gets_any_override#init tlc/standard/any_set/user_module_gets_any_override#property tlc/standard/any_set/user_module_gets_any_override#invariant
+3 exit 10->10 | tlc: N:N The first argument of RandomSubsetSetProbability should be a nonne | ours: Attempted to check equality of string "replaced by tlcN.module.Randomi
+    tlc/standard/randomization/sss_first_negative#assume tlc/standard/randomization/sss_first_string#assume tlc/standard/randomization/sss_k_over_max#assume
+3 exit 255->75 | tlc: N:N The first argument of RandomSubsetSetProbability should be a nonne | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/randomization/sss_first_negative#next tlc/standard/randomization/sss_first_string#next tlc/standard/randomization/sss_k_over_max#next
+2 exit 75->75 | tlc: N. Line N, column N to line N, column N in instance_substituted_expres | ours: N. Line N, column N to line N, column N in instance_substituted_expres
+    tlc/checker/init/instance_substituted_expression tlc/checker/prime/instance_substituted_expression_primed
+2 exit 151->0 | tlc: N:N The configuration file substitutes for K with the undefined identi | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/rhs_only_in_target_module tlc/config/module_overrides/undefined_rhs
+2 exit 0->0 | tlc: N:N The EXCEPT was applied to non-existing fields of the value at | ours: <none>
+    tlc/errors/TLC_WRONG_RECORD_FIELD_NAME/unknown_string_field_keeps_record tlc/errors/TLC_WRONG_TUPLE_FIELD_NAME/out_of_range_index_keeps_tuple
+2 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module dom
+    tlc/expressions/functions/lazy/domain_of_cartesian_function_skips_body#assume tlc/expressions/functions/lazy/domain_of_subset_function_skips_body#assume
+2 exit 10->10 | tlc: N:N Attempted to apply the operator overridden by the Java method | ours: N:N The argument of Len should be a sequence, but instead it is:
+    tlc/expressions/functions/lazy/len_of_nat_function#assume tlc/standard/sequences/len_infinite_function#assume
+2 exit 75->75 | tlc: N:N Attempted to apply the operator overridden by the Java method | ours: N:N The argument of Len should be a sequence, but instead it is:
+    tlc/expressions/functions/lazy/len_of_nat_function#init tlc/standard/sequences/len_infinite_function#init
+2 exit 75->255 | tlc: N:N TLC threw an unexpected exception. | ours: N:N The argument of Len should be a sequence, but instead it is:
+    tlc/expressions/functions/lazy/len_of_nat_function#next tlc/standard/sequences/len_infinite_function#next
+2 exit 10->10 | tlc: N:N Attempted to check if the value: | ours: Attempted to compare string "a" with non-string:
+    tlc/expressions/sets/binary/cap_nat_filters_right_reducible#assume tlc/expressions/sets/binary/diff_reducible_minus_nat#assume
+2 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module ran | ours: | {}
+    tlc/generated/random/000/random_00204#assume tlc/generated/random/010/random_05347#assume
+2 exit 75->75 | tlc: N:N The third argument of ndJsonSerialize should be a sequence, but in | ours: The third argument of ndJsonSerialize should be a sequence, but instea
+    tlc/standard/json/text_third_non_record#invariant tlc/standard/json/text_third_non_record#property
+2 exit 10->10 | tlc: N:N The third argument of RandomSubsetSetProbability should be a finit | ours: Attempted to check equality of string "replaced by tlcN.module.Randomi
+    tlc/standard/randomization/sss_third_int#assume tlc/standard/randomization/sss_third_nat#assume
+2 exit 255->75 | tlc: N:N The third argument of RandomSubsetSetProbability should be a finit | ours: N:N TLC threw an unexpected exception.
+    tlc/standard/randomization/sss_third_int#next tlc/standard/randomization/sss_third_nat#next
+2 exit 75->75 | tlc: N:N While working on the initial state: | ours: N:N Attempted to check equality of string "replaced by tlcN.module.Tra
+    tlc/standard/transitive_closure/mixed_node_types_two_edges_fail#invariant tlc/standard/transitive_closure/mixed_node_types_two_edges_fail#property
+2 exit 75->76 | tlc: N:N Implied-temporal checking--satisfiability problem has N branches. | ours: N:N The invariant Inv is not a state predicate (one with no primes or 
+    tlc/temporal/levels/config_operator_action_in_invariant tlc/temporal/levels/config_operator_temporal_in_invariant
+2 exit 75->75 | tlc: N:N The subscript of the next-state relation specified by the specific | ours: <none>
+    tlc/temporal/next_subscript/instance_subscript_partial tlc/temporal/next_subscript/instance_substituted_expression
+1 exit 0->0 | tlc: N:N The variable x was changed while it is specified as UNCHANGED at | ours: <none>
+    tlc/checker/enabled/unchanged_after_change
+1 exit 75->75 | tlc: N:N The action formula A appearing in a WF_v(A) or SF_v(A) operator do | ours: N:N In evaluation, the identifier x is either undefined or not an oper
+    tlc/checker/enabled/unchanged_operator_with_argument_bug
+1 exit 75->75 | tlc: N:N In computing initial states, TLC expected a boolean expression, | ours: N:N 
+    tlc/checker/init/set_conjunct_unassigned
+1 exit 75->75 | tlc: N. Line N, column N to line N, column N in angle_action_unassigned | ours: N. Line N, column N to line N, column N in angle_action_unassigned
+    tlc/checker/next/angle_action_unassigned
+1 exit 75->75 | tlc: N:N Successor state is not completely specified by action A of the nex | ours: N:N Successor state is not completely specified by action A(N) of the 
+    tlc/checker/next/unassigned_parameterized
+1 exit 151->151 | tlc: N:N The possible M cannot be a constant. | ours: N:N The possible M specified in the configuration file
+    tlc/checker/possible/constant_rejected
+1 exit 0->0 | tlc: | N | ours: <none>
+    tlc/checker/simulate/defer_runs_for_chosen_successor
+1 exit 0->0 | tlc: N:N Progress(N) at <date>: N states generated, -N distinct states foun | ours: N:N Progress(N) at <date>: N states generated, -N distinct states foun
+    tlc/checker/simulate/exit_stops
+1 exit 0->0 | tlc: N:N The set {A} has been defined to be a symmetry set but contains les | ours: N:N The set  has been defined to be a symmetry set but contains less t
+    tlc/checker/symmetry/too_small_set_warns
+1 exit 151->151 | tlc: N:N The view function C cannot be a constant. | ours: N:N The view function C specified in the configuration file
+    tlc/checker/view/error_constant
+1 exit 1->1 | tlc: N:N Error: Missing input TLA+ module. | ours: 
+    tlc/cli/usage/missing_module_consumed_by_flag
+1 exit 1->1 | tlc: N:N Error: more than one input files: other_spec and two_input_files.t | ours: 
+    tlc/cli/usage/two_input_files
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module assign_operato
+    tlc/config/assignment/assign_operator_symbol
+1 exit 151->255 | tlc: N:N The initial predicate Init cannot be a constant. | ours: N:N current state is not a legal state
+    tlc/config/assignment/assign_used_as_init_rejected
+1 exit 0->151 | tlc: N:N Finished computing initial states: N distinct state generated at < | ours: N:N The invariant of Inv is equal to FALSE
+    tlc/config/comments/nested_block_comment
+1 exit 151->0 | tlc: N:N The value of Spec is equal to TRUE | ours: N:N Finished computing initial states: N distinct state generated at <
+    tlc/config/errors/TLC_CONFIG_ID_HAS_VALUE/config_value_as_specification
+1 exit 151->0 | tlc: N:N The view function K cannot be a constant. | ours: N:N Finished computing initial states: N distinct state generated at <
+    tlc/config/errors/TLC_CONFIG_ID_MUST_NOT_BE_CONSTANT/view
+1 exit 151->151 | tlc: N:N The operator K, which equals N, | ours: N:N The operator K, which equals N,
+    tlc/config/errors/TLC_CONFIG_OP_IS_EQUAL/non_bool_conjunct
+1 exit 151->0 | tlc: N:N The initial predicate "Init" specified in the configuration file | ours: N:N Finished computing initial states: N distinct state generated at <
+    tlc/config/layout/init_named_by_string
+1 exit 151->0 | tlc: N:N The invariant "Inv" specified in the configuration file | ours: N:N The invariant Inv is a constant-level formula (i.e., it contains n
+    tlc/config/layout/invariant_named_by_string
+1 exit 151->0 | tlc: N:N The configuration file substitutes for K with Alt of different num | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/arity_mismatch
+1 exit 151->0 | tlc: N:N In the configuration file, the identifier N does not appear in the | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/constant_decl_not_allowed
+1 exit 151->0 | tlc: N:N In the configuration file, the module name inner is not a module i | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/nested_module_is_not_a_module
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module nested_module_
+    tlc/config/module_overrides/nested_module_value_is_ignored
+1 exit 151->0 | tlc: N:N In the configuration file, the identifier B appears | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/rhs_also_overridden_in_module
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module root_module_by
+    tlc/config/module_overrides/root_module_by_name
+1 exit 151->0 | tlc: N:N In the configuration file, the module name Nope is not a module in | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/unknown_module
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module unknown_module
+    tlc/config/module_overrides/unknown_module_value_is_ignored
+1 exit 151->0 | tlc: N:N In the configuration file, the identifier Nope does not appear in  | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/module_overrides/unknown_operator_in_module
+1 exit 151->151 | tlc: N:N The configuration file substitutes for N with the undefined identi | ours: N:N The configuration file substitutes for N with the undefined identi
+    tlc/config/overrides/string_rhs_rejected
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module override_beats
+    tlc/config/repetition/override_beats_assignment_either_order
+1 exit 151->151 | tlc: N:N TLC found an error in the configuration file at line N | ours: N:N TLC found an error in the configuration file at line N
+    tlc/config/values/double_equals_rejected
+1 exit 255->0 | tlc: N:N TLC threw an unexpected exception. | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/config/values/set_of_incomparable_types_fails
+1 exit 255->0 | tlc: N:N TLC supports at most N model values, but model value mN exceeds th | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/errors/TLC_FEATURE_UNSUPPORTED/too_many_model_values
+1 exit 76->76 | tlc: Note that a bug can cause TLC to incorrectly report this error. | ours: <none>
+    tlc/errors/TLC_INVARIANT_VIOLATED_LEVEL/primed_invariant_hidden_by_constant_operator
+1 exit 0->10 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N Assumption line N, col N to line N, col N of module correct_closur
+    tlc/errors/TLC_MODULE_TRANSITIVE_CLOSURE/correct_closure
+1 exit 10->10 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module ele | ours: N:N Assumption line N, col N to line N, col N of module element_not_a_
+    tlc/errors/TLC_MODULE_TRANSITIVE_CLOSURE/element_not_a_pair
+1 exit 10->10 | tlc: N:N Applying TransitiveClosure to the following value, | ours: Attempted to check equality of integer N with non-integer:
+    tlc/errors/TLC_MODULE_TRANSITIVE_CLOSURE/not_a_set
+1 exit 10->10 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module tri | ours: N:N Assumption line N, col N to line N, col N of module triple_not_a_p
+    tlc/errors/TLC_MODULE_TRANSITIVE_CLOSURE/triple_not_a_pair
+1 exit 75->255 | tlc: <none> | ours: N. Line N, column N to line N, column N in nat_with_string_set_incompa
+    tlc/expressions/arithmetic/number_sets/nat_with_string_set_incomparable#next
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module if_
+    tlc/expressions/conditional/if_returning_set_is_lazy_in_application#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module app
+    tlc/expressions/functions/lazy/apply_keeps_constructor_lazy#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module def
+    tlc/expressions/functions/lazy/defined_function_kept_lazy#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module nes
+    tlc/expressions/functions/lazy/nested_apply_stays_lazy#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module par
+    tlc/expressions/functions/lazy/parameter_function_kept_lazy#assume
+1 exit 255->75 | tlc: N:N The error occurred when TLC was evaluating the nested | ours: N:N TLC was unable to fingerprint.
+    tlc/expressions/functions/recursive/compare_forces_every_branch#next
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module let
+    tlc/expressions/let/let_function_kept_lazy_when_applied#assume
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module cup | ours: 
+    tlc/expressions/sets/binary/cup_nat_integer_reaches_string#assume
+1 exit 75->0 | tlc: N:N TLC threw an unexpected exception. | ours: <none>
+    tlc/expressions/sets/binary/cup_nat_integer_reaches_string#next
+1 exit 75->75 | tlc: N:N Attempted to check if the value: | ours: N:N TLC threw an unexpected exception.
+    tlc/expressions/sets/binary/diff_reducible_minus_nat#next
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module too | ours: 
+    tlc/expressions/sets/enum/too_many_elements#assume
+1 exit 75->0 | tlc: N:N TLC threw an unexpected exception. | ours: 
+    tlc/expressions/sets/enum/too_many_elements#next
+1 exit 10->10 | tlc: Attempted to check equality of integer N with non-integer: | ours: Attempted to compare string "a" with non-string:
+    tlc/expressions/sets/union/combine_compares_mixed_eagerly#assume
+1 exit 75->75 | tlc: : Attempted to check equality of integer N with non-integer: | ours: : Attempted to compare string "a" with non-string:
+    tlc/expressions/sets/union/combine_compares_mixed_eagerly#next
+1 exit 75->75 | tlc: N. Line N, column N to line N, column N in enumerate_nat_beside_enum | ours: <none>
+    tlc/expressions/sets/union/enumerate_nat_beside_enum#next
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module in_ | ours: | FALSE
+    tlc/generated/membership/set_of_records/in_set_of_records__function_pair_domain#assume
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module ran | ours: | FALSE
+    tlc/generated/random/002/random_01107#assume
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module ran | ours: | TRUE
+    tlc/generated/random/008/random_04339#assume
+1 exit 151->151 | tlc: N:N TLC could not determine if the subscript of the next-state relatio | ours: <none>
+    tlc/imported/tlc/tool/Github687specDTest/Github687spec
+1 exit 151->75 | tlc: N:N The operator x, which equals line N, col N to line N, col N of mod | ours: N:N 
+    tlc/imported/tlc/tool/Github715bTest/Github715
+1 exit 13->13 | tlc: N:N The subscript of the next-state relation specified by the specific | ours: <none>
+    tlc/imported/tlc/tool/Github971eTest/Github971e
+1 exit 0->151 | tlc: N:N Finished computing initial states: N distinct states generated at  | ours: N:N The configuration file did not specify the initial state predicate
+    tlc/modules/extends/constant_and_variable_same_class_warns
+1 exit 150->150 | tlc: | Encountered "<EOF>" at line N, column N and token "N"  | ours: | Encountered "<EOF>" at line N, column N and token "N" 
+    tlc/modules/monolithic/missing_end_line
+1 exit 75->75 | tlc: N. Line N, column N to line N, column N in expression_for_variable_can | ours: N. Line N, column N to line N, column N in expression_for_variable_can
+    tlc/modules/variables/expression_for_variable_cannot_assign
+1 exit 75->75 | tlc: N. Line N, column N to line N, column N in unchanged_expression_cannot | ours: N. Line N, column N to line N, column N in unchanged_expression_cannot
+    tlc/modules/variables/unchanged_expression_cannot_assign
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module use
+    tlc/standard/any_set/user_module_gets_any_override#assume
+1 exit 10->10 | tlc: N:N The third argument of ndJsonSerialize should be a sequence, but in | ours: The third argument of ndJsonSerialize should be a sequence, but instea
+    tlc/standard/json/text_third_non_record#assume
+1 exit 10->10 | tlc: N:N Attempted to apply the operator overridden by the Java method | ours: <none>
+    tlc/standard/tlc/permutations_mixed#assume
+1 exit 10->10 | tlc: N:N The second argument of \div is N. | ours: The second argument of \div is N.
+    tlc/standard/tlc_eval/argument_error#assume
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module fil | ours: 
+    tlc/standard/tlc_eval/filter_over_nat_fails#assume
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module fun | ours: 
+    tlc/standard/tlc_eval/function_over_nat_fails#assume
+1 exit 12->12 | tlc: x = {N, N} | ours: x = N..N
+    tlc/standard/tlc_eval/next_state_value
+1 exit 0->0 | tlc: | <<"deferred", N, N>> | ours: <none>
+    tlc/standard/tlc_ext/defer_simulate_runs_on_chosen
+1 exit 10->0 | tlc: N:N Evaluating assumption line N, col N to line N, col N of module to_ | ours: 
+    tlc/standard/tlc_ext/to_trace_lookalike_record#assume
+1 exit 10->10 | tlc: N:N TLCGet(s:missing) was undefined. | ours: TLCGet(s:missing) was undefined.
+    tlc/standard/tlc_get_set/named_undefined#assume
+1 exit 10->10 | tlc: N:N TLCGet(N) was undefined. | ours: TLCGet(N) was undefined.
+    tlc/standard/tlc_get_set/register_undefined#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module cha
+    tlc/standard/transitive_closure/chain#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module col
+    tlc/standard/transitive_closure/colon_greater_edge#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module cro
+    tlc/standard/transitive_closure/cross_product_relation#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module dia
+    tlc/standard/transitive_closure/diamond#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module dis
+    tlc/standard/transitive_closure/disjoint_components#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module emp
+    tlc/standard/transitive_closure/empty_relation#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module fil
+    tlc/standard/transitive_closure/filter_relation#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module fun
+    tlc/standard/transitive_closure/function_edge#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module lon
+    tlc/standard/transitive_closure/long_chain#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module mix
+    tlc/standard/transitive_closure/mixed_node_types_single_edge#assume
+1 exit 10->10 | tlc: N:N Attempted to apply the operator overridden by the Java method | ours: Attempted to check equality of string "replaced by tlcN.module.Transit
+    tlc/standard/transitive_closure/mixed_node_types_two_edges_fail#assume
+1 exit 75->75 | tlc: : | ours: : Attempted to check equality of string "replaced by tlcN.module.Trans
+    tlc/standard/transitive_closure/mixed_node_types_two_edges_fail#next
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module mod
+    tlc/standard/transitive_closure/model_values#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module sel
+    tlc/standard/transitive_closure/self_loop#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module set
+    tlc/standard/transitive_closure/set_nodes#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module sin
+    tlc/standard/transitive_closure/single_edge#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module str
+    tlc/standard/transitive_closure/strings#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module thr
+    tlc/standard/transitive_closure/three_cycle#assume
+1 exit 0->10 | tlc:  | ours: N:N Evaluating assumption line N, col N to line N, col N of module two
+    tlc/standard/transitive_closure/two_cycle#assume
+1 exit 150->150 | tlc: | Function name `f' already defined or declared. | ours: | Multiply-defined symbol 'f': this definition or declaration conflict
+    tlc/syntax/error_codes/redefined_function_own_name_as_parameter
+1 exit 150->0 | tlc: | @ used in !.@ | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/syntax/fields/at_in_except_dot
+1 exit 0->255 | tlc: N:N Finished computing initial states: N distinct state generated at < | ours: N:N current state is not a legal state
+    tlc/syntax/error_codes/variable_twice_in_one_statement
+1 exit 150->0 | tlc: | ***Parse Error*** | ours: N:N Finished computing initial states: N distinct states generated at 
+    tlc/syntax/module_header/tab_before_module_keyword
+1 exit 255->255 | tlc: N. Line N, column N to line N, column N in subscript_has_variable_acti | ours: N. Line N, column N to line N, column N in subscript_has_variable_acti
+    tlc/temporal/fairness/subscript_has_variable_action_ignores
+1 exit 0->255 | tlc: N:N Implied-temporal checking--satisfiability problem has N branches. | ours: N:N Temporal formulas containing actions must be of forms <>[]A or []<
+    tlc/temporal/formula/enabled_lambda_higher_order
+1 exit 151->151 | tlc: N:N The formula a at line N, col N to line N, col N of module action_l | ours: N:N The formula Prop at line N, col N to line N, col N of module actio
+    tlc/temporal/property_shape/action_level_with_let
+1 exit 151->151 | tlc: N:N The formula Prop is a state-level formula, but it was used as a PR | ours: N:N The operator C, which equals N,
+    tlc/temporal/property_shape/property_conjunct_constant_number
+1 exit 151->151 | tlc: N:N The formula Prop is a state-level formula, but it was used as a PR | ours: <none>
+    tlc/temporal/property_shape/property_conjunct_false
+1 exit 13->13 | tlc: N:N Property AInit is violated by the initial state: | ours: N:N Property line N, col N to line N, col N of module forall_parameter
+    tlc/temporal/refinement/forall_parameterized_instance
+1 exit 13->13 | tlc: N:N Property AInit is violated by the initial state: | ours: N:N Property line N, col N to line N, col N of module parameterized_in
+    tlc/temporal/refinement/parameterized_instance_fails
+1 exit 0->151 | tlc: N:N Implied-temporal checking--satisfiability problem has N branches. | ours: N:N The configuration file did not specify the initial state predicate
+    tlc/temporal/refinement/spec_instance_with_parameter_fairness
+1 exit 255->255 | tlc: N:N TLC threw an unexpected exception. | ours: N:N TLC cannot handle the temporal formula line N, col N to line N, co
+    tlc/temporal/refinement/substitution_of_action_operator_builtin
+1 exit 0->255 | tlc: N:N Implied-temporal checking--satisfiability problem has N branches. | ours: N:N TLC cannot handle the temporal formula line N, col N to line N, co
+    tlc/temporal/spec_shape/box_of_let_constrains_behaviors
+1 exit 0->255 | tlc: N:N Finished computing initial states: N distinct state generated at < | ours: N:N TLC cannot handle the temporal formula line N, col N to line N, co
+    tlc/temporal/spec_shape/box_of_let_state_predicate
+1 exit 151->151 | tlc: N:N The operator C, which equals N, | ours: N:N The operator C, which equals N,
+    tlc/temporal/spec_shape/constant_integer_conjunct
+1 exit 151->151 | tlc: N:N The value of C is equal to TRUE | ours: N:N The name C specified in the configuration file
+    tlc/temporal/spec_shape/spec_name_is_constant
+1 exit 151->11 | tlc: N:N The value of Spec is equal to N | ours: N:N Finished computing initial states: N distinct state generated at <
+    tlc/temporal/spec_shape/spec_name_overridden_with_value

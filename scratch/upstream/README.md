@@ -43,3 +43,21 @@ Pinned-jar adjudication (`adjudication/`, 7,652 runs of tla2tools.jar d8fb231d):
 - Regressions: 112 baseline matches now decline, all `#assume` runs, all with reason `an assumption that fails to evaluate: evaluating the assumption again: a startup definition that failed where TLC may fail otherwise: ...`; on all 112 the baseline output also equals the pinned jar. List in `adjudication/regressions.tsv`.
 - Pre-existing, unchanged by the branch: 553 runs differ from the pinned jar on both binaries with byte-identical output (236 exit differs, 317 text only; 296 under tlc/standard). Listed in `adjudication/report.json`.
 - `hang_postcond` is not in the upstream suite.
+
+## Winning back the 112: local startup-guards fa0b6e54 (ef8d0a55 + c25fc64b + fa0b6e54)
+
+Binary sha256 37ba9c90f3f01590ecfebede746e34caf0dfe0e06fd2fc6479b698076d6d7486. Full run of 72,827 against the baseline (`results/startup-guards-fa0b6e54.*`), adjudicated with the same pinned-jar runs (no new run needed: every non-match change is a decline or was already adjudicated).
+
+| class | main cb48b6eb | ef8d0a55 | fa0b6e54 |
+| --- | ---: | ---: | ---: |
+| match | 35,101 | 40,712 | 41,124 |
+| decline | 36,363 | 30,749 | 30,336 |
+| wrong vs the recording | 1,360 | 1,363 | 1,364 |
+| noncompletion | 3 | 3 | 3 |
+
+- The 112: all match. Baseline matches lost: 0. ef8d0a55 matches lost: 0.
+- guard-overreach (6,795): 5,981 match, 814 decline, 0 wrong.
+- startup-wrong-cases (575): 537 decline, 28 match, 10 match the pinned jar only, 0 wrong.
+- New wrong outputs vs the pinned jar: none. Wrong vs the recording beyond the jar: the same 553 runs as main, byte-identical; the other 811 equal the jar (version gap), 4 of them the precedence cases.
+- Found on the way: ef8d0a55 gives a wrong output not in the upstream suite, `{DOMAIN [b \in SUBSET {1} |-> 1] \ (3 .. 3), CHOOSE y \in {} : TRUE}` in a failing startup definition (TLC: the CHOOSE failure; ef8d0a55: a mistyped membership in 3..3). c25fc64b declines it (fixture `definition-fails-lazy-domain`).
+- `adjudication/pre-existing-553.txt`: the 553 grouped by first differing line.
