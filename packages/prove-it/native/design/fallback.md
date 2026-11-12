@@ -439,6 +439,13 @@ decline, none differ). What still declines:
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a startup print of a set of tuples, records or functions nested in another value, as in
+  `Id(S) == S` and `Test == PrintT(<<{1} \X Id({2})>>)`, whose parts the compiler can't prove
+  sized by their text (`is_sized`: enumerations, intervals, BOOLEAN, written domains, and sets
+  built of those): main printed it, and the engine can't yet tell it from one TLC fails to size,
+  such as `<<{1} \X Id(Int)>>`, so the startup definition declines ("a set TLC may fail to print,
+  at startup"). Telling them apart needs the compiled parts' sizes where the set is built, with
+  whether its value reaches the print threaded through the compiler's context.
 - a configuration error in what the configuration names for the search (CONSTRAINT,
   ACTION_CONSTRAINT and the like), where a constant definition prints: TLC prints what the
   constant definitions print first (`processConstantDefns`), which the front end, raising the
