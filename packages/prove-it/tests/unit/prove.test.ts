@@ -109,6 +109,32 @@ describe("prove follows tlapm's default method", () => {
     },
   );
 
+  // The module that defines the strings is one the Rust driver gives way to the TypeScript one for.
+  it.each(["rust", "ts"])(
+    "proves neither string = nor # the other where a module it extends defines them, with the %s driver",
+    async (driver) => {
+      const setting = process.env.PROVE_IT_PROVER_DRIVER;
+      process.env.PROVE_IT_PROVER_DRIVER = driver;
+      const library = '---- MODULE Lib ----\nC1 == "\uD800"\nC2 == "\uDC00"\n====\n';
+      const results = await Promise.all(
+        ["=", "#"].map((operator) =>
+          prove({
+            source: `---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM C1 ${operator} C2 BY SMT DEF C1, C2\n====\n`,
+            loadModule: (name) => (name === "Lib" ? library : undefined),
+          }),
+        ),
+      ).finally(() => {
+        if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
+        else process.env.PROVE_IT_PROVER_DRIVER = setting;
+      });
+      for (const result of results)
+        expect(result.obligations).toMatchObject([
+          { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
+          { status: "trivial" },
+        ]);
+    },
+  );
+
   it("needs tlapm on the PATH for the tlapm backend", async () => {
     process.env.PATH = "";
     await expect(proveFixture("HourClock_proof", { backend: "tlapm" })).rejects.toThrow(
