@@ -1624,6 +1624,35 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(1);
   });
 
+  // A pragma's string reads escapes as JSON does, so "\udcfe" is a lone surrogate no byte read made;
+  // where a module read holds that byte too, it declines (fallback.md lists it).
+  it.each([
+    ["no module holds", "\\* \xff\n", false],
+    ["a module holds", "\\* \xfe\n", true],
+  ])(
+    "judges a pragma's escape of a lone surrogate that %s as the byte",
+    (_, comment, isDeclined) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        Buffer.from(
+          `---- MODULE M ----\nEXTENDS TLAPS\n${comment}THEOREM TRUE OBVIOUS (*{ by (isabelle "\\udcfe") }*)\n====\n`,
+          "latin1",
+        ),
+      );
+      const result = runTlapmIn(directory, ["-N", "M.tla"]);
+      if (isDeclined) {
+        expect(result.stderr).toBe(
+          "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+        );
+        expect(result.status).toBe(1);
+      } else {
+        expect(result.stderr).not.toContain("not native yet");
+        expect(result.status).toBe(0);
+      }
+    },
+  );
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(

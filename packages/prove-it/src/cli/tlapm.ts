@@ -257,14 +257,19 @@ class NotUtf8Error extends Error {
   }
 }
 
-const ESCAPED_BYTE = /[\uDC80-\uDCFF]/u;
+const ESCAPED_BYTE = /[\uDC80-\uDCFF]/gu;
 
 // The modules read with an escaped byte, by the byte.
 const notUtf8 = { paths: new Map<string, string[]>() };
 
+// A lone surrogate is an escaped byte only where a module read held that byte: a string's escape,
+// such as a pragma's "\udcfe", makes one too.
 const findNotUtf8 = (text: string) => {
-  const escaped = ESCAPED_BYTE.exec(text)?.[0];
-  return escaped === undefined ? undefined : (notUtf8.paths.get(escaped) ?? []);
+  for (const [escaped] of text.matchAll(ESCAPED_BYTE)) {
+    const paths = notUtf8.paths.get(escaped);
+    if (paths !== undefined) return paths;
+  }
+  return undefined;
 };
 
 const readModule = (path: string) => {
