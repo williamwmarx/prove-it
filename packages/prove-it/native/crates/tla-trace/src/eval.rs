@@ -455,6 +455,11 @@ pub struct Evaluator<'ir> {
     /// How many UNIONs and set maps the evaluator evaluated.
     unions: usize,
     maps: usize,
+    /// The functions the evaluator built that TLC keeps lazy (`FcnLambdaValue`), by address,
+    /// recorded as a failure is evaluated, and how many times DOMAIN read one: TLC's DOMAIN of
+    /// one gives the set it holds as its domain, which may be lazy where the evaluator's isn't.
+    kept_lazy: HashSet<usize>,
+    lazy_domains: usize,
     /// How many times TLCGet read a register.
     pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
@@ -780,6 +785,8 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             except_skips: 0,
             unions: 0,
+            kept_lazy: HashSet::new(),
+            lazy_domains: 0,
             maps: 0,
             register_reads: 0,
             is_tool: None,
@@ -2406,7 +2413,8 @@ impl<'ir> Evaluator<'ir> {
     // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
     // doesn't always, may fail elsewhere, as `fallback.md` lists.
     fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
-        let (skips, unions, maps) = (self.except_skips, self.unions, self.maps);
+        let (skips, unions, maps, lazy_domains) =
+            (self.except_skips, self.unions, self.maps, self.lazy_domains);
         let body = self.definition(node).body;
         let result = self.evaluate_definition(node, body, &context.global());
         if self.except_skips != skips {
@@ -2433,6 +2441,7 @@ impl<'ir> Evaluator<'ir> {
                 let reason = error.reason.as_str();
                 stack.is_unsorted
                     || self.unions != unions
+                    || self.lazy_domains != lazy_domains
                     || holds(|lazy| matches!(lazy, Lazy::Union(_)))
                     || stack.frames.iter().any(|frame| match frame {
                         StackFrame::Node(node) => {
@@ -3373,7 +3382,9 @@ impl<'ir> Evaluator<'ir> {
                     let context = context.bind_value(name, Value::Int(key));
                     values.push(self.function_body(body, &context, is_built)?);
                 }
-                return Ok(Value::over_interval(low, values, Class::Lambda));
+                let function = Value::over_interval(low, values, Class::Lambda);
+                self.note_kept_lazy(&function, is_built);
+                return Ok(function);
             }
             let mut keys = Vec::new();
             let mut values = Vec::new();
@@ -3383,6 +3394,7 @@ impl<'ir> Evaluator<'ir> {
                 values.push(self.function_body(body, &context, is_built)?);
             }
             let function = sorted_function(keys, values, Class::Lambda)?;
+            self.note_kept_lazy(&function, is_built);
             // Applied while TLC keeps it lazy, the function asks its bound's set for the
             // argument, which TLC has sorted where a definition that reads no state names it.
             if let Value::Function(inner) = &function
@@ -3424,12 +3436,23 @@ impl<'ir> Evaluator<'ir> {
             },
         )?;
         let function = sorted_function(keys, values, Class::Lambda)?;
+        self.note_kept_lazy(&function, is_built);
         if let ([bound], Value::Function(inner)) = (bounds, &function)
             && self.is_sorted_constant(bound.set)
         {
             inner.search.set(Search::SortedDomain);
         }
         Ok(function)
+    }
+
+    // Records, as a failure is evaluated, a function the evaluator built that TLC keeps lazy.
+    fn note_kept_lazy(&mut self, function: &Value, is_built: bool) {
+        if !is_built
+            && self.call_stack.is_some()
+            && let Value::Function(inner) = function
+        {
+            self.kept_lazy.insert(Rc::as_ptr(inner) as usize);
+        }
     }
 
     // Whether an expression names a definition whose value TLC computed and sorted as it
@@ -4226,6 +4249,15 @@ impl<'ir> Evaluator<'ir> {
     // difference with a set enumeration or an interval at once too, testing each of its elements
     // in the other operand, which may fail on one the membership doesn't test, so the replay
     // builds those as TLC does.
+    // Whether an operand is an application of the builtin of this name.
+    fn is_builtin(&self, operand: &Operand, builtin: &str) -> bool {
+        matches!(operand, Operand::Node(node, _)
+            if matches!(self.kind(*node), NodeKind::Apply { name, .. }
+                if !name.is_local
+                    && matches!(name.resolution, Resolution::Builtin(index)
+                        if self.name(self.ir.builtins[index as usize].name) == builtin)))
+    }
+
     fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
         if let Operand::Node(node, context) = set
             && let NodeKind::Apply { name, args } = self.kind(*node)
@@ -4687,7 +4719,13 @@ impl<'ir> Evaluator<'ir> {
             }
             "DOMAIN" => {
                 arity(1)?;
-                match self.operand(&operands[0])? {
+                let function = self.operand(&operands[0])?;
+                if let Value::Function(inner) = &function
+                    && self.kept_lazy.contains(&(Rc::as_ptr(inner) as usize))
+                {
+                    self.lazy_domains += 1;
+                }
+                match function {
                     // `FcnLambdaValue.getDomain`: its domain, whatever the EXCEPTs.
                     Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
@@ -4897,7 +4935,13 @@ impl<'ir> Evaluator<'ir> {
             // method `FiniteSets.Cardinality` (`MethodValue.eval`).
             "Cardinality" => {
                 arity(1)?;
+                let lazy_domains = self.lazy_domains;
                 let set = self.operand(&operands[0])?;
+                // TLC counts the domain it holds lazy by its size, which is the evaluator's.
+                if self.is_builtin(&operands[0], "DOMAIN") {
+                    self.lazy_domains = lazy_domains;
+                }
+                // `SetPredValue.size` enumerates a filter TLC keeps lazy.
                 // `SetPredValue.size` enumerates a filter TLC keeps lazy.
                 let set = self.settle(&set)?;
                 // `FiniteSets.Cardinality` counts an `Enumerable` value.

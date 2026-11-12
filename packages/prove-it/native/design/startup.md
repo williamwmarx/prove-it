@@ -176,6 +176,11 @@ At a use, the trace evaluator holds the definition to failing again as TLC does
 - an evaluation that built a set TLC can't normalize, or evaluated a UNION, whose membership TLC
   tests set by set;
 - a failure in a function constructor, which TLC keeps lazy;
+- an evaluation that read DOMAIN of a function TLC keeps lazy (its domain isn't a set enumeration
+  or an interval) and that the evaluator built, but as the argument of Cardinality: TLC's DOMAIN
+  gives the set it holds as the domain, as `SUBSET S` a `SubsetValue`, where TLC may fail
+  elsewhere (`{DOMAIN [b \in SUBSET {1} |-> 1] \ (3 .. 3), CHOOSE y \in {} : TRUE}` fails at the
+  CHOOSE in TLC, in the difference in the evaluator);
 - a tuple pattern that doesn't match, or a function over a set TLC doesn't enumerate, which the
   evaluator words otherwise;
 - a sequence operator's failure on a value TLC may keep lazy, which TLC converts first;
