@@ -16,7 +16,9 @@
 //!   parses a module from, for the origins `file`, `root file` and `standard`, which the CLI's
 //!   TypeScript check answers through `resolveFiles` (`sanyText`);
 //! - `decide:<key>`, a backend's answer to a decision `prove` asks for, with its text, by the key it
-//!   gives it (`prove`).
+//!   gives it (`prove`);
+//! - `path:<name>#<n>`, the file the module `prove` reads as `module:<name>#<n>` came from, which
+//!   errors name (`obligations` and `fingerprint`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 

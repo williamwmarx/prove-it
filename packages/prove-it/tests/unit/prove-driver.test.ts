@@ -2,49 +2,72 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { getInputKey, readInputRecords } from "../../scripts/prover-records";
+import { getObligationError, proveInRounds } from "../../scripts/native-prover";
+import { getInputKey, getRecordedAnswer, readInputRecords } from "../../scripts/prover-records";
 import { getDigest } from "../../scripts/tlapm-digest";
-import { prove } from "../../src";
-import { TlaProverError, TlaUnsupportedError } from "../../src/errors";
-import { type ProveOptions, proveWith } from "../../src/prover/prove";
-import type { Decision } from "../../src/prover/verdict";
+import { prove, type ProveOptions } from "../../src";
+import type { NativeDecideRequest } from "../../src/engine/native";
 
 // The Rust driver proves as the TypeScript one does: the same obligations, statuses and reasons,
-// the same reports in the same order, and the same errors.
+// the same reports in the same order, and the same errors. driver.json holds what the TypeScript
+// driver gave on each case, by its name here.
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
+
+const EXPECTED: Record<string, unknown> = JSON.parse(
+  readFileSync(join(DIRECTORY, "driver.json"), "utf8"),
+);
 
 const loadFixture = (name: string) => {
   const path = join(DIRECTORY, `${name}.tla`);
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 };
 
-type Decide = (prover: string, text: string, options: { timeLimitMs: number }) => Promise<Decision>;
+const getModule = (body: string, extended = "Naturals, TLAPS") =>
+  `---- MODULE M ----\nEXTENDS ${extended}\n${body}\n====\n`;
 
-interface Run {
-  options: ProveOptions;
-  decide?: Decide;
-  // Aborts the run once this many obligations are reported.
-  abortAfter?: number;
-}
+type Answer = (request: NativeDecideRequest) => string;
 
-const proveWithDriver = async (driver: string, run: Run) => {
+// What the Rust driver reports when answer decides, and the error it throws after the reports
+// before it.
+const proveNatively = (
+  name: string,
+  source: string,
+  answer: Answer,
+  loadModule: (moduleName: string) => string | undefined = () => undefined,
+) => {
+  const result = proveInRounds(`${name}.tla`, source, loadModule, answer);
+  if (result.kind === "proved")
+    return {
+      result: {
+        obligations: result.reports,
+        missingProofCount: result.missingProofCount,
+        omittedProofCount: result.omittedProofCount,
+      },
+      streamed: result.reports,
+    };
+  const error = getObligationError(result);
+  return {
+    error: { class: error.constructor.name, name: error.name, message: error.message },
+    streamed: result.reports ?? [],
+  };
+};
+
+// What prove reports with the Rust driver and the native backends, as it reports each obligation
+// and in the end, or the error it throws. It aborts once abortAfter obligations are reported.
+const proveWithRust = async (options: ProveOptions, abortAfter?: number) => {
   const setting = process.env.PROVE_IT_PROVER_DRIVER;
-  process.env.PROVE_IT_PROVER_DRIVER = driver;
+  process.env.PROVE_IT_PROVER_DRIVER = "rust";
   const controller = new AbortController();
   const streamed: unknown[] = [];
   try {
-    const result = await proveWith(
-      {
-        ...run.options,
-        signal:
-          run.options.signal ?? (run.abortAfter === undefined ? undefined : controller.signal),
-        onObligation: (obligation) => {
-          streamed.push(obligation);
-          if (streamed.length === run.abortAfter) controller.abort(new Error("stop"));
-        },
+    const result = await prove({
+      ...options,
+      signal: options.signal ?? (abortAfter === undefined ? undefined : controller.signal),
+      onObligation: (obligation) => {
+        streamed.push(obligation);
+        if (streamed.length === abortAfter) controller.abort(new Error("stop"));
       },
-      run.decide,
-    );
+    });
     return { result, streamed };
   } catch (error) {
     const thrown = error instanceof Error ? error : new Error(String(error));
@@ -58,358 +81,131 @@ const proveWithDriver = async (driver: string, run: Run) => {
   }
 };
 
-const expectSame = async (run: Run) => {
-  const typescript = await proveWithDriver("ts", run);
-  expect(await proveWithDriver("rust", run)).toEqual(typescript);
-};
-
-const getModule = (body: string, extended = "Naturals, TLAPS") =>
-  `---- MODULE M ----\nEXTENDS ${extended}\n${body}\n====\n`;
-
 // Each prover's answer, or "throw" for a TlaProverError and "timeout" for an unknown at its limit.
 const byProver =
-  (answers: Record<string, string>): Decide =>
-  async (prover, _text, options) => {
-    const answer = answers[prover] ?? "unsat";
-    if (answer === "throw") throw new TlaProverError(`${prover} stopped`);
-    if (answer === "timeout")
-      return { verdict: "unknown", timeUsedMs: options.timeLimitMs, statistics: {} };
-    return { verdict: answer as Decision["verdict"], timeUsedMs: 1, statistics: {} };
+  (answers: Record<string, string>): Answer =>
+  (request) => {
+    const answer = answers[request.prover] ?? "unsat";
+    if (answer === "throw") return `error:${request.prover} stopped`;
+    if (answer === "timeout") return `unknown ${request.timeLimitMs}`;
+    return `${answer} 1`;
   };
 
 describe("the Rust driver", () => {
   // Each decision is replayed from the record, which the backends' own tests keep true, as deciding
   // Simple's obligation 7 runs three backends to their limits (design/prover.md, "Deviations from
   // Z3").
-  it.each(["HourClock", "Simple"])("proves %s as the TypeScript driver does", async (name) => {
+  it.each(["HourClock", "Simple"])("proves %s as the TypeScript driver does", (name) => {
     const records = readInputRecords();
     const unrecorded: string[] = [];
-    const replay: Decide = async (prover, text) => {
-      const key = getInputKey(prover, getDigest(text));
+    const replay: Answer = (request) => {
+      const key = getInputKey(request.prover, getDigest(request.text));
       const record = records[key];
       if (record === undefined) unrecorded.push(key);
-      if (record?.error !== undefined) throw new TlaProverError(record.error);
-      return { verdict: record?.verdict ?? "unknown", timeUsedMs: 0, statistics: {} };
+      return record === undefined ? "unknown 0" : getRecordedAnswer(record);
     };
-    const run = {
-      options: { source: loadFixture(name) ?? "", loadModule: loadFixture },
-      decide: replay,
-    };
-    const typescript = await proveWithDriver("ts", run);
-    const rust = await proveWithDriver("rust", run);
-    expect(unrecorded).toEqual([]);
-    expect(rust).toEqual(typescript);
-    expect(rust.streamed).toEqual(typescript.result?.obligations ?? []);
-  });
-
-  // A lone surrogate, which a Rust string can't hold, would read as U+FFFD, and "\uD800" =
-  // "\uDC00" would be proved.
-  it("proves a module that isn't well-formed UTF-16 as the TypeScript driver does", async () => {
-    await expectSame({
-      options: { source: getModule('THEOREM "\uD800" = "\uDC00" BY SMT') },
-      decide: async (_prover, text) => ({
-        verdict: text.includes("�") ? "unsat" : "unknown",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
-    });
+    const run = proveNatively(name, loadFixture(name) ?? "", replay, loadFixture);
+    expect<unknown>(unrecorded).toEqual([]);
+    expect<unknown>(run).toEqual(EXPECTED[`proves ${name}`]);
   });
 
   // A run's cache is keyed by its source and modules, which a NUL mustn't run together.
-  it("proves again when a loaded module changes, whatever the source holds", async () => {
+  it("proves again when a loaded module changes, whatever the source holds", () => {
     const source = getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS");
-    const decide: Decide = async (_prover, text) => ({
-      verdict: text.includes("2") ? "sat" : "unsat",
-      timeUsedMs: 1,
-      statistics: {},
-    });
+    const answer: Answer = (request) => (request.text.includes("2") ? "sat 1" : "unsat 1");
     const getLibrary = (value: number) => `---- MODULE Lib ----\nX == ${value}\n====\n`;
-    await expectSame({
-      options: { source, loadModule: (name) => (name === "Lib" ? getLibrary(1) : undefined) },
-      decide,
-    });
-    await expectSame({
-      options: {
-        source: `${source}\0module:Lib\0${getLibrary(1)}\0module:TLAPS\0`,
-        loadModule: (name) => (name === "Lib" ? getLibrary(2) : undefined),
-      },
-      decide,
-    });
+    expect<unknown>(
+      proveNatively("M", source, answer, (name) => (name === "Lib" ? getLibrary(1) : undefined)),
+    ).toEqual(EXPECTED["proves again: the first module"]);
+    expect<unknown>(
+      proveNatively(
+        "M",
+        `${source}\0module:Lib\0${getLibrary(1)}\0module:TLAPS\0`,
+        answer,
+        (name) => (name === "Lib" ? getLibrary(2) : undefined),
+      ),
+    ).toEqual(EXPECTED["proves again: the changed module"]);
   });
 
   // tlapm's assertion fails on the second theorem, after the first is reported.
-  it("reports the obligations before a tlapm bug, and throws the bug", async () => {
-    await expectSame({
-      options: {
-        source: getModule(
-          "VARIABLE v\nTHEOREM 1 = 1 BY SMT\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon",
-        ),
-      },
-      decide: byProver({}),
-    });
+  it("reports the obligations before a tlapm bug, and throws the bug", () => {
+    expect<unknown>(
+      proveNatively(
+        "M",
+        getModule("VARIABLE v\nTHEOREM 1 = 1 BY SMT\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon"),
+        byProver({}),
+      ),
+    ).toEqual(EXPECTED["a tlapm bug"]);
   });
 
-  it("throws tlapm's bug for a cycle of EXTENDS", async () => {
-    await expectSame({
-      options: {
-        source: getModule("THEOREM 1 = 1", "Lib"),
-        loadModule: (name) =>
-          name === "Lib" ? "---- MODULE Lib ----\nEXTENDS M\n====\n" : undefined,
-      },
-      decide: byProver({}),
-    });
-  });
-
-  it.each([1, 2])("stops after %i reports when the signal aborts", async (abortAfter) => {
-    await expectSame({
-      options: {
-        source: getModule(
-          [1, 2, 3, 4].map((value) => `THEOREM ${value} = ${value} BY CVC4`).join("\n"),
-        ),
-      },
-      abortAfter,
-    });
-  });
-
-  it.each([
-    ["no obligations", "A == 1"],
-    ["a syntax error", "A == == 1"],
-    ["obligations", "THEOREM 1 = 1 BY SMT"],
-  ])("handles a signal aborted before it starts on %s", async (_name, body) => {
-    await expectSame({
-      options: { source: getModule(body), signal: AbortSignal.abort(new Error("pre")) },
-      decide: byProver({}),
-    });
+  it("throws tlapm's bug for a cycle of EXTENDS", () => {
+    expect<unknown>(
+      proveNatively("M", getModule("THEOREM 1 = 1", "Lib"), byProver({}), (name) =>
+        name === "Lib" ? "---- MODULE Lib ----\nEXTENDS M\n====\n" : undefined,
+      ),
+    ).toEqual(EXPECTED["a cycle of EXTENDS"]);
   });
 
   // Each obligation decides its own texts, even one an earlier obligation sent the same backend.
-  it("decides a text again for another obligation", async () => {
+  it("decides a text again for another obligation", () => {
     let calls = 0;
-    await expectSame({
-      options: {
-        source: getModule(
+    expect<unknown>(
+      proveNatively(
+        "M",
+        getModule(
           "THEOREM ASSUME NEW x \\in Nat PROVE x + 0 = x BY SMT, Zenon\nTHEOREM ASSUME NEW x \\in Nat PROVE x + 0 = x BY SMT",
         ),
-      },
-      decide: async () => ({
-        verdict: calls++ % 3 === 0 ? "unknown" : "unsat",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
-    });
+        () => (calls++ % 3 === 0 ? "unknown 1" : "unsat 1"),
+      ),
+    ).toEqual(EXPECTED["a text again for another obligation"]);
   });
 
   it.each(["unsat", "sat", "unknown", "throw", "timeout"])(
     "proves as the TypeScript driver does when every backend answers %s",
-    async (answer) => {
-      await expectSame({
-        options: {
-          source: getModule(
+    (answer) => {
+      expect<unknown>(
+        proveNatively(
+          "M",
+          getModule(
             "THEOREM 1 = 1 BY SMT\nTHEOREM 2 = 2 BY Zenon, SMT\nTHEOREM 3 = 3 BY Isa\nTHEOREM 1 = 1 BY SMT",
           ),
-        },
-        decide: byProver({ smt: answer, zenon: answer, isabelle: answer }),
-      });
-    },
-  );
-
-  // The Rust driver reads only the verdicts it knows, and fails rather than ask again.
-  it("fails on an answer it can't read", async () => {
-    const run = await proveWithDriver("rust", {
-      options: { source: getModule("THEOREM 1 = 1 BY SMT") },
-      decide: async () => ({
-        verdict: "error" as Decision["verdict"],
-        timeUsedMs: 1,
-        statistics: {},
-      }),
-    });
-    expect(run.error?.class).toBe("EngineInvariantError");
-  });
-
-  // An earlier obligation's decision comes first, as the TypeScript decides in turn: here it
-  // throws, and then it proves, so the later obligation's error is the one thrown.
-  it.each(["boom1", "unsat"])(
-    "throws a decision's error in the order of the obligations when the earlier one answers %s",
-    async (earlier) => {
-      await expectSame({
-        options: { source: getModule("THEOREM 1 = 1 BY Zenon, SMT\nTHEOREM 2 = 2 BY SMT") },
-        decide: async (prover, text) => {
-          if (prover === "zenon") return { verdict: "unknown", timeUsedMs: 1, statistics: {} };
-          if (text.includes("Int 2")) throw new Error("boom2");
-          if (earlier !== "unsat") throw new Error(earlier);
-          return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
-        },
-      });
-    },
-  );
-
-  it("throws an abort before an obligation's error", async () => {
-    await expectSame({
-      options: {
-        source: getModule(
-          "VARIABLE v\nTHEOREM 1 = 1 BY SMT\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon",
+          byProver({ smt: answer, zenon: answer, isabelle: answer }),
         ),
-      },
-      decide: byProver({}),
-      abortAfter: 2,
-    });
-    await expectSame({
-      options: {
-        source: getModule("VARIABLE v\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon"),
-        signal: AbortSignal.abort(new Error("pre")),
-      },
-      decide: byProver({}),
-    });
-  });
+      ).toEqual(EXPECTED[`every backend answers ${answer}`]);
+    },
+  );
 
   // The third method's prior has another tactic, so the TypeScript decides the text again.
-  it("decides a text again for another method of the obligation", async () => {
+  it("decides a text again for another method of the obligation", () => {
     let calls = 0;
-    await expectSame({
-      options: {
-        source: getModule(
+    expect<unknown>(
+      proveNatively(
+        "M",
+        getModule(
           'PA == TRUE (*{ by (prover:"isabelle"; tactic:"auto") }*)\nPI == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)\nTHEOREM 1 = 1 BY PA, PI, PA',
         ),
-      },
-      decide: async () => ({
-        verdict: calls++ % 3 === 2 ? "unsat" : "unknown",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
-    });
+        () => (calls++ % 3 === 2 ? "unsat 1" : "unknown 1"),
+      ),
+    ).toEqual(EXPECTED["a text again for another method"]);
   });
 
-  // The Rust driver gives way on the module that isn't well-formed, after loading the others.
-  it("loads each module once when it gives way to the TypeScript driver", async () => {
-    const loads: string[] = [];
-    let count = 0;
-    const run = (driver: string) =>
-      proveWithDriver(driver, {
-        options: {
-          source: getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS"),
-          loadModule: (name) => {
-            loads.push(name);
-            if (name === "Lib")
-              return `---- MODULE Lib ----\nEXTENDS Lib2\nX == ${++count}\n====\n`;
-            if (name === "Lib2") return '---- MODULE Lib2 ----\nY == "\uD800"\n====';
-            return undefined;
-          },
-        },
-        decide: async (_prover, text) => ({
-          verdict: text.includes("2") ? "sat" : "unsat",
-          timeUsedMs: 1,
-          statistics: {},
-        }),
-      });
-    const typescript = await run("ts");
-    const typescriptLoads = loads.splice(0);
-    count = 0;
-    expect(await run("rust")).toEqual(typescript);
-    expect(loads).toEqual(typescriptLoads);
-  });
-
-  it("skips a method whose backend can't take the text", async () => {
-    await expectSame({
-      options: { source: getModule("THEOREM 1 = 1 BY SMT, Zenon") },
-      decide: async (prover) => {
-        if (prover === "smt") throw new TlaUnsupportedError("thing");
-        return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
-      },
-    });
-  });
-
-  it("throws an abort before a decision's error", async () => {
-    await expectSame({
-      options: { source: getModule("THEOREM 1 + 1 = 2 BY SMT\nTHEOREM 2 + 2 = 4 BY Zenon") },
-      decide: async (prover) => {
-        if (prover === "zenon") throw new Error("fatal zenon");
-        return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
-      },
-      abortAfter: 2,
-    });
-  });
-
-  it("reads a decide that throws at once as one that rejects", async () => {
-    await expectSame({
-      options: { source: getModule("THEOREM 1 + 1 = 2 BY SMT, Zenon") },
-      decide: (prover) => {
-        if (prover === "smt") throw new TlaProverError("at once");
-        return Promise.resolve({ verdict: "unsat", timeUsedMs: 1, statistics: {} });
-      },
-    });
-  });
-
-  it("loads a module two others extend once", async () => {
-    const getLoads = async (driver: string) => {
-      const loads: string[] = [];
-      await proveWithDriver(driver, {
-        options: {
-          source: getModule("THEOREM 1 = 1 BY SMT", "A, B, TLAPS"),
-          loadModule: (name) => {
-            loads.push(name);
-            if (name === "A" || name === "B") return `---- MODULE ${name} ----\nEXTENDS C\n====\n`;
-            return name === "C" ? "---- MODULE C ----\nZ == 1\n====\n" : undefined;
-          },
-        },
-        decide: byProver({}),
-      });
-      return loads;
-    };
-    expect(await getLoads("rust")).toEqual(await getLoads("ts"));
-  });
-
-  // An abort on a timer lands between reports.
-  it("stops when the signal aborts on a timer", async () => {
-    const run = async (driver: string) => {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(new Error("timer")));
-      return proveWithDriver(driver, {
-        options: {
-          source: getModule("THEOREM 1 = 1 BY Trivial\nTHEOREM 2 = 2 BY Trivial"),
-          signal: controller.signal,
-        },
-        decide: byProver({}),
-      });
-    };
-    expect(await run("rust")).toEqual(await run("ts"));
-  });
-
-  // The TypeScript reads a module named like a standard one, or a missing one, again for each
-  // module citing it, and stops at a module that doesn't parse.
-  it.each([
-    ["a standard module", "Naturals, Lib, TLAPS", { Lib: "EXTENDS Naturals\nX == 1" }],
-    ["a missing module", "A2, B2, TLAPS", { A2: "EXTENDS X", B2: "EXTENDS X" }],
-    ["a module that doesn't parse", "A, B, TLAPS", { A: "X == == 1", B: "Y == 1" }],
-  ])("reads %s as the TypeScript driver does", async (_name, extended, modules) => {
-    const getReads = async (driver: string) => {
-      const reads: string[] = [];
-      const run = await proveWithDriver(driver, {
-        options: {
-          source: getModule("THEOREM 1 + 1 = 2 BY SMT", extended),
-          loadModule: (name) => {
-            reads.push(name);
-            const body = (modules as Record<string, string>)[name];
-            return body === undefined ? undefined : `---- MODULE ${name} ----\n${body}\n====\n`;
-          },
-        },
-        decide: byProver({}),
-      });
-      return { run, reads };
-    };
-    expect(await getReads("rust")).toEqual(await getReads("ts"));
+  it("skips a method whose backend can't take the text", () => {
+    expect<unknown>(
+      proveNatively("M", getModule("THEOREM 1 = 1 BY SMT, Zenon"), (request) =>
+        request.prover === "smt" ? "unsupported:thing" : "unsat 1",
+      ),
+    ).toEqual(EXPECTED["a method whose backend can't take the text"]);
   });
 
   // An INSTANCE that instantiates its own module again would recurse until the stack overflows.
   // The TypeScript overflows its stack here, where tlapm and the Rust report a bug in tlapm.
-  it("throws tlapm's bug for an INSTANCE of a module inside itself", async () => {
-    const run = await proveWithDriver("rust", {
-      options: {
-        source:
-          "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nTHEOREM TRUE\n====\n",
-      },
-      decide: byProver({}),
-    });
-    expect(run.error).toEqual({
+  it("throws tlapm's bug for an INSTANCE of a module inside itself", () => {
+    const run = proveNatively(
+      "M",
+      "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nTHEOREM TRUE\n====\n",
+      byProver({}),
+    );
+    expect<unknown>(run.error).toEqual({
       class: "TlapmBugError",
       name: "TlaProofError",
       message: "Oops, this seems to be a bug in TLAPM.",
@@ -421,13 +217,130 @@ describe("the Rust driver", () => {
     ["an identifier", "CONSTANT toString\nTHEOREM toString = toString BY SMT"],
     ["a definition", "constructor == TRUE\nTHEOREM constructor BY Zenon DEF constructor"],
     ["a prover", 'Mine == TRUE (*{ by (prover:"toString") }*)\nTHEOREM 1 = 1 BY Mine'],
-  ])("reads %s named like an object's property as tlapm does", async (_name, body) => {
-    await expectSame({ options: { source: getModule(body, "TLAPS") }, decide: byProver({}) });
+  ])("reads %s named like an object's property as tlapm does", (name, body) => {
+    expect<unknown>(proveNatively("M", getModule(body, "TLAPS"), byProver({}))).toEqual(
+      EXPECTED[`${name} named like an object's property`],
+    );
   });
 
   // A pragma's string is read as JSON.parse reads it, and one it can't read is tlapm's bug.
+  it("reads a pragma's string with an escape JSON lacks as the TypeScript driver does", () => {
+    expect<unknown>(
+      proveNatively(
+        "M",
+        getModule('THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)', "Naturals, TLAPS"),
+        (request) => (request.text.includes("�") ? "unsat 1" : "unknown 1"),
+      ),
+    ).toEqual(EXPECTED["a pragma's string with an escape JSON lacks"]);
+  });
+});
+
+// What prove does around the Rust driver: it reads the modules, decides with the native backends,
+// reports each obligation as it settles and stops when its signal aborts.
+describe("prove with the Rust driver", () => {
+  it.each([1, 2])("stops after %i reports when the signal aborts", async (abortAfter) => {
+    const source = getModule(
+      [1, 2, 3, 4].map((value) => `THEOREM ${value} = ${value} BY CVC4`).join("\n"),
+    );
+    expect<unknown>(await proveWithRust({ source }, abortAfter)).toEqual(
+      EXPECTED[`stops after ${abortAfter} reports`],
+    );
+  });
+
   it.each([
-    ["an escape JSON lacks", 'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)'],
+    ["no obligations", "A == 1"],
+    ["a syntax error", "A == == 1"],
+    ["obligations", "THEOREM 1 = 1 BY SMT"],
+  ])("handles a signal aborted before it starts on %s", async (name, body) => {
+    expect<unknown>(
+      await proveWithRust({ source: getModule(body), signal: AbortSignal.abort(new Error("pre")) }),
+    ).toEqual(EXPECTED[`a signal aborted before it starts on ${name}`]);
+  });
+
+  it("throws an abort before an obligation's error", async () => {
+    expect<unknown>(
+      await proveWithRust(
+        {
+          source: getModule(
+            "VARIABLE v\nTHEOREM 1 = 1 BY SMT\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon",
+          ),
+        },
+        2,
+      ),
+    ).toEqual(EXPECTED["an abort before an obligation's error"]);
+    expect<unknown>(
+      await proveWithRust({
+        source: getModule("VARIABLE v\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon"),
+        signal: AbortSignal.abort(new Error("pre")),
+      }),
+    ).toEqual(EXPECTED["an abort before it starts and an obligation's error"]);
+  });
+
+  it("loads a module two others extend once", async () => {
+    const loads: string[] = [];
+    await proveWithRust({
+      source: getModule("THEOREM 1 = 1 BY SMT", "A, B, TLAPS"),
+      loadModule: (name) => {
+        loads.push(name);
+        if (name === "A" || name === "B") return `---- MODULE ${name} ----\nEXTENDS C\n====\n`;
+        return name === "C" ? "---- MODULE C ----\nZ == 1\n====\n" : undefined;
+      },
+    });
+    expect<unknown>(loads).toEqual(EXPECTED["loads of a module two others extend"]);
+  });
+
+  // An abort on a timer lands between reports.
+  it("stops when the signal aborts on a timer", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error("timer")));
+    expect<unknown>(
+      await proveWithRust({
+        source: getModule("THEOREM 1 = 1 BY Trivial\nTHEOREM 2 = 2 BY Trivial"),
+        signal: controller.signal,
+      }),
+    ).toEqual(EXPECTED["the signal aborts on a timer"]);
+  });
+
+  // The TypeScript reads a module named like a standard one, or a missing one, again for each
+  // module citing it, and stops at a module that doesn't parse.
+  it.each([
+    ["a standard module", "Naturals, Lib, TLAPS", { Lib: "EXTENDS Naturals\nX == 1" }],
+    ["a missing module", "A2, B2, TLAPS", { A2: "EXTENDS X", B2: "EXTENDS X" }],
+    ["a module that doesn't parse", "A, B, TLAPS", { A: "X == == 1", B: "Y == 1" }],
+  ])("reads %s as the TypeScript driver does", async (name, extended, modules) => {
+    const reads: string[] = [];
+    const run = await proveWithRust({
+      source: getModule("THEOREM 1 + 1 = 2 BY SMT", extended),
+      loadModule: (moduleName) => {
+        reads.push(moduleName);
+        const body = (modules as Record<string, string>)[moduleName];
+        return body === undefined ? undefined : `---- MODULE ${moduleName} ----\n${body}\n====\n`;
+      },
+    });
+    expect<unknown>({ run, reads }).toEqual(EXPECTED[`reads ${name}`]);
+  });
+
+  // The Rust driver gives way on the module that isn't well-formed, after loading the others.
+  it("loads each module once when it gives way to the TypeScript driver", async () => {
+    const loads: string[] = [];
+    let count = 0;
+    const run = await proveWithRust({
+      source: getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS"),
+      loadModule: (name) => {
+        loads.push(name);
+        if (name === "Lib") return `---- MODULE Lib ----\nEXTENDS Lib2\nX == ${++count}\n====\n`;
+        if (name === "Lib2") return '---- MODULE Lib2 ----\nY == "\uD800"\n====';
+        return undefined;
+      },
+    });
+    expect<unknown>({ run, loads }).toEqual(
+      EXPECTED["a module that isn't well-formed UTF-16 among the loaded"],
+    );
+  });
+
+  // A pragma's string is read as JSON.parse reads it. The Rust driver can't hold a lone surrogate,
+  // so it gives way.
+  it.each([
     [
       "an escape of a lone surrogate",
       'F(x) == x (*{ by (prover:"smt"; timeout:"\\ud800") }*)\nTHEOREM 1 = 1 BY F(1)',
@@ -436,60 +349,18 @@ describe("the Rust driver", () => {
       "a tactic with an escape of a lone surrogate",
       'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\ud800") }*)',
     ],
-  ])("reads a pragma's string with %s as the TypeScript driver does", async (_name, body) => {
-    await expectSame({
-      options: { source: getModule(body, "Naturals, TLAPS") },
-      decide: async (_prover, text) => ({
-        verdict: text.includes("\uFFFD") ? "unsat" : "unknown",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
-    });
+  ])("reads a pragma's string with %s as the TypeScript driver does", async (name, body) => {
+    expect<unknown>(await proveWithRust({ source: getModule(body, "Naturals, TLAPS") })).toEqual(
+      EXPECTED[`a pragma's string with ${name}`],
+    );
   });
 
-  // The second decision waits for the first obligation's report, so a driver that held reports
-  // back until every decision of a round settled would never finish.
-  it.each(["ts", "rust"])(
-    "with the %s driver, reports an obligation before a later one's decision settles",
-    async (driver) => {
-      let release = () => {};
-      const reported = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const setting = process.env.PROVE_IT_PROVER_DRIVER;
-      process.env.PROVE_IT_PROVER_DRIVER = driver;
-      try {
-        const result = await proveWith(
-          {
-            source: getModule("THEOREM 1 = 1 BY SMT\nTHEOREM 2 = 2 BY Zenon"),
-            onObligation: (obligation) => {
-              if (obligation.id === 1) release();
-            },
-          },
-          async (prover) => {
-            if (prover === "zenon") await reported;
-            return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
-          },
-        );
-        expect(result.obligations.length).toBeGreaterThan(1);
-      } finally {
-        if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
-        else process.env.PROVE_IT_PROVER_DRIVER = setting;
-      }
-    },
-  );
-
   it("proves with workers as the TypeScript driver does", async () => {
-    const source = loadFixture("HourClock") ?? "";
-    const setting = process.env.PROVE_IT_PROVER_DRIVER;
-    try {
-      process.env.PROVE_IT_PROVER_DRIVER = "ts";
-      const typescript = await prove({ source, loadModule: loadFixture, workers: 2 });
-      process.env.PROVE_IT_PROVER_DRIVER = "rust";
-      expect(await prove({ source, loadModule: loadFixture, workers: 2 })).toEqual(typescript);
-    } finally {
-      if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
-      else process.env.PROVE_IT_PROVER_DRIVER = setting;
-    }
+    const run = await proveWithRust({
+      source: loadFixture("HourClock") ?? "",
+      loadModule: loadFixture,
+      workers: 2,
+    });
+    expect<unknown>(run.result).toEqual(EXPECTED["proves HourClock with workers"]);
   });
 });

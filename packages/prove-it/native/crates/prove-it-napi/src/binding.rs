@@ -329,6 +329,34 @@ unsafe extern "C" fn prove(env: napi_env, info: napi_callback_info) -> napi_valu
     }
 }
 
+// obligations(file: string, source: string, known: [key, value][], encode: [id, prover][]), as
+// prove-it-host's `obligations` describes it.
+unsafe extern "C" fn obligations(env: napi_env, info: napi_callback_info) -> napi_value {
+    unsafe {
+        guard(env, || {
+            let arguments = store::get_arguments::<4>(env, info)?
+                .into_iter()
+                .map(|argument| store::get_host(env, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            store::create_result(env, prove_it_host::obligations::obligations(&arguments))
+        })
+    }
+}
+
+// fingerprint(file: string, source: string, known: [key, value][]), as prove-it-host's
+// `obligations` describes it.
+unsafe extern "C" fn fingerprint(env: napi_env, info: napi_callback_info) -> napi_value {
+    unsafe {
+        guard(env, || {
+            let arguments = store::get_arguments::<3>(env, info)?
+                .into_iter()
+                .map(|argument| store::get_host(env, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            store::create_result(env, prove_it_host::obligations::fingerprint(&arguments))
+        })
+    }
+}
+
 /// Node and Bun call this when they load the addon.
 ///
 /// # Safety
@@ -353,6 +381,8 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
             export(env, exports, c"resolveFiles", resolve_files)?;
             export(env, exports, c"decide", decide)?;
             export(env, exports, c"prove", prove)?;
+            export(env, exports, c"obligations", obligations)?;
+            export(env, exports, c"fingerprint", fingerprint)?;
             export(env, exports, c"checkSources", check_sources)?;
             store::export_hooks(env, exports)?;
             Ok(exports)

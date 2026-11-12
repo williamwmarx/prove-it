@@ -229,6 +229,9 @@ pub struct Expansion<'a> {
     pub is_specification: bool,
     /// What computes the sets a property's \A ranges over, without which it is `NotYet`.
     pub evaluator: Option<&'a Evaluator<'a>>,
+    /// Whether it unrolled a property's \A, which it does with the substitutions of the INSTANCEs
+    /// it went through bound, where TLC leaves them unbound and may take the \A whole.
+    pub is_unrolled: std::cell::Cell<bool>,
 }
 
 impl Expansion<'_> {
@@ -393,6 +396,7 @@ impl Expansion<'_> {
                                 Some(Rc::from(describe_range(body))),
                             )?);
                         }
+                        self.is_unrolled.set(true);
                         if expanded.is_empty() {
                             return Err(not_yet("a property TLC finds a tautology"));
                         }
@@ -1091,6 +1095,7 @@ pub fn get_specification(
         is_property: false,
         is_specification: true,
         evaluator: None,
+        is_unrolled: std::cell::Cell::new(false),
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
@@ -1231,6 +1236,8 @@ pub struct Properties {
     pub invariants: Vec<Property>,
     pub action_properties: Vec<ActionProperty>,
     pub liveness: Vec<Property>,
+    /// Whether a property's \A was unrolled, as `Expansion::is_unrolled`.
+    pub is_unrolled: bool,
     /// The properties TLC warns are state formulas, which it checks only on the initial states.
     pub state_level: Vec<Name>,
 }
@@ -1303,6 +1310,7 @@ pub fn get_properties(
         is_property: version != TlcVersion::V1_7_4,
         is_specification: false,
         evaluator,
+        is_unrolled: std::cell::Cell::new(false),
     };
     for name in &config.properties {
         let Some(definition) =
@@ -1385,6 +1393,7 @@ pub fn get_properties(
             }
         }
     }
+    properties.is_unrolled = expansion.is_unrolled.get();
     Ok(properties)
 }
 

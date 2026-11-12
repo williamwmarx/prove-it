@@ -3,12 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getNativeAddon } from "../src/engine/native";
-import type { PrintedObligation } from "../src/obligations";
-import { encodeForBackend } from "../src/prover/prove";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getInputDigest,
-  getModuleObligations,
+  getModuleEncodings,
   getZenonVerdict,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
@@ -45,39 +43,36 @@ const runs = readProofRecords()
   )
   .filter((_, index) => index % shard[1] === shard[0] - 1);
 
-// The runs come module by module, so only the current module's obligations stay parsed.
-const current: { moduleId: string; obligations: Map<number, PrintedObligation> | string } = {
+// The runs come module by module, so only the current module's encodings stay kept.
+const current: { moduleId: string; encodings: Map<number, string | Error> | string } = {
   moduleId: "",
-  obligations: "",
+  encodings: "",
 };
 const getModule = (moduleId: string) => {
-  if (current.moduleId === moduleId) return current.obligations;
+  if (current.moduleId === moduleId) return current.encodings;
   current.moduleId = moduleId;
-  current.obligations = (() => {
+  current.encodings = (() => {
     try {
-      const printed = getModuleObligations(join(CORPORA_DIRECTORY, moduleId));
-      return new Map(printed.map((obligation) => [obligation.id, obligation]));
+      return getModuleEncodings(
+        join(CORPORA_DIRECTORY, moduleId),
+        runs.filter((run) => run.moduleId === moduleId).map((run) => run.id),
+        "zenon",
+      ).encodings;
     } catch (error) {
       if (error instanceof Error) return `${error.name}: ${error.message}`;
       throw error;
     }
   })();
-  return current.obligations;
+  return current.encodings;
 };
 
 const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
-  const obligations = getModule(moduleId);
-  if (typeof obligations === "string") return "module error";
-  const obligation = obligations.get(id);
-  if (obligation === undefined) return "missing";
-  try {
-    return getInputDigest(encodeForBackend(obligation, "zenon", { caseErrors: 0 })) === input
-      ? "match"
-      : "mismatch";
-  } catch (error) {
-    if (error instanceof Error) return error.name;
-    throw error;
-  }
+  const encodings = getModule(moduleId);
+  if (typeof encodings === "string") return "module error";
+  const encoding = encodings.get(id);
+  if (encoding === undefined) return "missing";
+  if (encoding instanceof Error) return encoding.name;
+  return getInputDigest(encoding) === input ? "match" : "mismatch";
 };
 
 // tlapm runs Zenon with -max-time 1d and kills it once its timeout passes.

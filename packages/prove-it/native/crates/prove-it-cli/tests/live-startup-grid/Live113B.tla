@@ -1,0 +1,7 @@
+---- MODULE Live113B ----
+EXTENDS Naturals
+CONSTANT C
+VARIABLE x
+D == {C}
+In == INSTANCE Live113C WITH K <- C
+====
