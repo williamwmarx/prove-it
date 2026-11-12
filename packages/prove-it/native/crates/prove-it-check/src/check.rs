@@ -1144,6 +1144,9 @@ fn check_spec(
         dumps.leave_out_trace_file();
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
+    if printer.host.is_plain() {
+        printer.outcome.sany_warnings = front.sany_warnings.clone();
+    }
     for message in &front.override_messages {
         print_startup_message(printer, message);
     }
@@ -1414,11 +1417,13 @@ fn check_spec(
     );
     // Under -continue TLC reports an error or a deadlock otherwise than it does without it, with
     // other traces and exit codes, which the binary doesn't follow.
+    // WebAssembly's recursion bound stops the search as it would without -continue.
     if is_continued
         && !matches!(
-            outcome,
+            &outcome,
             SearchOutcome::Complete { .. } | SearchOutcome::Declined(_)
         )
+        && !matches!(&outcome, SearchOutcome::Stopped { reason, .. } if reason == tla_engine::machine::WEBASSEMBLY_TOO_DEEP)
     {
         return report_not_native(printer, "-continue to a search that stops");
     }

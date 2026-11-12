@@ -16,6 +16,7 @@ export {
   TlaEvaluationError,
   TlaSyntaxError,
   TlaUnsupportedError,
+  WebAssemblyStackError,
 } from "./errors";
 export { check } from "./library-check";
 export type { CheckOptions } from "./library-check";

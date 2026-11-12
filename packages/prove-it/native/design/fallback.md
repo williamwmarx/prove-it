@@ -82,9 +82,9 @@ platform addon loads.
   TLC's trace from it. A run-time stop the engine doesn't model does the same.
 - **A WebAssembly trap.** The engine's frames are on the host's call stack there, which is
   shallower than the addon's search thread, so a deep recursion can trap. The loader replaces the
-  instance and returns a stop that hands nothing over, and the interpreter searches from the start
-  (src/engine/wasm.ts). This is the one fallback that is not a semantic hand-over; it stays until
-  the engine's recursion no longer runs on the host's stack.
+  instance and returns a stop that hands nothing over (src/engine/wasm.ts). The CLI's interpreter
+  then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
+  does where the engine stops at its recursion bound.
 
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
@@ -161,7 +161,8 @@ Besides the 15 declines, it does the following in the library:
 - **What `getEngineIneligibility` keeps from the engine:** `PROVE_IT_ENGINE=0`, `-dump`, `-continue`,
   a periodic config and TLC 1.7.4. The binary says `not native yet` to `-dump`, `-continue` and
   TLC 1.7.4. The engine doesn't support a periodic config either.
-- **A WebAssembly stack overflow.** The interpreter searches from the start.
+- **A WebAssembly stack overflow.** The library's check throws `WebAssemblyStackError`; the CLI's
+  interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
@@ -301,6 +302,27 @@ it from one that printed something else. Each is outside the corpus:
   them where it computes them, as it did before it checked them.
 
 #### Known wrong outputs
+
+The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
+in an order other than the one in which TLC holds the sets' elements unnormalized, so a failure
+there names other elements than TLC's, and AssertError, which compares that message, answers FALSE
+where TLC answers TRUE (found by #327's adversarial round; each wrong on main alike):
+
+| Repro | TLC | Native |
+|---|---|---|
+| `AssertError("Attempted to check equality of integer 2 with non-integer:\n\"a\"", 1 \in {2, 1} \cup {"a"})` | TRUE | FALSE (the bare membership is right) |
+| `AssertError("Attempted to check equality of record:\n[a \|-> 1]\nwith non-record\n2", mv \in {[a \|-> 1]} \cup {2})`, `CONSTANT mv = mv` | TRUE | FALSE |
+| `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
+| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
+
+The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
+
+A module instantiated by the name of a module nested in an EXTENDed module fails to parse where
+SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTENDS Holder` then
+`J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."
+(exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
+an extended module") checks it with the TypeScript check until the front end matches.
 
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
@@ -708,6 +730,11 @@ search thread doesn't.
   declines the model, so that a recursion never traps there. A trap that a deeper frame still
   causes declines too (`checkSources` in `wasm.ts`). A larger stack in a Worker, which Node alone
   offers, is optional, and an explicit stack in the evaluator isn't worth its size.
+- **The library's answer.** Where the engine as WebAssembly stops at its bound
+  (`recursion deeper than WebAssembly's stack holds`) or traps, the library's check throws
+  `WebAssemblyStackError`, which names the addon and the binary, rather than search again in the
+  interpreter. So a model that recurses between 1,000 and 20,000 calls is checked with the addon
+  and the binary and rejected as WebAssembly: `native.test.ts` pins both answers.
 
 ### The CLI flipped
 
@@ -796,7 +823,8 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
   - WebAssembly fails to compile;
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
-- A WebAssembly stack overflow becomes an error unless S2 lifts it first.
+- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check. The
+  PR that removes `PROVE_IT_ENGINE=0` drops its message's clause that names it.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
 

@@ -86,6 +86,9 @@ pub struct LoweredModel {
     /// `Initial predicate` and where an unnamed one is written. None where the front end can't
     /// tell.
     pub initial_label: Option<String>,
+    /// SANY's warnings as the library's check prints them where its caller didn't print SANY's
+    /// report (`formatSanyWarnings`), or none.
+    pub sany_warnings: Vec<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -453,6 +456,7 @@ fn lower_ranked(
         };
         Ok((
             LoweredModel {
+                sany_warnings: environment.printed.clone(),
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,

@@ -110,6 +110,8 @@ export interface NativeCheckOutcome {
   queuedStates: number;
   depth: number;
   prints: string[];
+  // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
+  sanyWarnings: string[];
   violations: {
     code: number;
     headline: string;
