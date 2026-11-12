@@ -341,6 +341,12 @@ where TLC prints a record: TLC tests each character of a key with Java's
 `[x٣ |-> 5]` in TLC and `("x٣" :> 5)` natively. `tests/unit/check.test.ts` ("prints empty intervals
 and keys that are not field names like TLC") checks it with the TypeScript check.
 
+A record TLC compares with itself prints its fields in another order: TLC's equality normalizes the
+record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[fld1 |-> 1, fld2 |->
+2]>> IN IF r = r THEN r ELSE r)` gives `"<<[fld2 |-> 2, fld1 |-> 1]>>"` in TLC and `"<<[fld1 |-> 1,
+fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
+the records inside it") checks it with the TypeScript check.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
