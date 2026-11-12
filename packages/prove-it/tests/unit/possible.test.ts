@@ -130,7 +130,10 @@ describe("_POSSIBLE matches TLC", () => {
         },
         declinedFor,
       );
-      expect([result.status, result.violations[1]?.headline]).toEqual(["error", postcondition]);
+      expect([result.status, result.violations[1]?.headline]).toEqual<(string | undefined)[]>([
+        "error",
+        postcondition,
+      ]);
     },
   );
 
