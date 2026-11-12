@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import { TlaProofError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
+import { type Token, tokenize } from "../lexer";
 import {
   formatSummary,
   getObligations,
@@ -241,95 +242,19 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
   return length;
 };
 
-const MODULE_HEADER = /----+ *MODULE/y;
-const MODULE_KEYWORD = /(?<![A-Za-z0-9_])MODULE(?![A-Za-z0-9_])/y;
-const MODULE_END = /====+/y;
-
-// Whether a byte that isn't UTF-8 is where tlapm's lexer (alexer.mll) reads it as part of a token:
-// anywhere but before the first module's header, which its modfile rule skips, inside a comment,
-// `\*` to the end of the line or a nested `(* *)`, and after the first module's `====`, past which
-// its parser asks for no token (Module.Parser.parse_). `(*{` and `}*)` delimit a pragma, whose
-// contents are tokens. Each MODULE keyword opens a module, a nested one's header or not, so that
-// the first module's end is never taken early.
-const hasIllFormedToken = (bytes: Uint8Array) => {
-  const text = new TextDecoder("latin1").decode(bytes);
-  let state: "modfile" | "token" | "line" | "string" = "modfile";
-  let depth = 0;
-  let modules = 1;
-  let index = 0;
-  const matchAt = (pattern: RegExp) => {
-    pattern.lastIndex = index;
-    return pattern.test(text) ? pattern.lastIndex : undefined;
-  };
-  while (index < bytes.length) {
-    const length = getSequenceLength(bytes, index);
-    const isComment = state === "modfile" || state === "line" || depth > 0;
-    if (length === 0 && !isComment) return true;
-    const rest = text.slice(index, index + 3);
-    if (state === "modfile") {
-      MODULE_HEADER.lastIndex = index;
-      if (MODULE_HEADER.test(text)) {
-        state = "token";
-        index = MODULE_HEADER.lastIndex;
-        continue;
-      }
-    } else if (depth > 0) {
-      if (rest.startsWith("*)")) depth--;
-      else if (rest.startsWith("(*")) depth++;
-      if (rest.startsWith("*)") || rest.startsWith("(*")) {
-        index += 2;
-        continue;
-      }
-    } else if (state === "line") {
-      if (rest[0] === "\r" || rest[0] === "\n") state = "token";
-    } else if (state === "string") {
-      if (rest[0] === '"') state = "token";
-      else if (/^\\["\\tnfr]/.test(rest)) {
-        index += 2;
-        continue;
-      } else if (rest[0] === "\r" || rest[0] === "\n") state = "token";
-    } else if (rest === "(*{" || rest === "}*)") {
-      index += 3;
-      continue;
-    } else if (rest.startsWith("\\*")) {
-      state = "line";
-      index += 2;
-      continue;
-    } else if (rest.startsWith("(*")) {
-      depth = 1;
-      index += 2;
-      continue;
-    } else if (rest[0] === '"') {
-      state = "string";
-    } else {
-      const keywordEnd = matchAt(MODULE_KEYWORD);
-      const end = keywordEnd === undefined ? matchAt(MODULE_END) : undefined;
-      if (keywordEnd !== undefined) modules++;
-      if (end !== undefined && --modules === 0) return false;
-      if (keywordEnd !== undefined || end !== undefined) {
-        index = keywordEnd ?? end ?? index;
-        continue;
-      }
-    }
-    index += Math.max(length, 1);
-  }
-  return false;
-};
-
 // tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
-// strings would be one, and a theorem that they are equal proved, so such a byte declines but
-// where tlapm skips it.
+// strings would be one, and a theorem that they are equal proved. So each such byte reads as a
+// character the file doesn't hold, and where the lexer the obligations are read with puts one in a
+// token, or a pragma holds one, it declines; elsewhere, as in a comment or past the module's end,
+// each reads as a U+FFFD of its own, so that a column counts it once, as tlapm's, which count bytes,
+// do.
 class NotUtf8Error extends Error {
   constructor(readonly path: string) {
     super(`a byte that isn't UTF-8 outside a comment in ${path}`);
   }
 }
 
-// Each byte that isn't UTF-8 reads as a U+FFFD of its own, so that a column counts it once, as
-// tlapm's, which count bytes, do.
-const readModule = (path: string) => {
-  const bytes = readFileSync(path);
-  if (hasIllFormedToken(bytes)) throw new NotUtf8Error(path);
+const decodeEach = (bytes: Uint8Array, replacement: string) => {
   const parts: string[] = [];
   let start = 0;
   for (let index = 0; index < bytes.length;) {
@@ -338,11 +263,54 @@ const readModule = (path: string) => {
       index += length;
       continue;
     }
-    parts.push(bytes.toString("utf8", start, index), "\uFFFD");
+    parts.push(Buffer.from(bytes.subarray(start, index)).toString("utf8"), replacement);
     start = ++index;
   }
-  parts.push(bytes.toString("utf8", start));
+  parts.push(Buffer.from(bytes.subarray(start)).toString("utf8"));
   return parts.join("");
+};
+
+const isInPragma = (text: string, sentinel: string, end: number) => {
+  for (
+    let open = text.indexOf("(*{");
+    open !== -1 && open < end;
+    open = text.indexOf("(*{", open + 3)
+  ) {
+    const close = text.indexOf("}*)", open + 3);
+    if (text.slice(open, close === -1 ? end : close).includes(sentinel)) return true;
+  }
+  return false;
+};
+
+const readModule = (path: string) => {
+  const bytes = readFileSync(path);
+  const text = decodeEach(bytes, "\uFFFD");
+  if (!text.includes("\uFFFD")) return text;
+  let code = 0xe000;
+  while (text.includes(String.fromCharCode(code))) code++;
+  const sentinel = String.fromCharCode(code);
+  const judged = decodeEach(bytes, sentinel);
+  if (judged === text) return text;
+  let tokens: Token[];
+  try {
+    tokens = tokenize(judged);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes(sentinel)) throw new NotUtf8Error(path);
+    return text;
+  }
+  const last = tokens.at(-1);
+  const lines = judged.split("\n");
+  const end =
+    last === undefined
+      ? judged.length
+      : lines.slice(0, last.line - 1).reduce((total, line) => total + line.length + 1, 0) +
+        last.endColumn;
+  if (
+    tokens.some((token) => `${token.text}${token.spelling ?? ""}`.includes(sentinel)) ||
+    isInPragma(judged, sentinel, end)
+  )
+    throw new NotUtf8Error(path);
+  return text;
 };
 
 export const runTlapm = async (args: string[]) => {
