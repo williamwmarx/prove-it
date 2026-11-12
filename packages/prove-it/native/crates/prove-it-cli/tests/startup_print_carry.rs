@@ -53,6 +53,13 @@ const ROWS: &[(&str, bool)] = &[
     ("{<<x>> : x \\in {@}}", true),
     ("LET P == @ IN <<P>>", true),
     ("LET P == @ IN Cardinality({P})", false),
+    ("LET P == (LET P == @ IN <<P>>) IN <<P>>", true),
+    ("LET P == (LET Q == @ IN Cardinality({Q})) IN <<P>>", false),
+    // A part that is a domain written there is sized.
+    ("<<{1} \\X (DOMAIN [a |-> 0])>>", false),
+    ("<<{1} \\X (DOMAIN <<1, 2>>)>>", false),
+    ("<<{1} \\X (DOMAIN [x \\in {1, 2} |-> x])>>", false),
+    ("<<{1} \\X (DOMAIN [x \\in Int |-> x])>>", true),
     ("LET P == {@} IN <<P>>[1]", true),
     ("LET F(Q) == <<Q>> IN F(@)", true),
     ("<<@, 1>>[1]", true),

@@ -1764,9 +1764,35 @@ impl<'a> Compiler<'a> {
     // consumes, as `Cardinality(S \X T)` does, isn't in its value. A subexpression selector,
     // which names what it reaches by text, may reach anything.
     fn may_hold_unsized(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        self.may_hold_unsized_in(node, seen, &mut Vec::new())
+    }
+
+    // `may_hold_unsized`, with the LET definitions around the expression (`lets`), each with how
+    // many of them its own body sees, which a name bound there names.
+    fn may_hold_unsized_in(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<NodeId>,
+        lets: &mut Vec<(TextId, NodeId, usize)>,
+    ) -> bool {
         let (node, kind) = self.node(node);
         if !seen.insert(node) || self.is_scalar_valued(kind) {
             return false;
+        }
+        if let NodeKind::Let {
+            definitions, body, ..
+        } = kind
+        {
+            let depth = lets.len();
+            let visible = depth + definitions.len();
+            for &definition in definitions {
+                if let NodeKind::Definition(named) = self.node(definition).1 {
+                    lets.push((named.name, definition, visible));
+                }
+            }
+            let is_held = self.may_hold_unsized_in(*body, seen, lets);
+            lets.truncate(depth);
+            return is_held;
         }
         let is_unsized = match kind {
             // TLC sizes the factors in order and stops at an empty one.
@@ -1795,7 +1821,19 @@ impl<'a> Compiler<'a> {
                 if !name.is_local =>
             {
                 matches!(name.resolution, Resolution::Definition(index)
-                    if self.may_hold_unsized(self.ir.definitions[index as usize], seen))
+                    if self.may_hold_unsized_in(self.ir.definitions[index as usize], seen, &mut Vec::new()))
+            }
+            // A LET's definition, evaluated where it is written.
+            NodeKind::Identifier(name)
+            | NodeKind::OperatorReference(name)
+            | NodeKind::Apply { name, .. } => {
+                match lets.iter().rev().find(|&&(bound, ..)| bound == name.text) {
+                    Some(&(_, definition, visible)) => {
+                        let mut outer = lets[..visible].to_vec();
+                        self.may_hold_unsized_in(definition, seen, &mut outer)
+                    }
+                    None => false,
+                }
             }
             NodeKind::Subexpression(_) => true,
             _ => false,
@@ -1804,7 +1842,7 @@ impl<'a> Compiler<'a> {
             || self
                 .carried_children(kind)
                 .into_iter()
-                .any(|child| self.may_hold_unsized(child, seen))
+                .any(|child| self.may_hold_unsized_in(child, seen, lets))
     }
 
     // Whether an expression's value is a boolean, a number or a string, whatever sets it reads:
@@ -2208,6 +2246,8 @@ impl<'a> Compiler<'a> {
             NodeKind::RecordSet(fields) => Some(fields.iter().map(|&(_, field)| field).collect()),
             NodeKind::SetFilter { bound, .. } => Some(vec![bound.set]),
             NodeKind::SetMap { bounds, .. } => Some(bounds.iter().map(|bound| bound.set).collect()),
+            // A name the body binds isn't sized here.
+            NodeKind::Let { body, .. } => Some(vec![*body]),
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                 Resolution::Builtin(index) => {
                     (self.builtin_name(index) == "BOOLEAN").then(Vec::new)
@@ -2223,6 +2263,21 @@ impl<'a> Compiler<'a> {
                 Resolution::Builtin(index) => match (self.builtin_name(index), args.as_slice()) {
                     ("..", [_, _]) => Some(Vec::new()),
                     ("SUBSET", [_]) | ("\\cup" | "\\cap" | "\\", [_, _]) => Some(args.clone()),
+                    // The domain of a function, tuple or record written there.
+                    ("DOMAIN", &[function]) => match self.node(function).1 {
+                        NodeKind::Record(_) | NodeKind::Tuple(_) => Some(Vec::new()),
+                        NodeKind::FunctionConstruction { bounds, .. } => {
+                            Some(bounds.iter().map(|bound| bound.set).collect())
+                        }
+                        NodeKind::Apply { name, .. }
+                            if !name.is_local
+                                && matches!(name.resolution, Resolution::Builtin(index)
+                                    if self.builtin_name(index) == ":>") =>
+                        {
+                            Some(Vec::new())
+                        }
+                        _ => None,
+                    },
                     ("UNION", &[sets]) => match self.node(sets).1 {
                         NodeKind::SetEnumeration(sets) => Some(sets.clone()),
                         _ => None,
