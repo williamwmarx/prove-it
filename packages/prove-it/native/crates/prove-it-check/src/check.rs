@@ -4,14 +4,14 @@
 use std::path::Path;
 
 use crate::host_path::Platform;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
-    Continued, ContinuedTrace, Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome,
-    Settings, Violation, ViolationKind, search,
+    Continued, ContinuedTrace, Delegated, ErrorSite, HostFiles, JsonFiles, MINIMUM_SHARED_LEVEL,
+    Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, is_printable_normalized, write_value};
@@ -982,9 +982,11 @@ fn check_spec(
             if let Some(reason) = error.unworded {
                 return report_not_native(printer, reason);
             }
-            let Some(coded) = FrontError::Config(error.message).get_coded(printer.is_tool) else {
+            let message = error.message;
+            let Some(coded) = FrontError::Config(message.clone()).get_coded(printer.is_tool) else {
                 return report_not_native(printer, "a configuration file the front end rejects");
             };
+            printer.set_thrown(Some(Thrown::Config(message)));
             return print_coded_failure(printer, &coded, start);
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
@@ -1150,6 +1152,7 @@ fn check_spec(
         }
     }
     let is_sany_warned = front.is_sany_warned;
+    let is_tlcext_declined = front.is_tlcext_declined;
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
         printer.is_trace_recorded = is_trace_recorded(args, spec_path, printer.host.platform());
@@ -1255,6 +1258,11 @@ fn check_spec(
             return report_not_native(printer, reason);
         }
     }
+    let json_files = if printer.host.is_file_system() {
+        JsonFiles::System
+    } else {
+        JsonFiles::Host(Arc::new(HostFiles::new(printer.host.spec_files_read())))
+    };
     let settings = Settings {
         is_violation_reported: true,
         // The front end leaves out a substitute or a value the configuration scopes to a module
@@ -1292,7 +1300,7 @@ fn check_spec(
         is_dumped,
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
-        is_file_system: printer.host.is_file_system(),
+        json_files: json_files.clone(),
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -1417,6 +1425,16 @@ fn check_spec(
             drop(receiver);
         },
     );
+    // The host reads the files the Json module's operators would have read, and writes those they
+    // wrote.
+    if let JsonFiles::Host(files) = &json_files {
+        for path in files.take_unread() {
+            printer.host.read_spec_file(&path);
+        }
+        for (path, bytes) in files.take_written() {
+            printer.host.write_file(Path::new(&path), &bytes, false);
+        }
+    }
     if let Some(reason) = declined {
         return report_not_native(printer, &reason);
     }
@@ -1727,14 +1745,26 @@ fn check_spec(
                     "a value of a predicate the configuration substitutes a definition for",
                 );
             }
+            set_startup_thrown(
+                printer,
+                Thrown::Config(message.clone()),
+                is_sany_warned,
+                is_tlcext_declined,
+            );
             return match FrontError::Config(message).get_coded(printer.is_tool) {
                 Some(coded) => print_coded_failure(printer, &coded, start),
                 None => report_not_native(printer, "a configuration error without TLC's code"),
             };
         }
         SearchOutcome::StartupException { message } => {
-            let error = FrontError::Evaluation(format!("{UNEXPECTED_EXCEPTION}{message}"));
-            return match error.get_coded(printer.is_tool) {
+            let message = format!("{UNEXPECTED_EXCEPTION}{message}");
+            set_startup_thrown(
+                printer,
+                Thrown::Evaluation(message.clone()),
+                is_sany_warned,
+                is_tlcext_declined,
+            );
+            return match FrontError::Evaluation(message).get_coded(printer.is_tool) {
                 Some(coded) => print_coded_failure(printer, &coded, start),
                 None => report_not_native(printer, "an exception without TLC's code"),
             };
@@ -1790,9 +1820,12 @@ fn check_spec(
                     let message =
                         "No next state actions defined to generate successor states from.";
                     printer.print(code::NO_NEXT_ACTION, Level::Error, message);
-                    if !is_sany_warned {
-                        printer.set_thrown(Some(Thrown::Evaluation(message.to_owned())));
-                    }
+                    set_startup_thrown(
+                        printer,
+                        Thrown::Evaluation(message.to_owned()),
+                        is_sany_warned,
+                        is_tlcext_declined,
+                    );
                     print_finished(printer, start);
                     Ok(NO_NEXT_ACTION)
                 }
@@ -2860,6 +2893,27 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
             SPEC_PARSE_ERROR
         }
     }
+}
+
+/// Keeps the error the library throws where the engine stops as it starts, before it searches,
+/// after what the spec printed as it computed the constant definitions and assumptions. The
+/// library prints SANY's warnings before it throws, which it doesn't know here; and what the
+/// constant definitions the engine leaves out of its startup print as TLC computes them isn't
+/// known (fallback.md, "Known wrong outputs").
+fn set_startup_thrown(
+    printer: &mut Printer,
+    thrown: Thrown,
+    is_sany_warned: bool,
+    is_tlcext_declined: bool,
+) {
+    if is_sany_warned {
+        return;
+    }
+    printer.set_thrown(Some(if is_tlcext_declined {
+        Thrown::NotNative("what the spec prints as TLC computes its constants")
+    } else {
+        thrown
+    }));
 }
 
 /// An error TLC reports with its code, then how long it ran (`printFailure`).

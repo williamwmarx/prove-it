@@ -2056,6 +2056,15 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+    let environment = link_environment(options)?;
+    check_constant_substitutes(&environment, options.version)?;
+    Ok(environment)
+}
+
+/// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
+/// the constant definitions (`processConstantDefns`), after it has rejected any other error of
+/// the configuration (`processSpec`).
+pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
     let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,
@@ -2458,53 +2467,55 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .map(|linked| linked.module.clone())
             .collect(),
     };
+    Ok(environment)
+}
+
+/// TLC evaluates a substitute for a constant as it computes the constant definitions, and rejects
+/// it only when that fails and the level bound it computes is above constant.
+fn check_constant_substitutes(environment: &Environment, version: TlcVersion) -> Result<()> {
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's
     // Java code overrides with a minimum level as state-level, so the analyzer takes them for
     // variables.
-    {
-        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
-        let ranks = FastMap::default();
-        let evaluator = Evaluator::new(
-            &environment,
-            ValueOrder { ranks: &ranks },
-            options.version,
-            false,
-        );
-        for (name, target) in environment.substitutions.iter() {
-            let Some(definition) = environment.definitions.get(target) else {
-                continue;
-            };
-            let is_parameterless = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty());
-            if !declared_constants.contains(name)
-                || !is_parameterless
-                || analyzer
-                    .analyze_definition(definition, &Scope::default())?
-                    .data
-                    .level
-                    == 0
-            {
-                continue;
+    let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
+    let ranks = FastMap::default();
+    let evaluator = Evaluator::new(environment, ValueOrder { ranks: &ranks }, version, false);
+    for (name, target) in environment.substitutions.iter() {
+        let Some(definition) = environment.definitions.get(target) else {
+            continue;
+        };
+        let is_parameterless = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty());
+        if !environment
+            .root_constants
+            .iter()
+            .any(|constant| constant.name == *name)
+            || !is_parameterless
+            || analyzer
+                .analyze_definition(definition, &Scope::default())?
+                .data
+                .level
+                == 0
+        {
+            continue;
+        }
+        match evaluator.evaluate(&definition.body, None) {
+            // TLC's SpecProcessor adds the message of a TLCRuntimeException, not an
+            // EvalException's.
+            Err(FrontError::Evaluation(message)) => {
+                let addendum = if is_eval_exception(&message) {
+                    String::new()
+                } else {
+                    format!(" - specifically: {message}")
+                };
+                return Err(FrontError::Config(format!(
+                    "The configuration file substitutes constant {name} with non-constant {target}{addendum}"
+                )));
             }
-            match evaluator.evaluate(&definition.body, None) {
-                // TLC's SpecProcessor adds the message of a TLCRuntimeException, not an
-                // EvalException's.
-                Err(FrontError::Evaluation(message)) => {
-                    let addendum = if is_eval_exception(&message) {
-                        String::new()
-                    } else {
-                        format!(" - specifically: {message}")
-                    };
-                    return Err(FrontError::Config(format!(
-                        "The configuration file substitutes constant {name} with non-constant {target}{addendum}"
-                    )));
-                }
-                Err(error) => return Err(error),
-                Ok(_) => {}
-            }
+            Err(error) => return Err(error),
+            Ok(_) => {}
         }
     }
-    Ok(environment)
+    Ok(())
 }
 
 // TLC computes the constant definitions of each module in the order SANY finishes the modules,

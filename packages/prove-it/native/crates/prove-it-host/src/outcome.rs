@@ -35,7 +35,7 @@
 
 use tla_engine::Options;
 use tla_engine::search::{
-    Checkpoint, GraphCheckpoint, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings,
+    Checkpoint, GraphCheckpoint, JsonFiles, MINIMUM_SHARED_LEVEL, SearchOutcome, Settings,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::transfer::{EncodedStates, SharedStates};
@@ -89,7 +89,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         // The addon's tables stay on the pages its host's allocator gives.
         large_region_advice: None,
         // The interpreter reads and writes the Json module's files.
-        is_file_system: false,
+        json_files: JsonFiles::Declined,
     })
 }
 

@@ -31,12 +31,16 @@ pub struct Outcome {
     pub messages: Vec<Message>,
 }
 
-/// `TlaSyntaxError` for the errors SANY reports, `TlaConfigError` or `TlaEvaluationError`.
+/// `TlaSyntaxError` for the errors SANY reports, `TlaConfigError`, `TlaEvaluationError`, or
+/// `TlaStackOverflowError` for TLC's StackOverflowError; or why the library declines, where it
+/// doesn't know all TLC prints before the error.
 #[derive(Clone)]
 pub enum Thrown {
     Syntax(SanyReport),
     Config(String),
     Evaluation(String),
+    StackOverflow,
+    NotNative(&'static str),
 }
 
 pub struct Message {

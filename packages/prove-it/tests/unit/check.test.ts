@@ -12,7 +12,15 @@ import {
   TlaConfigError,
   TlaSyntaxError,
 } from "../../src";
-import { createSanyError, createSemanticError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import {
+  createSanyError,
+  createSemanticError,
+  STACK_OVERFLOW_MESSAGE,
+  TlaEvaluationError,
+  TlaStackOverflowError,
+  UNEXPECTED_EVAL_EXCEPTION,
+  UNEXPECTED_EXCEPTION,
+} from "../../src/errors";
 import {
   checkOnEngine,
   expectDeclined,
@@ -233,15 +241,14 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
-  it("declines a module that cannot be found", async () => {
-    await expectDeclined(
-      {
+  it("reports a module that cannot be found as a syntax error", async () => {
+    await expect(
+      check({
         source: "---- MODULE M ----\nEXTENDS Missing\n====",
         config: "",
         loadModule: () => undefined,
-      },
-      "the engine stopped before it searched (exit 150)",
-    );
+      }),
+    ).rejects.toThrow(TlaSyntaxError);
   });
 
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
@@ -944,10 +951,11 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
-  it("declines a symmetry that names a constant", async () => {
-    await expectDeclined(
-      getModuleOptions("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P"),
-      "the engine stopped before it searched (exit 255)",
+  it("reports a symmetry that names a constant like TLC", async () => {
+    await expect(checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The symmetry function P must specify a set of permutations.`,
+      ),
     );
   });
 
@@ -1024,15 +1032,17 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
-  it("declines a substitute that JsonDeserialize defines", async () => {
-    await expectDeclined(
-      {
-        source:
-          '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
-        config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
-      },
-      "the engine declined: JsonDeserialize, whose file the host reads and writes",
-    );
+  it("checks a model with a substitute that JsonDeserialize defines, which nothing reads", async () => {
+    const result = await checkOnEngine({
+      source:
+        '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
+      config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
@@ -1198,33 +1208,42 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
   });
 
-  it("reports an undefined symmetry like TLC and declines one that isn't a set of permutations", async () => {
+  it("reports an undefined symmetry and one that isn't a set of permutations like TLC", async () => {
     await expect(checkModule("", "SYMMETRY P")).rejects.toThrow(
       new TlaConfigError(
         "The symmetry function P specified in the configuration file\nis not defined in the specification.",
       ),
     );
-    for (const definition of ["P == 1", "P == {1}"]) {
-      await expectDeclined(
-        getModuleOptions(definition, "SYMMETRY P"),
-        "the engine stopped before it searched (exit 255)",
+    for (const [definition, message] of [
+      ["P == 1", "The symmetry operator must specify a set of functions."],
+      ["P == {1}", "The symmetry values must be function records."],
+    ]) {
+      await expect(checkModule(definition, "SYMMETRY P")).rejects.toThrow(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`),
       );
     }
+    await expectDeclined(
+      getModuleOptions("P(a) == a", "SYMMETRY P"),
+      "a SYMMETRY definition with parameters",
+    );
   });
 
-  it("declines a failing constant part of a property while processing the spec", async () => {
+  it("reports a failing constant part of a property while processing the spec like TLC", async () => {
     const properties = [
       "<>(1 = {})",
       "<>[](x = 2 => 1 = {})",
       "<>[](IF x = 1 THEN x = 2 ELSE 1 = {})",
     ];
     for (const property of properties) {
-      await expectDeclined(
-        {
+      await expect(
+        checkOnEngine({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == ${property}\n====`,
           config: "SPECIFICATION Spec\nPROPERTY Prop",
-        },
-        "the engine stopped before it searched (exit 255)",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 1 with non-integer:\n{}`,
+        ),
       );
     }
   });
@@ -3495,12 +3514,22 @@ describe("name resolution matches SANY", () => {
   });
   const checkSource = (source: string) => checkOnEngine(getOptions(source));
 
-  it.each(["EXTENDS Strings", "N == INSTANCE Nowhere"])(
-    "declines a spec that imports a module it cannot find: %s",
-    async (source) => {
-      await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
-    },
-  );
+  it.each([
+    ["EXTENDS Strings", "Strings"],
+    ["N == INSTANCE Nowhere", "Nowhere"],
+  ])("fails to parse a spec that imports a module it cannot find: %s", async (source, name) => {
+    await expect(checkSource(source)).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: `Cannot find source file for module ${name} imported in module M.`,
+          },
+        ],
+        true,
+      ),
+    );
+  });
 
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
@@ -5252,19 +5281,29 @@ describe("check matches TLC master", () => {
   });
 
   // TLC evaluates the constant parts of the properties as it builds the liveness checker.
-  it.each([
-    ["<>(1 \\notin SUBSET 1)", "an operator, which the constant evaluator doesn't compute"],
-    ["<>(1 + 1)", "the engine stopped before it searched (exit 255)"],
-    ["<>(\\b101 /\\ TRUE)", "the engine stopped before it searched (exit 255)"],
-  ])("declines an error in the constant part of the property %s", async (property, reason) => {
+  const getConstantPartOptions = (property: string) => ({
+    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
+    config: "SPECIFICATION Spec\nPROPERTY P",
+  });
+
+  it("declines an error in the constant part of the property <>(1 \\notin SUBSET 1)", async () => {
     await expectDeclined(
-      {
-        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
-        config: "SPECIFICATION Spec\nPROPERTY P",
-      },
-      reason,
+      getConstantPartOptions("<>(1 \\notin SUBSET 1)"),
+      "an operator, which the constant evaluator doesn't compute",
     );
   });
+
+  it.each([
+    ["<>(1 + 1)", "line 6, col 9 to line 6, col 13 of module M"],
+    ["<>(\\b101 /\\ TRUE)", "\\b101"],
+  ])(
+    "reports an error in the constant part of the property %s like TLC",
+    async (property, part) => {
+      await expect(checkOnEngine(getConstantPartOptions(property))).rejects.toThrow(
+        new TlaEvaluationError(`TLC expected a boolean value, but did not find one. ${part}`),
+      );
+    },
+  );
 
   it("declines TLCGet of the revision", async () => {
     await expectDeclined(
@@ -5327,7 +5366,9 @@ describe("check matches TLC master", () => {
       config: "SPECIFICATION Spec\nPROPERTY P",
     });
     expect((await checkOnEngine(getOptions("R(2)"))).status).toBe("liveness-violation");
-    await expectDeclined(getOptions("R(x)"), "the engine stopped before it searched (exit 255)");
+    await expect(checkOnEngine(getOptions("R(x)"))).rejects.toThrow(
+      new TlaEvaluationError(STACK_OVERFLOW_MESSAGE),
+    );
   });
 
   it.each([
@@ -5335,30 +5376,43 @@ describe("check matches TLC master", () => {
     [
       "Init == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init",
       "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
+      new TlaStackOverflowError(),
     ],
     // TLC reports an EvalException in the values a property quantifies over.
     [
       "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {1 \\div 0} : <>(x = k)",
       "SPECIFICATION Spec\nPROPERTY P",
+      new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`),
     ],
     // TLC can't handle a quantified formula whose body fails.
     [
       "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\E k \\in 0..1 : <>(2 \\in 1)",
       "SPECIFICATION Spec\nPROPERTY P",
+      new TlaEvaluationError(
+        "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M",
+      ),
     ],
     [
       "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in 1 : <>(x = k)",
       "SPECIFICATION Spec\nPROPERTY P",
+      new TlaEvaluationError(
+        "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 27 of module M:\nTLC encountered a non-enumerable quantifier bound\n1.\n1",
+      ),
     ],
-  ])("declines a spec TLC rejects before it searches: %s", async (definitions, config) => {
-    await expectDeclined(
-      {
+  ])(
+    "reports a spec TLC rejects before it searches like TLC: %s",
+    async (definitions, config, error) => {
+      const thrown = await checkOnEngine({
         source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
         config,
-      },
-      "the engine stopped before it searched (exit 255)",
-    );
-  });
+      }).then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+      expect(thrown).toBeInstanceOf(error.constructor);
+      expect((thrown as Error).message).toBe(error.message);
+    },
+  );
 
   // TLC doesn't evaluate a definition with a temporal operator before it checks the property.
   it("declines a property quantified over no values, a tautology", async () => {

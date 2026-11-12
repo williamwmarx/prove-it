@@ -105,13 +105,92 @@ pub struct Settings {
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
     pub large_region_advice: Option<Advice>,
-    /// Whether the Json module's operators may read and write the machine's files, which a host
-    /// that answers for the files itself, as the library does, doesn't let them.
-    pub is_file_system: bool,
+    /// Where the Json module's operators read and write their files.
+    pub json_files: JsonFiles,
 }
 
 /// See [`Settings::large_region_advice`].
 pub type Advice = fn(address: *const u8, length: usize);
+
+/// Where the Json module's operators read and write their files: the machine's, or, for a host
+/// that answers for the files itself, as the library does, the host's (`HostFiles`). Where the
+/// caller reads and writes them itself, the engine declines the operators.
+#[derive(Clone, Debug, Default)]
+pub enum JsonFiles {
+    #[default]
+    System,
+    Host(Arc<HostFiles>),
+    Declined,
+}
+
+/// The host's files the Json module's operators read and write. The engine reads what the host
+/// read for it before the search, or what the search wrote since, and stops at a file the host
+/// hasn't read, which it keeps for the host to read before the search runs again. It keeps what
+/// the operators write, each file with the text it was last written with, in the order the files
+/// were first written, which the host writes once the search ends.
+#[derive(Debug, Default)]
+pub struct HostFiles {
+    /// Each file the host read, or found none at.
+    read: HashMap<String, Option<Vec<u8>>>,
+    unread: Mutex<Vec<String>>,
+    written: Mutex<Vec<(String, Vec<u8>)>>,
+}
+
+/// What reading a host's file found.
+pub enum HostRead {
+    Bytes(Vec<u8>),
+    Missing,
+    Unread,
+}
+
+impl HostFiles {
+    pub fn new(read: impl IntoIterator<Item = (String, Option<Vec<u8>>)>) -> HostFiles {
+        HostFiles {
+            read: read.into_iter().collect(),
+            ..HostFiles::default()
+        }
+    }
+
+    pub fn read(&self, path: &str) -> HostRead {
+        if let Some((_, text)) = lock(&self.written).iter().find(|(other, _)| other == path) {
+            return HostRead::Bytes(text.clone());
+        }
+        match self.read.get(path) {
+            Some(Some(bytes)) => HostRead::Bytes(bytes.clone()),
+            Some(None) => HostRead::Missing,
+            None => {
+                let mut unread = lock(&self.unread);
+                if !unread.iter().any(|other| other == path) {
+                    unread.push(path.to_owned());
+                }
+                HostRead::Unread
+            }
+        }
+    }
+
+    pub fn write(&self, path: String, bytes: Vec<u8>) {
+        let mut written = lock(&self.written);
+        match written.iter_mut().find(|(other, _)| *other == path) {
+            Some((_, text)) => *text = bytes,
+            None => written.push((path, bytes)),
+        }
+    }
+
+    /// The files the search would have read that the host hasn't.
+    pub fn take_unread(&self) -> Vec<String> {
+        std::mem::take(&mut *lock(&self.unread))
+    }
+
+    pub fn take_written(&self) -> Vec<(String, Vec<u8>)> {
+        std::mem::take(&mut *lock(&self.written))
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 // How many candidates ahead the merge reads the state table.
 const MERGE_PREFETCH: usize = 16;
@@ -147,7 +226,7 @@ impl Default for Settings {
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
-            is_file_system: true,
+            json_files: JsonFiles::System,
         }
     }
 }
@@ -3242,7 +3321,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
-    compiler.is_file_system = settings.is_file_system;
+    compiler.json_files = settings.json_files.clone();
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),

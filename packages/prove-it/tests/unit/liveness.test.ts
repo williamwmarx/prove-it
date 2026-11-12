@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
-import { expectDeclined } from "../native-check";
+import { check, TlaEvaluationError } from "../../src";
+import { UNEXPECTED_EVAL_EXCEPTION } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
@@ -117,14 +117,15 @@ describe("liveness matches TLC", () => {
     expect(result.violations[1]?.headline).toBe("Temporal property NeverThree was violated.\n");
   });
 
-  it("declines a constant conjunct of a temporal property that fails to evaluate", async () => {
-    await expectDeclined(
-      {
+  it("reports a constant conjunct of a temporal property that fails to evaluate like TLC", async () => {
+    await expect(
+      check({
         source:
           "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>[](x = 1 /\\ (1 \\div 0) > 0)\n====",
         config: "SPECIFICATION Spec\nPROPERTY P",
-      },
-      "the engine stopped before it searched (exit 255)",
+      }),
+    ).rejects.toThrow(
+      new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`),
     );
   });
 });
