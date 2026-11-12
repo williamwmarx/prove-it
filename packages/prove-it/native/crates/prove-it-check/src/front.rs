@@ -231,7 +231,7 @@ fn native_sany(
     spec_path: &str,
     main_file: &str,
     sources: Option<&ModelSources>,
-    describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
+    describe_file: &dyn Fn(&str, ModuleOrigin) -> Result<String, String>,
     root_extendees: &[&str],
 ) -> Result<SanyText, FrontError> {
     let root = get_stem(platform.file_name(spec_path));

@@ -45,7 +45,7 @@ pub struct Files<'a> {
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
-pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> String + 'h>;
+pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> Result<String, String> + 'h>;
 
 /// What is at a path: nothing the system can follow to, a file, a directory, or anything else, such
 /// as a FIFO, which TLC reads as a file and tlapm's loader can't.

@@ -273,7 +273,7 @@ mod tests {
             None
         }
         fn get_file_describer<'h>(&'h self, _: &Files) -> FileDescription<'h> {
-            Box::new(|_, _| String::new())
+            Box::new(|_, _| Ok(String::new()))
         }
         fn get_variable(&self, _: &str) -> Option<String> {
             None

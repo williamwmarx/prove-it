@@ -47,27 +47,35 @@ impl<'h> FileDescriber<'h> {
             spec: resolve(&files.spec.to_string_lossy()),
             given_spec: files.spec.to_path_buf(),
             directories,
-            temporary: host
-                .real_path(&temporary)
-                .unwrap_or_else(|| resolve(&temporary.to_string_lossy())),
+            temporary: host.real_path(&temporary).map_or_else(
+                || resolve(&temporary.to_string_lossy()),
+                |real| PathBuf::from(platform.get_java_real(&real.to_string_lossy())),
+            ),
             metadir: files.metadir.map(resolve),
             standard_modules: files.jar.map(|jar| get_standard_modules_url(&resolve(jar))),
             is_174: files.is_174,
         }
     }
 
-    pub fn describe(&self, name: &str, origin: ModuleOrigin) -> String {
+    /// The file, or the reason the binary doesn't name it as TLC does: on Windows, where no run of
+    /// TLC has recorded how it names one, the forms other than a module's own file found by its
+    /// real path.
+    pub fn describe(&self, name: &str, origin: ModuleOrigin) -> Result<String, String> {
         let file_name = format!("{name}.tla");
+        let is_windows = self.platform == Platform::Windows;
         let real = |path: &Path| {
-            self.host
+            let real = self
+                .host
                 .real_path(path)
-                .unwrap_or_else(|| path.to_path_buf())
-                .display()
-                .to_string()
+                .unwrap_or_else(|| path.to_path_buf());
+            self.platform.get_java_real(&real.display().to_string())
         };
+        if is_windows && self.is_174 {
+            return Err("TLC 1.7.4's names of the files SANY parses on Windows".to_owned());
+        }
         match origin {
-            // ParseUnit names the file by its real path, and by the URI of the path its resolver
-            // made, through the directory as given, where the two differ.
+            // ParseUnit names the file by its real path (`Path.toRealPath`), and by the URI of the
+            // path its resolver made, through the directory as given, where the two differ.
             ModuleOrigin::File => {
                 let is_root =
                     self.platform.file_name(&self.given_spec.to_string_lossy()) == file_name;
@@ -77,25 +85,32 @@ impl<'h> FileDescriber<'h> {
                         .map(|directory| self.join(directory, &file_name))
                         .find(|path| self.host.is_file(path))
                 }) else {
-                    return real(&self.spec);
+                    return Ok(real(&self.spec));
                 };
                 let resolved = real(&found);
-                let made = get_java_absolute(
+                let made = self.platform.get_java_path(&get_java_absolute(
                     self.platform,
                     &self.host.current_dir().to_string_lossy(),
                     &found.to_string_lossy(),
-                );
+                ));
                 // TLC 1.7.4 names the file by its real path alone.
                 if made == resolved || self.is_174 {
-                    resolved
+                    Ok(resolved)
+                } else if is_windows {
+                    Err(format!(
+                        "the URL TLC prints on Windows of a module whose path isn't its real one, {made} for {resolved}"
+                    ))
                 } else {
-                    format!("{resolved} (file:{})", quote_uri_path(&made))
+                    Ok(format!("{resolved} (file:{})", quote_uri_path(&made)))
                 }
             }
             // TLC 1.7.4 copies a standard module into the temporary directory itself.
-            _ if self.is_174 => self.join(&self.temporary, &file_name).display().to_string(),
+            _ if self.is_174 => Ok(self.join(&self.temporary, &file_name).display().to_string()),
             // FileUtil.createTempFile copies a module from the root module's file into the
             // -metadir.
+            ModuleOrigin::RootFile if is_windows => Err(
+                "the path TLC prints on Windows of a module in the root module's file".to_owned(),
+            ),
             ModuleOrigin::RootFile => {
                 let root = real(&self.spec);
                 let directory = self.metadir.as_ref().unwrap_or(&self.temporary);
@@ -103,7 +118,7 @@ impl<'h> FileDescriber<'h> {
                     &self.join(directory, &temporary_name(&format!("{root} {name}"))),
                     &file_name,
                 );
-                format!("{} ({root})", copy.display())
+                Ok(format!("{} ({root})", copy.display()))
             }
             ModuleOrigin::Standard => {
                 let copy = self.join(
@@ -114,8 +129,11 @@ impl<'h> FileDescriber<'h> {
                     &file_name,
                 );
                 match &self.standard_modules {
-                    Some(url) => format!("{} ({url}{file_name})", copy.display()),
-                    None => copy.display().to_string(),
+                    Some(_) if is_windows => Err(
+                        "the URL TLC prints on Windows of a standard module in its jar".to_owned(),
+                    ),
+                    Some(url) => Ok(format!("{} ({url}{file_name})", copy.display())),
+                    None => Ok(copy.display().to_string()),
                 }
             }
         }
@@ -123,8 +141,10 @@ impl<'h> FileDescriber<'h> {
 }
 
 impl FileDescriber<'_> {
+    /// `directory` and then `name`, as Java's `Path.resolve` joins them on the host.
     fn join(&self, directory: &Path, name: &str) -> PathBuf {
-        PathBuf::from(self.platform.join(&directory.to_string_lossy(), name))
+        let joined = self.platform.join(&directory.to_string_lossy(), name);
+        PathBuf::from(self.platform.get_java_path(&joined))
     }
 }
 
