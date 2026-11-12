@@ -445,7 +445,10 @@ it from one that printed something else. Each is outside the corpus:
   intervals, BOOLEAN, written domains and LET bodies, and sets built of those), as `Id(S) == S`
   and `Test == PrintT(<<{1} \X Id({2})>>)`; or such a set as the argument of a user operator
   whose body discards it, as `Ignore(S) == 1` and `Test == PrintT(Ignore(Int \X {}))`, since every
-  argument of an operator counts as carried. Main printed each, and the engine can't yet tell it
+  argument of an operator counts as carried; or such a set a set map's or a filter's bound
+  ranges over where the mapped or filtered expression's result doesn't hold the name, as
+  `Test == PrintT({1 : x \in {Int \X {}}})`; or any argument of a recursive operator re-entered
+  in its own walk. Main printed each, and the engine can't yet tell it
   from a print TLC fails to size, such as `<<{1} \X Id(Int)>>` or `Id(Int \X {})`, so the startup
   definition declines ("a set TLC may fail to print, at startup"). Telling them apart needs each
   part's size and kind (a non-set part fails in TLC too) where the set is built, and whether its
