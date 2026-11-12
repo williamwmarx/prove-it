@@ -240,6 +240,20 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  // TLC keeps the filter of a set it doesn't reduce lazy (OPCODE_sso), so an intersection with
+  // one makes none of a reduction's tests: SetCapValue.member asks the left set first.
+  it("answers from the left set of an intersection with a filter TLC keeps lazy", async () => {
+    const filter = "{y \\in SUBSET Nat : 1 \\div 0 = 0}";
+    expect((await checkModule(`ASSUME {5} \\notin ((SUBSET {1}) \\cap ${filter})`)).status).toBe(
+      "success",
+    );
+    const result = await checkModule(`ASSUME {1} \\in ((SUBSET {1}) \\cap ${filter})`);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violations[0]?.headline).toContain(
+      "Cannot decide if element:\n{1}\n is element of:\nSUBSET Nat\nand satisfies the predicate line 6, col ",
+    );
+  });
+
   it("tests a union with a power set, a set of records or a domain where TLC does", async () => {
     expect((await checkModule('ASSUME 1 \\in (SUBSET {"a"}) \\cup {1}')).status).toBe("success");
     expect((await checkModule("ASSUME 1 \\in [a : {1}] \\cup {1}")).status).toBe("success");

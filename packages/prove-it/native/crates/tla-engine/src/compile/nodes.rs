@@ -831,6 +831,10 @@ impl Compiler<'_> {
             parts: tested_parts,
             reference,
             is_enumerated: set.is_enumerated,
+            // TLC filters a Reducible set at once, into a set enumeration, and keeps the filter
+            // of any other set lazy (`Tool`'s OPCODE_sso).
+            is_reducible: set.is_reducible || set.interval.is_some(),
+            is_irreducible: set.is_irreducible,
             are_elements_enumerated: set.are_elements_enumerated,
             is_in_order: set.is_in_order,
             are_elements_in_order: set.are_elements_in_order,
