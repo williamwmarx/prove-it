@@ -324,6 +324,30 @@ SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTEND
 (exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
 an extended module") checks it with the TypeScript check until the front end matches.
 
+A membership in a union whose enumerable side holds a value of another type is TRUE where TLC
+fails: TLC tests the enumerable side first, so `ASSUME 1 \in Int \cup {"none"}` stops with
+"Attempted to check equality of string "none" with non-string:\n1", where the engine finds the
+assumption true and checks the spec. `tests/unit/check.test.ts` ("checks membership in a union of a
+non-enumerable set against the enumerable side first") checks it with the TypeScript check.
+
+A function over a domain TLC keeps lazy, applied at one point, fails where TLC computes only that
+point: `ASSUME PrintT([s \in SUBSET {1} |-> 1 \div Cardinality(s)][{1}])` prints `1` in TLC, where
+the engine computes the function at every `s`, `{}` among them, and stops with "The second argument
+of \div is 0." `tests/unit/check.test.ts` ("evaluates a function over a domain TLC keeps lazy only
+where it is applied") checks it with the TypeScript check.
+
+A function from strings whose keys are Unicode letters and digits beyond ASCII prints as a function
+where TLC prints a record: TLC tests each character of a key with Java's
+`Character.isLetterOrDigit` (FcnRcdValue), so `PrintT("x٣" :> 5)` (U+0663, a decimal digit) prints
+`[x٣ |-> 5]` in TLC and `("x٣" :> 5)` natively. `tests/unit/check.test.ts` ("prints empty intervals
+and keys that are not field names like TLC") checks it with the TypeScript check.
+
+A record TLC compares with itself prints its fields in another order: TLC's equality normalizes the
+record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[fld1 |-> 1, fld2 |->
+2]>> IN IF r = r THEN r ELSE r)` gives `"<<[fld2 |-> 2, fld1 |-> 1]>>"` in TLC and `"<<[fld1 |-> 1,
+fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
+the records inside it") checks it with the TypeScript check.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
