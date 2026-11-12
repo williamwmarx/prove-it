@@ -1243,6 +1243,24 @@ is next.
   - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
     overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
     "Stack overflow" (#308).
+- P6b step C, before the TypeScript goes: no script or test imports `src/prover` or
+  `src/obligations` but `src/cli/tlapm.ts`'s, `tlapm-cache.test.ts` and `tlapm-cache-fixtures.ts`.
+  - **Exports:** the host's `obligations(file, source, known, encode)` gives each obligation's id,
+    location, kind, printed text and methods, and the text each backend receives for the
+    `[id, prover]` pairs asked for, encoded in turn in one run; `fingerprint(file, source, known)`
+    gives each obligation's fingerprint. Both read modules as `prove` does, with the file each came
+    from under `path:<name>#<n>`, on the addon interface only (ABI 19). `scripts/native-prover.ts`
+    reads them, and runs the Rust driver in rounds for `prover-inputs` and the tests.
+  - **Checks:** on the same inputs, `conformance:tlapm`, `:fingerprint`, `:smt-encode`,
+    `:isabelle-encode`, `:zenon` and `:ptl` give the same output and results files as with the
+    TypeScript, and `prover-inputs` writes the same 12,022 inputs and `time-limits.json`. The
+    exports give, byte for byte, what the TypeScript gives on all 1,873 modules of `tlapm.json`.
+  - **Known:** a pragma's string that escapes a lone surrogate, which no corpus module has, reads
+    as U+FFFD, as a Rust string can't hold it; `prove` gives way to the TypeScript driver there.
+  - **Deleted:** `obligation-differential`, `encoder-differential`, `prover-driver-differential`
+    and `obligations-dump`, which compared the TypeScript with the Rust. `prove-driver.test.ts`
+    compares the Rust driver with what the TypeScript driver gives, recorded in
+    `tests/fixtures/prove/driver.json`.
 
 ### Deviations from Z3
 

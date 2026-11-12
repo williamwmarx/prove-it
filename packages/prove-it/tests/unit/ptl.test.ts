@@ -1,11 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
+import { encodeForBackend, getObligations } from "../../scripts/native-prover";
+import { getNativeAddon } from "../../src/engine/native";
 import { TlaProverError } from "../../src/errors";
-import { getObligations } from "../../src/obligations";
-import { decide } from "../../src/prover/deciders";
-import { encodeForBackend } from "../../src/prover/prove";
 
-const OPTIONS = { timeLimitMs: 10_000 };
+const TIME_LIMIT_MS = 10_000;
 
 // The LS4 input for the obligation whose last hypothesis cites PTL.
 const getInput = (theorem: string[]) => {
@@ -23,14 +22,20 @@ const getInput = (theorem: string[]) => {
     ...theorem,
     "====",
   ].join("\n");
-  const obligations = getObligations([{ file: "M.tla", source }], () => undefined)[0].obligations;
+  const obligations = getObligations("M.tla", source, () => undefined).obligations;
   const cited = obligations.find((obligation) => obligation.text.includes("PTL \nPROVE"));
   if (!cited) throw new Error("expected an obligation that cites PTL");
-  return encodeForBackend(cited, "ls4", { caseErrors: 0 });
+  return encodeForBackend("M.tla", source, () => undefined, cited.id, "ls4");
 };
 
-// tlapm proves exactly the obligations expected to be unsat.
-const getVerdict = (theorem: string[]) => decide("ls4", getInput(theorem), OPTIONS).verdict;
+// tlapm proves exactly the obligations expected to be unsat. An input LS4 can't decide gives no
+// verdict.
+const getVerdict = (theorem: string[]) => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new Error(addon);
+  const decision = addon.decide("ls4", getInput(theorem), TIME_LIMIT_MS, undefined, undefined);
+  return decision.kind === "decided" ? decision.verdict : decision.kind;
+};
 
 const INDUCTION = [
   "THEOREM Spec => []Inv",

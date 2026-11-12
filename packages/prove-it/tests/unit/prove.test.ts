@@ -2,10 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { encodeForBackend } from "../../scripts/native-prover";
 import { type ProofObligation, prove, type ProveOptions, TlaUnsupportedError } from "../../src";
-import { getObligations } from "../../src/obligations";
-import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
 
 // HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
 // SMT solver for that obligation.
@@ -29,19 +27,18 @@ const getCommands = (script: string) =>
     .join(" ")
     .trim();
 
-const encodeFixture = (name: string, id: number) => {
-  const obligation = getObligations(
-    [{ file: `${name}.tla`, source: loadModule(name) ?? "" }],
+// TLAPS, where the fixtures have none, is the one the obligations know.
+const encodeFixture = (name: string, id: number) =>
+  encodeForBackend(
+    `${name}.tla`,
+    loadModule(name) ?? "",
     (moduleName) => {
-      const source = loadModule(moduleName) ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const source = loadModule(moduleName);
       return source === undefined ? undefined : { file: `${moduleName}.tla`, source };
     },
-  )
-    .flatMap((result) => result.obligations)
-    .find((innerObligation) => innerObligation.id === id);
-  if (!obligation) throw new Error(`no obligation ${id}`);
-  return encodeForBackend(obligation, "smt", { caseErrors: 0 });
-};
+    id,
+    "smt",
+  );
 
 const PATH = process.env.PATH;
 

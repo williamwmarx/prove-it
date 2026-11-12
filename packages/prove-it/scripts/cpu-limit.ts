@@ -9,12 +9,14 @@ import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 
-import type { DecideResponse } from "../src/prover/decide-pool";
-import type { Verdict } from "../src/prover/verdict";
 import { DIST_DIRECTORY } from "./dist";
+import type { BackendVerdict } from "./proof-records";
+
+// What the worker answers: the backend's verdict, or the message of the error it threw.
+type DecideResponse = { verdict: BackendVerdict } | { error: string };
 
 interface CpuLimitedRun {
-  verdict: Verdict;
+  verdict: BackendVerdict;
   wallMilliseconds: number;
   cpuMilliseconds: number;
 }
