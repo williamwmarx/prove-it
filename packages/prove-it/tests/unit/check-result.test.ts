@@ -47,9 +47,7 @@ const runBoth = async (
   const typeScript = await run(source, config, "0");
   expect(native.isNative).toBe(true);
   expect(native.result).toEqual(typeScript.result);
-  // The native check goes on to report what the spec prints as TLC prints a violation's trace,
-  // which the TypeScript check doesn't.
-  expect(native.printed.slice(0, typeScript.printed.length)).toEqual(typeScript.printed);
+  expect(native.printed).toEqual(typeScript.printed);
   return native;
 };
 
