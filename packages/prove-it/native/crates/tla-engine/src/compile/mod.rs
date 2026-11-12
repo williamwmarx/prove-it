@@ -1435,7 +1435,7 @@ impl<'a> Compiler<'a> {
             && definition.flags & Definition::SUBSTITUTED == 0
             && self.is_repeatable(definition.body, &mut HashSet::new(), true)
             && !self.may_read_state(definition.body, &mut HashSet::new())
-            && !self.may_be_lazy(definition.body, &mut HashSet::new())
+            && !self.may_be_lazy_or_print(definition.body, &mut HashSet::new(), true)
     }
 
     // Whether an expression may read the state: a variable, a prime, UNCHANGED or ENABLED in it or
@@ -1551,6 +1551,17 @@ impl<'a> Compiler<'a> {
     // `seen` holds the nodes being looked through: one met again is a recursion, which may build
     // anything, while one looked through before, as an operator applied twice, answers again.
     fn may_be_lazy(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        self.may_be_lazy_or_print(node, seen, false)
+    }
+
+    // `may_be_lazy`, or, where `is_print_seen`, a value TLC may keep lazy that PrintT prints, which
+    // TLC fails on only as PrintT prints it.
+    fn may_be_lazy_or_print(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<NodeId>,
+        is_print_seen: bool,
+    ) -> bool {
         if !seen.insert(node) {
             return true;
         }
@@ -1563,25 +1574,33 @@ impl<'a> Compiler<'a> {
                 consequent,
                 alternative,
                 ..
-            } => self.may_be_lazy(*consequent, seen) || self.may_be_lazy(*alternative, seen),
-            NodeKind::Case { arms, other } => {
-                arms.iter().any(|&(_, arm)| self.may_be_lazy(arm, seen))
-                    || other.is_some_and(|other| self.may_be_lazy(other, seen))
+            } => {
+                self.may_be_lazy_or_print(*consequent, seen, is_print_seen)
+                    || self.may_be_lazy_or_print(*alternative, seen, is_print_seen)
             }
-            NodeKind::Let { body, .. } => self.may_be_lazy(*body, seen),
-            NodeKind::SetFilter { bound, .. } => self.may_be_lazy(bound.set, seen),
+            NodeKind::Case { arms, other } => {
+                arms.iter()
+                    .any(|&(_, arm)| self.may_be_lazy_or_print(arm, seen, is_print_seen))
+                    || other
+                        .is_some_and(|other| self.may_be_lazy_or_print(other, seen, is_print_seen))
+            }
+            NodeKind::Let { body, .. } => self.may_be_lazy_or_print(*body, seen, is_print_seen),
+            NodeKind::SetFilter { bound, .. } => {
+                self.may_be_lazy_or_print(bound.set, seen, is_print_seen)
+            }
             NodeKind::SetEnumeration(elements)
             | NodeKind::Tuple(elements)
             | NodeKind::Product(elements) => elements
                 .iter()
-                .any(|&element| self.may_be_lazy(element, seen)),
+                .any(|&element| self.may_be_lazy_or_print(element, seen, is_print_seen)),
             NodeKind::Record(fields) => fields
                 .iter()
-                .any(|&(_, field)| self.may_be_lazy(field, seen)),
+                .any(|&(_, field)| self.may_be_lazy_or_print(field, seen, is_print_seen)),
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
-                Resolution::Definition(index) => self.may_be_lazy(
+                Resolution::Definition(index) => self.may_be_lazy_or_print(
                     self.definition(self.ir.definitions[index as usize]).body,
                     seen,
+                    is_print_seen,
                 ),
                 Resolution::Builtin(index) => {
                     matches!(self.builtin_name(index), "Nat" | "Int" | "Real" | "STRING")
@@ -1592,17 +1611,26 @@ impl<'a> Compiler<'a> {
                 Resolution::Builtin(index) => {
                     match self.text(self.ir.builtins[index as usize].name) {
                         "SUBSET" | "Seq" => true,
-                        "UNION" | "\\cup" | "\\cap" | "\\" => {
-                            args.iter().any(|&arg| self.may_be_lazy(arg, seen))
+                        "UNION" | "\\cup" | "\\cap" | "\\" => args
+                            .iter()
+                            .any(|&arg| self.may_be_lazy_or_print(arg, seen, is_print_seen)),
+                        "TLCEval" => self.may_be_lazy_or_print(args[0], seen, is_print_seen),
+                        "Print" => args.last().is_some_and(|&arg| {
+                            self.may_be_lazy_or_print(arg, seen, is_print_seen)
+                        }),
+                        "PrintT" => {
+                            is_print_seen
+                                && args.last().is_some_and(|&arg| {
+                                    self.may_be_lazy_or_print(arg, seen, is_print_seen)
+                                })
                         }
-                        "TLCEval" => self.may_be_lazy(args[0], seen),
-                        "Print" => args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen)),
                         _ => false,
                     }
                 }
-                Resolution::Definition(index) => self.may_be_lazy(
+                Resolution::Definition(index) => self.may_be_lazy_or_print(
                     self.definition(self.ir.definitions[index as usize]).body,
                     seen,
+                    is_print_seen,
                 ),
                 _ => true,
             },
