@@ -1,0 +1,17 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module LiveInstanced
+Semantic processing of module Live074
+Semantic errors:
+
+*** Errors: 1
+
+line 7, col 6 to line 7, col 8 of module Live074
+
+Unknown operator: `I!U'.
+
+
+Error: Parsing or semantic analysis failed.

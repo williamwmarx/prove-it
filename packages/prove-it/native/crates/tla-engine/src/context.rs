@@ -76,6 +76,8 @@ pub struct EngineContext {
     pub level_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
+    /// Whether an action property may print, which the search prints among Next's prints.
+    pub is_action_property_printing: bool,
     /// What TLC evaluates when it starts.
     pub startup: Startup,
     /// The constant definitions whose body is a CHOOSE over a set, as the compiler found them
@@ -630,6 +632,7 @@ impl EngineContext {
         // invariants (`doNextCheckImplied`), as the search does, so they may print where the
         // native checker reports what the search finds.
         let mut action_properties = Vec::new();
+        let mut is_action_property_printing = false;
         let is_native = compiler.is_native;
         for property in &model.action_properties {
             let action = compiler.compile_scoped(
@@ -642,6 +645,7 @@ impl EngineContext {
                 property.scope,
                 is_native,
             )?;
+            is_action_property_printing |= action.is_printing() || unchanged.is_printing();
             action_properties.push((action.eval, unchanged.eval));
         }
         let initial_predicates = model
@@ -887,6 +891,7 @@ impl EngineContext {
             diameter_atoms,
             level_atoms,
             is_invariant_printing,
+            is_action_property_printing,
             startup,
             choices: compiler.get_constant_choices(),
         })

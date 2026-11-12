@@ -4,28 +4,36 @@ import { join } from "node:path";
 
 import { check, TlaConfigError, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/modules");
 
 const checkNested = (configName: string, moduleName = "Nested") =>
-  check({
+  checkOnEngine({
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
   });
 
 const checkFixture = (name: string, configName = `${name}.cfg`) =>
-  check({
+  checkOnEngine({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
     loadModule: (module) => readFileSync(join(DIRECTORY, `${module}.tla`), "utf8"),
   });
 
+const getSource = (body: string, modules: Record<string, string> = {}) => ({
+  source: `---- MODULE M ----\n${body}\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====`,
+  config: "INIT Init\nNEXT Next",
+  loadModule: (name: string) => modules[name],
+});
+
 const checkSource = (body: string, modules: Record<string, string> = {}) =>
-  check({
-    source: `---- MODULE M ----\n${body}\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====`,
-    config: "INIT Init\nNEXT Next",
-    loadModule: (name) => modules[name],
-  });
+  checkOnEngine(getSource(body, modules));
+
+// A spec the front end rejects, which the engine reports to `check` only by leaving it to the
+// TypeScript path, so these stay on `check` until the engine's errors reach it.
+const checkRejected = (body: string, modules: Record<string, string> = {}) =>
+  check(getSource(body, modules));
 
 describe("nested and trailing modules match TLC", () => {
   it("instantiates a nested module that uses the enclosing module's definitions", async () => {
@@ -118,8 +126,9 @@ describe("nested module scoping matches SANY", () => {
     ]);
   });
 
+  // The front end rejects the spec where SANY doesn't (fallback.md, "Known wrong outputs").
   it("sees the nested modules of an extended module", async () => {
-    const result = await checkSource("EXTENDS Holder\nJ == INSTANCE Held\nASSUME J!Value = 2", {
+    const result = await checkRejected("EXTENDS Holder\nJ == INSTANCE Held\nASSUME J!Value = 2", {
       Holder: "---- MODULE Holder ----\n---- MODULE Held ----\nValue == 2\n====\n====",
     });
     expect(result.status).toBe("success");
@@ -143,37 +152,50 @@ describe("nested module scoping matches SANY", () => {
   });
 
   it("replaces ToJson of a user's Json module on master, but not on TLC 1.7.4, which has no Json class", async () => {
-    const checkJson = (version: "master" | "1.7.4", json: string) =>
-      check({
-        source: `---- MODULE M ----\nEXTENDS Json\nASSUME ToJson(1) = ${json}\n====`,
-        config: "",
-        loadModule: (name) =>
-          name === "Json" ? '---- MODULE Json ----\nToJson(x) == "mine"\n====' : undefined,
-        version,
-      });
-    const results = await Promise.all([checkJson("master", '"1"'), checkJson("1.7.4", '"mine"')]);
+    const checkJson = (version: "master" | "1.7.4", json: string, declinedFor: string) =>
+      checkOnEngine(
+        {
+          source: `---- MODULE M ----\nEXTENDS Json\nASSUME ToJson(1) = ${json}\n====`,
+          config: "",
+          loadModule: (name) =>
+            name === "Json" ? '---- MODULE Json ----\nToJson(x) == "mine"\n====' : undefined,
+          version,
+        },
+        declinedFor,
+      );
+    const results = await Promise.all([
+      checkJson(
+        "master",
+        '"1"',
+        "an assumption that fails to evaluate: evaluating the assumption again: the builtin ToJson@Json",
+      ),
+      checkJson("1.7.4", '"mine"', "TLC 1.7.4"),
+    ]);
     results.forEach((result) => expect(result.status).toBe("success"));
   });
 
   it("orders the variables of a user's TLCExt module as TLC 1.7.4 does", async () => {
-    const result = await check({
-      source: "---- MODULE Chart ----\nEXTENDS TLCExt\n====",
-      config: "INIT Init\nNEXT Next\nINVARIANT Few",
-      loadModule: (name) =>
-        name === "TLCExt"
-          ? [
-              "---- MODULE TLCExt ----",
-              "EXTENDS Naturals, TLC, Bags",
-              "VARIABLES f, bag",
-              'Init == f = (1 :> "a") @@ (2 :> "b") /\\ bag = EmptyBag',
-              "Put(i) == BagCardinality(bag) < 2 /\\ bag' = bag (+) SetToBag({f[i]}) /\\ UNCHANGED f",
-              "Next == \\E i \\in 1..2 : Put(i)",
-              'Few == CopiesIn("a", bag) < 2',
-              "====",
-            ].join("\n")
-          : undefined,
-      version: "1.7.4",
-    });
+    const result = await checkOnEngine(
+      {
+        source: "---- MODULE Chart ----\nEXTENDS TLCExt\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Few",
+        loadModule: (name) =>
+          name === "TLCExt"
+            ? [
+                "---- MODULE TLCExt ----",
+                "EXTENDS Naturals, TLC, Bags",
+                "VARIABLES f, bag",
+                'Init == f = (1 :> "a") @@ (2 :> "b") /\\ bag = EmptyBag',
+                "Put(i) == BagCardinality(bag) < 2 /\\ bag' = bag (+) SetToBag({f[i]}) /\\ UNCHANGED f",
+                "Next == \\E i \\in 1..2 : Put(i)",
+                'Few == CopiesIn("a", bag) < 2',
+                "====",
+              ].join("\n")
+            : undefined,
+        version: "1.7.4",
+      },
+      "TLC 1.7.4",
+    );
     expect(result.status).toBe("invariant-violation");
     expect(Object.keys(result.violations[0]?.states[0].variables ?? {})).toEqual(["bag", "f"]);
   });
@@ -222,12 +244,12 @@ describe("nested module scoping matches SANY", () => {
       "---- MODULE LetInner ----\nfoo == 42\n====\nop == LET Inst == INSTANCE LetInner IN Inst!foo",
     ],
   ])("rejects %s", async (_, body) => {
-    await expect(checkSource(body)).rejects.toThrow(TlaSyntaxError);
+    await expect(checkRejected(body)).rejects.toThrow(TlaSyntaxError);
   });
 
   it("rejects a nested module named after a module loaded before it", async () => {
     await expect(
-      checkSource("E == INSTANCE Shared\n---- MODULE Shared ----\nA == 2\n====", {
+      checkRejected("E == INSTANCE Shared\n---- MODULE Shared ----\nA == 2\n====", {
         Shared: "---- MODULE Shared ----\nA == 1\n====",
       }),
     ).rejects.toThrow(
@@ -243,7 +265,7 @@ describe("nested module scoping matches SANY", () => {
 
   it("rejects modules that extend each other like SANY", async () => {
     await expect(
-      checkSource("EXTENDS CycleA", {
+      checkRejected("EXTENDS CycleA", {
         CycleA: "---- MODULE CycleA ----\nEXTENDS CycleB\n====",
         CycleB: "---- MODULE CycleB ----\nEXTENDS CycleA\n====",
       }),
@@ -256,7 +278,7 @@ describe("nested module scoping matches SANY", () => {
 
   it("rejects an extended file that holds a module of another name", async () => {
     await expect(
-      checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
+      checkRejected("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
     ).rejects.toThrow(
       createSanyError(
         [
@@ -273,7 +295,7 @@ describe("nested module scoping matches SANY", () => {
 
   it("rejects a nested module that an unnamed theorem instantiates inside LET", async () => {
     await expect(
-      checkSource(
+      checkRejected(
         "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
       ),
     ).rejects.toThrow(

@@ -288,7 +288,8 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         running.check = undefined;
       }
     },
-    // A check that runs out of the host's stack declines, for the TypeScript check to check it.
+    // A check that runs out of the host's stack declines, which the library's check throws as
+    // WebAssemblyStackError.
     checkSources: (args, known, machine) => {
       try {
         return callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<

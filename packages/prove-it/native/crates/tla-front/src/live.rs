@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::{FrontError, describe_range};
+use crate::errors::{FrontError, TAUTOLOGY, describe_range};
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
@@ -119,6 +119,9 @@ struct Converter<'a> {
     facts: &'a DefinitionFacts,
     evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
+    /// Whether the formula being translated is part of an expression an INSTANCE put in for a
+    /// declaration, or of what it calls.
+    is_substituted: bool,
 }
 
 impl Converter<'_> {
@@ -158,9 +161,24 @@ impl Converter<'_> {
                 let reason = "a constant part of a temporal formula";
                 return match self.evaluate_boolean(expression, scope, reason)? {
                     Some(value) => Ok(Rc::new(Live::Boolean(value))),
-                    None => Err(not_yet(
-                        "a constant part of a temporal formula that isn't a boolean",
-                    )),
+                    // TLC names the declaration an INSTANCE substitutes, which may be written
+                    // in several places.
+                    None if self.is_substituted
+                        || self.environment.tables.is_substitution(expression) =>
+                    {
+                        Err(not_yet(
+                            "a constant part of a temporal formula that isn't a boolean, put in for an instance's declaration",
+                        ))
+                    }
+                    // `EC.TLC_EXPECTED_VALUE` names the formula by its `toString`: a numeral's
+                    // image, or else the formula's location.
+                    None => Err(FrontError::Evaluation(format!(
+                        "TLC expected a boolean value, but did not find one. {}",
+                        match &expression.kind {
+                            ExpressionKind::Number { text, .. } => text.to_string(),
+                            _ => describe_range(expression),
+                        }
+                    ))),
                 };
             }
             Level::Variable => Live::State {
@@ -279,6 +297,16 @@ impl Converter<'_> {
     }
 
     fn convert(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
+        if !self.is_substituted && self.environment.tables.is_substitution(expression) {
+            self.is_substituted = true;
+            let converted = self.convert_part(expression, scope);
+            self.is_substituted = false;
+            return converted;
+        }
+        self.convert_part(expression, scope)
+    }
+
+    fn convert_part(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
         // TLC's `LNAction` of <<A>>_v compares v in the two states before it evaluates A.
         if let ExpressionKind::Action {
             is_box: false,
@@ -475,6 +503,7 @@ pub fn get_liveness(
         facts,
         evaluator,
         depth: 0,
+        is_substituted: false,
     };
     let fairness = temporals
         .iter()
@@ -515,9 +544,7 @@ fn order_atoms(formula: &Rc<Live>) -> Result<(Vec<Rc<Live>>, usize)> {
     let mut terms = Vec::new();
     write_terms(formula, &mut atoms, &mut ids, &mut terms);
     let order = tla_live::atom_order(&terms).map_err(|declined| match &*declined.0 {
-        "a tautology" => FrontError::Evaluation(
-            "Temporal formula is a tautology (its negation is unsatisfiable).".to_owned(),
-        ),
+        "a tautology" => FrontError::Evaluation(TAUTOLOGY.to_owned()),
         "a temporal formula too large in disjunctive normal form" => FrontError::Evaluation(
             "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.".to_owned(),
         ),

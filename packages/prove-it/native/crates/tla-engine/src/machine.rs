@@ -66,6 +66,17 @@ const MAXIMUM_RECURSION: u32 = if cfg!(target_arch = "wasm32") {
     20_000
 };
 
+/// Why the engine as WebAssembly stops at that bound, for which the library throws
+/// `WebAssemblyStackError` (`src/library-check.ts`).
+pub const WEBASSEMBLY_TOO_DEEP: &str = "recursion deeper than WebAssembly's stack holds";
+
+/// Why the engine stops at that bound.
+const TOO_DEEP: &str = if cfg!(target_arch = "wasm32") {
+    WEBASSEMBLY_TOO_DEEP
+} else {
+    "recursion too deep"
+};
+
 /// Where a memo table reads one of its keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Key {
@@ -502,7 +513,7 @@ impl<'p> Machine<'p> {
             .as_ref()
             .expect("a recursive definition called before its body settled");
         if self.depth >= MAXIMUM_RECURSION {
-            return Err(Bail("recursion too deep"));
+            return Err(Bail(TOO_DEEP));
         }
         self.depth += 1;
         let result = match recursive.table {
@@ -542,7 +553,7 @@ impl<'p> Machine<'p> {
     /// call.
     pub(crate) fn nested(&mut self, run: impl FnOnce(&mut Self) -> Outcome<()>) -> Outcome<()> {
         if self.depth >= MAXIMUM_RECURSION {
-            return Err(Bail("recursion too deep"));
+            return Err(Bail(TOO_DEEP));
         }
         self.depth += 1;
         let result = run(self);

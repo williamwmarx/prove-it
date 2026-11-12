@@ -313,3 +313,27 @@ fn attempts_a_function_substituted_for_a_constant() {
         (Read::Attempted, false, Some(Rule::Substitute))
     );
 }
+
+// A substitute the configuration also gives a value is that value in `defns`, which TLC substitutes
+// for the name and holds, so it never computes the definition (`processConstants`).
+#[test]
+fn leaves_a_substitute_the_configuration_gives_a_value() {
+    let source = "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT C\nVARIABLE x\nX == 0\nD == PrintT(\"d\")\nE == PrintT(\"e\")\nInit == x = 0\nNext == x' = x\n====\n";
+    let config = parse_config(
+        "CONSTANT C <- D\nCONSTANT X <- E\nD = 4\nE = 5\nINIT Init\nNEXT Next\n",
+        TlcVersion::Master,
+    )
+    .expect("a configuration");
+    let environment = create_environment(&EnvironmentOptions {
+        source,
+        load_module: &|_| None,
+        config: &config,
+        is_unconfigured: false,
+        version: TlcVersion::Master,
+        is_level_checked: false,
+        load_class: None,
+    })
+    .expect("an environment");
+    assert_eq!(decide_in(&environment, "D"), (Read::Operator, false, None));
+    assert_eq!(decide_in(&environment, "E"), (Read::Operator, false, None));
+}

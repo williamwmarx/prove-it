@@ -8,7 +8,7 @@ mod payload;
 
 use std::path::PathBuf;
 
-use payload::compare_dumps;
+use payload::{compare_dumps, compare_values};
 use tla_engine::search::{Reporter, SearchOutcome, Settings, ViolationKind, search};
 use tla_front::config::parse_config;
 use tla_front::model::{ModelOptions, lower_front_ranking};
@@ -115,10 +115,15 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
         };
         let trace = trace.expect("a trace that rebuilds");
         let dumped = rebuilder
-            .dump_trace(&CounterExample {
-                trace: &trace,
-                cycle,
-            })
+            .dump_trace(
+                &CounterExample {
+                    trace: &trace,
+                    cycle,
+                },
+                true,
+                false,
+                false,
+            )
             .expect("a dump");
         let json = is_json_first.then(|| dumped.to_json().expect("a JSON dump"));
         let tlc = dumped.to_tlc(&model_values).expect("a tlc dump");
@@ -151,6 +156,9 @@ fn compares_dumps_but_for_their_tokens() {
     assert_ne!(sorted, first);
     assert_eq!(compare_dumps(&sorted, &first), Ok(()));
     assert!(compare_dumps(&sorted, &read("DumpNested.bin")).is_err());
+    // TLC's reader rebuilds the same value from both, and another from another trace's.
+    assert_eq!(compare_values(&sorted, &first), Ok(()));
+    assert!(compare_values(&sorted, &read("DumpNested.bin")).is_err());
 }
 
 #[test]

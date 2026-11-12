@@ -4114,7 +4114,9 @@ impl<'ir> Evaluator<'ir> {
                 }
                 Ok(Value::Unsorted(Rc::new(values)))
             }
-            Ok(set) if self.call_stack.is_some() => {
+            // A failure's message names the elements as TLC holds them, which a call stack
+            // reports and AssertError compares.
+            Ok(set) if self.call_stack.is_some() || self.asserting > 0 => {
                 mark_unnormalized(&set, values);
                 Ok(set)
             }

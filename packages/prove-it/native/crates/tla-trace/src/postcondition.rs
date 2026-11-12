@@ -80,9 +80,12 @@ impl Rebuilder<'_> {
             _ => None,
         };
         let counter_example = match &inputs.counter_example {
-            Some(counter_example) => {
-                Some(self.counter_example_value(counter_example, aliases.as_deref(), false)?)
-            }
+            Some(counter_example) => Some(self.counter_example_value(
+                counter_example,
+                aliases.as_deref(),
+                false,
+                false,
+            )?),
             None => None,
         };
         let evaluator = self.evaluator();
@@ -204,12 +207,14 @@ impl Rebuilder<'_> {
     /// CounterExample's record of a violation's trace (`tlc2.value.impl.CounterExample`): each
     /// state as the tuple of its number and its record, through the ALIAS where `aliases` has it,
     /// and each step as the tuple of its states with its action's record between them. A trace
-    /// TLC dumps (`is_dumped`) ranks the field names as the trace modules intern them.
+    /// TLC dumps (`is_dumped`) ranks the field names as the trace modules intern them, and with
+    /// `is_sharing_followed` declines a parameter TLC may share with a state.
     pub(crate) fn counter_example_value(
         &mut self,
         counter_example: &CounterExample<'_>,
         aliases: Option<&[Alias]>,
         is_dumped: bool,
+        is_sharing_followed: bool,
     ) -> Result<Value, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
@@ -251,7 +256,11 @@ impl Rebuilder<'_> {
                 if let Some(Alias::Record(fields)) =
                     aliases.as_ref().map(|aliases| &aliases[position])
                 {
-                    if fields.iter().any(|(name, _)| name == "_ALIASEvalError") {
+                    // Where the ALIAS fails, TLC adds the error's message to the state's record
+                    // (`Tool.evalAlias`); the binary trace file holds it as the evaluator words it.
+                    if fields.iter().any(|(name, _)| name == "_ALIASEvalError")
+                        && (!is_dumped || is_sharing_followed)
+                    {
                         return unsupported("of a model whose ALIAS fails");
                     }
                     let fields = fields
@@ -319,7 +328,7 @@ impl Rebuilder<'_> {
                         Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
                     )
                 };
-                if is_dumped && bound.iter().any(|(_, value)| is_shareable(value)) {
+                if is_sharing_followed && bound.iter().any(|(_, value)| is_shareable(value)) {
                     return unsupported("dumped with an action's parameter TLC may share");
                 }
                 let context = bound
