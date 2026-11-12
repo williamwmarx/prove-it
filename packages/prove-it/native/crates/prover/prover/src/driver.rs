@@ -23,6 +23,8 @@ use prove_obligations::proof::ObligationKind;
 use prove_obligations::ship::{ProofAttempt, encode_normalized};
 use prove_obligations::smt::rewrite::EncodingSession;
 
+use crate::tlapm_cache::{KnownAttempt, KnownAttempts, KnownResults};
+
 /// A decision the driver needs, under the key it is answered by.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
@@ -66,6 +68,20 @@ pub struct Attempt {
     pub time_used_ms: Option<f64>,
 }
 
+impl Attempt {
+    /// Whether Prove It couldn't try the method: it has no backend for it, or can't encode the
+    /// obligation for it.
+    pub fn is_skipped(&self) -> bool {
+        !self.attempt.is_proved
+            && !self.attempt.is_reused
+            && self.verdict.is_none()
+            && self
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason != "false" && reason != "timeout")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Report {
     pub id: usize,
@@ -84,6 +100,28 @@ pub struct Round {
     /// An error that is neither unsupported nor a prover's, which ends the run as
     /// `proveObligations` rethrows it, once the obligations before it are reported.
     pub error: Option<ObligationError>,
+    /// What each prover concluded for each fingerprint: what the run started from, with what it
+    /// concluded since, which the fingerprints file saves once the run is done.
+    pub results: KnownResults,
+}
+
+/// What `proveObligations` takes of tlapm's command line: the results it starts from (the
+/// fingerprints file), whether an obligation may reuse a result (`--nofp` and `--nofpl` forget
+/// them), and whether it proves at all (`--noproving` only reuses).
+pub struct Settings {
+    pub known: KnownResults,
+    pub is_fingerprinted: Box<dyn Fn(&PrintedObligation) -> bool>,
+    pub is_proving: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            known: KnownResults::default(),
+            is_fingerprinted: Box::new(|_| true),
+            is_proving: true,
+        }
+    }
 }
 
 // Why a method left an obligation unproved: a prover decided so, or Prove It couldn't try it.
@@ -159,7 +197,8 @@ pub struct Cache {
 struct Run<'a> {
     answers: &'a dyn Fn(&str) -> Option<Answer>,
     cache: &'a mut Cache,
-    results: HashMap<String, HashMap<String, Attempt>>,
+    settings: &'a Settings,
+    results: KnownResults,
     // The CASE errors the SMT encoder has standardized so far.
     case_errors: usize,
     // Whether an earlier obligation waits, so that later reports wait for its.
@@ -259,10 +298,17 @@ impl Run<'_> {
                 })
             })
         };
-        let get_prior = |results: &HashMap<String, HashMap<String, Attempt>>, method: &Method| {
+        // Prep.already_processed, which forgets the fingerprint's results on each call under --nofp.
+        let is_fingerprinted = (self.settings.is_fingerprinted)(obligation);
+        let get_prior = |results: &mut KnownResults, method: &Method| {
+            if !is_fingerprinted {
+                results.results.remove(&fingerprint);
+            }
             results
+                .results
                 .get(&fingerprint)
-                .and_then(|attempts| attempts.get(&method.prover))
+                .and_then(|known| known.attempts.get(&method.prover))
+                .map(|known| &known.attempt)
                 .filter(|prior| prior.attempt.method.tactic == method.tactic)
                 .cloned()
         };
@@ -279,7 +325,7 @@ impl Run<'_> {
         if let Some(prior) = methods
             .provers
             .first()
-            .and_then(|method| get_prior(&self.results, method))
+            .and_then(|method| get_prior(&mut self.results, method))
             .filter(|prior| prior.attempt.is_proved)
         {
             let prover = prior.attempt.method.prover.clone();
@@ -302,11 +348,13 @@ impl Run<'_> {
         let is_numbered_for = |prover: &str| is_numbering && matches!(prover, "smt" | "z3");
         // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
         if matches!(obligation.kind, ObligationKind::Support) && is_trivial(&sequent)? {
-            self.results.entry(fingerprint).or_default();
+            self.results
+                .results
+                .get_or_insert_with(fingerprint, KnownAttempts::default);
             return Ok(Proving::Settled(base(Status::Trivial)));
         }
         for (index, method) in methods.provers.iter().enumerate() {
-            let prior = get_prior(&self.results, method);
+            let prior = get_prior(&mut self.results, method);
             if let Some(prior) = prior.clone().filter(|prior| prior.attempt.is_proved) {
                 reuse(&mut attempts, prior);
                 return Ok(proved(&method.prover, attempts));
@@ -322,6 +370,9 @@ impl Run<'_> {
                     ),
                     is_decided: true,
                 });
+                continue;
+            }
+            if !self.settings.is_proving {
                 continue;
             }
             // Prep.prove_with: the Trivial method proves anything.
@@ -467,9 +518,10 @@ impl Run<'_> {
             let is_proved = attempt.attempt.is_proved;
             attempts.push(attempt.clone());
             self.results
-                .entry(fingerprint.clone())
-                .or_default()
-                .insert(method.prover.clone(), attempt);
+                .results
+                .get_or_insert_with(fingerprint.clone(), KnownAttempts::default)
+                .attempts
+                .insert(method.prover.clone(), KnownAttempt::new(attempt));
             if is_proved {
                 return Ok(proved(&method.prover, attempts));
             }
@@ -497,10 +549,21 @@ pub fn prove_obligations(
     answers: &dyn Fn(&str) -> Option<Answer>,
     cache: &mut Cache,
 ) -> Result<Round> {
+    prove_obligations_with(obligations, answers, cache, &Settings::default())
+}
+
+/// `prove_obligations` as tlapm's command line sets it.
+pub fn prove_obligations_with(
+    obligations: &[PrintedObligation],
+    answers: &dyn Fn(&str) -> Option<Answer>,
+    cache: &mut Cache,
+    settings: &Settings,
+) -> Result<Round> {
     let mut run = Run {
         answers,
         cache,
-        results: HashMap::new(),
+        settings,
+        results: settings.known.clone(),
         case_errors: 0,
         is_waiting: false,
         is_count_open: false,
@@ -543,5 +606,6 @@ pub fn prove_obligations(
         }
     }
     round.requests = run.requests;
+    round.results = run.results;
     Ok(round)
 }

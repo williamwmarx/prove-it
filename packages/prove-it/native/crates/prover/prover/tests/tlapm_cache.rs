@@ -1,5 +1,6 @@
-//! The OCaml Marshal format and tlapm's fingerprints file against what the TypeScript writes, as
-//! `scripts/tlapm-cache-fixtures.ts` records it in `tests/fixtures`, and `tlapm-cache.test.ts`.
+//! The OCaml Marshal format and tlapm's fingerprints file against what the TypeScript wrote, as the
+//! deleted `scripts/tlapm-cache-fixtures.ts` recorded it in `tests/fixtures`, which nothing rewrites
+//! now, and `tlapm-cache.test.ts`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,10 +47,12 @@ fn read_values(path: &Path) -> (MarshalValue, MarshalValue) {
 
 fn resave(input: &Path, output: &Path) {
     let mut table = FingerprintTable::new();
-    load_fingerprints(&mut table, input, false, VERSION).expect("a fingerprints file");
-    KnownResults::new(&table)
-        .save(&mut table, output, VERSION, NOW)
+    let bytes = fs::read(input).expect("a fingerprints file");
+    load_fingerprints(&mut table, &bytes, false, VERSION).expect("a fingerprints file");
+    let saved = KnownResults::new(&table)
+        .save(&mut table, VERSION, NOW)
         .expect("saved");
+    fs::write(output, saved).expect("written");
 }
 
 #[test]
@@ -119,13 +122,8 @@ fn fingerprints_files_save_as_the_typescript_saves_them() {
 
 fn get_provers(is_safe: bool) -> Vec<String> {
     let mut table = FingerprintTable::new();
-    load_fingerprints(
-        &mut table,
-        &fixture("failures-tlapm.fingerprints"),
-        is_safe,
-        VERSION,
-    )
-    .expect("a fingerprints file");
+    let bytes = fs::read(fixture("failures-tlapm.fingerprints")).expect("a fingerprints file");
+    load_fingerprints(&mut table, &bytes, is_safe, VERSION).expect("a fingerprints file");
     let mut provers: Vec<String> = KnownResults::new(&table)
         .results
         .values()
