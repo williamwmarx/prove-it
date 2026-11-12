@@ -456,6 +456,17 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
+- an operator of a module of the user's named after a class TLC counts as its own
+  (`BuiltInModuleHelper`: TransitiveClosure, Randomization, AnySet, Bags, Json, TLCExt, ...),
+  which TLC replaces by the class's method whatever the module's text (`processModuleOverrides`).
+  The front end gives an imported module named like a standard module the builtins of the same
+  names and arities, and read any other such operator by its body, which printed the body's value
+  where TLC computes the method's (264 wrong runs in the upstream conformance suite, whose
+  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that names one now
+  declines (`an operator of a module of the user's that TLC's Java class replaces`). Five runs
+  matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
+  (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
+  ANY and RandomSubsetSet as builtins.
 - a configuration substitute `C <- D`, and an operator a TLCOverrides index replaces, where TLC
   computes the definition or the Java method again at each read: TLC holds C as D's definition, so
   it prints, draws and sets registers again wherever it reads C, and calls a `final` method without

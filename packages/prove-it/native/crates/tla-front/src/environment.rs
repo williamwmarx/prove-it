@@ -2061,6 +2061,142 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     Ok(environment)
 }
 
+/// The modules whose Java class TLC counts as its own (`BuiltInModuleHelper.isBuiltInModule`).
+const BUILT_IN_CLASSES: [&str; 15] = [
+    "AnySet",
+    "Bags",
+    "FiniteSets",
+    "Integers",
+    "Naturals",
+    "Sequences",
+    "Strings",
+    "TLC",
+    "TransitiveClosure",
+    "Randomization",
+    "Json",
+    "TLCExt",
+    "TLCGetSet",
+    "TLCEval",
+    "_Possible",
+];
+
+/// TLC loads its own Java class named after each module of the spec, wherever the module's text
+/// comes from, and runs each method of it in place of the operator of the module spelled the same,
+/// whatever its arity (`processModuleOverrides`): a module of the user's named TransitiveClosure
+/// computes Warshall in Java, not by its body. The front end gives an imported module named like a
+/// standard module the builtins of that module of the same names and arities
+/// (`get_linked_module`), and reads any other operator by its body, so a spec that names one the
+/// class replaces declines.
+fn reject_class_overrides(
+    modules: &[Rc<Module>],
+    root: &Module,
+    config: &ModelConfig,
+    version: TlcVersion,
+) -> Result<()> {
+    for module in modules {
+        if !BUILT_IN_CLASSES.contains(&&*module.name) {
+            continue;
+        }
+        let standard = (module.name != root.name && is_sany_standard_module(&module.name, version))
+            .then(|| {
+                get_standard_modules(version)
+                    .iter()
+                    .find(|standard| standard.name == &*module.name)
+            })
+            .flatten();
+        for definition in &module.definitions {
+            let is_replaced = crate::startup::get_overrides().any(|(class, operator, _)| {
+                class == &*module.name && operator == &*definition.name
+            });
+            let arity = match &definition.kind {
+                DefinitionKind::Operator { params, .. } => params.len(),
+                DefinitionKind::Function { .. } => 0,
+            };
+            let is_builtin = standard.is_some_and(|standard| {
+                standard
+                    .operators
+                    .iter()
+                    .any(|operator| operator.name == &*definition.name && operator.arity == arity)
+            });
+            if is_replaced && !is_builtin && is_named(&definition.name, modules, definition, config)
+            {
+                return Err(FrontError::NotYet(format!(
+                    "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
+                    module.name, definition.name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether any expression of the modules but the definition's own body, or the configuration,
+/// names the operator, by the last part of the name as written.
+fn is_named(
+    operator: &str,
+    modules: &[Rc<Module>],
+    definition: &Rc<Definition>,
+    config: &ModelConfig,
+) -> bool {
+    fn names(expression: &Expr, operator: &str) -> bool {
+        let written = match &expression.kind {
+            ExpressionKind::Identifier { name, .. } => Some(name),
+            ExpressionKind::Apply { operator, .. }
+            | ExpressionKind::OperatorReference { operator, .. } => Some(operator),
+            _ => None,
+        };
+        written.is_some_and(|written| written.rsplit('!').next() == Some(operator))
+            || expression
+                .children()
+                .iter()
+                .any(|child| names(child, operator))
+    }
+    let in_modules = modules.iter().any(|module| {
+        module
+            .definitions
+            .iter()
+            .filter(|other| !Rc::ptr_eq(other, definition))
+            .any(|other| names(&other.body, operator))
+            || module
+                .assumptions
+                .iter()
+                .any(|assumption| names(&assumption.expression, operator))
+            || module.instances.iter().any(|instance| {
+                instance
+                    .substitutions
+                    .iter()
+                    .any(|substitution| names(&substitution.expression, operator))
+            })
+    });
+    let named = [
+        &config.init,
+        &config.next,
+        &config.specification,
+        &config.symmetry,
+        &config.view,
+        &config.alias,
+        &config.periodic,
+        &config.rl_reward,
+    ];
+    let listed = [
+        &config.invariants,
+        &config.properties,
+        &config.constraints,
+        &config.action_constraints,
+        &config.postconditions,
+        &config.possible,
+    ];
+    in_modules
+        || named.iter().any(|name| name.as_deref() == Some(operator))
+        || listed
+            .iter()
+            .any(|names| names.iter().any(|name| name == operator))
+        || config
+            .substitutions
+            .iter()
+            .any(|substitution| substitution.target == operator)
+}
+
 /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
 /// the constant definitions (`processConstantDefns`), after it has rejected any other error of
 /// the configuration (`processSpec`).
@@ -2467,6 +2603,7 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .map(|linked| linked.module.clone())
             .collect(),
     };
+    reject_class_overrides(&environment.modules, &root, config, options.version)?;
     Ok(environment)
 }
 
