@@ -511,34 +511,3 @@ export const formatLexicalError = (
   after: string,
 ) =>
   `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
-
-// TLC 1.7.4's lexer, which JavaCC generated without UNICODE_INPUT, reads a character past U+00FF
-// outside a comment by its low byte, and stops at one whose low byte is below 0x80.
-export const getSany174LexicalError = (source: string) => {
-  const readToken = createSanyLexer(source);
-  for (
-    let token = readToken();
-    typeof token !== "string" && token.kind !== getKind("EOF");
-    token = readToken()
-  ) {
-    const index = token.image.split("").findIndex((character) => {
-      const code = character.charCodeAt(0);
-      return code > 0xff && (code & 0xff) < 0x80;
-    });
-    if (index === -1) continue;
-    const column = token.image
-      .slice(1, index + 1)
-      .split("")
-      .reduce(
-        (previous, character) => (character === "\t" ? getTabStop(previous) : previous + 1),
-        token.beginColumn,
-      );
-    return formatLexicalError(
-      token.beginLine,
-      column,
-      token.image[index],
-      token.image.slice(0, index),
-    );
-  }
-  return undefined;
-};

@@ -8,20 +8,10 @@ import {
   statSync,
 } from "node:fs";
 import { arch, availableParallelism, release, tmpdir, totalmem, type } from "node:os";
-import { delimiter } from "node:path";
 
 import type { NativeMachine } from "../engine/native";
 import { getEngineVariables } from "../engine/settings";
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
-import {
-  createMessagePrinter,
-  formatInnerMessage,
-  getCodedMessage,
-  MESSAGE_CODE,
-  MESSAGE_LEVEL,
-  type MessagePrinter,
-} from "../tlc/messages";
-import type { TlcVersion } from "../tlc/version";
+import { getErrorExitCode, TlaError } from "../errors";
 
 // What the CLI exits with where the native binary declines, as the binary does.
 export const NOT_NATIVE_EXIT_CODE = 1;
@@ -75,45 +65,15 @@ export const readFileKey = (key: string) => {
   }
 };
 
-// TLC prints an error it raises with that error's message code. tla-ts names the others, such as a
-// module SANY rejects.
-export const printError = (error: TlaError, printer: MessagePrinter) => {
-  if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
-    const coded = getCodedMessage(error.message);
-    const code = coded && !coded.isEvalException ? coded.code : MESSAGE_CODE.general;
-    return printer.print(
-      code,
-      MESSAGE_LEVEL.error,
-      formatInnerMessage(code, error.message, printer.isTool),
-    );
-  }
-  console.error(`${error.name}: ${error.message}`);
-};
-
-export const reportErrors = async (
-  run: () => number | Promise<number>,
-  printer = createMessagePrinter(false),
-) => {
+export const reportErrors = async (run: () => number | Promise<number>) => {
   try {
     return await run();
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    printError(error, printer);
+    console.error(`${error.name}: ${error.message}`);
     return getErrorExitCode(error);
   }
 };
-
-export interface JavaProperties {
-  libraries: string[];
-  // The system properties the launch sets with -Dname=value, which TLCGet("-Dname") reads.
-  properties: Map<string, string>;
-  classPath?: string;
-  temporaryDirectory?: string;
-  tlcVersion?: TlcVersion;
-}
-
-export const getToolsJar = (java: JavaProperties) =>
-  java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
 
 // The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
 const getZoneRule = () => {

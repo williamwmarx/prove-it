@@ -29,7 +29,7 @@ import {
 } from "../prover/tlapm/cache";
 import { getTlapmPaths } from "../prover/tlapm/tlapm";
 import { TLAPS_MODULE } from "../prover/tlaps-module";
-import { formatTlcDate } from "../tlc/messages";
+import { formatTlcDate } from "../tlc/date";
 import { type ParsedArgs, TLAPM_COMMAND, USAGE } from "./options";
 import { getInputPaths } from "./shared";
 

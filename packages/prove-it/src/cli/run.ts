@@ -1,82 +1,31 @@
-import { delimiter } from "node:path";
-
+import { checkAllSources, getNativeAddon, loadWasmEngine } from "../engine/native";
 import { EngineUnavailableError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
-import { getTlcVersion } from "../tlc/version";
-import { getToolsJar, type JavaProperties, reportErrors } from "./shared";
-import { checkNatively, checkSpecs } from "./tlc";
+import { getMachine, readFileKey, reportErrors } from "./shared";
 
-// Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
-// as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
-const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
+// What the CLI exits with where the native check declines, as the binary does.
+const NOT_NATIVE_EXIT_CODE = 1;
 
-const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";
-
-const TEMPORARY_DIRECTORY_PROPERTY = "-Djava.io.tmpdir=";
-
-const TLC_VERSION_PROPERTY = "-Dtla-ts.tlc=";
-
-const getJavaLaunch = (args: string[]) => {
-  const java: JavaProperties = { libraries: [], properties: new Map() };
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
-    if (arg.startsWith("-D")) {
-      const separator = arg.indexOf("=");
-      java.properties.set(
-        arg.slice(2, separator === -1 ? undefined : separator),
-        separator === -1 ? "" : arg.slice(separator + 1),
-      );
-    }
-    if (arg === "-cp" || arg === "-classpath" || arg === "--class-path") {
-      index++;
-      java.classPath = args[index];
-    } else if (arg === "-jar") {
-      java.classPath = args[index + 1];
-      return { mainClass: "tlc2.TLC", args: args.slice(index + 2), java };
-    } else if (arg.startsWith(TLA_LIBRARY_PROPERTY) || arg === "-DTLA-Library") {
-      // The JVM keeps a property's last value, which TLC splits as Java's String.split does,
-      // dropping the empty paths at the end (SimpleFilenameToStream.parsePaths).
-      const paths = arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter);
-      java.libraries =
-        paths.length === 1 ? paths : paths.slice(0, paths.findLastIndex((path) => path !== "") + 1);
-    } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
-      java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);
-    } else if (arg.startsWith(TLC_VERSION_PROPERTY)) {
-      java.tlcVersion = arg.slice(TLC_VERSION_PROPERTY.length) === "1.7.4" ? "1.7.4" : "master";
-    } else if (!arg.startsWith("-D") && !arg.startsWith("-X")) {
-      const isLaunch = index > 0 || JAVA_MAIN_CLASSES.includes(arg);
-      return isLaunch ? { mainClass: arg, args: args.slice(index + 1), java } : undefined;
-    }
+// The command line the native binary runs, run in-process: TLC's or XMLExporter's, the Java launch
+// included, its files read as the binary reads them.
+const runNatively = async (args: string[]) => {
+  await loadWasmEngine();
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new EngineUnavailableError(addon);
+  const result = checkAllSources(addon, args, getMachine(), readFileKey);
+  if (result.kind === "declined") {
+    console.error(`prove-it: not native yet: ${result.reason}`);
+    return NOT_NATIVE_EXIT_CODE;
   }
-  return undefined;
+  process.stdout.write(result.out);
+  process.stderr.write(result.err);
+  return result.exitCode;
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "tlapm") {
-    const tlapm = await import("./tlapm");
-    return reportErrors(() => tlapm.runTlapm(args.slice(1)));
-  }
-  const launch = getJavaLaunch(args);
-  if (launch === undefined) {
-    const java = { libraries: [], properties: new Map() };
-    return (await checkNatively(args)) ?? reportErrors(() => checkSpecs(args, args, java));
-  }
-  launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
-  if (launch.mainClass === "tlc2.TLC") {
-    return (
-      (await checkNatively(args)) ??
-      reportErrors(() => checkSpecs(args, launch.args, launch.java, true))
-    );
-  }
-  if (launch.mainClass === "tla2sany.xml.XMLExporter") {
-    const exporter = await import("./xml-exporter");
-    return reportErrors(() => exporter.exportXml(args));
-  }
-
-  console.error(
-    `Error: tla-ts runs the Java classes ${JAVA_MAIN_CLASSES.join(" and ")}, not ${launch.mainClass}.`,
-  );
-  return 1;
+  if (args[0] !== "tlapm") return runNatively(args);
+  const tlapm = await import("./tlapm");
+  return reportErrors(() => tlapm.runTlapm(args.slice(1)));
 };
 
 // Without a native engine, the CLI exits as TLC does on an internal error.

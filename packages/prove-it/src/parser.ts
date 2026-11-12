@@ -25,7 +25,6 @@ import type {
 import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, type Token, tokenize } from "./lexer";
 import { getSanyParseError } from "./sany/parse-error";
-import type { TlcVersion } from "./tlc/version";
 
 interface Precedence {
   low: number;
@@ -346,13 +345,12 @@ export const extractModule = (source: string, name: string) => {
 // The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some modules
 // that SANY does not. The sany mode leaves the checks that SANY makes after parsing to the SANY
 // generator.
-type ParseMode = "tlc" | "tlapm" | "sany";
+type ParseMode = "tlc" | "tlapm";
 
 const parse = (
   source: string,
   mode: ParseMode,
   sourceTokens = tokenize(source),
-  version?: TlcVersion,
 ): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
@@ -1202,15 +1200,15 @@ const parse = (
         case "DOMAIN": {
           advance();
           // tlapm gives these operators the precedence 8 of the TLA+ book. SANY gives SUBSET and
-          // UNION 8 and DOMAIN 9, and in TLC 1.7.4 gave all three 10-13.
-          const precedence = version === "1.7.4" ? 10 : token.text === "DOMAIN" ? 9 : 8;
+          // UNION 8 and DOMAIN 9.
+          const precedence = token.text === "DOMAIN" ? 9 : 8;
           return {
             kind: "Apply",
             operator: token.text,
             args: [
               isTlapm
                 ? parseExpression(9)
-                : parsePrefixOperand(token, precedence, version === "1.7.4" ? 13 : precedence),
+                : parsePrefixOperand(token, precedence, precedence),
             ],
             location,
           };
@@ -2108,18 +2106,11 @@ const parse = (
   const module = parseModuleBody();
   // SANY's lexer marks where each definition begins before its parser runs, which can split a
   // module's name from a keyword that the parser would take for one.
-  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source, version) : undefined;
+  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source) : undefined;
   if (sanyError !== undefined) throw new TlaSyntaxError(sanyError);
   return module;
 };
 
 export const parseModule = (source: string) => parse(source, "tlc");
 
-// Parses a module the caller has tokenized already, as SANY in a version of TLC does.
-export const parseModuleTokens = (source: string, tokens: Token[], version?: TlcVersion) =>
-  parse(source, "tlc", tokens, version);
-
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");
-
-export const parseSanyModule = (source: string, tokens?: Token[], version?: TlcVersion) =>
-  parse(source, "sany", tokens, version);
