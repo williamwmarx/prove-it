@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parseConfig, TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { checkParsed } from "../../src/parallel";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/possible");
 
@@ -21,9 +22,12 @@ const checkPossible = async (configName: string) => {
   return [result.status, result.violation?.message, result.violation?.counts];
 };
 
+const MODULE =
+  "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n";
+
 const checkModule = (body: string, config: string) =>
   checkParsed({
-    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n${body}\n====`,
+    source: `${MODULE}${body}\n====`,
     config: `INIT Init\nNEXT Next\n${config}`,
   });
 
@@ -86,34 +90,52 @@ describe("_POSSIBLE matches TLC", () => {
   });
 
   it("checks a POSTCONDITION after a violation without changing its status", async () => {
-    const result = await checkParsed({
+    const result = await checkOnEngine({
       source:
         '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nNever == TLCGet("level") < 0\nInv == x < 1\n====',
       config: "INIT Init\nNEXT Next\nPOSTCONDITION Never\nINVARIANT Inv",
     });
-    expect([result.status, result.violation?.postcondition]).toEqual([
+    expect([result.status, result.violations.map((violation) => violation.headline)]).toEqual([
       "invariant-violation",
-      {
-        name: "Never",
-        code: 2404,
-        message: "Postcondition Never at line 6, col 10 to line 6, col 28 of module M is false.",
-      },
+      [
+        "Invariant Inv is violated.",
+        "Postcondition Never at line 6, col 10 to line 6, col 28 of module M is false.",
+      ],
     ]);
   });
 
   // TLC checks it after the next-state relation fails, but not after an invariant or action
   // property does.
   it.each([
-    ["INVARIANT P", "P == x < 2 \\/ 1 \\div 0 = 0", undefined],
-    ["PROPERTY P", "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x", undefined],
-    ["INVARIANT P", "P == TRUE\nStep == IF x = 2 THEN 1 \\div 0 = 0 ELSE Next", "Never"],
-  ])("checks a POSTCONDITION after %s fails to evaluate as TLC does", async (kind, body, name) => {
-    const result = await checkParsed({
-      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1\nNever == TLCGet("level") < 0\n${body}\nSpec == Init /\\ [][${body.includes("Step") ? "Step" : "Next"}]_x\n====`,
-      config: `SPECIFICATION Spec\nPOSTCONDITION Never\n${kind}`,
-    });
-    expect([result.status, result.failure?.postcondition?.name]).toEqual(["error", name]);
-  });
+    ["INVARIANT P", "P == x < 2 \\/ 1 \\div 0 = 0", undefined, undefined],
+    [
+      "PROPERTY P",
+      "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x",
+      undefined,
+      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+    ],
+    [
+      "INVARIANT P",
+      "P == TRUE\nStep == IF x = 2 THEN 1 \\div 0 = 0 ELSE Next",
+      "Postcondition Never at line 6, col 10 to line 6, col 28 of module M is false.",
+      "the engine stopped: division by zero: a failure with a POSTCONDITION or -dumpTrace",
+    ],
+  ])(
+    "checks a POSTCONDITION after %s fails to evaluate as TLC does",
+    async (kind, body, postcondition, declinedFor) => {
+      const result = await checkOnEngine(
+        {
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1\nNever == TLCGet("level") < 0\n${body}\nSpec == Init /\\ [][${body.includes("Step") ? "Step" : "Next"}]_x\n====`,
+          config: `SPECIFICATION Spec\nPOSTCONDITION Never\n${kind}`,
+        },
+        declinedFor,
+      );
+      expect([result.status, result.violations[1]?.headline]).toEqual<(string | undefined)[]>([
+        "error",
+        postcondition,
+      ]);
+    },
+  );
 
   it("rejects a constant POSTCONDITION like TLC and skips it after a violation", async () => {
     const failed = await checkModule("Never == FALSE", "POSTCONDITION Never");
@@ -121,14 +143,11 @@ describe("_POSSIBLE matches TLC", () => {
       "error",
       `${UNEXPECTED_EXCEPTION}The post condition Never cannot be a constant.`,
     ]);
-    const violated = await checkModule(
-      "Never == FALSE\nInv == x < 2",
-      "POSTCONDITION Never\nINVARIANT Inv",
-    );
-    expect([violated.status, violated.violation?.postcondition]).toEqual([
-      "invariant-violation",
-      undefined,
-    ]);
+    const violated = await checkOnEngine({
+      source: `${MODULE}Never == FALSE\nInv == x < 2\n====`,
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Never\nINVARIANT Inv",
+    });
+    expect([violated.status, violated.violations.length]).toEqual(["invariant-violation", 1]);
   });
 
   it("rejects predicates TLC cannot track", async () => {
