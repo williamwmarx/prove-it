@@ -393,6 +393,66 @@ describe("check's result", () => {
     expect(await run(check)).toEqual(reference);
   });
 
+  // TLC checks the temporal properties part way through the search, on a schedule of the time,
+  // which PROVE_IT_TEST_LIVE_CHECK_AT sets to a count of states for both checks.
+  it("reports a check of the temporal properties part way through the search", async () => {
+    const source =
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x' = (x + 1) % 30 /\\ UNCHANGED y\n        \\/ y' = (y + 1) % 30 /\\ UNCHANGED x\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nPlain == []<>(x >= 0)\n====";
+    const config = "SPECIFICATION Spec\nPROPERTY Plain\nCHECK_DEADLOCK FALSE";
+    const run = async (checker: typeof check) => {
+      const reported: string[] = [];
+      await checker({
+        source,
+        config,
+        onProgress: (progress) => {
+          if (progress.kind === "liveness-started") reported.push(`${progress.isComplete}`);
+          else if (progress.kind !== "progress") reported.push(progress.kind);
+        },
+      });
+      return reported;
+    };
+    process.env.PROVE_IT_TEST_LIVE_CHECK_AT = "10";
+    try {
+      const reference = await run(checkWithInterpreter);
+      expect(reference).toContain("false");
+      expect(await run(check)).toEqual(reference);
+    } finally {
+      delete process.env.PROVE_IT_TEST_LIVE_CHECK_AT;
+    }
+  });
+
+  // TLC reports the search's progress every minute, and the native check reports one event for
+  // each report its search made, with the counts it printed, once the check ends.
+  // PROVE_IT_TEST_PROGRESS_AT has the native search report it once, at the level's state it
+  // names, which the TypeScript check doesn't read.
+  it("reports the search's progress where the native search reports it", async () => {
+    const settings = {
+      PROVE_IT_TEST_PROGRESS_AT: "6000",
+      PROVE_IT_WORKERS: "4",
+      PROVE_IT_SHARED_LEVEL: "1",
+    };
+    Object.assign(process.env, settings);
+    try {
+      const progress: CheckProgress[] = [];
+      const checked = await checkNatively({
+        source:
+          "---- MODULE Wide ----\nEXTENDS Integers\nVARIABLE n\nInit == n = 0\nNext == \\/ n = 0 /\\ n' \\in 1..4000\n        \\/ n \\in 1..4000 /\\ n' = n + 4000\nSpec == Init /\\ [][Next]_n\n====",
+        config: "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE",
+        workers: 4,
+        onProgress: (event) => {
+          if (event.kind === "progress") progress.push(event);
+        },
+      });
+      expect(checked.declined).toBeUndefined();
+      expect(progress).toHaveLength(1);
+      const statistics = progress[0].kind === "progress" ? progress[0].statistics : undefined;
+      expect(statistics?.generatedStates).toBeGreaterThan(4001);
+      expect(statistics?.generatedStates).toBeLessThanOrEqual(8001);
+    } finally {
+      Object.keys(settings).forEach((name) => delete process.env[name]);
+    }
+  });
+
   it("reports each violation -continue goes on past", async () => {
     const reported: string[] = [];
     const checked = await checkNatively({
