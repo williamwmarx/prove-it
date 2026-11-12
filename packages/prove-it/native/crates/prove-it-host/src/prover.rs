@@ -35,7 +35,15 @@ pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
         return Err("decide takes a prover, a text, a time limit and a step limit".into());
     };
     let prover = get_text(prover, "the prover")?;
-    let text = get_text(text, "the text")?;
+    let HostValue::Text(units) = text else {
+        return Err("the text must be a string".into());
+    };
+    // A lone surrogate has no UTF-8, and replacing it with U+FFFD would make two different strings
+    // the same name, so that their equality would be proved.
+    let Ok(text) = String::from_utf16(units) else {
+        let reason = "the text holds a lone surrogate".to_owned();
+        return Ok(get_result(Err(DecideError::Declined(reason))));
+    };
     let HostValue::Number(time_limit) = *time_limit else {
         return Err("the time limit must be a number of milliseconds".into());
     };
@@ -186,6 +194,26 @@ mod tests {
         for _ in 0..3 {
             let result = decide(&arguments, None).expect("a result");
             assert_eq!(get_kind(&result), HostValue::text("decided"));
+        }
+    }
+
+    // Each string is a lone surrogate, which U+FFFD would make the same name.
+    #[test]
+    fn declines_a_text_that_holds_a_lone_surrogate() {
+        let mut text: Vec<u16> = "(assert (= smt__TLA__StrLit_".encode_utf16().collect();
+        text.push(0xD800);
+        text.extend(" smt__TLA__StrLit_".encode_utf16());
+        text.push(0xDC00);
+        text.extend("))".encode_utf16());
+        for prover in ["smt", "z3", "zenon", "isabelle", "ls4"] {
+            let arguments = [
+                HostValue::text(prover),
+                HostValue::Text(text.clone()),
+                HostValue::Number(f64::INFINITY),
+                HostValue::Undefined,
+            ];
+            let result = decide(&arguments, None).expect("a result");
+            assert_eq!(get_kind(&result), HostValue::text("declined"));
         }
     }
 
