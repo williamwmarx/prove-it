@@ -1443,9 +1443,15 @@ pub fn check_search_config(
                 "The symmetry function {name} specified in the configuration file\nis not defined in the specification."
             )));
         }
-        if !definition.is_some_and(|definition| {
-            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+        // TLC evaluates the body of a definition with parameters without them.
+        if definition.is_some_and(|definition| {
+            !matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
         }) {
+            return Err(FrontError::NotYet(
+                "a SYMMETRY definition with parameters".to_owned(),
+            ));
+        }
+        if definition.is_none() {
             return Err(FrontError::Evaluation(format!(
                 "{}The symmetry function {name} must specify a set of permutations.",
                 crate::errors::UNEXPECTED_EXCEPTION

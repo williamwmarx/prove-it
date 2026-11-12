@@ -5212,7 +5212,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\nS(a) == a\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nSYMMETRY S\n"
     },
-    "declined": "the engine stopped before it searched (exit 255)"
+    "declined": "a SYMMETRY definition with parameters"
   },
   {
     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S == {1}",

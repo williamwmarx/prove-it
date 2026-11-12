@@ -424,6 +424,10 @@ decline, none differ). What still declines:
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a SYMMETRY definition with parameters, whose body TLC evaluates without them
+  (`Tool.getSymmetryPerms`), failing at the first parameter it reads or going on with the value.
+  The front end reported that it isn't a set of permutations, which TLC never prints for one; it
+  declines it (`a SYMMETRY definition with parameters`).
 - a function constructor that binds a tuple pattern over a set of functions TLC built as
   functions, applied at once (`[<<a, b>> \in {[k \in 1..2 |-> k]} |-> a][<<1, 2>>]`). TLC applies
   the function without building it, so it never binds the pattern; the engine builds it and
