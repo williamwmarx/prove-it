@@ -176,11 +176,21 @@ set operation's operand that TLC never tests for an element. A definition the se
 that the evaluator computes is such a disagreement, and declines: TLC printed or computed it as
 the evaluator does, which the search didn't.
 
-No startup failure is swallowed unconfirmed: as the search reports its failing definitions, the
-native checker runs the trace evaluator's startup at once (`Rebuilder::confirm_startup`), whether
-or not anything reads them, as in `Test == PrintT({} \cap 0)` that nothing names, which TLC prints
-as `{}` where the search fails on `0`. The run declines where the evaluator computes such a
-definition, or fails on it only after an effect.
+No startup failure is swallowed unconfirmed. The search's startup gives what it found only once
+the reporter confirms each failure it swallowed (`run_startup` returns an `Unconfirmed`, which only
+`confirm` turns into the startup's results), so every outcome passes the confirmation before the
+engine reports anything: the startup's prints, a configuration error, an exception, an assumption,
+the search. The native checker's reporter runs the trace evaluator's startup
+(`Rebuilder::confirm_startup`) whether or not anything reads the definitions, as in
+`Test == PrintT({} \cap 0)` that nothing names, which TLC prints as `{}` where the search fails on
+`0`; it declines where the evaluator computes such a definition, or fails on it only after an
+effect. Any other reporter declines a swallowed failure.
+
+TLC binds a variable that `x = D` assigns in the initial predicate or a step, D a definition it
+failed to compute as it started, and reports a failure of a value it builds there as a state it
+fails to fingerprint, but one in a Java method such as PrintT's as the method's. The trace
+evaluator declines the former ("a variable assigned a startup definition that failed outside a
+Java method").
 
 At a use, the trace evaluator holds the definition to failing again as TLC does
 (`evaluate_failed_startup`). Several cases decline instead:

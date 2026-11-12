@@ -271,9 +271,19 @@ pub trait Reporter {
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
-    /// Whether each startup definition failed as TLC started, where the engine evaluates it again
-    /// at each use, before the assumptions are checked.
-    fn startup_failed(&mut self, _failed: &[bool]) {}
+    /// Confirms that TLC fails as it starts on each startup definition the engine found failing
+    /// before any effect, which it swallows as TLC does and evaluates again at each use, whether or
+    /// not anything reads it: the engine may fail where TLC doesn't. The engine asks before it
+    /// reports anything of the startup, whatever follows; `Err` declines the model. A reporter that
+    /// can't confirm a failure declines it.
+    fn confirm_startup(&mut self, failed: &[bool]) -> Result<(), String> {
+        if failed.contains(&true) {
+            return Err(
+                "a startup definition that fails, which nothing confirms TLC fails on".into(),
+            );
+        }
+        Ok(())
+    }
     /// Checks the assumption at this position of the IR's assumptions, which the engine can't
     /// evaluate (AssertError, which compares TLC's message for a failure), after those before it
     /// held, and reports what it prints. `Err` declines the model.
@@ -2902,6 +2912,27 @@ struct Started {
     failed_startup: Vec<bool>,
 }
 
+// The startup as the engine ran it, which gives what it found only once the reporter has confirmed
+// each failure it swallowed (`Reporter::confirm_startup`), so no outcome of the startup is reported
+// before that.
+mod unconfirmed {
+    use super::{Reporter, Started};
+
+    pub(super) struct Unconfirmed(Started);
+
+    impl Unconfirmed {
+        pub(super) fn new(started: Started) -> Unconfirmed {
+            Unconfirmed(started)
+        }
+
+        pub(super) fn confirm(self, reporter: &mut dyn Reporter) -> Result<Started, String> {
+            reporter.confirm_startup(&self.0.failed_startup)?;
+            Ok(self.0)
+        }
+    }
+}
+use unconfirmed::Unconfirmed;
+
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
 // until one is false. What they print is kept until all of it is evaluated, so a model the engine
 // can't take prints nothing.
@@ -2913,7 +2944,7 @@ fn run_startup(
     machine: &mut Machine<'_>,
     startup: &Startup,
     settings: &Settings,
-) -> Outcome<Started> {
+) -> Outcome<Unconfirmed> {
     let is_native = settings.is_violation_reported;
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
@@ -2996,7 +3027,7 @@ fn run_startup(
                 format!("The value of {name} is equal to {}", format(machine)?)
             }
         };
-        return Ok(Started {
+        return Ok(Unconfirmed::new(Started {
             printed: take(machine),
             small_sets: Vec::new(),
             holding,
@@ -3008,13 +3039,13 @@ fn run_startup(
             exception: None,
             delegated: None,
             failed_startup,
-        });
+        }));
     }
     if let Some(symmetry) = &startup.symmetry
         && let Some(failure) = symmetry.failure
     {
         (symmetry.definition)(machine)?;
-        return Ok(Started {
+        return Ok(Unconfirmed::new(Started {
             printed: take(machine),
             small_sets: Vec::new(),
             holding,
@@ -3026,7 +3057,7 @@ fn run_startup(
             exception: Some(failure),
             delegated: None,
             failed_startup,
-        });
+        }));
     }
     let (group, small_sets) = match &startup.symmetry {
         Some(symmetry) => symmetry_group(machine, symmetry)?,
@@ -3034,7 +3065,7 @@ fn run_startup(
     };
     let printed = take(machine);
     let assumed = check_assumptions(machine, startup, 0, is_native)?;
-    Ok(Started {
+    Ok(Unconfirmed::new(Started {
         printed,
         small_sets,
         holding,
@@ -3046,7 +3077,7 @@ fn run_startup(
         exception: None,
         delegated: assumed.delegated,
         failed_startup,
-    })
+    }))
 }
 
 struct Assumed {
@@ -3207,8 +3238,13 @@ pub(crate) fn start(
         machine.set_slot(LEVEL_SLOT, zero);
         run_startup(machine, &context.startup, settings)
     });
+    // Nothing of the startup is reported before the reporter confirms each failure it swallowed.
+    let startup = match startup {
+        Err(Bail(reason)) => Err(reason.to_owned()),
+        Ok(unconfirmed) => unconfirmed.confirm(reporter),
+    };
     let group = match startup {
-        Err(Bail(reason)) => return Err(Box::new(SearchOutcome::Declined(reason.into()))),
+        Err(reason) => return Err(Box::new(SearchOutcome::Declined(reason))),
         Ok(Started {
             failed: Some((_, Bail(reason))),
             ..
@@ -3234,7 +3270,6 @@ pub(crate) fn start(
             if !started.small_sets.is_empty() {
                 reporter.symmetry_sets_too_small(&started.small_sets);
             }
-            reporter.startup_failed(&started.failed_startup);
             reporter.startup_done();
             report(reporter, &started.assumed);
             let mut assumed = Assumed {
