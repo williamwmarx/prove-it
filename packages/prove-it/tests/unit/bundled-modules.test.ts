@@ -17,7 +17,8 @@ describe("bundled modules match TLC's sources", () => {
       "line 17, col 13 to line 17, col 65 of module Reals",
     );
     // TLC reports the \EE inside RTBound as a temporal formula it can't evaluate here, where the
-    // TypeScript check, which the engine leaves this to, reports an unbounded quantifier.
+    // TypeScript check, which the engine leaves this to, reports an unbounded quantifier
+    // (fallback.md, "Known wrong outputs").
     expect((await checkParsed(getOptions("RTBound(x' = x, x, 0, 1)"))).failure?.message).toContain(
       "at line 20, column 6",
     );

@@ -30,6 +30,8 @@ describe("Json matches TLC", () => {
     expect(written.get("target/json/test.json")).toBe('{"a":3,"b":{"c":[4,5,6]}}');
   });
 
+  // Which CommunityModules Json the fixture follows is open: the reference jar's JsonDeserialize
+  // wraps numbers to 32 bits where the fixture expects an error.
   it("converts and reads values like TLC's Java Json module", async () => {
     const written = new Map<string, string>();
     const result = await check(getOptions("JsonValues", written));
