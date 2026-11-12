@@ -700,12 +700,14 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
   `TLC.class`, which TLC tries to load;
 - under `PROVE_IT_ENGINE=0` alone: options TLC doesn't know, which it rejects.
 
-On Windows, the binary and the CLI find a spec's files by the host's rules (`host_path.rs`), but
-print the paths they found as the CLI built them, with `/` between the parts, where TLC prints
-Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as `C:Spec`, and
-`File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
-path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
-run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
+On Windows, the binary and the CLI find a spec's files by the host's rules (`host_path.rs`), and
+print the forms of a path whose rendering TLC's source settles: SANY's `Parsing file` of a module
+found by its real path is `Path.toRealPath`, which Java takes from `GetFinalPathNameByHandle` as
+std's `canonicalize` does, without the verbatim `\\?\` prefix (`WindowsLinkSupport.getFinalPath`),
+with `\` between the parts. The other forms decline (see "Declines to win back" below). Before
+PR 364 the binary printed the verbatim prefix and a `(file:…)` URL with `\` escaped as `%5C` for
+every module, as it compared the path it was given with the verbatim real path, and printed the
+trace exploration spec's path with `/`.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
@@ -966,6 +968,26 @@ progress events for the library's `onProgress` (see "The public API afterwards")
 #### Declines to win back
 
 Checks the binary answered and now declines, because the answer matched TLC only by chance.
+
+- **Paths on Windows** (PR 364): where TLC on Windows would print a path whose rendering no run
+  of TLC on Windows has recorded, the binary declines. They were printed with `/` and could only
+  have matched TLC by chance. Winning each back takes recording TLC on Windows.
+  - **The trace exploration spec**, whose path TLC prints and whose trace file it names in the spec
+    with Java's `Path.toString` (`the path TLC prints on Windows of the trace exploration spec`): a
+    violation of more than one state in TLC's default mode declines on Windows unless `-noTE` is
+    given. The library's `check` writes no such spec unless `isTraceRecorded` asks for one, so it
+    answers violations on Windows as elsewhere (`tests/unit/native-check.test.ts`).
+  - A module found by a path other than its real one, whose `(file:…)` URL Java writes with
+    `File.toURI` (`the URL TLC prints on Windows of a module whose path isn't its real one`), as a
+    working directory that is a short (8.3) path or reached through a link makes of every module.
+  - A module in the root module's file (`the path TLC prints on Windows of a module in the root
+    module's file`), and a standard module from a jar on the class path (`the URL TLC prints on
+    Windows of a standard module in its jar`).
+  - A Java override's class (`the URL TLC prints on Windows of a Java class`), and TLC 1.7.4's
+    paths.
+
+  `get_windows_expectation` in tests/common/mod.rs gives each path test's Windows expectation from
+  the Unix recording.
 
 - **The library where the check stops before it searches without a typed error** (PR 7): a
   decimal or big literal the front end rejects, and a big number in the configuration, which it
@@ -1380,6 +1402,10 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 ### Declines to win back
 
 Runs the deleted TypeScript CLI printed as tlapm does only by chance:
+- A module named by an absolute Windows path, such as `C:\specs\M.tla`, which the port reads by
+  tlapm's Unix rules and tlapm, which has no Windows build, never read (`a module named by an
+  absolute Windows path, which tlapm reads only on Unix`). Winning it back takes a tlapm that runs
+  on Windows to record.
 - Toolbox mode with more than one thread, where two decisions are in flight together: the
   TypeScript printed each obligation's messages in order, which tlapm does only where the results
   happen to come back in that order.

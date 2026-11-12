@@ -39,7 +39,7 @@ fn get_report_with_files(
                     .find(|file| file.0 == name)
                     .map(|file| file.1.to_owned())
             },
-            describe_file: &|name, origin| format!("{name} {origin:?}"),
+            describe_file: &|name, origin| Ok(format!("{name} {origin:?}")),
             root_extendees: &[],
             is_xml_export: false,
         },
@@ -79,8 +79,8 @@ fn reports_every_recursive_shape_as_sany_does() {
                     std::fs::read_to_string(directory.join(format!("{module}.tla"))).ok()
                 },
                 describe_file: &|module, origin| match origin {
-                    ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
-                    ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
+                    ModuleOrigin::Standard => Ok(format!("/tmp/tlc-_/{module}.tla")),
+                    ModuleOrigin::File | ModuleOrigin::RootFile => Ok(format!("{module}.tla")),
                 },
                 root_extendees: &[],
                 is_xml_export: false,
@@ -208,8 +208,8 @@ fn check_recorded_cases_here(cases: &str, recordings: &BTreeMap<String, String>)
                         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 },
                 describe_file: &|module, origin| match origin {
-                    ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
-                    ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
+                    ModuleOrigin::Standard => Ok(format!("/tmp/tlc-_/{module}.tla")),
+                    ModuleOrigin::File | ModuleOrigin::RootFile => Ok(format!("{module}.tla")),
                 },
                 root_extendees,
                 is_xml_export: false,

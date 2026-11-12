@@ -603,6 +603,10 @@ fn get_override_messages(
                 && path.chars().all(|character| {
                     character.is_ascii_alphanumeric() || "/._-".contains(character)
                 });
+            let is_windows = path.contains('\\') || path.as_bytes().get(1) == Some(&b':');
+            if is_windows {
+                return Err("the URL TLC prints on Windows of a Java class".to_owned());
+            }
             if !is_plain {
                 return Err("the URL of a Java class whose path a URL escapes".to_owned());
             }

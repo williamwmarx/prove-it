@@ -37,7 +37,7 @@ pub fn export_xml(
             version: TlcVersion::Master,
             file_name: Some(file_name),
             load_module,
-            describe_file: &|_, _| String::new(),
+            describe_file: &|_, _| Ok(String::new()),
             root_extendees: &[],
             is_xml_export: true,
         },

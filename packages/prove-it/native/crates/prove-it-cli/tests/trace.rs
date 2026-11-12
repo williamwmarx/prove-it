@@ -1,12 +1,12 @@
 //! The binary as TLC runs by default, recording the trace for its trace exploration spec,
 //! against TLC built at d8fb231.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
+use common::stdout;
 
 // Writes the spec and its configuration to a directory of their own and checks them with TLC's
 // command line and the arguments, without -noTE.
@@ -47,7 +47,7 @@ fn checks_as_tlc_does_by_default_where_it_records_the_trace() {
         .lines()
         .filter_map(|line| line.strip_prefix("Parsing file "))
         .map(|path| {
-            let file = path.rsplit('/').next().unwrap_or(path);
+            let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
             file.strip_suffix(".tla").unwrap_or(file)
         })
         .collect();
@@ -105,6 +105,11 @@ fn writes_the_trace_file_of_a_counterexample() {
         "INIT Init\nNEXT Next\nINVARIANT Inv\n",
         &[],
     );
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_TRACE_SPEC, "counterexample");
+        std::fs::remove_dir_all(directory).expect("removed");
+        return;
+    }
     let text = format!(
         "{}{}",
         stdout(&output),
@@ -158,6 +163,11 @@ fn writes_the_spec_after_an_error_after_a_behavior_where_tlc_records_the_trace()
         ),
     ] {
         let (output, directory) = run_spec(name, spec, config, &[]);
+        if cfg!(windows) {
+            common::assert_declined(&output, common::DECLINED_TRACE_SPEC, name);
+            std::fs::remove_dir_all(directory).expect("removed");
+            continue;
+        }
         let text = stdout(&output);
         assert_eq!(output.status.code(), Some(exit), "{name}: {text}");
         let line = text.lines().last().unwrap_or_default();

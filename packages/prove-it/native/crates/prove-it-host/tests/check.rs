@@ -124,8 +124,12 @@ fn checks_a_spec_once_it_has_the_files_it_names() {
     assert_eq!(text(&get(&result, "kind")), "checked", "{result:?}");
     let out = text(&get(&result, "out"));
     assert_eq!(get(&result, "exitCode"), HostValue::Number(0.0), "{out}");
-    assert!(out.contains("Parsing file /specs/Counter.tla\n"), "{out}");
-    assert!(out.contains("Parsing file /specs/Other.tla\n"), "{out}");
+    // A Windows build names the host's paths by Windows's rules, with its separator.
+    let separator = if cfg!(windows) { "\\" } else { "/" };
+    for module in ["Counter", "Other"] {
+        let line = format!("Parsing file {separator}specs{separator}{module}.tla\n");
+        assert!(out.contains(&line), "{out}");
+    }
     assert!(
         out.contains("[pid: 7] (Linux 6.0 x64, prove-it native 64bit"),
         "{out}"

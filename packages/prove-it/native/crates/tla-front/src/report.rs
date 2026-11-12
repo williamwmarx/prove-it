@@ -93,7 +93,8 @@ pub struct ReportOptions<'a> {
     /// A module's text from a file of its own, beside the spec or in the library.
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
-    pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
+    /// Its error is why the binary can't name the file as TLC does.
+    pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> std::result::Result<String, String>,
     /// The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY
     /// loads after the ones the root module extends: `-dumpTrace`'s, then `_TLCTrace` where TLC
     /// records the trace for its trace exploration spec (`ModelOptions::root_extendees`).
@@ -285,10 +286,8 @@ impl Loader<'_> {
         // SANY's parser takes []ASSUME and []PROVE, which the front end's reads unboxed.
         let parsed = get_unboxed_source(&text)
             .and_then(|unboxed| parse_sany_module(&unboxed, None, self.options.version));
-        let parsing_line = format!(
-            "Parsing file {}\n",
-            (self.options.describe_file)(name, origin)
-        );
+        let file = (self.options.describe_file)(name, origin).map_err(|reason| not_yet(&reason))?;
+        let parsing_line = format!("Parsing file {file}\n");
         // `parseSource` in the generator: TLC 1.7.4's lexer first, then SANY's parser, whose
         // report replaces the front end's own where SANY's parser would accept the module.
         let lexical_error = (self.options.version == TlcVersion::V1_7_4)
