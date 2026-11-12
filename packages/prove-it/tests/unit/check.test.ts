@@ -3679,6 +3679,8 @@ describe("name resolution matches SANY", () => {
     "One(a) == a\nf == One(UNCHANGED) /\\ One(') /\\ One(^+)",
     "K(a) == LET C(b) == a IN C(1)\nHigh(Op(_)) == Op(1)\nM(a) == INSTANCE Naturals\nA == High(K(1)!C) /\\ U1\nB == High(M(1)!+)",
     "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
+    // SANY's errors of modules nested in nested modules, which the CLI prints as TLC does.
+    "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
   ])("declines %j, which SANY rejects", async (source) => {
     await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
   });
