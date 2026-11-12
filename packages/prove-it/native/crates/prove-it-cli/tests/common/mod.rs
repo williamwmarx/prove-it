@@ -97,3 +97,22 @@ pub fn link(target: &Path, link: &Path) {
         );
     }
 }
+
+/// Sets when the directory was last modified.
+pub fn set_modified(directory: &Path, time: std::time::SystemTime) {
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(unix)]
+    options.read(true);
+    // Windows opens a directory only with FILE_FLAG_BACKUP_SEMANTICS, and sets its times only with
+    // FILE_WRITE_ATTRIBUTES.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.access_mode(0x100).custom_flags(0x0200_0000);
+    }
+    options
+        .open(directory)
+        .expect("the directory")
+        .set_modified(time)
+        .expect("its time");
+}
