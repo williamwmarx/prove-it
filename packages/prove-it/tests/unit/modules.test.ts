@@ -30,9 +30,6 @@ const getSource = (body: string, modules: Record<string, string> = {}) => ({
 const checkSource = (body: string, modules: Record<string, string> = {}) =>
   checkOnEngine(getSource(body, modules));
 
-// The reason the native check declines a spec SANY rejects, whose error it doesn't pass on.
-const SANY_DECLINED = "the engine stopped before it searched (exit 150)";
-
 describe("nested and trailing modules match TLC", () => {
   it("instantiates a nested module that uses the enclosing module's definitions", async () => {
     const result = await checkNested("Nested.cfg");
@@ -199,15 +196,12 @@ describe("nested module scoping matches SANY", () => {
       "a nested module instantiated only inside LET",
       "---- MODULE LetInner ----\nfoo == 42\n====\nop == LET Inst == INSTANCE LetInner IN Inst!foo",
     ],
+    [
+      "an instance of a nested module before its definition",
+      "I == INSTANCE Inner\n  ---- MODULE Inner ----\n  A == 1\n  ====",
+    ],
   ])("rejects %s", async (_, body) => {
     await expect(checkSource(body)).rejects.toThrow(TlaSyntaxError);
-  });
-
-  it("declines an instance of a nested module before its definition", async () => {
-    await expectDeclined(
-      getSource("I == INSTANCE Inner\n  ---- MODULE Inner ----\n  A == 1\n  ===="),
-      SANY_DECLINED,
-    );
   });
 
   it("rejects a nested module named after a module loaded before it", async () => {
@@ -226,20 +220,40 @@ describe("nested module scoping matches SANY", () => {
     );
   });
 
-  it("declines modules that extend each other", async () => {
-    await expectDeclined(
-      getSource("EXTENDS CycleA", {
+  it("rejects modules that extend each other like SANY", async () => {
+    await expect(
+      checkSource("EXTENDS CycleA", {
         CycleA: "---- MODULE CycleA ----\nEXTENDS CycleB\n====",
         CycleB: "---- MODULE CycleB ----\nEXTENDS CycleA\n====",
       }),
-      SANY_DECLINED,
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "Circular dependency among .tla files; dependency cycle is:\n\n  CycleA.tla --> CycleB.tla --> CycleA.tla",
+          },
+        ],
+        true,
+      ),
     );
   });
 
-  it("declines an extended file that holds a module of another name", async () => {
-    await expectDeclined(
-      getSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
-      SANY_DECLINED,
+  it("rejects an extended file that holds a module of another name", async () => {
+    await expect(
+      checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+          },
+        ],
+        true,
+      ),
     );
   });
 

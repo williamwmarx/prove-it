@@ -1797,7 +1797,21 @@
       "isContinued": false,
       "isWarningEnabled": true
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module Inner imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module Inner imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "modules.test.ts:225",
@@ -1915,7 +1929,21 @@
         "CycleB": "---- MODULE CycleB ----\nEXTENDS CycleA\n===="
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nCircular dependency among .tla files; dependency cycle is:\n\n  CycleA.tla --> CycleB.tla --> CycleA.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "Circular dependency among .tla files; dependency cycle is:\n\n  CycleA.tla --> CycleB.tla --> CycleA.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "modules.test.ts:260",
@@ -1929,7 +1957,21 @@
         "test": "---- MODULE Foo ----\nA == 1\n===="
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nFile name 'test' does not match the name 'Foo' of the top level module it contains.",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "File name 'test' does not match the name 'Foo' of the top level module it contains."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "modules.test.ts:279",
@@ -2081,7 +2123,22 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == (1 + \n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nEncountered \"====\" at line 6, column 1 and token \"+\" \n\nResidual stack trace follows:\nExtendableExpr starting at line 6, column 1.\nExtendableExpr starting at line 5, column 9.\nExpression starting at line 5, column 9.\nExtendableExpr starting at line 5, column 8.\nExpression starting at line 5, column 8.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "parse error in module",
@@ -2092,7 +2149,22 @@
         "A": "---- MODULE A ----\nQ == ((\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCould not parse module A from file A.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Could not parse module A from file A.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nEncountered \"====\" at line 3, column 1 and token \"(\" \n\nResidual stack trace follows:\nExtendableExpr starting at line 3, column 1.\nExpression starting at line 3, column 1.\nExtendableExpr starting at line 2, column 7.\nExpression starting at line 2, column 7.\nExtendableExpr starting at line 2, column 6.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "missing module",
@@ -2100,7 +2172,21 @@
       "source": "---- MODULE M ----\nEXTENDS A\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module A imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module A imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "missing deep module",
@@ -2111,7 +2197,21 @@
         "A": "---- MODULE A ----\nEXTENDS B\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCannot find source file for module B imported in module A.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Cannot find source file for module B imported in module A."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "file name mismatch",
@@ -2122,7 +2222,21 @@
         "A": "---- MODULE Z ----\nQ == 1\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nFile name 'A' does not match the name 'Z' of the top level module it contains.",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "File name 'A' does not match the name 'Z' of the top level module it contains."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "warning + error",
@@ -2160,7 +2274,22 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBad == [](x' = x)'\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nPrecedence conflict between ops [] in block line 5, col 18 to line 5, col 18 of module M and '.\n\nResidual stack trace follows:\nExtendableExpr starting at line 5, column 10.\nExpression starting at line 5, column 8.\nDefinition starting at line 5, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "level error2",
@@ -2299,7 +2428,21 @@
         "A": "---- MODULE A ----\nEXTENDS M\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nCircular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "Circular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "instance missing subst",
@@ -2347,7 +2490,22 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nS == \"abc\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "Lexical error at line 5, column 10.  Encountered: \"\\n\" (10), after : \"\\\"abc\""
+      }
+    },
+    "prints": []
   },
   {
     "test": "bad char root",
@@ -2355,7 +2513,22 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nS == 1 ` 2\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "Lexical error at line 5, column 8.  Encountered: \"`\" (96), after : \"\""
+      }
+    },
+    "prints": []
   },
   {
     "test": "parse err root tool",
@@ -2364,7 +2537,22 @@
       "config": "INIT Init\nNEXT Next\n",
       "isTool": true
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nEncountered \"====\" at line 6, column 1 and token \"+\" \n\nResidual stack trace follows:\nExtendableExpr starting at line 6, column 1.\nExtendableExpr starting at line 5, column 9.\nExpression starting at line 5, column 9.\nExtendableExpr starting at line 5, column 8.\nExpression starting at line 5, column 8.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "warn in A, err in M",
@@ -2467,7 +2655,22 @@
       "source": "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n---- MODULE I ----\nQ == ((\n====\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCould not parse module M from file M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Could not parse module M from file M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nEncountered \"====\" at line 7, column 1 and token \"(\" \n\nResidual stack trace follows:\nExtendableExpr starting at line 7, column 1.\nExpression starting at line 7, column 1.\nExtendableExpr starting at line 6, column 7.\nExpression starting at line 6, column 7.\nExtendableExpr starting at line 6, column 6.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "unknown op in inner module",
@@ -2526,7 +2729,21 @@
         "A": "---- MODULE A ----\nEXTENDS Naturals, Integers\nQ(a) == LET a == 1 IN a\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module Zz imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module Zz imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "recursive undeclared",
@@ -2898,7 +3115,21 @@
         "C": "---- MODULE C ----\nQ == 1\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module Zz imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module Zz imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "warn + config err",
@@ -2968,7 +3199,21 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "err A inst then missing B",
@@ -2979,7 +3224,21 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "inst A err, ext B missing",
@@ -2990,7 +3249,21 @@
         "A": "---- MODULE A ----\nQ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A ext C missing, A err",
@@ -3001,7 +3274,21 @@
         "A": "---- MODULE A ----\nEXTENDS C\nQ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCannot find source file for module C imported in module A.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Cannot find source file for module C imported in module A."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A err, B parse err",
@@ -3013,7 +3300,22 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "A err, B name mismatch",
@@ -3025,7 +3327,21 @@
         "B": "---- MODULE Bx ----\nQ == 1\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nFile name 'B' does not match the name 'Bx' of the top level module it contains.",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "File name 'B' does not match the name 'Bx' of the top level module it contains."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "inst err then ext err",
@@ -3384,7 +3700,22 @@
       "source": "---- MODULE M ----\nEXTENDS T\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n---- MODULE T ----\nQ == ==\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module T\n\nCould not parse module T from file T.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module T",
+            "message": "Could not parse module T from file T.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "trailing module sem err",
@@ -3417,7 +3748,22 @@
         "A": "---- MODULE A ----\nZ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module T\n\nCould not parse module T from file T.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module T",
+            "message": "Could not parse module T from file T.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "A parse err then T",
@@ -3428,7 +3774,22 @@
         "A": "---- MODULE A ----\nZ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCould not parse module A from file A.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Could not parse module A from file A.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "inst A err then ext? parse err B",
@@ -3440,7 +3801,22 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "B parse err, A err (inst)",
@@ -3452,7 +3828,22 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "A err, A extends B parse",
@@ -3464,7 +3855,22 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "root err then B parse",
@@ -3475,7 +3881,22 @@
         "B": "---- MODULE B ----\nZ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "let inst A parse err, ext C err",
@@ -3487,7 +3908,22 @@
         "C": "---- MODULE C ----\nR == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCould not parse module A from file A.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Could not parse module A from file A.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "print const then config err",
@@ -3788,7 +4224,21 @@
         "A": "---- MODULE A ----\nEXTENDS M\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nCircular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "Circular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "cycle + earlier err",
@@ -3800,7 +4250,21 @@
         "B": "---- MODULE B ----\nZ == y\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "Unknown location\n\nCircular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "Unknown location",
+            "message": "Circular dependency among .tla files; dependency cycle is:\n\n  M.tla --> A.tla --> M.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "instance arity + other err",
@@ -4022,7 +4486,21 @@
         "A": "---- MODULE A ----\nR == 1.5\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "root decimal + B missing",
@@ -4030,7 +4508,21 @@
       "source": "---- MODULE M ----\nEXTENDS B\nVARIABLE x\nInit == x = 0\nNext == x' = x\nZ == 1.5\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "root decimal + config err",
@@ -4140,7 +4632,21 @@
       "source": "---- MODULE M ----\nZ == y\nI == INSTANCE B\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "root sem err then let inst missing",
@@ -4148,7 +4654,21 @@
       "source": "---- MODULE M ----\nZ == y\nVARIABLE x\nInit == x = 0\nNext == x' = x\nW == LET I == INSTANCE B IN 1\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module B imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module B imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A sem err, A inst missing",
@@ -4159,7 +4679,21 @@
         "A": "---- MODULE A ----\nZ == y\nI == INSTANCE B\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCannot find source file for module B imported in module A.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Cannot find source file for module B imported in module A."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A sem err, A let inst missing",
@@ -4170,7 +4704,21 @@
         "A": "---- MODULE A ----\nZ == y\nW == LET I == INSTANCE B IN 1\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module A\n\nCannot find source file for module B imported in module A.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module A",
+            "message": "Cannot find source file for module B imported in module A."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A inner inst missing, M err",
@@ -4181,7 +4729,21 @@
         "A": "---- MODULE A ----\n---- MODULE N ----\nI == INSTANCE B\n====\n\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module N\n\nCannot find source file for module B imported in module N.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module N",
+            "message": "Cannot find source file for module B imported in module N."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "root sem err then inst parse err",
@@ -4192,7 +4754,22 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "root sem err then ext parse err",
@@ -4203,7 +4780,22 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "A sem err then A inst parse err",
@@ -4215,7 +4807,22 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "A ext parse err after M let",
@@ -4227,7 +4834,22 @@
         "B": "---- MODULE B ----\nQ == ==\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module B\n\nCould not parse module B from file B.tla",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module B",
+            "message": "Could not parse module B from file B.tla"
+          }
+        ],
+        "warnings": [],
+        "isFatal": true,
+        "parseError": "***Parse Error***\nWas expecting \"Expression or Instance\"\nEncountered \"==\" at line 2, column 6 and token \"==\" \n\nResidual stack trace follows:\nDefinition starting at line 2, column 1.\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
+      }
+    },
+    "prints": []
   },
   {
     "test": "root inner inst missing",
@@ -4235,7 +4857,21 @@
       "source": "---- MODULE M ----\n---- MODULE N ----\nI == INSTANCE B\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module N\n\nCannot find source file for module B imported in module N.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module N",
+            "message": "Cannot find source file for module B imported in module N."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "root inner ext missing",
@@ -4243,7 +4879,21 @@
       "source": "---- MODULE M ----\n---- MODULE N ----\nEXTENDS B\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module N\n\nCannot find source file for module B imported in module N.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module N",
+            "message": "Cannot find source file for module B imported in module N."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "A inner ext missing",
@@ -4254,7 +4904,21 @@
         "A": "---- MODULE A ----\n---- MODULE N ----\nEXTENDS B\n====\n\n====\n"
       }
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module N\n\nCannot find source file for module B imported in module N.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module N",
+            "message": "Cannot find source file for module B imported in module N."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "pcal diverged + config err",
@@ -6199,7 +6863,21 @@
       "source": "---- MODULE M ----\nEXTENDS A\n---- MODULE Naturals ----\nQ == 2\n====\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\n"
     },
-    "declined": "the engine stopped before it searched (exit 150)"
+    "error": {
+      "name": "TlaSyntaxError",
+      "message": "In module M\n\nCannot find source file for module A imported in module M.",
+      "sany": {
+        "errors": [
+          {
+            "location": "In module M",
+            "message": "Cannot find source file for module A imported in module M."
+          }
+        ],
+        "warnings": [],
+        "isFatal": true
+      }
+    },
+    "prints": []
   },
   {
     "test": "<>(x' = x) / INIT Init|NEXT Next|PROPERTY P|{}",

@@ -946,12 +946,14 @@ progress events for the library's `onProgress` (see "The public API afterwards")
 
 Checks the binary answered and now declines, because the answer matched TLC only by chance.
 
-- **The library where the check stops before it searches without a typed error** (PR 7): a missing
-  module, decimal and big literals, a bad SYMMETRY, constant parts of a property, a second ALIAS, a
-  recursion overflow in the configuration and an evaluation error in a property's bound. The
-  binary prints TLC's output, but `get_thrown` returns nothing, so `check` throws
-  `TlaUnsupportedError` "not native yet: the engine stopped before it searched (exit N)" where the
-  interpreter threw TLC's error. Winning them back takes `get_thrown` reporting them.
+- **The library where the check stops before it searches without a typed error** (PR 7): decimal
+  and big literals, a bad SYMMETRY, constant parts of a property, a second ALIAS, a recursion
+  overflow in the configuration and an evaluation error in a property's bound. The binary prints
+  TLC's output, but `get_thrown` returns nothing, so `check` throws `TlaUnsupportedError` "not
+  native yet: the engine stopped before it searched (exit N)" where the interpreter threw TLC's
+  error. Winning them back takes `get_thrown` reporting them. SANY's fatal errors (a module it
+  can't find or parse, a file named after another module, a circular dependency) are won back:
+  `check` throws them as `TlaSyntaxError` with SANY's report.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with
