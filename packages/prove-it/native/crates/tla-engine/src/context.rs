@@ -89,7 +89,9 @@ pub struct EngineContext {
 /// with effects, then the symmetry, then each assumption, with the name TLC reports it by.
 pub struct Startup {
     pub substitutes: Vec<Eval>,
-    pub definitions: Vec<Eval>,
+    /// Each startup definition, and whether TLC evaluates it again where it is used as the
+    /// engine does, should it fail as TLC starts.
+    pub definitions: Vec<(Eval, bool)>,
     /// The constant definitions the configuration names, with how TLC rejects each one's value
     /// and the configuration error's words for it.
     pub predicates: Vec<(Eval, PredicateForm, String, String)>,
@@ -464,9 +466,10 @@ impl EngineContext {
                 .definitions
                 .iter()
                 .map(|&index| {
+                    let is_retried = compiler.is_retried_at_use(index);
                     compiler
                         .compile_root_printing(Root::Definition(index), true)
-                        .map(|compiled| compiled.eval)
+                        .map(|compiled| (compiled.eval, is_retried))
                 })
                 .collect::<Result<_, CompileError>>()?,
             predicates: model

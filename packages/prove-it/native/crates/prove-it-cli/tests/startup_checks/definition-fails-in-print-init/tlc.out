@@ -1,0 +1,22 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to compute the value of an expression of form
+CHOOSE x \in S: P, but no element of S satisfied P.
+line 4, col 13 to line 4, col 34 of module M
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 18 in M
+1. Line 6, column 9 to line 6, column 13 in M
+2. Line 6, column 18 to line 6, column 18 in M
+3. Line 4, column 6 to line 4, column 35 in M
+4. Line 4, column 13 to line 4, column 34 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

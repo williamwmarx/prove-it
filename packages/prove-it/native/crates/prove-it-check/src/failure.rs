@@ -43,6 +43,9 @@ pub struct ErrorStop<'a> {
     pub out_degrees: &'a [u64],
     /// TLC's set of fingerprints when the search stopped at such an invariant, sorted.
     pub fingerprints: &'a [u64],
+    /// The values the search computed at startup, ids of `store`, for the startup definitions
+    /// that failed there.
+    pub startup: &'a [Id],
     /// With an ALIAS or postconditions, the violation the search stopped at, for the startup
     /// values and registers they may read.
     pub replayed: Option<&'a Violation>,
@@ -489,6 +492,7 @@ fn evaluate(
     evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         rebuilder.set_fingerprints(stop.fingerprints);
+        rebuilder.set_failed_startup(stop.startup);
         if let Some(violation) = stop.replayed {
             rebuilder.set_startup(
                 &violation.store,

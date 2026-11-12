@@ -142,6 +142,59 @@ Still approximate: the order of the attempts is the substitutes, then the defini
 before its definitions; and a definition another one reaches counts as computed only by its own
 level, where TLC counts a held value as level 0 whether or not it reaches the state.
 
+## A startup definition that fails
+
+TLC swallows what a constant definition throws as it starts and keeps the definition as an
+operator, which it evaluates again, and fails again, wherever it is used (`processConstantDefns`).
+The engine did the same for none: a failure declined the model.
+
+Now `run_startup` goes on past a startup definition that fails with a failure TLC reports (not
+one of the engine's limits) before any effect: nothing printed, no draw from the generator, no
+register set (`evaluate_retried`). It must also be one TLC evaluates again at each use as the
+engine does at the use (`is_retried_at_use`). That is an operator without parameters whose body,
+through the definitions it names, doesn't read the state. It has no value TLC may keep lazy, and
+no builtin whose value depends on when or how often TLC evaluates it, except Print, PrintT,
+AssertEq, RandomElement, RandomSubset and TLCSet, whose effects the search sees run. Such a
+definition fails at each use exactly as it failed at startup, before the same lack of effects, as
+in `PrintT(<<expression that fails>>)`. Its `once` keeps no value, so each use evaluates the body.
+
+The startup values hand on `NO_VALUE` for it. The trace evaluator takes that as a definition to
+evaluate again where it is used, and so does a failure's evaluation, which takes those markers
+even where it takes no other startup value. The trace evaluator does the same for one its own
+startup finds failing before it printed, drew or set a register.
+
+The engine retries only a failure TLC surely has where the engine has it. It does not retry the
+ones its assumptions already leave to the trace evaluator (`UNSURE_FAILURES`), where TLC may
+never test the set the engine finds failing.
+
+At a use, the trace evaluator holds the definition to failing again as TLC does
+(`evaluate_failed_startup`). Several cases decline instead:
+- an evaluation that succeeds;
+- an EXCEPT of a key outside the domain, which TLC warns of with 2144;
+- an evaluation that built a set TLC can't normalize, or a value TLC may keep lazy;
+- a failure in a function constructor, a filter or a map;
+- a failure comparing, enumerating or testing membership.
+
+TLC holds values unnormalized or lazy where the evaluator doesn't always, so in those cases it may
+fail elsewhere: building its message, or at another element (fallback.md, "Known wrong outputs").
+A set applied as a function declines before its argument is evaluated, as TLC fails there first,
+naming the class it built the set as.
+
+The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
+argument of most operators. So an effect TLC runs before the failure is one the engine runs
+before it, which keeps the definition declining.
+
+The native checker allows it only where the configuration scopes no substitute or value to a
+module (`<- [M]`, `= [M]`), which the front end leaves out where TLC applies it; a model whose
+startup failed would then read past it what TLC doesn't (fallback.md, "Known wrong outputs").
+The interpreter's route and the simulation keep declining.
+
+A failing definition that printed, drew or set a register before it failed still declines. So do
+one that reads the state, TLC's search or the time, and one TLC keeps lazy (`may_be_lazy`, "a
+value TLC computed at startup with effects"). So does an INSTANCE's copy with substitutions, or a
+definition that names one. Its substitute may fail, and the trace leaves out the frames TLC
+reports for a failing substitute (fallback.md, "A failing INSTANCE substitute").
+
 ## Asks
 
 - **constant-alias:** land LITERAL as it is. Step 2 then folds it into Defns.

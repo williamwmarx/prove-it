@@ -1265,6 +1265,17 @@ fn check_spec(
     };
     let settings = Settings {
         is_violation_reported: true,
+        // The front end leaves out a substitute or a value the configuration scopes to a module
+        // (`<- [M]`, `= [M]`), which TLC applies, so what a model whose startup failed reads past
+        // it may differ.
+        is_failed_startup_retried: config
+            .substitutions
+            .iter()
+            .all(|substitution| substitution.module.is_none())
+            && config
+                .constants
+                .iter()
+                .all(|assignment| assignment.module.is_none()),
         workers,
         // The search shares its levels and the liveness checker's atoms between as many threads
         // as TLC has workers, and finds what one thread finds. PROVE_IT_WORKERS asks for another
@@ -1889,6 +1900,7 @@ fn check_spec(
                     let stop = ErrorStop {
                         added,
                         reason: &reason,
+                        startup: &violation.startup,
                         store: &violation.store,
                         states: violation.states.iter().map(Vec::as_slice).collect(),
                         actions: violation.labels.clone(),

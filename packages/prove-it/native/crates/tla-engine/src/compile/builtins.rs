@@ -2472,6 +2472,7 @@ fn get_register(machine: &mut Machine<'_>, key: Id) -> Outcome<Id> {
 
 fn set_register(machine: &mut Machine<'_>, key: Id, value: Id) -> Outcome<()> {
     let registers = &mut machine.registers;
+    registers.writes += 1;
     match get_register_key(&machine.store, key) {
         Some(RegisterKey::Numbered(index)) => {
             if registers.numbered.len() <= index {

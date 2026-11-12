@@ -1,0 +1,41 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 6, col 9 to line 6, col 44 of module M>
+x = 1
+
+State 3: <Next line 6, col 9 to line 6, col 44 of module M>
+x = 2
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 44 in M
+1. Line 6, column 39 to line 6, column 44 in M
+2. Line 6, column 44 to line 6, column 44 in M
+3. Line 4, column 6 to line 4, column 16 in M
+4. Line 4, column 6 to line 4, column 13 in M
+
+
+Reason:
+Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

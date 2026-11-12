@@ -1421,12 +1421,77 @@ impl<'a> Compiler<'a> {
                 .any(|child| self.may_have_effect(child, seen))
     }
 
+    /// Whether TLC, having failed to compute a startup definition (`processConstantDefns` swallows
+    /// what it throws and keeps the definition as an operator), evaluates it again where it is used
+    /// as the engine's evaluation at the use does, should no effect run before it fails: an
+    /// operator without parameters whose body neither reads the state, through the definitions it
+    /// names, nor has a value that depends on when or how often TLC evaluates it but by printing,
+    /// drawing or setting a register, which the search sees run, nor has a value TLC may keep
+    /// lazy, which may fail only where TLC applies it. An INSTANCE's copy with substitutions, which
+    /// may fail in a substitute, and one that names such a copy, read what the state may hold.
+    pub(crate) fn is_retried_at_use(&self, index: Index) -> bool {
+        let definition = self.definition(self.ir.definitions[index as usize]);
+        matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && definition.flags & Definition::SUBSTITUTED == 0
+            && self.is_repeatable(definition.body, &mut HashSet::new(), true)
+            && !self.may_read_state(definition.body, &mut HashSet::new())
+            && !self.may_be_lazy(definition.body, &mut HashSet::new())
+    }
+
+    // Whether an expression may read the state: a variable, a prime, UNCHANGED or ENABLED in it or
+    // in a definition it names, or a definition of an instance something is substituted into,
+    // whose substitutes may. A subexpression, which the walk doesn't follow, may.
+    fn may_read_state(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        let (node, kind) = self.node(node);
+        if !seen.insert(node) {
+            return false;
+        }
+        let reads = match kind {
+            NodeKind::Prime(_)
+            | NodeKind::Unchanged(_)
+            | NodeKind::Enabled(_)
+            | NodeKind::Subexpression(_) => true,
+            NodeKind::Identifier(name)
+            | NodeKind::Apply { name, .. }
+            | NodeKind::OperatorReference(name)
+                if !name.is_local =>
+            {
+                match name.resolution {
+                    Resolution::Variable(_) => true,
+                    Resolution::Definition(index) => {
+                        let definition = self.definition(self.ir.definitions[index as usize]);
+                        definition.flags & Definition::SUBSTITUTED != 0
+                            || self.may_read_state(definition.body, seen)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        reads
+            || self
+                .children(node)
+                .into_iter()
+                .any(|child| self.may_read_state(child, seen))
+    }
+
     /// Whether TLC's predicate evaluation of an action is the walk of it as TLC generates its
     /// steps, but for the comparisons of the primed variables: no ENABLED, action composition,
     /// `[A]_v`, `<<A>>_v` or temporal operator inside, through the definitions it names but those
     /// TLC computes as it starts, and no builtin whose value depends on when or how often TLC
     /// evaluates it.
     pub(crate) fn is_walk_repeatable(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        self.is_repeatable(node, seen, false)
+    }
+
+    // `is_walk_repeatable`, but for Print, PrintT, AssertEq, RandomElement, RandomSubset and
+    // TLCSet where `is_effect_seen`.
+    fn is_repeatable(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<NodeId>,
+        is_effect_seen: bool,
+    ) -> bool {
         let (node, kind) = self.node(node);
         if !seen.insert(node) {
             return true;
@@ -1442,33 +1507,31 @@ impl<'a> Compiler<'a> {
             | NodeKind::Subexpression(_) => false,
             NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
                 match name.resolution {
-                    Resolution::Builtin(index) => !matches!(
-                        self.builtin_name(index),
-                        "\\cdot"
-                            | "Print"
-                            | "PrintT"
-                            | "AssertEq"
-                            | "RandomElement"
-                            | "RandomSubset"
-                            | "TLCSet"
-                            | "TLCGet"
-                            | "TLCGetOrDefault"
-                            | "TLCGetAndSet"
-                            | "TLCCache"
-                            | "TLCDefer"
-                            | "TLCModelValue"
-                            | "JavaTime"
-                            | "Trace"
-                            | "JsonSerialize"
-                            | "ndJsonSerialize"
-                            | "JsonDeserialize"
-                            | "ndJsonDeserialize"
-                    ),
+                    Resolution::Builtin(index) => match self.builtin_name(index) {
+                        "Print" | "PrintT" | "AssertEq" | "RandomElement" | "RandomSubset"
+                        | "TLCSet" => is_effect_seen,
+                        name => !matches!(
+                            name,
+                            "\\cdot"
+                                | "TLCGet"
+                                | "TLCGetOrDefault"
+                                | "TLCGetAndSet"
+                                | "TLCCache"
+                                | "TLCDefer"
+                                | "TLCModelValue"
+                                | "JavaTime"
+                                | "Trace"
+                                | "JsonSerialize"
+                                | "ndJsonSerialize"
+                                | "JsonDeserialize"
+                                | "ndJsonDeserialize"
+                        ),
+                    },
                     // TLC computes a constant definition once, as it starts.
                     Resolution::Definition(index) => {
                         let definition = self.definition(self.ir.definitions[index as usize]);
                         definition.flags & Definition::NORMALIZED != 0
-                            || self.is_walk_repeatable(definition.body, seen)
+                            || self.is_repeatable(definition.body, seen, is_effect_seen)
                     }
                     _ => true,
                 }
@@ -1479,7 +1542,7 @@ impl<'a> Compiler<'a> {
             && kind
                 .children()
                 .into_iter()
-                .all(|child| self.is_walk_repeatable(child, seen))
+                .all(|child| self.is_repeatable(child, seen, is_effect_seen))
     }
 
     // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
