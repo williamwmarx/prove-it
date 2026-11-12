@@ -2,12 +2,12 @@ import { expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-live-level");
 
 const checkProperty = (name: string) =>
-  check({
+  checkOnEngine({
     source: readFileSync(join(DIRECTORY, "LiveLevel.tla"), "utf8"),
     config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
   });

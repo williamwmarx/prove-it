@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { check, TlaError, TlaUnsupportedError } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const SOURCE = readFileSync(join(import.meta.dirname, "../fixtures/temporal/Temporal.tla"), "utf8");
 
@@ -86,14 +87,16 @@ const TLC_VERDICTS: Verdict[] = [
   ["QuantifiedSpec", "EventuallyBounded", "success", [21, 8]],
 ];
 
-const checkProperty = (specification: string, property: string) =>
-  check({ source: SOURCE, config: `SPECIFICATION ${specification}\nPROPERTY ${property}\n` });
+const getOptions = (specification: string, property: string) => ({
+  source: SOURCE,
+  config: `SPECIFICATION ${specification}\nPROPERTY ${property}\n`,
+});
 
 describe("general temporal formulas match TLC", () => {
   it.each(TLC_VERDICTS.filter((verdict) => verdict[2] !== "error"))(
     "%s with %s is %s",
     async (specification, property, status, counts) => {
-      const result = await checkProperty(specification, property);
+      const result = await checkOnEngine(getOptions(specification, property));
       expect(result.status).toBe<string>(status);
       expect([result.generatedStates, result.distinctStates]).toEqual<number[] | undefined>(counts);
     },
@@ -102,13 +105,15 @@ describe("general temporal formulas match TLC", () => {
   it.each(TLC_VERDICTS.filter((verdict) => verdict[2] === "error"))(
     "%s with %s is rejected",
     async (specification, property) => {
-      await expect(checkProperty(specification, property)).rejects.toThrow(TlaError);
-      await expect(checkProperty(specification, property)).rejects.not.toThrow(TlaUnsupportedError);
+      await expect(check(getOptions(specification, property))).rejects.toThrow(TlaError);
+      await expect(check(getOptions(specification, property))).rejects.not.toThrow(
+        TlaUnsupportedError,
+      );
     },
   );
 
   it("names the violated property and returns a lasso", async () => {
-    const result = await check({
+    const result = await checkOnEngine({
       source: SOURCE,
       config: "SPECIFICATION WeakSpec\nPROPERTIES OftenFlipped OftenTop\n",
     });
