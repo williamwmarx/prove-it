@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { TlaProofError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
@@ -46,9 +46,15 @@ const getLibraryDirectories = (parsed: ParsedArgs) => [
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
 
+// What is printed until every module is read, which a decline then drops: a run declines whole.
+const output: { held?: (() => void)[] } = {};
+const print = (write: () => void) => (output.held ? output.held.push(write) : write());
+const printOut = (text: string) => print(() => console.log(text));
+const printErr = (text: string) => print(() => console.error(text));
+
 // A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
-  console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
+  printErr(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
 const printObligationMessage = (obligation: PrintedObligation, status: string, fields: string[]) =>
   printToolboxMessage([
@@ -110,7 +116,7 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   } catch (error) {
     declineHeldNotUtf8([error instanceof Error ? error.message : String(error), error]);
     if (!(error instanceof TlaProofError)) throw error;
-    console.error(` tlapm ending abnormally with ${error.exception}\n`);
+    printErr(` tlapm ending abnormally with ${error.exception}\n`);
     return undefined;
   }
 };
@@ -248,8 +254,11 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 // file name holds: one character for one byte, so that columns count it once, as tlapm's, which
 // count bytes, do. A run declines where one is held by the obligations, a warning or an error;
 // elsewhere, as in a comment, it changes nothing printed or proved.
+// What tla-ts tlapm can't yet do as tlapm does, which it declines.
+class TlapmDecline extends Error {}
+
 // Which of the modules read with the byte holds the one reached isn't known, so it names them all.
-class NotUtf8Error extends Error {
+class NotUtf8Error extends TlapmDecline {
   constructor(paths: string[]) {
     super(
       `a byte that isn't UTF-8 outside a comment in ${paths.length === 1 ? paths[0] : `one of ${paths.join(", ")}`}`,
@@ -332,7 +341,8 @@ export const runTlapm = async (args: string[]) => {
   try {
     return await runTlapmOrDecline(args);
   } catch (error) {
-    if (!(error instanceof NotUtf8Error)) throw error;
+    output.held = undefined;
+    if (!(error instanceof TlapmDecline)) throw error;
     console.error(`prove-it: not native yet: ${error.message}`);
     return 1;
   }
@@ -372,8 +382,9 @@ const runTlapmOrDecline = async (args: string[]) => {
     return 1;
   }
   const isToolbox = parsed.has("--toolbox") || parsed.has("--line");
+  output.held = [];
   if (isToolbox) {
-    console.log(
+    printOut(
       `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
     );
   }
@@ -389,12 +400,25 @@ const runTlapmOrDecline = async (args: string[]) => {
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
     getLibraryDirectories(parsed),
   );
+  // tlapm keeps the first of two modules of one name on the command line, from two files, and searches for a module
+  // in an order of its own (M_save.file_search'), which tla-ts doesn't follow, so where either
+  // decides which module is read, it declines.
+  const getRealPath = (path: string) => (existsSync(path) ? realpathSync(path) : path);
+  const sameName = modulePaths.find((path, index) =>
+    modulePaths
+      .slice(0, index)
+      .some(
+        (other) => basename(other) === basename(path) && getRealPath(other) !== getRealPath(path),
+      ),
+  );
+  if (sameName !== undefined)
+    throw new TlapmDecline(`two modules named ${basename(sameName, ".tla")} on the command line`);
   const moduleNames = new Set<string>();
   const modules = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
-      console.error(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
+      printErr(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
       throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
     }
     return getObligations(
@@ -402,9 +426,15 @@ const runTlapmOrDecline = async (args: string[]) => {
       (name) => {
         moduleNames.add(name);
         // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
-        const file = directories
+        const found = directories
           .map((directory) => `${directory}/${name}.tla`)
-          .find((path) => existsSync(path));
+          .filter((path) => existsSync(path));
+        const [file] = found;
+        if (new Set(found.map((path) => realpathSync(path))).size > 1) {
+          throw new TlapmDecline(
+            `a module ${name} found in more than one directory tlapm searches: ${found.join(", ")}`,
+          );
+        }
         if (file !== undefined) return { file, source: readModule(file) };
         return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },
@@ -412,17 +442,20 @@ const runTlapmOrDecline = async (args: string[]) => {
         lines,
         onWarning: (warning) => {
           declineHeldNotUtf8(warning);
-          if (warning.channel === "stdout") return console.log(warning.text);
+          if (warning.channel === "stdout") return printOut(warning.text);
           const isToolboxMessage =
             warning.channel === "toolbox" || warning.channel === "toolboxOnly";
           if (isToolbox && isToolboxMessage)
             return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
-          if (warning.channel !== "toolboxOnly") console.error(warning.text);
+          if (warning.channel !== "toolboxOnly") printErr(warning.text);
         },
       },
     );
   });
   declineHeldNotUtf8(modules);
+  const held = output.held;
+  output.held = undefined;
+  held.forEach((write) => write());
   if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";

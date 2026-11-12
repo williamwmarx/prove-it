@@ -558,6 +558,14 @@ read the byte `xx`. tla-ts's lexer ends a `\*` comment at a line feed
 alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
 comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
 
+`prove-it tlapm` also declines where tlapm's choice of module decides what is proved, until the
+native command follows it: a module found in more than one directory it searches (`a module …
+found in more than one directory tlapm searches`), since tlapm searches `.`, the `-I` directories
+in the order given and its standard library (`M_save.file_search'`), and a module's own directory
+only after them, where tla-ts searched the module's directory first; and two modules of one name on
+the command line, of which tlapm proves the first and tla-ts proved the last. Each proved a theorem
+tlapm fails. A run that declines prints nothing before the decline.
+
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
 (prover.md, "Deviations from Z3", has the gate):

@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getSteadyLines } from "../../scripts/normalize-output";
@@ -1694,6 +1694,78 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       expect(result.stderr).not.toContain("not native yet");
       expect(result.status).toBe(0);
     }
+  });
+
+  // tlapm decides which of two modules of one name it reads in ways tla-ts doesn't follow yet.
+  const writeFiles = (files: Record<string, string>) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(directory, path)), { recursive: true });
+      writeFileSync(join(directory, path), text);
+    }
+    return directory;
+  };
+  const MAIN =
+    "---- MODULE Main ----\nEXTENDS Defs, Naturals, TLAPS\nTHEOREM X = 2 BY DEF X\n====\n";
+  const getDefs = (value: number) => `---- MODULE Defs ----\nX == ${value}\n====\n`;
+
+  it.each([
+    [
+      "in two -I directories",
+      { "Main.tla": MAIN, "I1/Defs.tla": getDefs(1), "I2/Defs.tla": getDefs(2) },
+      ["-I", "I1", "-I", "I2", "Main.tla"],
+      "I2/Defs.tla, I1/Defs.tla",
+    ],
+    [
+      "beside the spec and in the current directory",
+      { "sub/Main.tla": MAIN, "Defs.tla": getDefs(1), "sub/Defs.tla": getDefs(2) },
+      ["sub/Main.tla"],
+      "sub/Defs.tla, ./Defs.tla",
+    ],
+  ])("declines a module found %s", (_, files, args, found) => {
+    for (const options of [["-N"], ["-N", "--toolbox", "0", "0"]]) {
+      const result = runTlapmIn(writeFiles(files), [...options, ...args]);
+      expect(result.stderr).toBe(
+        `prove-it: not native yet: a module Defs found in more than one directory tlapm searches: ${found}\n`,
+      );
+      expect(result.stdout).toBe("");
+      expect(result.status).toBe(1);
+    }
+  });
+
+  it("declines two modules of one name on the command line", () => {
+    const directory = writeFiles({
+      "d1/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 3 OBVIOUS\n====\n",
+      "d2/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 OBVIOUS\n====\n",
+    });
+    for (const options of [[], ["-N"]]) {
+      const result = runTlapmIn(directory, [...options, "d1/M.tla", "d2/M.tla"]);
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: two modules named M on the command line\n",
+      );
+      expect(result.stdout).toBe("");
+      expect(result.status).toBe(1);
+    }
+  });
+
+  it("reads a module named twice on the command line as it did", () => {
+    const directory = writeFiles({
+      "M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 OBVIOUS\n====\n",
+    });
+    const twice = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla", "./M.tla"]);
+    expect(twice.stderr).not.toContain("not native yet");
+    expect(twice.status).toBe(0);
+  });
+
+  it("reads a module found in one directory as it did", () => {
+    const run = (files: Record<string, string>, args: string[]) =>
+      runTlapmIn(writeFiles(files), ["-N", "--toolbox", "0", "0", ...args]);
+    const beside = run({ "sub/Main.tla": MAIN, "sub/Defs.tla": getDefs(2) }, ["sub/Main.tla"]);
+    expect(beside.status).toBe(0);
+    expect(beside.stderr).toContain("@!!type:obligationsnumber\n@!!count:1\n");
+    const included = run({ "Main.tla": MAIN, "I1/Defs.tla": getDefs(1) }, ["-I", "I1", "Main.tla"]);
+    expect(included.status).toBe(0);
+    expect(included.stderr).toBe(beside.stderr);
   });
 
   it("declines a byte that isn't UTF-8 in a pragma", () => {
