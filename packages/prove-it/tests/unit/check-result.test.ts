@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, type CheckResult } from "../../src";
+import { check } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -15,40 +16,27 @@ afterEach(() => {
   else process.env.PROVE_IT_ENGINE = setting;
 });
 
-interface Run {
-  result: CheckResult;
-  printed: string[];
-  // Whether the native check checked it, rather than the TypeScript check.
-  isNative: boolean;
-}
-
-const run = async (source: string, config: string, engine: string): Promise<Run> => {
-  process.env.PROVE_IT_ENGINE = engine;
+// The TypeScript check's result and prints, which PROVE_IT_ENGINE=0 asks for.
+const runTypeScript = async (source: string, config: string) => {
+  process.env.PROVE_IT_ENGINE = "0";
   const printed: string[] = [];
-  const lines: string[] = [];
-  const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-    if (typeof message === "string") lines.push(message);
-  });
-  try {
-    const result = await check({ source, config, onPrint: (text) => printed.push(text) });
-    return { result, printed, isNative: !lines.some((line) => line.includes("declined")) };
-  } finally {
-    spy.mockRestore();
-  }
+  const result = await check({ source, config, onPrint: (text) => printed.push(text) });
+  return { result, printed };
 };
 
-// The native check's run and the TypeScript check's, of a module M of the body.
+// The native check's run, which the engine answers, and the TypeScript check's, which converts to
+// the same result, of a module M of the body.
 const runBoth = async (
   body: string,
   config: string,
   source = `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\n${body}\n====`,
 ) => {
-  const native = await run(source, config, "debug");
-  const typeScript = await run(source, config, "0");
-  expect(native.isNative).toBe(true);
-  expect(native.result).toEqual(typeScript.result);
-  expect(native.printed).toEqual(typeScript.printed);
-  return native;
+  const printed: string[] = [];
+  const result = await checkOnEngine({ source, config, onPrint: (text) => printed.push(text) });
+  const typeScript = await runTypeScript(source, config);
+  expect(result).toEqual(typeScript.result);
+  expect(printed).toEqual(typeScript.printed);
+  return { result, printed };
 };
 
 describe("check's result", () => {
@@ -240,17 +228,14 @@ describe("check's result", () => {
   // rebuilds the trace, as the CLI prints them. The native check declines the model, so the
   // TypeScript check reports it.
   it("reports what fails as TLC rebuilds a failure's trace, after the trace", async () => {
-    const lines: string[] = [];
-    process.env.PROVE_IT_ENGINE = "debug";
-    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-      if (typeof message === "string") lines.push(message);
-    });
-    const result = await check({
-      source:
-        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
-      config: "INIT Init\nNEXT Next",
-    }).finally(() => spy.mockRestore());
-    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: check declined: /));
+    const result = await checkOnEngine(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: an action that fails or prints after a successor TLC can't fingerprint",
+    );
     expect([result.status, result.violations]).toEqual([
       "error",
       [

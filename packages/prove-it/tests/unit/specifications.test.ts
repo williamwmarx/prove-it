@@ -3,18 +3,21 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { check, TlaConfigError, TlaEvaluationError } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/specifications");
 
-const checkSpecification = (config: string, moduleName = "Specifications", values = "{a, b}") =>
-  check({
-    source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
-    config: moduleName === "Specifications" ? `CONSTANT P = ${values}\n${config}` : config,
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-  });
+const getOptions = (config: string, moduleName = "Specifications", values = "{a, b}") => ({
+  source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
+  config: moduleName === "Specifications" ? `CONSTANT P = ${values}\n${config}` : config,
+  loadModule: (name: string) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+});
+
+const checkSpecification = (config: string, moduleName?: string, values?: string) =>
+  check(getOptions(config, moduleName, values));
 
 const getSummary = async (config: string, moduleName?: string) => {
-  const result = await checkSpecification(config, moduleName);
+  const result = await checkOnEngine(getOptions(config, moduleName));
   return [result.status, result.generatedStates, result.distinctStates, result.depth];
 };
 
