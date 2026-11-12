@@ -394,9 +394,7 @@ fn lower_ranked(
         check_search_config(&config, &environment, &facts, &evaluator).map_err(|error| {
             if may_print && matches!(error, FrontError::Config(_) | FrontError::Evaluation(_)) {
                 return FrontError::NotYet(
-                    "an error in what the configuration names for the search, after what the \
-                     constant definitions print"
-                        .to_owned(),
+                    "what the spec prints as TLC computes its constants".to_owned(),
                 );
             }
             let invariants: Vec<(Rc<str>, Option<usize>)> = constant_invariants

@@ -442,9 +442,8 @@ it from one that printed something else. Each is outside the corpus:
 - a configuration error in what the configuration names for the search (CONSTRAINT,
   ACTION_CONSTRAINT and the like), where a constant definition prints: TLC prints what the
   constant definitions print first (`processConstantDefns`), which the front end, raising the
-  error as it reads the configuration, doesn't; it declines it ("an error in what the
-  configuration names for the search, after what the constant definitions print"), which main
-  answered without the prints.
+  error as it reads the configuration, doesn't; it declines it ("what the spec prints as TLC
+  computes its constants", as the library's check does), which main answered without the prints.
 - a variable `x = D` assigns in the initial predicate or a step, D a startup definition that
   failed outside a Java method: TLC reports the failure as a state it fails to fingerprint (see
   the known wrong output below); the trace evaluator declines it.
