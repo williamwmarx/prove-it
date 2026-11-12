@@ -2985,14 +2985,7 @@ fn check_assumptions(
             // functions over Nat by their parts, and enumerates `Nat \cap S` by S. So is a set
             // operation on a value that isn't a set, which TLC may never test for an element.
             Err(bail)
-                if is_native
-                    && (is_engine_limit(bail.0)
-                        || [
-                            crate::compile::lazy::INFINITE_DOMAIN,
-                            crate::compile::INFINITE_BOUND,
-                            crate::compile::NON_SET_OPERAND,
-                        ]
-                        .contains(&bail.0)) =>
+                if is_native && (is_engine_limit(bail.0) || UNSURE_FAILURES.contains(&bail.0)) =>
             {
                 assumed.delegated = Some((position as u32, bail));
                 break;
@@ -3057,6 +3050,15 @@ pub(crate) fn startup_values(
         .collect()
 }
 
+// The failures TLC may not have where the engine has them: it enumerates some sets TLC tests an
+// element of part by part, as `Nat \cap S` by S, and it tests a set operation's operand for a set
+// where TLC may never test it for an element.
+const UNSURE_FAILURES: &[&str] = &[
+    crate::compile::lazy::INFINITE_DOMAIN,
+    crate::compile::INFINITE_BOUND,
+    crate::compile::NON_SET_OPERAND,
+];
+
 // A startup definition's value, or NO_VALUE for one TLC evaluates again at each use that fails as
 // TLC reports before any effect: printing, drawing or setting a register.
 fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool) -> Outcome<Id> {
@@ -3070,7 +3072,10 @@ fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool
     let before = effects(machine);
     match evaluate(machine) {
         Err(Bail(reason))
-            if is_retried && !is_engine_limit(reason) && effects(machine) == before =>
+            if is_retried
+                && !is_engine_limit(reason)
+                && !UNSURE_FAILURES.contains(&reason)
+                && effects(machine) == before =>
         {
             Ok(NO_VALUE)
         }
