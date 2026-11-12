@@ -496,6 +496,7 @@ impl PolyRewriter {
                     if products.len() > 10 * sums.len() {
                         return Ok((true, products));
                     }
+                    m.limit.check_time()?;
                     let factors: Vec<Expr> = sums
                         .iter()
                         .enumerate()

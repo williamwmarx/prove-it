@@ -7,7 +7,8 @@
 //     for a change to a backend that moves the search on the recorded limits.
 // "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
-// property of the runtime rather than of the search, a full heap or stack, and isn't compared.
+// property of the runtime rather than of the search, a full stack, and isn't compared. The SMT
+// core's size cap (stop "heap") counts what the search holds, so it is compared like any stop.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -47,7 +48,7 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prover-differential.json");
 
 const BATCH_SIZE = 25;
 
-const RUNTIME_STOPS = new Set(["heap", "stack"]);
+const RUNTIME_STOPS = new Set(["stack"]);
 
 const prover = getOption("--prover");
 const filter = getOption("--filter");

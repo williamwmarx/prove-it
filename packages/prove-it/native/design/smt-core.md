@@ -30,7 +30,7 @@ track: keep it current.
 | `core::{proto_model, model_evaluator, model_generator}` | models: interpretations, evaluation, completion, the model of a search | done; hand-built models and ground EUF/propositional searches against the TS (`smt/tests/tables/models.txt`, `scripts/smt-model-reference.ts`) |
 | `core::{auf_solver, model_macro_solver, quantifier_analyzer, model_finder, model_checker}` | model-based quantifier instantiation | done; thirteen quantified EUF problems without patterns, which only MBQI decides (sat by macros, quasi-macros and projections, unsat by model-based instances over several rounds), give the TS's result, conflicts, steps, instances, ASTs and model (`smt/tests/tables/mbqi.txt`, `scripts/smt-mbqi-reference.ts`). The model checker's auxiliary context shares the main context's manager by swapping it in for each of its operations (`model_checker.rs`'s header) |
 | `core::theory_lra*` | `theory-lra*.ts`, the arithmetic theory | done; one module per TS file, the state a struct `TheoryLra` held as `Context::theory` and its methods `impl Context` methods (`lra_*`, the kernel's `theory_*`), as the header of `theory_lra_state.rs` describes, with how it owns and calls `LarSolver`, `BoundPropagator`, `IntSolver` and `NlaCore`. 116 arithmetic problems (Int and Real, bounds, (dis)equalities, ite, div and mod, nonlinear products, theory combination, models; 80 of them seeded random) and solver.ts's `checkSmt` on all 45 `tests/fixtures/smt` scripts give the TS's result, conflicts, steps, instances, ASTs and models (`smt/tests/tables/lra.txt`, `scripts/smt-lra-reference.ts`). nlsat's model is read through `lp::nra_solver` (`NraSolver::value`, its algebraic manager) as the TS reads it: `mk_value`, `is_eq` and `assume_eqs` under `is_using_nra_model`, which the nine `nra-*` problems pin (shared variables, terms and integers compared in nlsat's model, rational model values, and the TS's `SmtUnsupportedError` on an irrational one) |
-| `core::solver`, `prove_smt::decide` | `solver.ts` (`checkSmt`, `decideSmt`) and `decideZ3` | done; declines nothing but a port bug: as `decideSmt`, a cancel or the step limit is unknown with its `stop`, `SmtError::Unsupported` unknown with `stop=unsupported`, a parse error `DecideError::Prover`; every other error (`SmtError::Invariant` above all) is `DecideError::Declined`, never a verdict. `tests/unit/smt.test.ts` case for case in `smt/tests/smt.rs`, all with the TS's expectations, and all 45 fixtures' verdicts and statistics (`instances`, `steps`, `stop`) identical to `decideSmt`'s (`smt/tests/tables/decide.txt`, `scripts/smt-decide-reference.ts`) |
+| `core::solver`, `prove_smt::decide` | `solver.ts` (`checkSmt`, `decideSmt`) and `decideZ3` | done; declines a script outside the SMT-LIB tlapm writes (`core::script_subset`: unknown, `stop=unsupported`, `steps=0`) and a port bug: as `decideSmt`, a cancel or the step limit is unknown with its `stop`, `SmtError::Unsupported` unknown with `stop=unsupported`, a parse error `DecideError::Prover`; every other error (`SmtError::Invariant` above all) is `DecideError::Declined`, never a verdict. `tests/unit/smt.test.ts` case for case in `smt/tests/smt.rs`, all with the TS's expectations, and all 45 fixtures' verdicts and statistics (`instances`, `steps`, `stop`) identical to `decideSmt`'s (`smt/tests/tables/decide.txt`, `scripts/smt-decide-reference.ts`) |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables were written from the TypeScript by the scripts named above, which were deleted with it
@@ -120,6 +120,36 @@ same order. `array.sort(cmp)` is `sort_by` (stable, as JS), the comparator porte
 goes on (so far: a nullary `(and)`, `(or)`, `(=)`, whose TS declaration hash reads `undefined`
 sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 `DecideError::Declined`, so the TypeScript decides it; never as a verdict.
+
+**The subset.** The solver decides only the SMT-LIB tlapm's encoder writes (`backend/smtlib.ml`,
+ported in the obligations crate's `smt` module); `core::script_subset` states it, and holds every
+smt and z3 input of the decider corpus and every fixture. `decide` declines any other script
+before a step: unknown, `stop=unsupported`, `steps=0`, never a verdict. That covers what Z3 reads
+with an error and reads past (unknown attributes, symbols and numerals the encoder never spells,
+a stray parenthesis), what it reads otherwise than the encoder means (`:named` references, `let`,
+overloaded and builtin names, `(reset)`, a second check-sat, `echo`), a logic other than UFNIA,
+and the forms it writes otherwise (a negative numeral is `(- 1)`, a chained equality two). The
+parser keeps the TypeScript's reading of what lies outside, for the tests that run the solver on
+its own.
+
+**Limits.** Past the step limit, the deadline or the signal a decision is unknown with its `stop`.
+Some work takes no step: reading a script, splitting and simplifying the goal, expanding a
+distinct into the disequalities of every pair, multiplying out a product of sums. There the
+deadline and the signal are read without a step (`ResourceLimit::check_time`, on every 256th
+call), so a 1,000,000-wide `(not (or …))`, a distinct of 2,000 constants or a product of 2^15
+sums stops at the deadline, not after it, and moves no step count.
+
+**Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
+the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
+context's cancel checks and where the goal and the manager grow, so that a decision that grows
+without taking steps stops at the same step on every machine. 2^26 is a ceiling against runaway
+growth, about 9 GB, not a budget: a search that answers may hold gigabytes, as Z3's does, and
+the cap is set far above what any input of the decider corpus holds (7.3 million). A structure
+that can grow without a step joins the count. Known large-memory inputs:
+- `tests/inputs/instance-growth.smt`, a mutant of smt/706e2c3eb8dbf208 whose one E-matching run
+  finds millions of new instances past a million steps: unknown, `stop=heap`, at 1,691,188
+  steps with 4.9 GB (10.5 GB by two million steps before the cap; Z3 5.3.3 times out at 175 MB
+  with `-T:5`, 1.2 GB at 20 s, 6.7 GB at 60 s). It holds too much for the unit tests to run.
 
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a

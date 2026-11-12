@@ -82,6 +82,17 @@ impl Limits {
         }))
     }
 
+    /// These limits with no more than `step_limit` steps, counted from the steps taken so far:
+    /// the rlimit a script sets.
+    pub fn with_step_limit(&self, step_limit: u64) -> Self {
+        Limits(Rc::new(Inner {
+            deadline: self.0.deadline,
+            step_limit: step_limit.min(self.0.step_limit),
+            steps: Cell::new(self.0.steps.get()),
+            cancel: self.0.cancel.clone(),
+        }))
+    }
+
     /// The steps taken so far.
     pub fn steps(&self) -> u64 {
         self.0.steps.get()

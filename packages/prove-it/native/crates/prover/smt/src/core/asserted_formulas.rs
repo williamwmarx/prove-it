@@ -444,6 +444,7 @@ impl AssertedFormulas {
         if self.is_inconsistent || m.is_true(expr) {
             return Ok(());
         }
+        m.limit.check_time()?;
         if m.is_false(expr) {
             result.push(m, expr);
             self.is_inconsistent = true;

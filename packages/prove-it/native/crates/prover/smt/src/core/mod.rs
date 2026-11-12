@@ -50,6 +50,7 @@ pub mod ref_vector;
 pub mod relevancy;
 pub mod rewriter;
 pub mod rewriter_tpl;
+pub mod script_subset;
 pub mod smtlib_parser;
 pub mod solver;
 pub mod sort;
