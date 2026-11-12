@@ -5,16 +5,20 @@
 //! nothing. The export starts again from the beginning each round, so it asks only for what it
 //! reads. The keys are:
 //!
-//! - `module:<name>`, a module's text from a file of its own, beside the spec or in a library;
-//! - `file:<origin>:<name>`, the file TLC prints that it parses a module from, for the origins
-//!   `file`, `root file` and `standard`;
-//! - `text:<path>`, the text of a file the command line names, such as the spec or its
-//!   configuration (`checkSources`);
-//! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`);
-//! - `bytes:<path>`, the bytes of a file the command line names, such as the tla2tools.jar on a
-//!   Java launch's class path, as a Uint8Array (`checkSources`);
+//! - `stat:<path>`, `"file"` or `"directory"` where the system finds something at the path,
+//!   `bytes:<path>`, the bytes of a file there, as a Uint8Array, `realpath:<path>`, the path with
+//!   its links followed, `cwd`, the working directory, and `tmpdir`, the system's temporary
+//!   directory: the CLI's files, which the binary's resolver finds (`checkSources`,
+//!   `resolveFiles`);
+//! - `text:<path>`, the text of the library's spec or configuration, `module:<name>`, a module's
+//!   text, and `class:<name>`, the Java override for a module as a Uint8Array: the library's
+//!   (`checkSources`); and `module:<name>` and `file:<origin>:<name>`, the file TLC prints that it
+//!   parses a module from, for the origins `file`, `root file` and `standard`, which the CLI's
+//!   TypeScript check answers through `resolveFiles` (`sanyText`);
 //! - `decide:<key>`, a backend's answer to a decision `prove` asks for, with its text, by the key it
-//!   gives it (`prove`).
+//!   gives it (`prove`);
+//! - `path:<name>#<n>`, the file the module `prove` reads as `module:<name>#<n>` came from, which
+//!   errors name (`obligations` and `fingerprint`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
@@ -108,8 +112,9 @@ impl Sources {
 
     fn get_known(&self, key: String) -> Option<Known> {
         let value = self.known.get(&key).cloned();
-        if value.is_none() {
-            self.needed.borrow_mut().push(key);
+        let mut needed = self.needed.borrow_mut();
+        if value.is_none() && !needed.contains(&key) {
+            needed.push(key);
         }
         value.flatten()
     }

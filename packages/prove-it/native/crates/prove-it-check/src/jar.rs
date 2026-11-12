@@ -4,16 +4,16 @@
 
 use std::path::Path;
 
-use crate::args::PATH_DELIMITER;
 use crate::host::Host;
+use crate::host_path::Platform;
 use crate::zip::read_entry;
 
 const MANIFEST: &str = "META-INF/MANIFEST.MF";
 
 /// The jar on the class path: its first entry that ends with `.jar` (`getToolsJar`).
-pub fn get_tools_jar(class_path: &str) -> Option<&str> {
+pub fn get_tools_jar(class_path: &str, platform: Platform) -> Option<&str> {
     class_path
-        .split(PATH_DELIMITER)
+        .split(platform.delimiter())
         .find(|entry| entry.ends_with(".jar"))
 }
 
@@ -92,12 +92,14 @@ mod tests {
     #[test]
     fn names_the_jar_and_its_standard_modules_as_the_typescript_cli_does() {
         assert_eq!(
-            get_tools_jar(&format!(
-                "classes{PATH_DELIMITER}lib/tla2tools.jar{PATH_DELIMITER}other.jar"
-            )),
+            get_tools_jar("classes:lib/tla2tools.jar:other.jar", Platform::Unix),
             Some("lib/tla2tools.jar")
         );
-        assert_eq!(get_tools_jar("classes"), None);
+        assert_eq!(
+            get_tools_jar("C:\\classes;C:\\lib\\tla2tools.jar", Platform::Windows),
+            Some("C:\\lib\\tla2tools.jar")
+        );
+        assert_eq!(get_tools_jar("classes", Platform::Unix), None);
         assert_eq!(
             get_standard_modules_url(Path::new("/lib/tla2tools.jar")),
             "jar:file:/lib/tla2tools.jar!/tla2sany/StandardModules/"

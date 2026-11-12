@@ -1,22 +1,20 @@
 import { describe, expect, it } from "bun:test";
 
-import { getObligations } from "../../src/obligations";
-import { getFingerprint } from "../../src/prover/prep/fingerprint";
+import { getFingerprints } from "../../scripts/native-prover";
 
-const getFingerprints = (theorems: string[]) =>
-  getObligations(
-    [
-      {
-        file: "M.tla",
-        source: ["---- MODULE M ----", "EXTENDS Naturals", ...theorems, "===="].join("\n"),
-      },
-    ],
+const getModuleFingerprints = (theorems: string[]) =>
+  getFingerprints(
+    "M.tla",
+    ["---- MODULE M ----", "EXTENDS Naturals", ...theorems, "===="].join("\n"),
     () => undefined,
-  )[0].obligations.map((obligation) => getFingerprint(obligation.sequent));
+  ).map((entry) => {
+    if (entry.fingerprint instanceof Error) throw entry.fingerprint;
+    return entry.fingerprint;
+  });
 
 describe("fingerprints match tlapm's fp_sequent", () => {
   it("ignores the names of bound variables but not of declarations", () => {
-    const fingerprints = getFingerprints([
+    const fingerprints = getModuleFingerprints([
       "THEOREM \\A x \\in Nat : x + 0 = x",
       "  OBVIOUS",
       "THEOREM \\A y \\in Nat : y + 0 = y",

@@ -19,23 +19,23 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { TlaError, TlaProverError } from "../src/errors";
-import { decide } from "../src/prover/deciders";
-import { proveObligations } from "../src/prover/prove";
-import type { Decision } from "../src/prover/verdict";
+import { getNativeAddon, type NativeDecision } from "../src/engine/native";
+import { EngineUnavailableError } from "../src/errors";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
 import { appendJournal, readJournal, repairJournal } from "./journal";
 import { runModuleWorkers } from "./module-workers";
+import { getObligationError, proveInRounds } from "./native-prover";
 import {
-  getModuleObligations,
   getObligationCount,
   type ModuleProofRecord,
+  readModule,
   readProofRecords,
 } from "./proof-records";
 import {
   getInputKey,
   getInputPath,
   getMergedTimeLimits,
+  getRecordedAnswer,
   type InputRecord,
   PROVER_INPUTS_DIRECTORY,
   PROVER_INPUTS_PATH,
@@ -53,25 +53,22 @@ const records: Record<string, InputRecord> =
     ? {}
     : readInputRecords();
 
-// The recorded answer, as prove's decide gives it: a decision, or the TlaProverError the backend
-// threw.
-const replay = (record: InputRecord): Decision => {
-  if (record.error !== undefined) throw new TlaProverError(record.error);
-  return { verdict: record.verdict, timeUsedMs: 0, statistics: record.statistics };
-};
+const addon = getNativeAddon();
+if (typeof addon === "string") throw new EngineUnavailableError(addon);
+
+// A backend that gives no decision throws a TlaProverError with this message in prove.
+const getError = (prover: string, decision: Exclude<NativeDecision, { kind: "decided" }>) =>
+  decision.kind === "error" ? decision.message : `${prover} declined: ${decision.reason}`;
 
 const record = (prover: string, text: string, timeLimitMs: number): InputRecord => {
-  const getRecord = (): InputRecord => {
-    const steps = Number(decide(prover, text, { timeLimitMs }).statistics.steps);
-    const decision = decide(prover, text, { timeLimitMs: Infinity }, steps);
-    return { prover, stepLimit: steps, verdict: decision.verdict, statistics: decision.statistics };
-  };
-  try {
-    return getRecord();
-  } catch (error) {
-    if (!(error instanceof TlaProverError)) throw error;
-    return { prover, verdict: "unknown", statistics: {}, error: error.message };
-  }
+  const timed = addon.decide(prover, text, timeLimitMs, undefined, undefined);
+  if (timed.kind !== "decided")
+    return { prover, verdict: "unknown", statistics: {}, error: getError(prover, timed) };
+  const steps = Number(timed.statistics.steps);
+  const decision = addon.decide(prover, text, Infinity, steps, undefined);
+  if (decision.kind !== "decided")
+    return { prover, verdict: "unknown", statistics: {}, error: getError(prover, decision) };
+  return { prover, stepLimit: steps, verdict: decision.verdict, statistics: decision.statistics };
 };
 
 const RECORDING_PATH = join(PROVER_INPUTS_DIRECTORY, "recording.jsonl");
@@ -97,30 +94,36 @@ const writeModuleInputs = async (module: ModuleProofRecord): Promise<ModuleInput
   const finished = isRecording ? readRecording().get(module.id) : undefined;
   if (finished !== undefined) return finished;
   const inputs: Record<string, InputRecord> = {};
-  const timeLimits: Record<string, (number | null)[]> = {};
-  const obligations = (() => {
-    try {
-      return getModuleObligations(join(CORPORA_DIRECTORY, module.id));
-    } catch (error) {
-      if (!(error instanceof TlaError)) throw error;
-      return [];
-    }
-  })();
-  await proveObligations(obligations, {
-    decide: async (prover, text, options) => {
-      const key = getInputKey(prover, getDigest(text));
-      const path = getInputPath(key);
-      mkdirSync(join(path, ".."), { recursive: true });
-      writeFileSync(path, text);
-      const seconds = Number.isFinite(options.timeLimitMs) ? options.timeLimitMs / 1000 : null;
-      timeLimits[key] = [...new Set([...(timeLimits[key] ?? []), seconds])];
+  const sent: { key: string; seconds: number | null; priority: number }[] = [];
+  const path = join(CORPORA_DIRECTORY, module.id);
+  const result = proveInRounds(
+    path,
+    readFileSync(path, "utf8"),
+    (name) => readModule(path, name)?.source,
+    (request) => {
+      const key = getInputKey(request.prover, getDigest(request.text));
+      const inputPath = getInputPath(key);
+      mkdirSync(join(inputPath, ".."), { recursive: true });
+      writeFileSync(inputPath, request.text);
+      const seconds = Number.isFinite(request.timeLimitMs) ? request.timeLimitMs / 1000 : null;
+      sent.push({ key, seconds, priority: request.priority });
       const recorded = inputs[key] ?? (isRecording ? undefined : records[key]);
       if (!isRecording && recorded === undefined)
         throw new Error(`${module.id}: input ${key} isn't in prover-inputs.json`);
-      inputs[key] = recorded ?? record(prover, text, options.timeLimitMs);
-      return replay(inputs[key]);
+      inputs[key] = recorded ?? record(request.prover, request.text, request.timeLimitMs);
+      return getRecordedAnswer(inputs[key]);
     },
-  });
+  );
+  // A module whose obligations fail has no inputs, but an error in proving them is the run's.
+  if (result.kind === "error" && result.reports !== undefined) throw getObligationError(result);
+  // Each round asks for the decisions of several obligations, but prove makes an obligation's
+  // decisions once the earlier one's are made, so the limits keep the obligations' order.
+  const timeLimits: Record<string, (number | null)[]> = {};
+  sent
+    .toSorted((left, right) => left.priority - right.priority)
+    .forEach((input) => {
+      timeLimits[input.key] = [...new Set([...(timeLimits[input.key] ?? []), input.seconds])];
+    });
   if (isRecording) {
     mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
     appendJournal(RECORDING_PATH, { id: module.id, inputs, timeLimits });

@@ -61,6 +61,24 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. Until then, the CLI prints the TypeScript report where no engine loads.
 
+### Decision: the CLI finds a spec's files with the engine
+
+Settled on 2026-11-11, as the CLI's TypeScript copy of TLC's resolver is deleted: the CLI finds the
+spec, its config, its modules and its Java overrides as the binary does, through `prove-it-host`'s
+`resolveFiles` and `checkSources`, which name the paths they stat, read and resolve, the working
+and temporary directories and the platform, for JavaScript to answer. Paths follow the host's rules
+(`prove-it-check/src/host_path.rs`, Node's `path` for the platform, as the TypeScript resolver used
+it): the binary and the addon take them from the target they were built for, and the WebAssembly
+engine from the platform JavaScript names, so a Windows host without the addon reads `;` lists,
+drives and UNC paths. So `PROVE_IT_ENGINE=0` means, here too, that
+the interpreter searches, not that no native code runs. An install without the platform package
+checks with the WebAssembly engine beside `dist/cli.js` (`tests/unit/native.test.ts` runs a copy of
+`dist/` that no package resolves from). The CLI throws `EngineUnavailableError` only where an engine
+`PROVE_IT_ENGINE_ADDON` or `PROVE_IT_ENGINE_WASM` names, or an executable embeds, fails to load, or
+where neither the addon nor the WebAssembly engine loads. Its message then names no setting, since
+none checks without the engine. The library's `check` of a source string reads no file and is
+unchanged.
+
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
 WebAssembly engine needs no file system and calls nothing in JavaScript.
@@ -85,6 +103,15 @@ platform addon loads.
   instance and returns a stop that hands nothing over (src/engine/wasm.ts). The CLI's interpreter
   then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
   does where the engine stops at its recursion bound.
+
+### Interpreter limits
+
+Where the native check declines, the library's `check()` passes the TypeScript check's prints of
+a violation's trace to `onPrint` as TLC prints them, but for three shapes, where the TypeScript
+check places them otherwise than TLC or prints other values in them: an ALIAS that prints, a
+temporal property that prints, and TLCExt's `Trace`. There `onPrint` gets what the TypeScript
+check printed as it searched, as where the native check doesn't run (`onProgress`, `onPause`, a
+`dot` dump, TLC 1.7.4). `tests/unit/trace-prints.test.ts` pins them; they go with the interpreter.
 
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
@@ -420,6 +447,40 @@ record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[f
 fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
 the records inside it") checks it with the TypeScript check.
 
+A successor whose value fails as TLC fingerprints it is reported as an evaluation failure where TLC
+reports a fingerprint failure. With `Filter == {n \in SUBSET {1} : 1 \div 0 = 1}`,
+`Next == x' = Filter /\ {} = x'` (or `x' = 1 /\ {1} # Filter`), TLC prints the division, the
+behavior, then "TLC was unable to fingerprint." with its Fingerprint Stack Trace and exits 75; the
+engine prints the same frames as "The error occurred when TLC was evaluating the nested
+expressions" and exits 255. A set TLC keeps lazy that fails to enumerate as TLC fingerprints the
+successor does the same with the exit code right: `\E n \in ({1} \cup 2) : x' = n`,
+`x' = x /\ \A n \in ({1} \cup 2) : TRUE`, `x' = CHOOSE n \in ({1} \cup 2) : TRUE` and
+`x' = Cardinality({n + 1 : n \in ({1} \cup 2)})` print the nested expressions where TLC prints its
+fingerprint failure, and `x' \in {1} \cup ({1} \cup 2)` leaves out the last frame of TLC's
+Fingerprint Stack Trace. `tests/unit/check.test.ts` ("reports the sources of a set the replay of %s
+fails to enumerate", "reports the left side of %s that fails to compare") checks them with the
+TypeScript check.
+
+Adding a state to the behavior graph that fails after an invariant violation leaves out where it
+fails: with `Fair == x' = 1 \div (x - 1)`, `Next == x < 3 /\ x' = x + 1`, `Inv == x < 2`,
+`Spec == Init /\ [][Next]_x /\ WF_x(Fair)` and `PROPERTY Live`, `INVARIANT Inv`, TLC prints after
+the trace "The error occurred when TLC was evaluating the nested expressions at the following
+positions:" with three frames, and the engine prints the rest alike without it; both exit 12.
+`tests/unit/tlc-replay.test.ts` ("prints where adding a state to the behavior graph fails after a
+violation") checks it with the TypeScript check.
+
+`RTBound` of TLC's RealTime module, whose body holds `\EE`, applied in an initial predicate, is
+declined by the engine (`unsupported: expression UnboundedQuantifier`) and reported by the
+TypeScript check as "TLC cannot evaluate an unbounded quantifier at line 20, column 6", where TLC
+reports "TLC encountered a temporal formula (\EE) when evaluating a predicate or action." with the
+same frames and exit code. `tests/unit/bundled-modules.test.ts` asserts the TypeScript check's
+text; it goes with the interpreter.
+
+A file that instantiates or extends its own inner module of the file's name, as `---- MODULE B ----`
+holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
+its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
+keys by name. It panicked before. It comes back once the front end scopes contexts as SANY does.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
@@ -492,10 +553,14 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
 - a `.class` file that isn't one (empty, truncated, `/dev/null` or a socket), which TLC rejects
   with `Found a Java class for module M, but unable to read it`, and a user's `Naturals.class` or
   `TLC.class`, which TLC tries to load;
-- under `PROVE_IT_ENGINE=0` alone: the configuration of a spec on the library path, read beside
-  the spec rather than where TLC's resolver finds it first; a relative `-config` with an absolute
-  spec, which TLC resolves against the spec's directory; a missing configuration named by its
-  path rather than its name; and options TLC doesn't know, which it rejects.
+- under `PROVE_IT_ENGINE=0` alone: options TLC doesn't know, which it rejects.
+
+On Windows, the binary and the CLI find a spec's files by the host's rules (`host_path.rs`), but
+print the paths they found as the CLI built them, with `/` between the parts, where TLC prints
+Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as `C:Spec`, and
+`File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
+path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
+run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
@@ -509,6 +574,12 @@ record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm pr
 | LamportMutex_proofs #574 | cf2bc77dbe72f5d0 | Z3 4.8.9 proves it, 5.3.3 times out |
 | PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
 | Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
+
+At the level of inputs, #321 also moved ten `smt` inputs tlapm proves from `unsat` to `unknown`
+that main proved: 0dfd248d2bdad02b, 12a106a46ac87d79, 181f3f94d6c23221, 2f279b8fcc0984d6,
+52c873767bacfb3b, 6181e3d8679eef23, 6f1bb244e72ae33d, 8e48a4022642d1fc, b2ca9ee96f3db516 and
+e8e512b5c0878a4e, and gained one. Z3 4.8.9 proves nine of the ten (all but 6181e3d8679eef23). Only
+b2ca9ee96f3db516 (Boulanger #240) loses its obligation; Zenon or Isabelle prove the other nine's.
 
 The engine's `decide` declines a text that holds a lone surrogate, so the obligation fails. A string
 that is one would read as U+FFFD, two different strings would be one name, and the axiom that they

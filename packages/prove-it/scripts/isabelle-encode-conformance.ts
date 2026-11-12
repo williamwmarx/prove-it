@@ -5,11 +5,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaProverError, TlaUnsupportedError } from "../src/errors";
-import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
   getIsabelleDigest,
-  getModuleObligations,
+  getModuleEncodings,
   normalizeTheory,
   printResults,
   PROOF_INPUTS_DIRECTORY,
@@ -33,15 +32,13 @@ interface Result {
 }
 
 // The theory, or why tla-ts can't encode the obligation or tlapm wouldn't.
-const getEncoding = (encode: () => string) => {
-  try {
-    return { kind: "theory", text: encode() } as const;
-  } catch (error) {
-    if (error instanceof TlaUnsupportedError)
-      return { kind: "unsupported", reason: error.message } as const;
-    if (error instanceof TlaProverError) return { kind: "failed", reason: error.message } as const;
-    throw error;
-  }
+const getEncoding = (encoding: string | Error) => {
+  if (typeof encoding === "string") return { kind: "theory", text: encoding } as const;
+  if (encoding instanceof TlaUnsupportedError)
+    return { kind: "unsupported", reason: encoding.message } as const;
+  if (encoding instanceof TlaProverError)
+    return { kind: "failed", reason: encoding.message } as const;
+  throw encoding;
 };
 
 // The two normalized theories from just before the first character where they differ.
@@ -63,22 +60,23 @@ const results = readProofRecords()
     ),
   )
   .flatMap((record): Result[] => {
-    const obligations = new Map(
-      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
-        obligation.id,
-        obligation,
-      ]),
+    const recorded = record.obligations.flatMap((expected) =>
+      expected.status === "trivial" || !("isabelle" in expected) || !expected.isabelle
+        ? []
+        : [{ id: expected.id, input: expected.isabelle.input }],
     );
-    return record.obligations.flatMap((expected): Result[] => {
-      if (expected.status === "trivial" || !("isabelle" in expected) || !expected.isabelle)
-        return [];
+    const encodings = getModuleEncodings(
+      join(CORPORA_DIRECTORY, record.id),
+      recorded.map((expected) => expected.id),
+      "isabelle",
+      (obligation) => obligation.kind !== "Error",
+    ).encodings;
+    return recorded.map((expected): Result => {
       const base = { module: record.id, id: expected.id };
-      const obligation = obligations.get(expected.id);
-      if (!obligation || obligation.kind.kind === "Error")
-        return [{ ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" }];
-      const encoded = getEncoding(() =>
-        encodeForBackend(obligation, "isabelle", { caseErrors: 0 }),
-      );
+      const encoding = encodings.get(expected.id);
+      if (encoding === undefined)
+        return { ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" };
+      const encoded = getEncoding(encoding);
       const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.thy`);
       // tlapm writes a theory as it prints it, so one whose printing fails stops before its end.
       if (
@@ -86,19 +84,16 @@ const results = readProofRecords()
         existsSync(inputPath) &&
         !/\nend\s*$/.test(readFileSync(inputPath, "utf8"))
       )
-        return [{ ...base, verdict: "match" }];
+        return { ...base, verdict: "match" };
       if (encoded.kind !== "theory")
-        return [{ ...base, verdict: encoded.kind, reason: encoded.reason }];
-      if (getIsabelleDigest(encoded.text) === expected.isabelle.input)
-        return [{ ...base, verdict: "match" }];
-      if (!existsSync(inputPath)) return [{ ...base, verdict: "mismatch" }];
-      return [
-        {
-          ...base,
-          verdict: "mismatch",
-          ...findDifference(readFileSync(inputPath, "utf8"), encoded.text),
-        },
-      ];
+        return { ...base, verdict: encoded.kind, reason: encoded.reason };
+      if (getIsabelleDigest(encoded.text) === expected.input) return { ...base, verdict: "match" };
+      if (!existsSync(inputPath)) return { ...base, verdict: "mismatch" };
+      return {
+        ...base,
+        verdict: "mismatch",
+        ...findDifference(readFileSync(inputPath, "utf8"), encoded.text),
+      };
     });
   });
 
