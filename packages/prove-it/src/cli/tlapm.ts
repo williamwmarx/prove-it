@@ -307,10 +307,24 @@ class NotUtf8Error extends Error {
   }
 }
 
+// Each byte that isn't UTF-8 reads as a U+FFFD of its own, so that a column counts it once, as
+// tlapm's, which count bytes, do.
 const readModule = (path: string) => {
   const bytes = readFileSync(path);
   if (hasIllFormedToken(bytes)) throw new NotUtf8Error(path);
-  return bytes.toString("utf8");
+  const parts: string[] = [];
+  let start = 0;
+  for (let index = 0; index < bytes.length;) {
+    const length = getSequenceLength(bytes, index);
+    if (length > 0) {
+      index += length;
+      continue;
+    }
+    parts.push(bytes.toString("utf8", start, index), "\uFFFD");
+    start = ++index;
+  }
+  parts.push(bytes.toString("utf8", start));
+  return parts.join("");
 };
 
 export const runTlapm = async (args: string[]) => {

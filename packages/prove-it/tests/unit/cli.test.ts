@@ -1430,7 +1430,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     ["before the header", [0xe9, 0x0a], ""],
     ["in a line comment", [], "\\* caf\xe9\n"],
     ["in a nested comment", [], "(* (* caf\xe9 *) \xff *)\n"],
-  ])("reads a byte that isn't UTF-8 %s as it did", (_, before, inside) => {
+  ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside) => {
     const getModule = (byte: number) =>
       Buffer.concat([
         Buffer.from(before.map((value) => (value === 0xe9 ? byte : value))),
@@ -1446,6 +1446,26 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const read = run(0xe9);
     expect(read.stderr).not.toContain("not native yet");
     expect(read).toMatchObject({ status: 0, stdout: run(0x65).stdout, stderr: run(0x65).stderr });
+  });
+
+  // tlapm's columns count bytes, so a comment holding two bytes of a three-byte sequence puts what
+  // follows it on the line two columns on.
+  it("counts each byte that isn't UTF-8 in a comment as a column", () => {
+    const run = (comment: Buffer) => {
+      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        Buffer.concat([
+          Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "),
+          comment,
+          Buffer.from(" 1 = 1 OBVIOUS\n====\n"),
+        ]),
+      );
+      return runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla"]);
+    };
+    const truncated = run(Buffer.from([0x28, 0x2a, 0xe2, 0x82, 0x2a, 0x29]));
+    expect(truncated.stderr).toContain("loc:3:22:3:29");
+    expect(truncated.stderr).toBe(run(Buffer.from("(*ab*)")).stderr);
   });
 
   it("declines a byte that isn't UTF-8 in a pragma", () => {
