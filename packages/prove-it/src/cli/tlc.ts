@@ -74,6 +74,7 @@ import {
   getInputPaths,
   getMachine,
   type JavaProperties,
+  NOT_NATIVE_EXIT_CODE,
   printError,
   readFileKey,
   reportErrors,
@@ -547,15 +548,24 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
 // turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
 // -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
-const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
+const getFlags = (args: ParsedArgs) => {
   const flags = [...args.unknown, ...args.options.map((option) => option.name)];
-  const hasFlag = (name: string, alias = name) =>
+  return (name: string, alias = name) =>
     flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
-  const isSpecGenerated =
-    hasFlag("-generateSpecTE") ||
-    (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue"));
-  return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
 };
+
+// Whether TLC writes the trace exploration spec of an error trace.
+const isTraceSpecWritten = (args: ParsedArgs, version: TlcVersion) => {
+  const hasFlag = getFlags(args);
+  return (
+    version !== "1.7.4" &&
+    (hasFlag("-generateSpecTE") ||
+      (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue")))
+  );
+};
+
+const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) =>
+  isTraceSpecWritten(args, version) && !getFlags(args)("-noGenerateSpecTEBin", "-noTEBin");
 
 // Where TLC finds the files of the spec it was `given`, as the binary finds them (prove-it-host's
 // resolveFiles), throwing where the binary declines what TLC does. `resolverLine` is the Java launch
@@ -799,6 +809,16 @@ const checkSpec = async (
       },
       sany.readings,
     );
+    // TLC writes the trace exploration spec of a trace of two states or more and prints its path,
+    // which only the native check writes.
+    if (
+      isTraceSpecWritten(args, version) &&
+      !fileName.includes("_TTrace") &&
+      [result.violation, result.failure].some((error) => (error?.trace.length ?? 0) > 1)
+    ) {
+      console.error("prove-it: not native yet: the trace exploration spec of an error trace");
+      return NOT_NATIVE_EXIT_CODE;
+    }
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];

@@ -23,6 +23,9 @@ import {
 } from "../tlc/messages";
 import type { TlcVersion } from "../tlc/version";
 
+// What the CLI exits with where the native binary declines, as the binary does.
+export const NOT_NATIVE_EXIT_CODE = 1;
+
 const GLOB_CHARACTERS = /[*?[{]/;
 
 interface InputPath {
