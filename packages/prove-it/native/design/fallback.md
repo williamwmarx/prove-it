@@ -61,6 +61,24 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. Until then, the CLI prints the TypeScript report where no engine loads.
 
+### Decision: the CLI finds a spec's files with the engine
+
+Settled on 2026-11-11, as the CLI's TypeScript copy of TLC's resolver is deleted: the CLI finds the
+spec, its config, its modules and its Java overrides as the binary does, through `prove-it-host`'s
+`resolveFiles` and `checkSources`, which name the paths they stat, read and resolve, the working
+and temporary directories and the platform, for JavaScript to answer. Paths follow the host's rules
+(`prove-it-check/src/host_path.rs`, Node's `path` for the platform, as the TypeScript resolver used
+it): the binary and the addon take them from the target they were built for, and the WebAssembly
+engine from the platform JavaScript names, so a Windows host without the addon reads `;` lists,
+drives and UNC paths. So `PROVE_IT_ENGINE=0` means, here too, that
+the interpreter searches, not that no native code runs. An install without the platform package
+checks with the WebAssembly engine beside `dist/cli.js` (`tests/unit/native.test.ts` runs a copy of
+`dist/` that no package resolves from). The CLI throws `EngineUnavailableError` only where an engine
+`PROVE_IT_ENGINE_ADDON` or `PROVE_IT_ENGINE_WASM` names, or an executable embeds, fails to load, or
+where neither the addon nor the WebAssembly engine loads. Its message then names no setting, since
+none checks without the engine. The library's `check` of a source string reads no file and is
+unchanged.
+
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
 WebAssembly engine needs no file system and calls nothing in JavaScript.
@@ -488,10 +506,14 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
 - a `.class` file that isn't one (empty, truncated, `/dev/null` or a socket), which TLC rejects
   with `Found a Java class for module M, but unable to read it`, and a user's `Naturals.class` or
   `TLC.class`, which TLC tries to load;
-- under `PROVE_IT_ENGINE=0` alone: the configuration of a spec on the library path, read beside
-  the spec rather than where TLC's resolver finds it first; a relative `-config` with an absolute
-  spec, which TLC resolves against the spec's directory; a missing configuration named by its
-  path rather than its name; and options TLC doesn't know, which it rejects.
+- under `PROVE_IT_ENGINE=0` alone: options TLC doesn't know, which it rejects.
+
+On Windows, the binary and the CLI find a spec's files by the host's rules (`host_path.rs`), but
+print the paths they found as the CLI built them, with `/` between the parts, where TLC prints
+Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as `C:Spec`, and
+`File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
+path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
+run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT

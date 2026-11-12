@@ -1,18 +1,23 @@
-//! The paths TLC names the files SANY parses by, as `createFileDescriber` in `src/cli/tlc.ts` writes
-//! them: a module's own file, the root module's file copied into a directory named for it, or a
-//! standard module copied into a directory named for the spec, from the jar on the class path.
+//! The paths TLC names the files SANY parses by: a module's own file, the root module's file copied
+//! into a directory named for it, or a standard module copied into a directory named for the spec,
+//! from the jar on the class path. It reads the host's file system, which the CLI's host answers
+//! for its own.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use tla_front::report::ModuleOrigin;
 use tla_values::fingerprint::Polynomial;
 
-use crate::host::Files;
+use crate::host::{Files, Host};
+use crate::host_path::Platform;
 use crate::jar::get_standard_modules_url;
+use crate::resolve::get_java_absolute;
 
 const STRING_VALUE: u8 = 3;
 
-pub struct FileDescriber {
+pub struct FileDescriber<'h> {
+    host: &'h dyn Host,
+    platform: Platform,
     spec: PathBuf,
     /// The spec's path as TLC was given it, or as it found it on the library path, which names the
     /// root module's file.
@@ -25,23 +30,28 @@ pub struct FileDescriber {
     is_174: bool,
 }
 
-impl FileDescriber {
+impl<'h> FileDescriber<'h> {
     /// The temporary directory is the JVM's `java.io.tmpdir` where the launch sets it.
-    pub fn new(files: &Files) -> FileDescriber {
-        let spec = resolve(files.spec);
+    pub fn new(files: &Files, host: &'h dyn Host) -> FileDescriber<'h> {
+        let platform = host.platform();
+        let current = host.current_dir();
+        let current = current.to_string_lossy();
+        let resolve = |path: &str| PathBuf::from(platform.resolve(&current, path));
         let directories = files.directories.iter().map(PathBuf::from).collect();
         let temporary = files
             .temporary
-            .map_or_else(std::env::temp_dir, PathBuf::from);
+            .map_or_else(|| host.temp_dir(), PathBuf::from);
         FileDescriber {
-            spec,
+            host,
+            platform,
+            spec: resolve(&files.spec.to_string_lossy()),
             given_spec: files.spec.to_path_buf(),
             directories,
-            temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
-            metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
-            standard_modules: files
-                .jar
-                .map(|jar| get_standard_modules_url(&resolve(Path::new(jar)))),
+            temporary: host
+                .real_path(&temporary)
+                .unwrap_or_else(|| resolve(&temporary.to_string_lossy())),
+            metadir: files.metadir.map(resolve),
+            standard_modules: files.jar.map(|jar| get_standard_modules_url(&resolve(jar))),
             is_174: files.is_174,
         }
     }
@@ -49,8 +59,9 @@ impl FileDescriber {
     pub fn describe(&self, name: &str, origin: ModuleOrigin) -> String {
         let file_name = format!("{name}.tla");
         let real = |path: &Path| {
-            std::fs::canonicalize(path)
-                .unwrap_or_else(|_| path.to_path_buf())
+            self.host
+                .real_path(path)
+                .unwrap_or_else(|| path.to_path_buf())
                 .display()
                 .to_string()
         };
@@ -58,52 +69,62 @@ impl FileDescriber {
             // ParseUnit names the file by its real path, and by the URI of the path its resolver
             // made, through the directory as given, where the two differ.
             ModuleOrigin::File => {
-                let is_root = self
-                    .given_spec
-                    .file_name()
-                    .is_some_and(|file| file.to_string_lossy() == file_name);
+                let is_root =
+                    self.platform.file_name(&self.given_spec.to_string_lossy()) == file_name;
                 let Some(found) = is_root.then(|| self.given_spec.clone()).or_else(|| {
                     self.directories
                         .iter()
-                        .map(|directory| directory.join(&file_name))
-                        .find(|path| path.exists())
+                        .map(|directory| self.join(directory, &file_name))
+                        .find(|path| self.host.is_file(path))
                 }) else {
                     return real(&self.spec);
                 };
                 let resolved = real(&found);
-                let made = get_java_absolute(&found);
-                if made == resolved {
+                let made = get_java_absolute(
+                    self.platform,
+                    &self.host.current_dir().to_string_lossy(),
+                    &found.to_string_lossy(),
+                );
+                // TLC 1.7.4 names the file by its real path alone.
+                if made == resolved || self.is_174 {
                     resolved
                 } else {
                     format!("{resolved} (file:{})", quote_uri_path(&made))
                 }
             }
             // TLC 1.7.4 copies a standard module into the temporary directory itself.
-            _ if self.is_174 => self.temporary.join(&file_name).display().to_string(),
+            _ if self.is_174 => self.join(&self.temporary, &file_name).display().to_string(),
             // FileUtil.createTempFile copies a module from the root module's file into the
             // -metadir.
             ModuleOrigin::RootFile => {
                 let root = real(&self.spec);
                 let directory = self.metadir.as_ref().unwrap_or(&self.temporary);
-                let copy = directory
-                    .join(temporary_name(&format!("{root} {name}")))
-                    .join(&file_name);
+                let copy = self.join(
+                    &self.join(directory, &temporary_name(&format!("{root} {name}"))),
+                    &file_name,
+                );
                 format!("{} ({root})", copy.display())
             }
             ModuleOrigin::Standard => {
-                let copy = self
-                    .temporary
-                    .join(format!(
-                        "tlc-{}",
-                        temporary_name(&self.spec.display().to_string())
-                    ))
-                    .join(&file_name);
+                let copy = self.join(
+                    &self.join(
+                        &self.temporary,
+                        &format!("tlc-{}", temporary_name(&self.spec.display().to_string())),
+                    ),
+                    &file_name,
+                );
                 match &self.standard_modules {
                     Some(url) => format!("{} ({url}{file_name})", copy.display()),
                     None => copy.display().to_string(),
                 }
             }
         }
+    }
+}
+
+impl FileDescriber<'_> {
+    fn join(&self, directory: &Path, name: &str) -> PathBuf {
+        PathBuf::from(self.platform.join(&directory.to_string_lossy(), name))
     }
 }
 
@@ -130,30 +151,6 @@ fn temporary_name(contents: &str) -> String {
     fingerprint.to_string()
 }
 
-/// Java's `File.getAbsolutePath`: against the working directory, with repeated separators and a
-/// trailing one dropped, and `.` and `..` kept.
-fn get_java_absolute(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    let absolute = if path.is_absolute() {
-        text.into_owned()
-    } else {
-        format!(
-            "{}/{text}",
-            std::env::current_dir().unwrap_or_default().display()
-        )
-    };
-    let mut normalized = String::new();
-    for character in absolute.chars() {
-        if !(character == '/' && normalized.ends_with('/')) {
-            normalized.push(character);
-        }
-    }
-    if normalized.len() > 1 && normalized.ends_with('/') {
-        normalized.pop();
-    }
-    normalized
-}
-
 /// A path as `java.net.URI` quotes it in `File.toURI`: each byte of a character a URI's path
 /// doesn't allow as `%XX`, and characters beyond ASCII as they are.
 fn quote_uri_path(path: &str) -> String {
@@ -172,22 +169,6 @@ fn quote_uri_path(path: &str) -> String {
         }
     }
     quoted
-}
-
-/// Node's `path.resolve`: absolute, with `.` and `..` resolved by name, not through links.
-fn resolve(path: &Path) -> PathBuf {
-    let absolute = std::env::current_dir().unwrap_or_default().join(path);
-    let mut resolved = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::ParentDir => {
-                resolved.pop();
-            }
-            Component::CurDir => {}
-            other => resolved.push(other),
-        }
-    }
-    resolved
 }
 
 #[cfg(test)]
