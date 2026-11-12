@@ -439,6 +439,15 @@ decline, none differ). What still declines:
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a startup definition the search found failing whose failure the trace evaluator's startup
+  can't place as one TLC raises (no TLC message: "values TLC can't compare" on a pair it doesn't
+  word, "a membership in a union TLC builds of values it may fail to compare"), as `Test ==
+  PrintT([{1} -> {2, 3}] \subseteq ({1, 2} \cap {2, 3}))` with `ASSUME Test`, 108 runs of the
+  guard-overreach set: the startup meets the pair with a function on the left, and only the
+  replay at the use, with an integer on the left, words TLC's error. Only positive evidence
+  confirms a swallowed failure, so it declines ("...that the evaluator can't follow"). To win
+  them: hold an inconclusive confirmation pending, have the replays report which failed startup
+  definitions they worded a failure through, and decline any outcome where one stayed pending.
 - a startup print that may hold a set of tuples, records or functions TLC fails to size, as the
   compiler reads it from the text (`may_write_unsized`), where TLC prints it: a set nested in
   another value whose parts the compiler can't prove sized as written (`is_sized`: enumerations,
