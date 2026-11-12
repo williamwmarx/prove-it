@@ -1603,6 +1603,27 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(0);
   });
 
+  // Which module holds the byte reached isn't known where more than one was read with it.
+  it("names every module read with a byte that isn't UTF-8 that is reached", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(
+        '---- MODULE M ----\nEXTENDS Lib, TLAPS\n(* \xff *)\nTHEOREM S = "a" BY DEF S\n====\n',
+        "latin1",
+      ),
+    );
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.from('---- MODULE Lib ----\nS == "\xff"\n====\n', "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in one of M.tla, ./Lib.tla\n",
+    );
+    expect(result.status).toBe(1);
+  });
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(

@@ -248,20 +248,23 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 // file name holds: one character for one byte, so that columns count it once, as tlapm's, which
 // count bytes, do. A run declines where one is held by the obligations, a warning or an error;
 // elsewhere, as in a comment, it changes nothing printed or proved.
+// Which of the modules read with the byte holds the one reached isn't known, so it names them all.
 class NotUtf8Error extends Error {
-  constructor(readonly path: string) {
-    super(`a byte that isn't UTF-8 outside a comment in ${path}`);
+  constructor(paths: string[]) {
+    super(
+      `a byte that isn't UTF-8 outside a comment in ${paths.length === 1 ? paths[0] : `one of ${paths.join(", ")}`}`,
+    );
   }
 }
 
 const ESCAPED_BYTE = /[\uDC80-\uDCFF]/u;
 
 // The modules read with an escaped byte, by the byte.
-const notUtf8 = { paths: new Map<string, string>() };
+const notUtf8 = { paths: new Map<string, string[]>() };
 
 const findNotUtf8 = (text: string) => {
   const escaped = ESCAPED_BYTE.exec(text)?.[0];
-  return escaped === undefined ? undefined : (notUtf8.paths.get(escaped) ?? "");
+  return escaped === undefined ? undefined : (notUtf8.paths.get(escaped) ?? []);
 };
 
 const readModule = (path: string) => {
@@ -275,7 +278,8 @@ const readModule = (path: string) => {
       continue;
     }
     const escaped = String.fromCharCode(0xdc00 + bytes[index]);
-    if (!notUtf8.paths.has(escaped)) notUtf8.paths.set(escaped, path);
+    const paths = notUtf8.paths.get(escaped) ?? [];
+    if (!paths.includes(path)) notUtf8.paths.set(escaped, [...paths, path]);
     parts.push(bytes.toString("utf8", start, index), escaped);
     start = ++index;
   }
@@ -284,7 +288,7 @@ const readModule = (path: string) => {
 };
 
 // The module an escaped byte comes from, wherever one is held.
-const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string | undefined => {
+const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string[] | undefined => {
   if (typeof value === "string") return findNotUtf8(value);
   if (typeof value !== "object" || value === null || seen.has(value)) return undefined;
   seen.add(value);
@@ -295,16 +299,16 @@ const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string |
         ? [...value]
         : Object.values(value);
   for (const held of values) {
-    const path = findHeldNotUtf8(held, seen);
-    if (path !== undefined) return path;
+    const paths = findHeldNotUtf8(held, seen);
+    if (paths !== undefined) return paths;
   }
   return undefined;
 };
 
 const declineHeldNotUtf8 = (value: unknown) => {
   if (notUtf8.paths.size === 0) return;
-  const path = findHeldNotUtf8(value);
-  if (path !== undefined) throw new NotUtf8Error(path);
+  const paths = findHeldNotUtf8(value);
+  if (paths !== undefined) throw new NotUtf8Error(paths);
 };
 
 export const runTlapm = async (args: string[]) => {
