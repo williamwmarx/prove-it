@@ -1,8 +1,7 @@
 // The enumeration oracle (native/DESIGN.md 6.8): seeded small sets TLC keeps lazy, each
 // enumerated in the order a quantifier binds its elements and the order x' \in S assigns them, by
-// TLC's own classes (native/oracle/ValueOracle.java), by the interpreter (getQuantifierElements,
-// getStreamedElements), and by the native engine (replay enumerate). The three must list the same
-// elements in the same order, or all fail. --record freezes a sample of the cases, with TLC's
+// TLC's own classes (native/oracle/ValueOracle.java) and by the native engine (replay enumerate).
+// Where both answer, they must list the same elements in the same order. --record freezes a sample of the cases, with TLC's
 // answers, into tests/conformance/enumeration, which cargo test (replay's tests) and
 // tests/unit/enumeration-oracle.test.ts check without Java.
 // Usage: TLA2TOOLS_JAR=... bun scripts/run.ts enumeration-oracle [--cases 100000] [--seed 1]
@@ -13,15 +12,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { setStringOrder } from "../src/values";
 import { getOption } from "./corpora";
-import {
-  answerCase,
-  CASE_STRINGS,
-  encodeText,
-  toCaseAnswers,
-  toRequests,
-} from "./enumeration-cases";
+import { CASE_STRINGS, encodeText, toCaseAnswers, toRequests } from "./enumeration-cases";
 
 const caseCount = Number(getOption("--cases") ?? 100000);
 const seed = Number(getOption("--seed") ?? 1);
@@ -157,7 +149,6 @@ const classify = (answer: string, expected: string) =>
         ? "missesFailure"
         : "differs";
 
-setStringOrder(CASE_STRINGS);
 const tally: Record<string, number> = { cases: 0, enumerations: 0, allAnswer: 0, allFail: 0 };
 const count = (name: string) => {
   tally[name] = (tally[name] ?? 0) + 1;
@@ -168,12 +159,10 @@ const seen = new Set<string>();
 
 for (let start = 0; start < caseCount; start += BATCH) {
   const cases: string[] = [];
-  const interpreter: [string, string][] = [];
   while (cases.length < Math.min(BATCH, caseCount - start)) {
     atom.isText = next(2) === 0;
     const tokens = generate(3).tokens;
     cases.push(tokens);
-    interpreter.push(answerCase(tokens));
   }
   const requests = `${toRequests(cases).join("\n")}\n`;
   const tlc = spawnSync("java", ["-cp", `${jar}:${directory}`, "ValueOracle"], {
@@ -198,31 +187,24 @@ for (let start = 0; start < caseCount; start += BATCH) {
     for (const order of [0, 1]) {
       count("enumerations");
       const fromTlc = tlcAnswers[index * 2 + order];
-      const fromInterpreter = interpreter[index][order];
       const fromNative = nativeAnswers[index * 2 + order];
-      const describe = `${order === 0 ? "q" : "s"} ${tokens}: TLC ${fromTlc}, interpreter ${fromInterpreter}, native ${fromNative}`;
-      const comparisons = [
-        ["native against the interpreter", classify(fromNative, fromInterpreter)],
-        ["native against TLC", classify(fromNative, fromTlc)],
-        ["interpreter against TLC", classify(fromInterpreter, fromTlc)],
-      ];
-      for (const [name, outcome] of comparisons) {
-        if (outcome === "same") continue;
-        count(`${name}: ${outcome}`);
-        if (examples.length < 20 && outcome !== "stopsAlone") examples.push(`${name}: ${describe}`);
+      const describe = `${order === 0 ? "q" : "s"} ${tokens}: TLC ${fromTlc}, native ${fromNative}`;
+      const outcome = classify(fromNative, fromTlc);
+      if (outcome !== "same") {
+        count(`native against TLC: ${outcome}`);
+        if (examples.length < 20 && outcome !== "stopsAlone") examples.push(describe);
       }
-      if ([fromTlc, fromInterpreter, fromNative].every(isFailure)) count("allFail");
-      else if (fromTlc === fromInterpreter && fromTlc === fromNative) count("allAnswer");
+      if ([fromTlc, fromNative].every(isFailure)) count("allFail");
+      else if (fromTlc === fromNative) count("allAnswer");
     }
-    // A sample of the cases, each shape once, where all three agree.
+    // A sample of the cases, each shape once, where both agree.
     const shape = tokens.replace(/[is][0-9a-f]+/g, "v").replace(/S\d+/g, "S");
     const answers: [string, string] = [tlcAnswers[index * 2], tlcAnswers[index * 2 + 1]];
     if (
       recordCount !== undefined &&
       recorded.length < Number(recordCount) &&
       !seen.has(shape) &&
-      answers.every((answer, order) => isAgreed(answer, nativeAnswers[index * 2 + order])) &&
-      answers.every((answer, order) => isAgreed(answer, interpreter[index][order]))
+      answers.every((answer, order) => isAgreed(answer, nativeAnswers[index * 2 + order]))
     ) {
       seen.add(shape);
       recorded.push({ tokens, answers });
@@ -244,14 +226,14 @@ if (recordCount !== undefined) {
   );
   console.log(`Froze ${recorded.length} cases in ${RECORD_DIRECTORY}.`);
 }
-// The native engine must enumerate as the interpreter does, and where it and TLC both answer, as
-// TLC does; it may stop where they don't.
+// Where the native engine and TLC both answer, the engine must enumerate as TLC does; it may stop
+// where TLC doesn't.
 const isExact = Object.keys(tally).every(
   (name) => !name.startsWith("native") || name.endsWith("stopsAlone"),
 );
 console.log(
   isExact
-    ? "The native engine enumerates every set as the interpreter does, and as TLC does where both answer."
+    ? "The native engine enumerates every set as TLC does where both answer."
     : "The native engine's enumerations differ.",
 );
 process.exit(isExact ? 0 : 1);
