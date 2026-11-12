@@ -405,6 +405,8 @@ pub struct Evaluator<'ir> {
     /// The startup definitions that failed as TLC started, which it evaluates again where they are
     /// used (`processConstantDefns` swallows what one throws).
     failed_startup: HashSet<NodeId>,
+    /// The startup definitions the search found failing as TLC started.
+    searched_failing: HashSet<NodeId>,
     /// The value the search computed of each constant definition whose body is a CHOOSE over a
     /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
     chosen: HashMap<NodeId, Value>,
@@ -450,6 +452,9 @@ pub struct Evaluator<'ir> {
     pub register_writes: usize,
     /// How many EXCEPTs named a key outside the function's domain, which TLC warns of.
     except_skips: usize,
+    /// How many UNIONs and set maps the evaluator evaluated.
+    unions: usize,
+    maps: usize,
     /// How many times TLCGet read a register.
     pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
@@ -754,6 +759,7 @@ impl<'ir> Evaluator<'ir> {
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
             failed_startup: HashSet::new(),
+            searched_failing: HashSet::new(),
             chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
@@ -773,6 +779,8 @@ impl<'ir> Evaluator<'ir> {
             registers: Registers::default(),
             register_writes: 0,
             except_skips: 0,
+            unions: 0,
+            maps: 0,
             register_reads: 0,
             is_tool: None,
             trace: None,
@@ -1906,6 +1914,7 @@ impl<'ir> Evaluator<'ir> {
                 Ok(Value::Set(Rc::new(kept)))
             }
             NodeKind::SetMap { expression, bounds } => {
+                self.maps += 1;
                 let mut values = Vec::new();
                 self.for_each_binding(bounds, context, &mut |evaluator, inner| {
                     values.push(evaluator.evaluate(*expression, inner)?);
@@ -2229,7 +2238,13 @@ impl<'ir> Evaluator<'ir> {
                 )
             };
             let before = effects(self);
-            let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
+            let evaluated = self.evaluate(self.definition(node).body, &Context::default());
+            // A definition the search found failing that computes here is one the evaluator
+            // and the engine disagree on, which TLC may print or compute as either does.
+            if evaluated.is_ok() && self.searched_failing.contains(&node) {
+                return fail("a startup definition the search found failing that computes");
+            }
+            let Ok(value) = evaluated else {
                 if ir.model.startup.definitions.contains(&index)
                     && effects(self) == before
                     && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
@@ -2327,6 +2342,17 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Takes whether the search found each startup definition failing as TLC started, in the
+    /// model's order of them.
+    pub fn set_searched_failing(&mut self, failed: &[bool]) {
+        for (&index, &is_failed) in self.ir.model.startup.definitions.iter().zip(failed) {
+            if is_failed {
+                self.searched_failing
+                    .insert(self.ir.definitions[index as usize]);
+            }
+        }
+    }
+
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
     /// over a set (`Violation::chosen`), ids of `store` by position in the IR's definitions, for
     /// those whose evaluation has no effect but its value: neither reading the state or TLC's
@@ -2380,7 +2406,7 @@ impl<'ir> Evaluator<'ir> {
     // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
     // doesn't always, may fail elsewhere, as `fallback.md` lists.
     fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
-        let skips = self.except_skips;
+        let (skips, unions, maps) = (self.except_skips, self.unions, self.maps);
         let body = self.definition(node).body;
         let result = self.evaluate_definition(node, body, &context.global());
         if self.except_skips != skips {
@@ -2392,19 +2418,41 @@ impl<'ir> Evaluator<'ir> {
             }
             Err(error) => error,
         };
-        let is_unsure = self.call_stack.as_ref().is_none_or(|stack| {
-            stack.is_unsorted
-                || stack.values.values().any(may_be_kept_lazy)
-                || stack.frames.iter().any(|frame| match frame {
-                    StackFrame::Node(node) => matches!(
-                        self.kind(*node),
-                        NodeKind::FunctionConstruction { .. }
-                            | NodeKind::SetFilter { .. }
-                            | NodeKind::SetMap { .. }
-                    ),
-                    _ => false,
-                })
-        }) || is_order_dependent(&error.reason);
+        let is_unsure = match &self.call_stack {
+            None => true,
+            Some(stack) => {
+                let lazy: Vec<&Value> = stack
+                    .values
+                    .values()
+                    .filter(|value| may_be_kept_lazy(value))
+                    .collect();
+                let holds = |is_kind: fn(&Lazy) -> bool| {
+                    lazy.iter()
+                        .any(|value| matches!(value, Value::Lazy(inner) if is_kind(inner)))
+                };
+                let reason = error.reason.as_str();
+                stack.is_unsorted
+                    || self.unions != unions
+                    || holds(|lazy| matches!(lazy, Lazy::Union(_)))
+                    || stack.frames.iter().any(|frame| match frame {
+                        StackFrame::Node(node) => {
+                            matches!(self.kind(*node), NodeKind::FunctionConstruction { .. })
+                        }
+                        _ => false,
+                    })
+                    || is_unsure_failure(reason)
+                    || (reason.ends_with("of a non-sequence") && !lazy.is_empty())
+                    || (reason.contains("compare")
+                        && holds(|lazy| matches!(lazy, Lazy::Product(_) | Lazy::Subset(_))))
+                    || (reason.starts_with("enumerated ")
+                        && holds(|lazy| matches!(lazy, Lazy::Subset(_))))
+                    || ((reason.starts_with("expected ") || reason.ends_with("of a non-sequence"))
+                        && holds(|lazy| {
+                            matches!(lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
+                        }))
+                    || (reason == "values TLC can't compare" && self.maps != maps)
+            }
+        };
         if is_unsure {
             return fail(format!(
                 "a startup definition that failed where TLC may fail otherwise: {}",
@@ -4624,6 +4672,7 @@ impl<'ir> Evaluator<'ir> {
             // `UnionValue.union`: the elements of set enumerations, and otherwise a lazy union.
             "UNION" => {
                 arity(1)?;
+                self.unions += 1;
                 let sets = self.operand(&operands[0])?;
                 match &sets {
                     Value::Set(sets) if sets.iter().all(|set| matches!(set, Value::Set(_))) => {
@@ -6353,14 +6402,13 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
     }
 }
 
-// Whether a failure is one of comparing, enumerating or testing membership, where TLC may hold
-// the values unnormalized or lazy, so that evaluating again may fail at other elements.
-fn is_order_dependent(reason: &str) -> bool {
+// The failures the evaluator words otherwise than TLC wherever they arise: a tuple pattern TLC
+// matches as it binds, and a function over a set TLC converts as it enumerates.
+fn is_unsure_failure(reason: &str) -> bool {
     matches!(
         reason,
-        "values TLC can't compare" | "equality of values TLC can't compare"
-    ) || reason.starts_with("enumerated ")
-        || reason.starts_with("a mistyped membership")
+        "a tuple pattern that doesn't match" | "built a function over a set TLC doesn't enumerate"
+    )
 }
 
 // Whether TLC may hold a value lazy: a function it builds by its constructor, or a set but Nat,

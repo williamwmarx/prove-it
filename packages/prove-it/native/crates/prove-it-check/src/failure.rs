@@ -444,11 +444,12 @@ pub(crate) fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[Sou
 /// after what the assumptions printed before it failed that the run hasn't, and returns the
 /// status TLC exits with, or why the run isn't native yet. `printed` is what the run printed of
 /// the assumptions, which must be what TLC prints first. TLC prints no statistics, since it hasn't
-/// searched.
+/// searched. `failed_startup` is whether the search found each startup definition failing.
 pub fn print_assumption_failure(
     printer: &mut Printer,
     ir: &Ir,
     position: u32,
+    failed_startup: &[bool],
     printed: &[String],
     workers: usize,
     start: Instant,
@@ -456,6 +457,7 @@ pub fn print_assumption_failure(
     let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_workers(workers);
+            rebuilder.set_searched_failing(failed_startup);
             rebuilder.evaluate_assumption(position, printer.is_tool)
         })
     })?;
