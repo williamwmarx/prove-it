@@ -68,7 +68,9 @@ impl<'h> FileDescriber<'h> {
                 .host
                 .real_path(path)
                 .unwrap_or_else(|| path.to_path_buf());
-            self.platform.get_java_real(&real.display().to_string())
+            let real = self.platform.get_java_real(&real.display().to_string());
+            // Java's Path writes a real path with the host's separator alone.
+            self.platform.get_java_path(&real)
         };
         if is_windows && self.is_174 {
             return Err("TLC 1.7.4's names of the files SANY parses on Windows".to_owned());
