@@ -553,6 +553,15 @@ The engine's `decide` declines a text that holds a lone surrogate, so the obliga
 that is one would read as U+FFFD, two different strings would be one name, and the axiom that they
 differ would prove anything. No obligation of tlapm's record holds one.
 
+The SMT solver decides only the SMT-LIB tlapm's encoder writes (`script_subset.rs`). Two known
+issues remain within that subset. tlapm's encoder writes neither shape, and no input of the record
+reaches either:
+
+| Repro | Z3 4.8.9 | The port |
+|---|---|---|
+| `(assert (= (* b1 b2 … b12) 1))`, a product of 12 binomials over 24 Int constants | sat at once | runs on: `nlsat::levelwise::add_linear_approximations` reaches `AlgebraicManager::select` and `Rational::floor`, which read neither the deadline nor the step limit |
+| `(assert (distinct c0 … c11999))` over `Idv` | not measured | aborts the process: the rewriter's `mk_not` allocates past the size cap, which preprocessing never reads, and an allocation failure isn't caught |
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
