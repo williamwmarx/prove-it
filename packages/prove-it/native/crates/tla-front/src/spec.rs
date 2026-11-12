@@ -1314,6 +1314,50 @@ impl SubscriptCollector<'_, '_> {
         ))
     }
 
+    /// Whether an expression of constant level evaluates without fail, which TLC then holds as a
+    /// value as it starts: literals, tuples, set enumerations and records of such, what Print and
+    /// PrintT print of such, and definitions of such.
+    fn is_total(&self, expression: &Expr) -> bool {
+        match &expression.kind {
+            ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
+            ExpressionKind::Tuple(items) | ExpressionKind::SetEnumeration(items) => {
+                items.iter().all(|item| self.is_total(item))
+            }
+            ExpressionKind::Record {
+                is_set: false,
+                fields,
+            } => fields.iter().all(|field| self.is_total(&field.value)),
+            ExpressionKind::Label { body, .. } => self.is_total(body),
+            ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {
+                if expression.is_locally_resolved() {
+                    return false;
+                }
+                let Some(name) = expression.reference() else {
+                    return false;
+                };
+                let args: &[Expr] = match &expression.kind {
+                    ExpressionKind::Apply { args, .. } => args,
+                    _ => &[],
+                };
+                if self.environment.builtins.contains_key(&name) {
+                    return match (&*name, args) {
+                        ("TRUE" | "FALSE", []) => true,
+                        ("Print", [_, _]) | ("PrintT", [_]) => {
+                            args.iter().all(|argument| self.is_total(argument))
+                        }
+                        _ => false,
+                    };
+                }
+                args.is_empty()
+                    && get_definition(&name, self.environment).is_some_and(|definition| {
+                        matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                            && self.is_total(&definition.body)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     // `enter`: false where TLC gives up on the subscript.
     fn enter(
         &self,
@@ -1360,6 +1404,18 @@ impl SubscriptCollector<'_, '_> {
             && let Some((node, binding)) = lookup_scope(scope, &name)
         {
             match binding {
+                // A LET definition whose body is a literal TLC holds as the literal's value
+                // (`processConstants`), which the collector ignores.
+                Binding::Thunk {
+                    expression: bound,
+                    scope: ScopeOf::Own,
+                } if matches!(
+                    bound.kind,
+                    ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+                ) =>
+                {
+                    return Ok(true);
+                }
                 Binding::Thunk {
                     expression: bound,
                     scope: bound_scope,
@@ -1409,15 +1465,31 @@ impl SubscriptCollector<'_, '_> {
             {
                 match self.startup.read(definition) {
                     crate::startup::Read::Literal => return Ok(true),
+                    // TLC computes the definition as it starts: where that succeeds it holds the
+                    // value, which the collector ignores, and where it fails, the operator, whose
+                    // body it enters. Of constant level, the body holds no variable, so the two
+                    // differ only where the body reaches what the collector gives up at.
                     crate::startup::Read::Attempted => {
-                        let evaluator = self.evaluator.ok_or(Unfollowed(
-                            "a subscript of [][Next]_v that TLC may compute as it starts",
-                        ))?;
-                        return match evaluator.evaluate(&body, None) {
-                            Ok(_) => Ok(true),
-                            Err(_) => Err(Unfollowed(
-                                "a subscript of [][Next]_v whose definition fails as TLC starts",
-                            )),
+                        let computed = match self.evaluator {
+                            Some(evaluator) => match evaluator.evaluate(&body, None) {
+                                Ok(_) => Some(true),
+                                Err(FrontError::Evaluation(_)) => Some(false),
+                                Err(_) => None,
+                            },
+                            None => None,
+                        };
+                        return match computed {
+                            Some(true) => Ok(true),
+                            Some(false) => self.enter(&body, closure_scope.as_ref(), found),
+                            None if self.is_total(&body) => Ok(true),
+                            None => {
+                                match self.enter(&body, closure_scope.as_ref(), &mut Vec::new()) {
+                                    Ok(true) => Ok(true),
+                                    _ => Err(Unfollowed(
+                                        "a definition in the subscript of [][Next]_v that TLC may compute as it starts",
+                                    )),
+                                }
+                            }
                         };
                     }
                     crate::startup::Read::Operator => {}
