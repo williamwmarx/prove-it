@@ -149,16 +149,16 @@ pub unsafe extern "C" fn prove_it_sany_text(pointer: *mut u8, length: usize) -> 
     }
 }
 
-/// `sanyXml(root, source, fileName, flags, known)`, as prove-it-host's `sany` describes it.
+/// `resolveFiles(args, given, request, known)`, as prove-it-host's `check` describes it.
 ///
 /// # Safety
 ///
 /// As for `prove_it_check`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn prove_it_sany_xml(pointer: *mut u8, length: usize) -> *mut u8 {
+pub unsafe extern "C" fn prove_it_resolve_files(pointer: *mut u8, length: usize) -> *mut u8 {
     unsafe {
         call(pointer, length, |arguments| {
-            prove_it_host::sany::sany_xml(&get::<5>(arguments))
+            prove_it_host::check::resolve_files(&get::<4>(arguments))
         })
     }
 }
