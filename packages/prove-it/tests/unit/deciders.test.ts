@@ -137,13 +137,29 @@ describe("the Rust ports", () => {
     expect(decide("cvc4", "")).toEqual({ kind: "declined", reason: "the cvc4 backend" });
   });
 
-  // A decision whose cancel cell is set before it starts gives up at once.
-  it.each(INPUTS)("%s is unknown once its decision is canceled", (prover, text) => {
+  // The addon reads the cancel cell, so a decision whose cell is set before it starts gives up at
+  // once. WebAssembly decides on the thread that would set it, so it doesn't read the cell
+  // (prove-it-host's prover.rs) and decides as without one.
+  const getCanceledDecision = (prover: string, text: string) => {
     const cancel = new Int32Array(new SharedArrayBuffer(4));
     cancel[0] = 1;
-    expect(getAddon().decide(prover, text, Infinity, undefined, cancel)).toMatchObject({
-      kind: "decided",
-      verdict: "unknown",
-    });
-  });
+    return getAddon().decide(prover, text, Infinity, undefined, cancel);
+  };
+
+  it.if(process.env.PROVE_IT_ENGINE_WASM === undefined).each(INPUTS)(
+    "%s is unknown once its decision is canceled",
+    (prover, text) => {
+      expect(getCanceledDecision(prover, text)).toMatchObject({
+        kind: "decided",
+        verdict: "unknown",
+      });
+    },
+  );
+
+  it.if(process.env.PROVE_IT_ENGINE_WASM !== undefined).each(INPUTS)(
+    "%s decides as WebAssembly whatever its cancel cell holds",
+    (prover, text) => {
+      expect(getCanceledDecision(prover, text)).toEqual(decide(prover, text));
+    },
+  );
 });
