@@ -29,6 +29,17 @@ it("stops generating successors at the first violation", async () => {
     onPrint: (text) => printed.push(text),
   });
   expect(result.status).toBe("invariant-violation");
-  expect(printed).toEqual(["<<1, 1>>", "<<2, 2>>"]);
+  // TLC prints as it searches, then again as it rebuilds the trace, before its second state and
+  // after it.
+  expect(printed).toEqual([
+    "<<1, 1>>",
+    "<<2, 2>>",
+    "<<1, 3>>",
+    "<<2, 3>>",
+    "<<3, 3>>",
+    "<<1, 3>>",
+    "<<2, 3>>",
+    "<<3, 3>>",
+  ]);
   expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
 });
