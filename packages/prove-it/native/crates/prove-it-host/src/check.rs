@@ -464,6 +464,35 @@ fn get_outcome(outcome: Outcome) -> HostValue {
             ),
         ),
         ("violations", HostValue::Array(violations.collect())),
+        (
+            "messages",
+            HostValue::Array(
+                outcome
+                    .messages
+                    .iter()
+                    .map(|message| {
+                        HostValue::Array(vec![
+                            HostValue::Number(f64::from(message.code)),
+                            HostValue::Number(f64::from(message.level)),
+                            HostValue::text(&message.text),
+                            HostValue::Number(message.prints_before as f64),
+                            message.counts.map_or(HostValue::Undefined, |counts| {
+                                HostValue::Array(
+                                    [
+                                        counts.generated,
+                                        counts.distinct,
+                                        counts.queued,
+                                        counts.depth,
+                                    ]
+                                    .map(|count| HostValue::Number(count as f64))
+                                    .into(),
+                                )
+                            }),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ])
 }
 

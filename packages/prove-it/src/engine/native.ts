@@ -144,6 +144,16 @@ export interface NativeCheckOutcome {
   prints: string[];
   // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
   sanyWarnings: string[];
+  // TLC's messages as the check printed them: each one's code, level and text, how many of
+  // `prints` came before it, and the search's counts (generated, distinct, queued, depth) where
+  // TLC checks the temporal properties part way through the search.
+  messages: [
+    code: number,
+    level: number,
+    text: string,
+    printsBefore: number,
+    counts: [number, number, number, number] | undefined,
+  ][];
   violations: {
     code: number;
     headline: string;

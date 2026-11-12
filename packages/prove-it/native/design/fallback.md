@@ -805,6 +805,13 @@ Checks the binary answered and now declines, because the answer matched TLC only
   of strings the search made`), and the library's tests assert TLC's output through the interpreter.
   Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
   every successor and every expression in TLC's order, which a later change would have to show.
+- **Live progress during a native check.** The native check reports `onProgress`'s events once it
+  ends, where the TypeScript check reported them as the search reached them. Live delivery would
+  take a callback the check calls as the printer prints: a threadsafe function in the napi binding,
+  since the check runs on its own thread, and an import in the WebAssembly binding. `checkSources`
+  reruns the check from the start each round it needs another file, so the events of a round may
+  go out only once it is the last: the library would hold them until the check returns without
+  asking for more, or the check would ask for every file before it searches.
 
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
@@ -879,9 +886,33 @@ no full `tlc-stdout`. Recording them is deferred.
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
-- **Native progress events (a blocker for S4).** `check` hands a call with `onProgress` to the
-  TypeScript check, since the native check reports none of the points of the search at which TLC
-  prints a message. It must report them, in `CheckProgress`'s shape, before the interpreter goes.
+- **Native progress events (done).** The native check records each message TLC prints, with its
+  code, its place among the spec's prints and, for a check of the temporal properties part way
+  through the search, the search's counts; `check` turns them into `CheckProgress` events
+  (`src/native-progress.ts`), which it reports once the check ends. On the corpus models the native
+  check answers, the events and their order equal the TypeScript check's (746 of the 762 it answers
+  of 920; of the other 16, six were the report of a violation, fixed since, five the clock's, one
+  a warning below, and four differed in the result or the prints: TLC's recordings side with the
+  native check on Github696b's error and VoteProof's deadlock, where the TypeScript check differs,
+  and the two UserModuleOverride models printed what the property prints as TLC finds the behavior
+  violating it only through the TypeScript check, which the native check's `onPrint` now
+  receives too), but for
+  the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
+  the native search made, every minute, and a `liveness-started` with `isComplete` false for each
+  check part way through it, at the native search's own times. Where the two differ otherwise:
+  - `liveness-initializing` takes `isSymmetric` and `isConstrained` from the configuration, as
+    TLC warns, where the TypeScript check first drops a constraint that is a constant formula and
+    a symmetry whose sets are too small;
+  - a name the configuration lists twice gets the warning event TLC prints, which drops a warning
+    identical to one it printed (`MP.printWarning`), where the TypeScript check reports it twice;
+  - with `-nowarning`, the native check reports none of the warnings TLC doesn't print, where the
+    TypeScript check still reports a constant-level invariant, a state-level property and a
+    symmetry set too small;
+  - what the native engine doesn't print yet has no event either: the warning of an EXCEPT on a
+    record's missing field in an ASSUME or an ALIAS, and what the spec prints as TLC searches for a
+    liveness counterexample;
+  - `PROVE_IT_TEST_LIVE_CHECK_AT` names the state before whose expansion the native search checks,
+    and after whose expansion the TypeScript check does.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the

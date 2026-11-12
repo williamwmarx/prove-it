@@ -26,6 +26,9 @@ pub struct Outcome {
     /// Where TLC stops before it searches, the error the library throws, as the TypeScript check
     /// throws it.
     pub thrown: Option<Thrown>,
+    /// TLC's messages as the check printed them, the library's progress events: each one's code,
+    /// level and text, and how many of `prints` came before it.
+    pub messages: Vec<Message>,
 }
 
 /// `TlaSyntaxError` for the errors SANY reports, `TlaConfigError` or `TlaEvaluationError`.
@@ -34,6 +37,16 @@ pub enum Thrown {
     Syntax(SanyReport),
     Config(String),
     Evaluation(String),
+}
+
+pub struct Message {
+    pub code: u32,
+    pub level: u8,
+    pub text: String,
+    pub prints_before: usize,
+    /// The search's counts when TLC checks the temporal properties part way through it, which
+    /// the message doesn't print.
+    pub counts: Option<Counts>,
 }
 
 #[derive(Clone, Copy, Default)]
