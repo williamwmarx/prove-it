@@ -434,6 +434,41 @@ holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module tha
 its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
 keys by name. It panicked before. It comes back once the front end scopes contexts as SANY does.
 
+The adversarial rounds of the extended file's inner modules and of the library's typed errors
+found these, each wrong on main alike:
+
+| Repro | TLC | Native |
+|---|---|---|
+| A root inner module named `Sequences`, `Naturals`, `TLCExt` or `_TLCTrace`, in TLC's default mode, which writes the trace exploration spec | `Multiply-defined module '<X>'` | checks the model |
+| `EXTENDS A, B` where A and B each hold an inner `---- MODULE In ----` | SANY's warning "the declaration of 'In' conflicts with its declaration at …" | no warning |
+| `K == INSTANCE B`, B `EXTENDS A` and holds an inner `In`, as A does | `*** Errors: 1`, the multiply-defined module | `*** Errors: 2`, adding "Substitution error, probably due to error in module being instantiated." |
+| `EXTENDS B, A` where B instantiates `In.tla` and A holds an inner `In` | `Multiply-defined module 'In'` at A's | checks the model |
+| A constant definition `P == PrintT("in")` in a module the spec instantiates | prints `"in"` for the module's definition and again for the instance's | prints it once |
+| `P == PrintT("hi")` with a configuration error, such as `NEXT Nope` | prints `"hi"`, then the error | the error alone |
+| `CONSTANT K = 3000000000` in the configuration | `NumberFormatException: For input string: "3000000000"` | `Integer overflow` |
+| `CONSTANT K <- D` with `CONSTRAINT D`, D a set | `TLC expected a boolean value, but did not find one.` at D's definition | `The constraint of D is equal to {1}` |
+| `CONSTANT K <- Nope` where `K` isn't declared and the spec's `C` is unassigned | `The constant parameter C is not assigned a value by the configuration file.` | `In the configuration file, the identifier K does not appear in the specification.` |
+| A circular dependency SANY finds as it loads the files, with standard modules to load before the cycle closes | stops at the cycle | parses those modules first, as it finds the cycle once it has loaded every file |
+
+The PrintT ones wait on steps 2 and 3 of [startup.md](startup.md); the library leaves those to the
+TypeScript check, which prints first.
+
+The front end binds a name to an inner module of an extended file as SANY does
+(`resolveNamesBetweenSpecAndExtention`) only where its first load stops at "Cannot find source
+file" for the name, every module of the spec has a name of its own, at any depth, and the name
+names no file or standard module. There binding by name is SANY's binding by scope. Elsewhere it
+reports what it reported before, which differs from TLC where SANY binds the name:
+
+- where the name also names a file or a standard module, it reads that file, where SANY reads none
+  and uses the inner module;
+- where two modules of the spec share a name, two inner modules or an inner module and a file or
+  standard module, it reports "Cannot find source file";
+- where a file extends a name bound to an inner module that extends another file, it reports
+  "Cannot find source file" too.
+
+Each comes back once the front end scopes an inner module's context as SANY does, instead of by
+name; branch `extended-inner-lexical` holds a version that tracks more of SANY's scopes by name.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
