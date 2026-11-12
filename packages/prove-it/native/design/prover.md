@@ -391,6 +391,20 @@ TypeScript keeps the orchestration until P6:
   calls again; no callback into JavaScript. The keys are its `module:<name>`, plus any new kind
   tlapm's lookup needs, added to the list in `sources.rs`. Both exports go through the wasm
   `call()` buffer ABI and bump `ABI_VERSION` as it requires.
+- No text that reaches a decision or an obligation's fingerprint is read lossily. A Rust string
+  can't hold a lone surrogate. U+FFFD in its place would make two different TLA+ strings one SMT
+  name, and the axiom that they differ would then prove anything (#339). So `decide` declines a
+  text that holds one, and `proveNatively` gives way to the TypeScript driver for a source or a
+  module that isn't well-formed UTF-16, or that escapes a lone surrogate in a pragma
+  (`isNativeText`). That driver's decisions then reach the same `decide`. The other lossy reads
+  on the prover's side lose nothing:
+  - `get_text` in `sources.rs` reads only what `isNativeText` passed.
+  - `pragma.rs`'s JSON escapes can make a lone surrogate, but only in a pragma that
+    `isNativeText` keeps from Rust.
+  - `format.rs`, `pragma.rs`'s tokens, `source.rs` and Zenon's `isar.rs` slice text that came
+    from a Rust `String` at ASCII delimiters.
+  - `methods.rs` and Zenon's `expr.rs` read ASCII digits and letters.
+  - `marshal.rs` reads tlapm's fingerprints file, whose keys are hex digests.
 - At P5 the boundary moves up: `getObligations` and the encoders run in Rust, behind
   `prove_obligations(source, modules) → obligations + texts`, and `prove.ts` only decides. At P6
   the whole of `prove` and `prove-it tlapm` run in Rust; the TS `prove` becomes a thin call, as
