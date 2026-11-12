@@ -74,6 +74,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         minimum_shared_level: usize::try_from(minimum_shared_level).unwrap_or(MINIMUM_SHARED_LEVEL),
         // The interpreter reports a violation itself.
         is_violation_reported: false,
+        // The host's search declines a model whose startup fails.
+        is_failed_startup_retried: false,
         is_liveness_periodic: liveness_periodic != 0,
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
         // Only the native checker's tests set these.

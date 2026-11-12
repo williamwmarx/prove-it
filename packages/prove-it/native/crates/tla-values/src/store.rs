@@ -59,6 +59,8 @@ pub const FALSE: Id = 0;
 pub const TRUE: Id = 1;
 pub const EMPTY_SET: Id = 2;
 pub const EMPTY_TUPLE: Id = 3;
+/// The id of no value, which the search gives a startup definition that failed as TLC started.
+pub const NO_VALUE: Id = u32::MAX;
 
 /// Where the store meets something TLC reports as an error, or the engine doesn't handle, with
 /// the TypeScript store's reason, word for word.

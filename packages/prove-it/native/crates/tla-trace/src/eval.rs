@@ -16,6 +16,7 @@ use tla_ir::{
     Pattern, Resolution, ScopeBinding, TextId,
 };
 
+use tla_values::store::NO_VALUE;
 use tla_values::{Id, Store};
 
 use crate::Unsupported;
@@ -401,6 +402,9 @@ pub struct Evaluator<'ir> {
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
+    /// The startup definitions that failed as TLC started, which it evaluates again where they are
+    /// used (`processConstantDefns` swallows what one throws).
+    failed_startup: HashSet<NodeId>,
     /// The value the search computed of each constant definition whose body is a CHOOSE over a
     /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
     chosen: HashMap<NodeId, Value>,
@@ -444,6 +448,8 @@ pub struct Evaluator<'ir> {
     pub registers: Registers,
     /// How many times TLCSet set a register.
     pub register_writes: usize,
+    /// How many EXCEPTs named a key outside the function's domain, which TLC warns of.
+    except_skips: usize,
     /// How many times TLCGet read a register.
     pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
@@ -747,6 +753,7 @@ impl<'ir> Evaluator<'ir> {
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
+            failed_startup: HashSet::new(),
             chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
@@ -765,6 +772,7 @@ impl<'ir> Evaluator<'ir> {
             runtime: None,
             registers: Registers::default(),
             register_writes: 0,
+            except_skips: 0,
             register_reads: 0,
             is_tool: None,
             trace: None,
@@ -2210,9 +2218,24 @@ impl<'ir> Evaluator<'ir> {
         for index in substitutes.chain(ir.model.startup.definitions.iter().copied()) {
             let node = ir.definitions[index as usize];
             // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps
-            // it as an operator, evaluated again, and failing again, where it is used. The front
-            // end has rejected a substitute TLC checks and finds failing.
+            // it as an operator, evaluated again, and failing again, where it is used: before the
+            // same effects, none where it printed, drew and set no register before it failed here.
+            // The front end has rejected a substitute TLC checks and finds failing.
+            let effects = |evaluator: &Self| {
+                (
+                    evaluator.printed.len(),
+                    evaluator.random.map(|random| random.state()),
+                    evaluator.register_writes,
+                )
+            };
+            let before = effects(self);
             let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
+                if ir.model.startup.definitions.contains(&index)
+                    && effects(self) == before
+                    && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
+                {
+                    self.failed_startup.insert(node);
+                }
                 continue;
             };
             if ir.model.startup.definitions.contains(&index) {
@@ -2279,13 +2302,29 @@ impl<'ir> Evaluator<'ir> {
     /// Takes the values the search computed at startup for the model's startup definitions,
     /// ids of `store` in their order, as the values of those definitions.
     pub fn set_startup(&mut self, store: &Store, values: &[Id]) -> Result<(), Unsupported> {
+        self.set_failed_startup(values);
         for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
             let node = self.ir.definitions[index as usize];
+            if id == NO_VALUE {
+                continue;
+            }
             let value = from_store(store, id)?;
             self.cache.insert((node, false), value.clone());
             self.cache.insert((node, true), value);
         }
         Ok(())
+    }
+
+    /// Takes, of the values the search computed at startup, the startup definitions that failed
+    /// there, of which the search keeps no value (`NO_VALUE`) and which TLC evaluates again at
+    /// each use.
+    pub fn set_failed_startup(&mut self, values: &[Id]) {
+        for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
+            if id == NO_VALUE {
+                self.failed_startup
+                    .insert(self.ir.definitions[index as usize]);
+            }
+        }
     }
 
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
@@ -2333,22 +2372,69 @@ impl<'ir> Evaluator<'ir> {
         self.evaluate(body, context)
     }
 
+    // A startup definition that failed as TLC started, which TLC evaluates again where it is used,
+    // where it fails again as it did then: the search found it failing before any effect, as TLC
+    // reports. A warning TLC prints, or a value here, is a disagreement with the search. Where the
+    // evaluation built a set TLC can't normalize or a value TLC may keep lazy, failed in a function
+    // constructor, a filter or a map TLC may keep lazy, or failed comparing, enumerating or testing
+    // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
+    // doesn't always, may fail elsewhere, as `fallback.md` lists.
+    fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+        let skips = self.except_skips;
+        let body = self.definition(node).body;
+        let result = self.evaluate_definition(node, body, &context.global());
+        if self.except_skips != skips {
+            return fail("an EXCEPT of a key outside the domain, which TLC warns of");
+        }
+        let error = match result {
+            Ok(_) => {
+                return fail("a startup definition that failed there and not where it is used");
+            }
+            Err(error) => error,
+        };
+        let is_unsure = self.call_stack.as_ref().is_none_or(|stack| {
+            stack.is_unsorted
+                || stack.values.values().any(may_be_kept_lazy)
+                || stack.frames.iter().any(|frame| match frame {
+                    StackFrame::Node(node) => matches!(
+                        self.kind(*node),
+                        NodeKind::FunctionConstruction { .. }
+                            | NodeKind::SetFilter { .. }
+                            | NodeKind::SetMap { .. }
+                    ),
+                    _ => false,
+                })
+        }) || is_order_dependent(&error.reason);
+        if is_unsure {
+            return fail(format!(
+                "a startup definition that failed where TLC may fail otherwise: {}",
+                error.reason
+            ));
+        }
+        Err(error)
+    }
+
     pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
             return Ok(value.clone());
         }
-        // The value TLC computed at startup, which the search computed and hands on.
-        if self
-            .ir
-            .model
-            .startup
-            .definitions
-            .iter()
-            .any(|&index| self.ir.definitions[index as usize] == node)
+        // The value TLC computed at startup, which the search computed and hands on, but for one
+        // that failed there, which TLC evaluates again here.
+        if !self.failed_startup.contains(&node)
+            && self
+                .ir
+                .model
+                .startup
+                .definitions
+                .iter()
+                .any(|&index| self.ir.definitions[index as usize] == node)
         {
             return fail("a value TLC computed at startup with effects");
+        }
+        if self.failed_startup.contains(&node) {
+            return self.evaluate_failed_startup(node, context);
         }
         let (reads, captures) = (self.reads, self.captures);
         let printed = self.printed.len();
@@ -3438,6 +3524,16 @@ impl<'ir> Evaluator<'ir> {
                 ),
             );
         }
+        // TLC names the set by the class it built it as, which the evaluator doesn't keep.
+        if matches!(
+            function,
+            Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)
+        ) {
+            return fail(format!(
+                "applied a non-function: {}",
+                format_value(&function)
+            ));
+        }
         let argument = argument(self)?;
         if let Value::Lambda(lambda) = &function {
             return self.apply_lambda(lambda, &argument);
@@ -3869,6 +3965,7 @@ impl<'ir> Evaluator<'ir> {
         };
         // TLC leaves a function as it is where the key isn't in its domain.
         let Some(position) = find_key(function, &key)? else {
+            self.except_skips += 1;
             return Ok(value.clone());
         };
         let next = self.except(&function.range[position], rest, update, context)?;
@@ -6202,6 +6299,26 @@ const EFFECTS: &[&str] = &[
     "IOEnv",
 ];
 
+/// The builtins of `EFFECTS` but those whose effect the startup sees run: Print, PrintT,
+/// RandomElement, RandomSubset and TLCSet.
+const UNSEEN_EFFECTS: &[&str] = &[
+    "TLCGet",
+    "CounterExample",
+    "_Counts",
+    "JavaTime",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "JsonDeserialize",
+    "ndJsonDeserialize",
+    "Serialize",
+    "Deserialize",
+    "IOExec",
+    "IOEnvExec",
+    "IOExecTemplate",
+    "IOEnvExecTemplate",
+    "IOEnv",
+];
+
 // Whether an element of a set is the value the search chose, by a walk that changes neither:
 // `None` where the walk can't tell, or where the element is that value but holds a part that
 // evaluating the predicate may change, such as a function's written order or a function TLC
@@ -6233,6 +6350,29 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
             (!is_same || is_settled).then_some(is_same)
         }
         _ => None,
+    }
+}
+
+// Whether a failure is one of comparing, enumerating or testing membership, where TLC may hold
+// the values unnormalized or lazy, so that evaluating again may fail at other elements.
+fn is_order_dependent(reason: &str) -> bool {
+    matches!(
+        reason,
+        "values TLC can't compare" | "equality of values TLC can't compare"
+    ) || reason.starts_with("enumerated ")
+        || reason.starts_with("a mistyped membership")
+}
+
+// Whether TLC may hold a value lazy: a function it builds by its constructor, or a set but Nat,
+// Int, Real, STRING and Any.
+fn may_be_kept_lazy(value: &Value) -> bool {
+    match value {
+        Value::Lambda(_) => true,
+        Value::Lazy(lazy) => !matches!(
+            **lazy,
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any
+        ),
+        _ => false,
     }
 }
 

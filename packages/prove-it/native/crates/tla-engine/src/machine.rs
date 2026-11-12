@@ -218,6 +218,8 @@ pub struct Registers {
     /// Whether TLCSet("exit", TRUE) ran, which stops TLC's search once the worker finishes the
     /// state it is expanding (`ModelChecker.stop`).
     pub is_exit: bool,
+    /// How many times TLCSet has set a register.
+    pub writes: u64,
 }
 
 impl Registers {

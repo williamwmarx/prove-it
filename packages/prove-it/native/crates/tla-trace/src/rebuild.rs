@@ -165,6 +165,12 @@ impl<'ir> Rebuilder<'ir> {
         Ok(())
     }
 
+    /// Takes, of the values the search computed at startup, ids of a store, which startup
+    /// definitions failed there, which TLC evaluates again at each use.
+    pub fn set_failed_startup(&mut self, values: &[Id]) {
+        self.evaluator.set_failed_startup(values);
+    }
+
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
     /// over a set (`Violation::chosen`), ids of `store`, which TLC computed as it started.
     pub fn set_chosen(&mut self, store: &Store, values: &[(u32, Id)]) {
