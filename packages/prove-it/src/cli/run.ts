@@ -59,24 +59,20 @@ const run = async (args: string[]) => {
   const launch = getJavaLaunch(args);
   if (launch === undefined) {
     const java = { libraries: [], properties: new Map() };
-    return (await checkNatively(args, args, java)) ?? checkSpecs(args, java);
+    return (await checkNatively(args)) ?? reportErrors(() => checkSpecs(args, args, java));
   }
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") {
     return (
-      (await checkNatively(args, launch.args, launch.java)) ??
-      reportErrors(() => checkSpecs(launch.args, launch.java, true))
+      (await checkNatively(args)) ??
+      reportErrors(() => checkSpecs(args, launch.args, launch.java, true))
     );
   }
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
-    // TLC 1.7.4's XMLExporter is retired, and only master's is native.
-    if (launch.java.tlcVersion === "1.7.4") {
-      console.error("prove-it: not native yet: TLC 1.7.4");
-      return 1;
-    }
     const exporter = await import("./xml-exporter");
-    return reportErrors(() => exporter.exportXml(launch.args));
+    return reportErrors(() => exporter.exportXml(args));
   }
+
   console.error(
     `Error: tla-ts runs the Java classes ${JAVA_MAIN_CLASSES.join(" and ")}, not ${launch.mainClass}.`,
   );

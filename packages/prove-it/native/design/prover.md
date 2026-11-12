@@ -392,6 +392,20 @@ TypeScript keeps the orchestration until P6:
   calls again; no callback into JavaScript. The keys are its `module:<name>`, plus any new kind
   tlapm's lookup needs, added to the list in `sources.rs`. Both exports go through the wasm
   `call()` buffer ABI and bump `ABI_VERSION` as it requires.
+- No text that reaches a decision or an obligation's fingerprint is read lossily. A Rust string
+  can't hold a lone surrogate. U+FFFD in its place would make two different TLA+ strings one SMT
+  name, and the axiom that they differ would then prove anything (#339). So `decide` declines a
+  text that holds one, and `proveNatively` gives way to the TypeScript driver for a source or a
+  module that isn't well-formed UTF-16, or that escapes a lone surrogate in a pragma
+  (`isNativeText`). That driver's decisions then reach the same `decide`. The other lossy reads
+  on the prover's side lose nothing:
+  - `get_text` in `sources.rs` reads only what `isNativeText` passed.
+  - `pragma.rs`'s JSON escapes can make a lone surrogate, but only in a pragma that
+    `isNativeText` keeps from Rust.
+  - `format.rs`, `pragma.rs`'s tokens, `source.rs` and Zenon's `isar.rs` slice text that came
+    from a Rust `String` at ASCII delimiters.
+  - `methods.rs` and Zenon's `expr.rs` read ASCII digits and letters.
+  - `marshal.rs` reads tlapm's fingerprints file, whose keys are hex digests.
 - At P5 the boundary moves up: `getObligations` and the encoders run in Rust, behind
   `prove_obligations(source, modules) → obligations + texts`, and `prove.ts` only decides. At P6
   the whole of `prove` and `prove-it tlapm` run in Rust; the TS `prove` becomes a thin call, as
@@ -1264,6 +1278,24 @@ is next.
   - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
     overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
     "Stack overflow" (#308).
+- P6b step C, before the TypeScript goes: no script or test imports `src/prover` or
+  `src/obligations` but `src/cli/tlapm.ts`'s, `tlapm-cache.test.ts` and `tlapm-cache-fixtures.ts`.
+  - **Exports:** the host's `obligations(file, source, known, encode)` gives each obligation's id,
+    location, kind, printed text and methods, and the text each backend receives for the
+    `[id, prover]` pairs asked for, encoded in turn in one run; `fingerprint(file, source, known)`
+    gives each obligation's fingerprint. Both read modules as `prove` does, with the file each came
+    from under `path:<name>#<n>`, on the addon interface only (ABI 19). `scripts/native-prover.ts`
+    reads them, and runs the Rust driver in rounds for `prover-inputs` and the tests.
+  - **Checks:** on the same inputs, `conformance:tlapm`, `:fingerprint`, `:smt-encode`,
+    `:isabelle-encode`, `:zenon` and `:ptl` give the same output and results files as with the
+    TypeScript, and `prover-inputs` writes the same 12,022 inputs and `time-limits.json`. The
+    exports give, byte for byte, what the TypeScript gives on all 1,873 modules of `tlapm.json`.
+  - **Known:** a pragma's string that escapes a lone surrogate, which no corpus module has, reads
+    as U+FFFD, as a Rust string can't hold it; `prove` gives way to the TypeScript driver there.
+  - **Deleted:** `obligation-differential`, `encoder-differential`, `prover-driver-differential`
+    and `obligations-dump`, which compared the TypeScript with the Rust. `prove-driver.test.ts`
+    compares the Rust driver with what the TypeScript driver gives, recorded in
+    `tests/fixtures/prove/driver.json`.
 
 ### Deviations from Z3
 

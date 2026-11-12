@@ -43,10 +43,24 @@ pub fn compare_dumps(expected: &[u8], actual: &[u8]) -> Result<(), String> {
     ))
 }
 
-// A payload with its tokens zeroed, and a listing of it.
+/// Whether TLC's reader rebuilds the same value from the two trace files, as `-loadTrace` reads
+/// them: references followed, tokens and slots skipped (AGENTS.md, "The oracle").
+pub fn compare_values(expected: &[u8], actual: &[u8]) -> Result<(), String> {
+    let expected = Dump::read(&gunzip(expected)?)?.value;
+    let actual = Dump::read(&gunzip(actual)?)?.value;
+    if expected == actual {
+        return Ok(());
+    }
+    Err(format!(
+        "the values differ:\nexpected: {expected}\nactual:   {actual}"
+    ))
+}
+
+// A payload with its tokens zeroed, a listing of it, and the value TLC's reader rebuilds.
 struct Dump {
     bytes: Vec<u8>,
     lines: Vec<String>,
+    value: String,
 }
 
 struct Reader<'a> {
@@ -57,6 +71,9 @@ struct Reader<'a> {
     handles: usize,
     tokens: HashMap<i32, Vec<u8>>,
     texts: HashMap<Vec<u8>, i32>,
+    /// Each handle's value as TLC's reader rebuilds it, references followed, without tokens or
+    /// slots, which it skips.
+    values: Vec<String>,
 }
 
 impl Dump {
@@ -69,8 +86,9 @@ impl Dump {
             handles: 0,
             tokens: HashMap::new(),
             texts: HashMap::new(),
+            values: Vec::new(),
         };
-        reader.value(0)?;
+        let value = reader.value(0)?;
         if reader.at != payload.len() {
             return Err(format!(
                 "{} bytes past the value",
@@ -80,6 +98,7 @@ impl Dump {
         Ok(Dump {
             bytes: reader.bytes,
             lines: reader.lines,
+            value,
         })
     }
 }
@@ -120,6 +139,7 @@ impl Reader<'_> {
 
     fn handle(&mut self) -> usize {
         self.handles += 1;
+        self.values.push(String::new());
         self.handles - 1
     }
 
@@ -128,7 +148,7 @@ impl Reader<'_> {
     }
 
     // `UniqueString.readExternal`: the token, zeroed, which must name one text in the file.
-    fn unique(&mut self) -> Result<String, String> {
+    fn unique(&mut self) -> Result<(String, String), String> {
         let at = self.at;
         let token = self.int()?;
         self.bytes[at..at + 4].fill(0);
@@ -146,15 +166,11 @@ impl Reader<'_> {
                 String::from_utf8_lossy(&text)
             ));
         }
-        Ok(format!(
-            "{:?} slot {slot}",
-            text.iter()
-                .map(|&byte| char::from(byte))
-                .collect::<String>()
-        ))
+        let text: String = text.iter().map(|&byte| char::from(byte)).collect();
+        Ok((format!("{text:?} slot {slot}"), format!("{text:?}")))
     }
 
-    fn reference(&mut self, depth: usize, what: &str) -> Result<(), String> {
+    fn reference(&mut self, depth: usize, what: &str) -> Result<String, String> {
         let handle = self.nat()?;
         if handle < 0 || handle as usize >= self.handles {
             return Err(format!(
@@ -163,95 +179,118 @@ impl Reader<'_> {
             ));
         }
         self.line(depth, format!("{what}@{handle}"));
-        Ok(())
+        Ok(self.values[handle as usize].clone())
     }
 
-    fn value(&mut self, depth: usize) -> Result<(), String> {
-        match self.byte()? {
+    fn value(&mut self, depth: usize) -> Result<String, String> {
+        let value = match self.byte()? {
             // BOOLVALUE, INTVALUE.
             0 => {
                 let boolean = self.byte()?;
                 self.line(depth, format!("bool {boolean}"));
+                format!("bool {boolean}")
             }
             1 => {
                 let int = self.int()?;
                 self.line(depth, format!("int {int}"));
+                format!("{int}")
             }
             // STRINGVALUE: the handle follows the string.
             3 => {
-                let text = self.unique()?;
+                let (listed, text) = self.unique()?;
                 let handle = self.handle();
-                self.line(depth, format!("string#{handle} {text}"));
+                self.line(depth, format!("string#{handle} {listed}"));
+                self.values[handle] = text.clone();
+                text
             }
             // RECORDVALUE: the handle, then each field's name, a string or a reference to one.
             4 => {
                 let handle = self.handle();
                 let length = self.int()?;
                 self.line(depth, format!("record#{handle} {length}"));
+                let mut fields = Vec::new();
                 for _ in 0..length.unsigned_abs() {
-                    match self.byte()? {
+                    let name = match self.byte()? {
                         26 => self.reference(depth + 1, "name")?,
                         _ => {
                             let name_handle = self.handle();
-                            let text = self.unique()?;
-                            self.line(depth + 1, format!("name#{name_handle} {text}"));
+                            let (listed, text) = self.unique()?;
+                            self.line(depth + 1, format!("name#{name_handle} {listed}"));
+                            self.values[name_handle] = text.clone();
+                            text
                         }
-                    }
-                    self.value(depth + 2)?;
+                    };
+                    fields.push(format!("{name} |-> {}", self.value(depth + 2)?));
                 }
+                let value = format!("[{}]", fields.join(", "));
+                self.values[handle] = value.clone();
+                value
             }
             // SETENUMVALUE.
             5 => {
                 let handle = self.handle();
                 let length = self.int()?;
                 self.line(depth, format!("set#{handle} {length}"));
-                for _ in 0..length.unsigned_abs() {
-                    self.value(depth + 1)?;
-                }
+                let elements = (0..length.unsigned_abs())
+                    .map(|_| self.value(depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let value = format!("{{{}}}", elements.join(", "));
+                self.values[handle] = value.clone();
+                value
             }
             // TUPLEVALUE.
             7 => {
                 let handle = self.handle();
                 let length = self.nat()?;
                 self.line(depth, format!("tuple#{handle} {length}"));
-                for _ in 0..length {
-                    self.value(depth + 1)?;
-                }
+                let elements = (0..length)
+                    .map(|_| self.value(depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let value = format!("<<{}>>", elements.join(", "));
+                self.values[handle] = value.clone();
+                value
             }
             // FCNRCDVALUE: over an interval, its values; else its keys and values.
             9 => {
                 let handle = self.handle();
                 let length = self.nat()?;
-                match self.byte()? {
+                let value = match self.byte()? {
                     0 => {
                         let (low, high) = (self.int()?, self.int()?);
                         self.line(depth, format!("function#{handle} {length} {low}..{high}"));
-                        for _ in 0..length {
-                            self.value(depth + 1)?;
-                        }
+                        let values = (0..length)
+                            .map(|_| self.value(depth + 1))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        format!("({low}..{high} |-> {})", values.join(", "))
                     }
                     info => {
                         self.line(depth, format!("function#{handle} {length} info {info}"));
+                        let mut pairs = Vec::new();
                         for _ in 0..length {
-                            self.value(depth + 1)?;
-                            self.value(depth + 1)?;
+                            let key = self.value(depth + 1)?;
+                            pairs.push(format!("{key} :> {}", self.value(depth + 1)?));
                         }
+                        format!("({})", pairs.join(" @@ "))
                     }
-                }
+                };
+                self.values[handle] = value.clone();
+                value
             }
             // MODELVALUE, INTERVALVALUE, DUMMYVALUE.
             21 => {
                 let index = self.short()?;
                 self.line(depth, format!("model value {index}"));
+                format!("model value {index}")
             }
             23 => {
                 let (low, high) = (self.int()?, self.int()?);
                 self.line(depth, format!("interval {low}..{high}"));
+                format!("{low}..{high}")
             }
             26 => self.reference(depth, "value")?,
             kind => return Err(format!("a value of kind {kind}, which TLC doesn't read")),
-        }
-        Ok(())
+        };
+        Ok(value)
     }
 }
 

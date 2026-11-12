@@ -255,13 +255,26 @@ export class EngineInvariantError extends TlaError {
 
 // No native engine loads: no platform package for this system is installed, its addon fails to
 // load, or, where there is no process.dlopen, the WebAssembly engine doesn't. check doesn't fall
-// back to a slower search unasked: PROVE_IT_ENGINE=0 checks with the interpreter.
+// back to a slower search unasked: PROVE_IT_ENGINE=0 checks with the interpreter, except where the
+// CLI finds a spec's files, which only the engine does, whatever the setting.
 export class EngineUnavailableError extends Error {
-  constructor(reason: string) {
+  constructor(reason: string, isInterpreterEnough = true) {
     super(
-      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform, or set PROVE_IT_ENGINE=0 to check with the interpreter.`,
+      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform${isInterpreterEnough ? ", or set PROVE_IT_ENGINE=0 to check with the interpreter" : ""}.`,
     );
     this.name = "EngineUnavailableError";
+  }
+}
+
+// The engine as WebAssembly runs on the host's call stack, so it stops a recursion deeper than that
+// stack holds (MAXIMUM_RECURSION in machine.rs), or traps where a deeper frame exhausts it. check
+// doesn't search again with a slower engine unasked: the addon and the binary recurse further.
+export class WebAssemblyStackError extends Error {
+  constructor() {
+    super(
+      "The WebAssembly engine ran out of stack: the spec recurses or nests deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls, or set PROVE_IT_ENGINE=0 to check with the interpreter.",
+    );
+    this.name = "WebAssemblyStackError";
   }
 }
 

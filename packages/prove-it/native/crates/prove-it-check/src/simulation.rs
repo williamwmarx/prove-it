@@ -19,7 +19,7 @@ use crate::check::{
     ASSUMPTION_VIOLATION, DEADLOCK, Event, Relay, SAFETY_VIOLATION, SUCCESS, print_coded_failure,
     print_finished, print_small_sets, print_startup_message, print_violation, report_not_native,
 };
-use crate::dump_trace::{TRACE_FILE_DECLINE, TraceDumps};
+use crate::dump_trace::TraceDumps;
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
@@ -258,7 +258,10 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
     // The simulator checks the trace exploration spec's postcondition on the violation's trace,
     // which writes the trace's file.
     if dumps.is_trace_recorded() {
-        return report_not_native(printer, TRACE_FILE_DECLINE);
+        return report_not_native(
+            printer,
+            "the trace file of a simulation's violation, which the trace exploration spec's postcondition writes",
+        );
     }
     // TLC's simulator reports the violation and goes on generating traces (`Simulator`'s
     // `TLCGlobals.continuation`).

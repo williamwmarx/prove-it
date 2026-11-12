@@ -2,26 +2,36 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkParsed } from "../../src/parallel";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
-const checkCounterExample = async (configName: string) => {
+// A lasso declines natively where its step back into the cycle prints, and the TypeScript check
+// answers it; one that stutters doesn't step back.
+const LASSO_DECLINED =
+  "a temporal property's counterexample: a step back into the cycle of a spec that prints";
+
+const checkCounterExample = async (configName: string, declinedFor?: string) => {
   const printed: string[] = [];
-  const result = await checkParsed({
-    source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
-    onPrint: (text) => printed.push(text),
-  });
-  // TLC prints what the postcondition prints after the trace.
-  return [result.status, ...printed, ...(result.violation?.traceOutput ?? [])];
+  const result = await checkOnEngine(
+    {
+      source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
+      onPrint: (text) => printed.push(text),
+    },
+    declinedFor,
+  );
+  // TLC prints what the postcondition prints after the trace, which onPrint reports.
+  return [result.status, ...printed];
 };
 
 describe("POSTCONDITION after a violation matches TLC", () => {
   it("binds CounterExample to the behavior that violates an invariant or deadlocks", async () => {
     expect(
       await Promise.all(
-        ["CounterExampleInvariant", "CounterExampleDeadlock"].map(checkCounterExample),
+        ["CounterExampleInvariant", "CounterExampleDeadlock"].map((name) =>
+          checkCounterExample(name),
+        ),
       ),
     ).toEqual([
       [
@@ -35,7 +45,10 @@ describe("POSTCONDITION after a violation matches TLC", () => {
 
   it("closes the lasso of a liveness violation with the step back to the loop", async () => {
     expect(
-      await Promise.all(["CounterExampleCycle", "CounterExampleStutter"].map(checkCounterExample)),
+      await Promise.all([
+        checkCounterExample("CounterExampleCycle", LASSO_DECLINED),
+        checkCounterExample("CounterExampleStutter"),
+      ]),
     ).toEqual([
       [
         "liveness-violation",

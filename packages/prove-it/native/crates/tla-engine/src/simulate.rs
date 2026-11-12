@@ -200,6 +200,7 @@ pub fn simulate(
                 registers: stopped.registers,
                 possible: Vec::new(),
                 fingerprints: Vec::new(),
+                added: None,
             }))
         }
         None => None,
@@ -396,7 +397,10 @@ impl Run<'_, '_> {
             }
             if self.next_states.is_empty() {
                 if self.check_deadlock {
-                    let kind = ViolationKind::Deadlock { accepted: None };
+                    let kind = ViolationKind::Deadlock {
+                        accepted: None,
+                        atom: None,
+                    };
                     self.stop(machine, &path, kind)?;
                     return Ok(true);
                 }

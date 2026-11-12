@@ -2,7 +2,9 @@
 //! XMLExporter of TLC master, which prints a spec's semantic tree as XML.
 
 use std::cell::Cell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::host_path::get_stem;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
@@ -132,17 +134,12 @@ fn print_missing_root(
     root: &str,
     includes: &[String],
 ) -> i32 {
-    let user_directory = std::env::current_dir()
-        .map(|directory| directory.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let directories: String = includes
-        .iter()
-        .map(|include| format!("{include}, "))
-        .collect();
+    let user_directory = output.host.current_dir().to_string_lossy().into_owned();
+    let directories = includes.join(", ");
     let fatal = format!("Unknown location\n\nCannot find source file for module {root}");
     let _ = write!(
         output.err,
-        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
+        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}, classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
     );
     XML_EXPORT_SPEC_PARSING_FAILURE
 }
@@ -182,18 +179,15 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
     };
     // SANY looks for each module in the working directory, then in the -I directories, which
     // XMLExporter passes in place of TLA-Library, then among its standard modules.
+    let platform = output.host.platform();
     let directories: Vec<&Path> = std::iter::once(Path::new("."))
         .chain(includes.iter().map(Path::new))
         .collect();
     let path = directories
         .iter()
-        .map(|directory| directory.join(&file_name))
+        .map(|directory| PathBuf::from(platform.join(&directory.to_string_lossy(), &file_name)))
         .find(|path| output.host.is_file(path));
-    let root = Path::new(&file_name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default()
-        .to_owned();
+    let root = get_stem(platform.file_name(&file_name)).to_owned();
     let source = match &path {
         Some(path) => output
             .host
@@ -224,8 +218,8 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
     };
     let exported =
         export_xml(&root, &source, name, &load_module, &options).map_err(|error| match error {
-            FrontError::NotYet(reason) => reason,
-            other => format!("{other:?}"),
+            FrontError::NotYet(reason) => format!("SANY's XMLExporter of {reason}"),
+            _ => "SANY's XMLExporter, which tla-front doesn't write".to_owned(),
         })?;
     if unreadable.get() {
         return Err(
