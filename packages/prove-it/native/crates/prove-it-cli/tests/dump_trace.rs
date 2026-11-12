@@ -6,6 +6,7 @@
 //! trace file. The JSON is compared byte for byte, the `.bin` but for the tokens of its strings,
 //! which no two runs share.
 
+mod common;
 #[path = "../../tla-trace/tests/dump/payload.rs"]
 mod payload;
 
@@ -63,7 +64,8 @@ fn normalize(text: &str) -> String {
             (Some(prefix), _) => prefix.to_owned(),
             (None, Some(path)) => {
                 let path = path.split(' ').next().unwrap_or(path);
-                format!("Parsing file {}", path.rsplit('/').next().unwrap_or(path))
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                format!("Parsing file {name}")
             }
             _ if line.starts_with("Finished computing initial states")
                 || line.starts_with("Checking temporal properties ") =>
@@ -231,6 +233,11 @@ fn parses_the_trace_modules_where_tlc_records_the_trace() {
         "DumpInvariant",
         &["-dumpTrace", "json", "DumpInvariant.json"],
     );
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_TRACE_SPEC, "default-violation");
+        std::fs::remove_dir_all(directory).expect("removed");
+        return;
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(12), "{text}");
     let trace_spec = |text: &str| {
@@ -366,9 +373,8 @@ fn te_bin_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-// Runs the binary in TLC's default on the spec, in a directory of its own, and returns the trace
-// file it wrote.
-fn write_trace_file(spec: &str) -> Vec<u8> {
+// Runs the binary in TLC's default on the spec, in a directory of its own.
+fn run_default(spec: &str) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-te-bin-{spec}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -381,6 +387,12 @@ fn write_trace_file(spec: &str) -> Vec<u8> {
         .current_dir(&directory)
         .output()
         .expect("the binary runs");
+    (output, directory)
+}
+
+// Runs the binary in TLC's default on the spec and returns the trace file it wrote.
+fn write_trace_file(spec: &str) -> Vec<u8> {
+    let (output, directory) = run_default(spec);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -410,6 +422,14 @@ fn writes_the_trace_file_tlc_reads_back() {
         "AliasLiteral",
         "Shared",
     ] {
+        // TLC writes a trace exploration spec beside the trace file for a trace of two states or
+        // more, whose path the binary declines to print on Windows.
+        if cfg!(windows) && spec != "AliasInit" {
+            let (output, directory) = run_default(spec);
+            common::assert_declined(&output, common::DECLINED_TRACE_SPEC, spec);
+            std::fs::remove_dir_all(directory).expect("removed");
+            continue;
+        }
         let expected =
             std::fs::read(te_bin_fixture(&format!("{spec}.bin"))).expect("TLC's trace file");
         if let Err(difference) = compare_values(&expected, &write_trace_file(spec)) {

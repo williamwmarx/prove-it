@@ -180,7 +180,7 @@ impl Host for SourcesHost {
 
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {
         if self.is_library {
-            return Box::new(|_, _| String::new());
+            return Box::new(|_, _| Ok(String::new()));
         }
         let describer = FileDescriber::new(files, self);
         Box::new(move |name, origin| describer.describe(name, origin))

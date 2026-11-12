@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tla_front::config::ModelConfig;
 use tla_values::fingerprint::{MODEL_VALUE, Polynomial};
 
+use crate::host_path::Platform;
 use crate::messages::{self as code, Level, Printer};
 
 const INDENT: &str = "    ";
@@ -276,6 +277,12 @@ pub fn write_after_finish(printer: &mut Printer) {
             return;
         }
     };
+    // TLC prints the path as Java's Path does, which on Windows no run of TLC has recorded.
+    if printer.host.platform() == Platform::Windows {
+        printer.trace_spec_decline =
+            Some("the path TLC prints on Windows of the trace exploration spec".into());
+        return;
+    }
     let path = spec.get_path(".tla");
     if !printer
         .host
