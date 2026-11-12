@@ -697,14 +697,23 @@ no full `tlc-stdout`. Recording them is deferred.
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
 - **Native progress events (done).** The native check records each message TLC prints, with its
-  code and its place among the spec's prints, and `check` turns them into `CheckProgress` events
-  (`src/native-progress.ts`), which it reports once the check ends. On the first 300 corpus models
-  the native check answers, the events and their order equal the TypeScript check's, but for the
-  search's periodic progress and periodic liveness checks, which TLC times by the clock. What the
-  printer can't supply: `liveness-initializing` without a warning takes `isSymmetric` and
-  `isConstrained` from the configuration, where the interpreter drops a constraint that is a true
-  constant formula first; and the search's statistics carry their four counts, which the
-  TypeScript check's events now narrow to as well.
+  code, its place among the spec's prints and, for a check of the temporal properties part way
+  through the search, the search's counts; `check` turns them into `CheckProgress` events
+  (`src/native-progress.ts`), which it reports once the check ends. On the corpus models the native
+  check answers, the events and their order equal the TypeScript check's (CORPUS_COUNT), but for
+  the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
+  the native search made, every minute, and a `liveness-started` with `isComplete` false for each
+  check part way through it, at the native search's own times. Where the two differ otherwise:
+  - `liveness-initializing` takes `isSymmetric` and `isConstrained` from the configuration, where
+    the TypeScript check drops a constraint or a symmetry that is a constant formula first;
+  - with `-nowarning`, the native check reports none of the warnings TLC doesn't print, where the
+    TypeScript check still reports a constant-level invariant, a state-level property and a
+    symmetry set too small;
+  - what the native engine doesn't print yet has no event either: the warning of an EXCEPT on a
+    record's missing field in an ASSUME or an ALIAS, and what the spec prints as TLC searches for a
+    liveness counterexample;
+  - `PROVE_IT_TEST_LIVE_CHECK_AT` names the state before whose expansion the native search checks,
+    and after whose expansion the TypeScript check does.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the

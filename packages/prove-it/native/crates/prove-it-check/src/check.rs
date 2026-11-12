@@ -286,8 +286,8 @@ pub(crate) enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// behavior graphs of how many states in all.
-    LivenessStarted(u64, u64),
+    /// behavior graphs of how many states in all, and the search's counts then.
+    LivenessStarted(u64, u64, Statistics),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
     Print(Option<String>),
@@ -545,8 +545,17 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, states));
+    fn liveness_started(&mut self, branches: u64, expanded: u64, states: u64, counts: [u64; 3]) {
+        let [generated, distinct, depth] = counts;
+        let statistics = Statistics {
+            generated,
+            distinct,
+            queued: distinct.saturating_sub(expanded),
+            depth,
+        };
+        let _ = self
+            .sender
+            .send(Event::LivenessStarted(branches, states, statistics));
     }
 
     fn liveness_finished(&mut self) {
@@ -1338,8 +1347,9 @@ fn check_spec(
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, states) => {
+                    Event::LivenessStarted(branches, states, statistics) => {
                         checking = Some(print_liveness_check(printer, branches, states, "current"));
+                        printer.count_message(statistics.counts());
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {

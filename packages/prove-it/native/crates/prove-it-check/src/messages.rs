@@ -215,9 +215,17 @@ impl<'o> Printer<'o> {
                 level: level as u8,
                 text: text.to_string(),
                 prints_before: self.outcome.prints.len(),
+                counts: None,
             });
         }
         self.line(&message);
+    }
+
+    /// Notes the search's counts with the message just printed, for the library's events.
+    pub fn count_message(&mut self, counts: crate::outcome::Counts) {
+        if let Some(message) = self.outcome.messages.last_mut() {
+            message.counts = Some(counts);
+        }
     }
 
     /// A line outside any message, such as what the front end printed.

@@ -29,6 +29,9 @@ pub struct Message {
     pub level: u8,
     pub text: String,
     pub prints_before: usize,
+    /// The search's counts when TLC checks the temporal properties part way through it, which
+    /// the message doesn't print.
+    pub counts: Option<Counts>,
 }
 
 #[derive(Clone, Copy, Default)]

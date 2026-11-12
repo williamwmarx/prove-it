@@ -15,8 +15,8 @@ const toCount = (text: string) => Number(text.replaceAll(",", ""));
 const CONTINUED_STATUSES = new Map<number, CheckStatus>([
   [MESSAGE_CODE.invariantViolatedInitial, "invariant-violation"],
   [MESSAGE_CODE.invariantViolatedBehavior, "invariant-violation"],
-  [MESSAGE_CODE.propertyViolatedInitial, "property-violation"],
-  [MESSAGE_CODE.actionPropertyViolatedBehavior, "property-violation"],
+  [MESSAGE_CODE.propertyViolatedInitial, "liveness-violation"],
+  [MESSAGE_CODE.actionPropertyViolatedBehavior, "liveness-violation"],
 ]);
 
 // The warnings the events name apart from a warning's code and text, and those of a violation's
@@ -58,7 +58,7 @@ export const getNativeProgress = (
     events.push({ progress, printsBefore });
   const continued = [...violations];
   const messages = outcome.messages;
-  messages.forEach(([code, level, text, printsBefore], index) => {
+  messages.forEach(([code, level, text, printsBefore, counts], index) => {
     const next = messages[index + 1];
     switch (code) {
       case MESSAGE_CODE.starting:
@@ -142,8 +142,16 @@ export const getNativeProgress = (
             text,
           );
         const previous = messages[index - 1];
-        const statistics =
-          previous?.[0] === MESSAGE_CODE.progress ? getStatistics(previous[2]) : undefined;
+        const statistics = counts
+          ? {
+              generatedStates: counts[0],
+              distinctStates: counts[1],
+              queuedStates: counts[2],
+              depth: counts[3],
+            }
+          : previous?.[0] === MESSAGE_CODE.progress
+            ? getStatistics(previous[2])
+            : undefined;
         return (
           match &&
           add(

@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, type CheckResult } from "../../src";
+import { check, type CheckProgress, type CheckResult } from "../../src";
 import { checkNatively, checkWithInterpreter } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
