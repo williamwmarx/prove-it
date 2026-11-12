@@ -846,7 +846,9 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
   which holds what tlapm's holds but for each result's date and versions. tlapm copies Zenon's
   stderr to its stdout, and the native command writes Zenon's `exhausted search space` line, which
-  the TypeScript CLI left out.
+  the TypeScript CLI left out. It sends Isabelle's stdout to a file (`Prep.isabelle_prove`), and
+  Isabelle writes nothing to stderr for a proof it doesn't find, so such a failure prints as any
+  other.
 - `scripts/tlapm-conformance.ts` on the 1,873 modules of `tests/conformance/tlapm.json`, run as
   `record-tlapm.ts` ran tlapm (`-N --printallobs --toolbox 0 0`): every one of the 33,138
   obligations of the 1,507 modules tlapm accepted prints byte for byte, and the 366 modules it
@@ -874,8 +876,6 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 - **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
-  - an obligation Isabelle doesn't prove within its time limit, since Isabelle reports why on its
-    stderr;
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
     limit, and an input a back end can't read.
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It (cvc3, Cooper,

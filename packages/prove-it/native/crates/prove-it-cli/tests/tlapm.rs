@@ -1024,3 +1024,28 @@ fn declines_a_module_that_holds_a_marker() {
         format!("{NOT_NATIVE}U+10FFFF in M.tla, which Prove It reads a byte that isn't UTF-8 as\n")
     );
 }
+
+// tlapm sends Isabelle's stdout to a file, and Isabelle writes nothing to stderr for a proof it
+// doesn't find, so the failure prints as any other.
+#[test]
+fn prints_a_proof_isabelle_doesnt_find_as_any_failure() {
+    let module = "---- MODULE I ----\nEXTENDS Naturals, TLAPS\nCONSTANT x\nTHEOREM x = x + 0\n  BY Isa\n====\n";
+    let output = run_in(
+        &write_files(&[("I.tla", module)]),
+        &["--threads", "1", "I.tla"],
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        stdout(&output),
+        "(* created new \".tlacache/I.tlaps/I.thy\" *)\n(* fingerprints written in \".tlacache/I.tlaps/fingerprints\" *)\n"
+    );
+    assert!(stderr(&output).contains("[ERROR]: 1/2 obligations failed.\n"));
+    let output = run_in(
+        &write_files(&[("I.tla", module)]),
+        &["--threads", "1", "--toolbox", "0", "0", "I.tla"],
+    );
+    assert!(
+        stderr(&output).contains("@!!prover:isabelle\n@!!meth:auto; time-limit: 30; time-used: ")
+    );
+    assert!(stderr(&output).contains("@!!reason:false\n"));
+}

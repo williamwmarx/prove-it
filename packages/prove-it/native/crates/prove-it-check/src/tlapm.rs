@@ -1500,8 +1500,9 @@ fn decide(job: Job, cancel: &Cancel) -> Decided {
                     Statistic::Text(text) => Some(text.as_str()),
                     Statistic::Count(_) => None,
                 });
-            let is_timeout = time_used_ms >= job.time_limit_ms;
             // tlapm runs Zenon with its stderr on tlapm's stdout, and kills it at the time limit.
+            // It sends Isabelle's stdout to a file (Prep.isabelle_prove), and Isabelle writes
+            // nothing to stderr for a proof it doesn't find.
             let note = match (job.prover.as_str(), decision.verdict, stop) {
                 (_, Verdict::Unsat, _) => Ok(None),
                 ("zenon", _, Some("exhausted")) => Ok(Some(
@@ -1515,9 +1516,6 @@ fn decide(job: Job, cancel: &Cancel) -> Decided {
                     "what Zenon writes where it stops at {}",
                     stop.unwrap_or("no reason")
                 )),
-                ("isabelle", _, _) if !is_timeout => {
-                    Err("what Isabelle writes for an obligation it doesn't prove".to_owned())
-                }
                 _ => Ok(None),
             };
             note.map(|note| {
