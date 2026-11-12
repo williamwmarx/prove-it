@@ -1383,17 +1383,25 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
-  // UTF-8, they would be one, and the theorem proved.
-  it.each([
-    ["the module", "M.tla", ""],
-    ["a module it extends", "./Lib.tla", "Lib, "],
-  ])("declines %s when it isn't UTF-8 rather than read two strings alike", (_, path, extended) => {
+  // UTF-8, they would be one, and the theorem proved: ED A0 80 and ED B0 80 encode U+D800 and
+  // U+DC00, which a lossy decode reads as three U+FFFD each.
+  const NOT_UTF8 = [
+    ["\\xff = \\xfe", [0xff], [0xfe], "="],
+    ["U+D800 = U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "="],
+    ["U+D800 # U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "#"],
+  ] as const;
+  it.each(
+    NOT_UTF8.flatMap(([name, ...strings]) => [
+      ["the module", name, "M.tla", "", ...strings] as const,
+      ["a module it extends", name, "./Lib.tla", "Lib, ", ...strings] as const,
+    ]),
+  )("declines %s that isn't UTF-8: %s", (_, _name, path, extended, left, right, operator) => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     const theorem = Buffer.concat([
       Buffer.from('THEOREM "'),
-      Buffer.from([0xff]),
-      Buffer.from('" = "'),
-      Buffer.from([0xfe]),
+      Buffer.from(left),
+      Buffer.from(`" ${operator} "`),
+      Buffer.from(right),
       Buffer.from('" BY SMT\n'),
     ]);
     writeFileSync(
