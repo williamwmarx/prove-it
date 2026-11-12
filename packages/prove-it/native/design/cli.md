@@ -124,9 +124,14 @@ same way:
   print fails with a failure TLC reports ("printed a set with a part TLC can't size"), which a
   startup definition then retries at each use; where the engine can't tell, a startup
   definition's print declines and any other prints the set it enumerates. A definition that
-  prints or writes a value's text that may hold such a set anywhere else (`may_hold_unsized`;
-  a set consumed by an expression whose value is a boolean, a number or a string, as
-  `Cardinality(S \X T)` or `S \X T = {}`, isn't in it) declines ("a set TLC may fail to print, at startup"). Parts that are enumerations, intervals,
+  prints or writes a value's text that may hold such a set anywhere else declines ("a set TLC
+  may fail to print, at startup"; `may_write_unsized`, `may_hold_unsized`). Whether a value may
+  hold it follows one table over the node kinds and builtins (`carried_children`): an expression
+  whose value is a boolean, a number or a string holds none; IF and CASE hold their branches, not
+  their conditions; DOMAIN holds a written constructor's domain, not its range; an application
+  holds the function's range, a written tuple's element at a written position, not the argument;
+  a field of a written record holds that field; a LET holds its body; Print its second argument;
+  any other operand may be held. Parts that are enumerations, intervals,
   BOOLEAN or sets built of those are sized; a part empty as written (`{}`, `3..1`) stops the
   walk; a record set's fields are walked in the order of their names' ranks.
 - **symmetry**: the SYMMETRY definition, and each set its body's operator applies to, by the name

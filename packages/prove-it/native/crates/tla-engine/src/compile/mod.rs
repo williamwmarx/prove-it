@@ -1802,7 +1802,7 @@ impl<'a> Compiler<'a> {
         };
         is_unsized
             || self
-                .unsized_children(kind)
+                .carried_children(kind)
                 .into_iter()
                 .any(|child| self.may_hold_unsized(child, seen))
     }
@@ -1952,9 +1952,16 @@ impl<'a> Compiler<'a> {
             NodeKind::Subexpression(_) => return true,
             _ => {}
         }
-        let (before, bound, after) = self.binders(kind);
+        // Only an operand whose value the expression's value may hold, which, where the expression
+        // binds no names, may be one an operand holds (`carried_children`).
+        let carried = self.carried_children(kind);
+        let (mut before, bound, after) = self.binders(kind);
+        if bound.is_empty() && after.is_empty() {
+            before.clone_from(&carried);
+        }
         if before
             .iter()
+            .filter(|child| carried.contains(child))
             .any(|&child| self.reads_unsized_name(child, scope, seen))
         {
             return true;
@@ -1963,6 +1970,7 @@ impl<'a> Compiler<'a> {
         scope.extend(bound);
         let is_read = after
             .iter()
+            .filter(|child| carried.contains(child))
             .any(|&child| self.reads_unsized_name(child, scope, seen));
         scope.truncate(depth);
         is_read
@@ -2077,13 +2085,104 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // The expressions an expression holds, the set a filter ranges over among them.
-    fn unsized_children(&self, kind: &NodeKind) -> Vec<NodeId> {
-        let mut children = kind.children();
-        if let NodeKind::SetFilter { bound, .. } = kind {
-            children.push(bound.set);
+    // The expressions an expression holds whose value may be held in its value, so that a set one
+    // of them holds may be printed with it. Each kind and builtin says which of its operands its
+    // value may contain: none where its value is a boolean, a number or a string
+    // (`is_scalar_valued`); the branches of an IF or a CASE, not their conditions; the set CHOOSE
+    // picks from and a filter keeps elements of; the domain of a function a constructor writes,
+    // not its range, under DOMAIN; the function, not the argument, of an application; one field
+    // of a record written there; the second argument of Print. Any operand not known otherwise
+    // may be.
+    fn carried_children(&self, kind: &NodeKind) -> Vec<NodeId> {
+        let bound_sets =
+            |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect::<Vec<_>>();
+        if self.is_scalar_valued(kind) {
+            return Vec::new();
         }
-        children
+        match kind {
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => vec![*consequent, *alternative],
+            NodeKind::Case { arms, other } => arms
+                .iter()
+                .map(|&(_, arm)| arm)
+                .chain(other.iter().copied())
+                .collect(),
+            NodeKind::Choose { set, .. } => set.iter().copied().collect(),
+            NodeKind::SetFilter { bound, .. } => vec![bound.set],
+            NodeKind::SetMap { expression, bounds } => {
+                let mut carried = bound_sets(bounds);
+                carried.push(*expression);
+                carried
+            }
+            NodeKind::FunctionConstruction { bounds, body, .. } => {
+                let mut carried = bound_sets(bounds);
+                carried.push(*body);
+                carried
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                match (self.node(*function).1, args.as_slice()) {
+                    (NodeKind::FunctionConstruction { body, .. }, _) => vec![*body],
+                    // A tuple written there, at a position written there, holds that element.
+                    (NodeKind::Tuple(elements), &[position]) => match self.node(position).1 {
+                        NodeKind::Number(position) => usize::try_from(*position - 1)
+                            .ok()
+                            .and_then(|index| elements.get(index))
+                            .copied()
+                            .into_iter()
+                            .collect(),
+                        _ => elements.clone(),
+                    },
+                    _ => vec![*function],
+                }
+            }
+            // A LET's value is its body's, which holds a definition's value only where it names it.
+            NodeKind::Let { body, .. } => vec![*body],
+            NodeKind::FieldAccess { record, field } => match self.node(*record).1 {
+                NodeKind::Record(fields) => fields
+                    .iter()
+                    .filter(|&&(name, _)| name == *field)
+                    .map(|&(_, value)| value)
+                    .collect(),
+                _ => vec![*record],
+            },
+            NodeKind::ExceptAt
+            | NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::BoxAction { .. }
+            | NodeKind::AngleAction { .. }
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. } => Vec::new(),
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => match (self.builtin_name(index), args.as_slice()) {
+                    ("PrintT" | "Assert" | "ToString" | "TLCSet" | "..", _) => Vec::new(),
+                    ("Print", [_, value]) => vec![*value],
+                    ("DOMAIN", &[function]) => match self.node(function).1 {
+                        NodeKind::FunctionConstruction { bounds, .. } => bound_sets(bounds),
+                        NodeKind::Record(_) | NodeKind::Tuple(_) => Vec::new(),
+                        NodeKind::Apply { name, args }
+                            if !name.is_local
+                                && matches!(name.resolution, Resolution::Builtin(index)
+                                    if self.builtin_name(index) == ":>") =>
+                        {
+                            args.first().copied().into_iter().collect()
+                        }
+                        _ => vec![function],
+                    },
+                    _ => args.clone(),
+                },
+                _ => kind.children(),
+            },
+            _ => {
+                let mut children = kind.children();
+                if let NodeKind::SetFilter { bound, .. } = kind {
+                    children.push(bound.set);
+                }
+                children
+            }
+        }
     }
 
     // Whether TLC sizes a set without failing, as it does to print a set the set is a part of, and
@@ -2557,9 +2656,7 @@ impl<'a> Compiler<'a> {
         {
             return unsupported("a value TLC computed at startup with effects");
         }
-        if self.may_hold_unsized(definition.body, &mut HashSet::new())
-            && self.may_write_unsized(definition.body, &mut Vec::new(), &mut HashSet::new())
-        {
+        if self.may_write_unsized(definition.body, &mut Vec::new(), &mut HashSet::new()) {
             return unsupported("a set TLC may fail to print, at startup");
         }
         if context.is_expanding(node) {
