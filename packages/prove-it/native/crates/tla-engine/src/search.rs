@@ -417,6 +417,11 @@ pub struct Violation {
     /// fingerprints when it stopped, sorted, the failing state's among them where TLC added it:
     /// TLC replays the expansion and skips each successor in the set. Empty for any other stop.
     pub fingerprints: Vec<u64>,
+    /// Where the search held what it printed for the liveness checker, what TLC prints as it adds
+    /// the state it stopped at to the behavior graphs once it has reported the stop, after the
+    /// trace and before any replay of the expansion (`Worker.run`): each print's values, ids of
+    /// `store`. `None` where nothing prints.
+    pub added: Option<Vec<Prints>>,
 }
 
 /// A path to a tableau node that accepts every behavior: its states, as a `Violation`'s, whose
@@ -424,6 +429,14 @@ pub struct Violation {
 pub struct AcceptedTrace {
     pub states: Vec<Vec<Id>>,
     pub violated: Vec<usize>,
+}
+
+/// The atom at this position of the IR's `model.atoms` that fails as TLC adds a deadlocked state
+/// to the behavior graphs: on the state or, `is_extra`, on its stuttering step, its only step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeadlockAtom {
+    pub atom: u32,
+    pub is_extra: bool,
 }
 
 pub enum ViolationKind {
@@ -440,9 +453,11 @@ pub enum ViolationKind {
     ActionProperty(usize),
     /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
     /// reports the deadlock, where it may reach a tableau node that accepts every behavior, which
-    /// it reports next, as on its Github710d.
+    /// it reports next, as on its Github710d, or fail evaluating an atom, whose call stack it
+    /// prints after the trace.
     Deadlock {
         accepted: Option<Box<AcceptedTrace>>,
+        atom: Option<DeadlockAtom>,
     },
     /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
     /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
@@ -691,6 +706,11 @@ struct Graph {
     /// The last state the graph expands where Next failed on it: its steps are those Next took
     /// before it failed.
     partial: Option<usize>,
+    /// The fingerprint of the new successor a search that holds its prints stopped at, an
+    /// invariant or an action property it violates or an invariant that fails on it: TLC put it
+    /// in the state's set of successors before it checked it (`Worker#isSeenState`), and the
+    /// last edge reaches it, past the stored states.
+    stopped: Option<u64>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -950,6 +970,16 @@ impl States {
         let index = self.count() as u32;
         self.push(state, key, fingerprint, parent);
         self.set.insert(slot, fingerprint, index);
+    }
+
+    // Drops the states added past the first `count`, which the set doesn't hold.
+    fn truncate(&mut self, count: usize) {
+        self.ids.truncate(count * self.width);
+        if let Some(width) = self.key_width {
+            self.keys.truncate(count * width);
+        }
+        self.parents.truncate(count);
+        self.fingerprints.truncate(count);
     }
 
     // Adds a state whose fingerprint the set holds already.
@@ -1660,26 +1690,18 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         self.states.defers_violation(self.expanding, fingerprint)
                     });
                 if !is_deferred {
+                    // TLC put the successor in the state's set of successors before it checked
+                    // it, which the liveness checker reads where it places what TLC prints.
+                    if self.held.is_some() && is_in_model {
+                        self.record_step(machine, found);
+                        self.note_stopped(fingerprint);
+                    }
                     return Err(bail);
                 }
             }
         }
-        if let Some(graph) = &mut self.graph
-            && is_in_model
-        {
-            graph.edges.push(match found {
-                Some(Ok(slot)) => self.states.index(slot),
-                _ => self.states.count() as u32,
-            });
-            if let Some(labels) = &mut graph.labels {
-                labels.push(self.action);
-            }
-            if let Some(pieces) = &mut graph.pieces {
-                pieces.extend_from_slice(&machine.piece_bits.to_le_bytes()[..graph.piece_width]);
-            }
-            if let Some(reals) = &mut graph.reals {
-                reals.extend_from_slice(&self.successor);
-            }
+        if is_in_model {
+            self.record_step(machine, found);
         }
         for (position, (action, unchanged)) in context.action_properties.iter().enumerate() {
             if !crate::context::holds(machine, action)?
@@ -1709,6 +1731,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         self.states.defers_violation(self.expanding, fingerprint)
                     });
                 if !is_deferred {
+                    if self.held.is_some() && is_in_model && is_new {
+                        self.note_stopped(fingerprint);
+                    }
                     return Err(Bail("an action property violated"));
                 }
                 break;
@@ -1730,6 +1755,33 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
 }
 
 impl<T: Reached, E: Entries> Search<'_, T, E> {
+    // Records the step to the successor, in the model, in the graph: to the state `found` names,
+    // or to the one the search adds next where it is new.
+    fn record_step(&mut self, machine: &Machine<'_>, found: Option<Result<usize, usize>>) {
+        let Some(graph) = &mut self.graph else {
+            return;
+        };
+        graph.edges.push(match found {
+            Some(Ok(slot)) => self.states.index(slot),
+            _ => self.states.count() as u32,
+        });
+        if let Some(labels) = &mut graph.labels {
+            labels.push(self.action);
+        }
+        if let Some(pieces) = &mut graph.pieces {
+            pieces.extend_from_slice(&machine.piece_bits.to_le_bytes()[..graph.piece_width]);
+        }
+        if let Some(reals) = &mut graph.reals {
+            reals.extend_from_slice(&self.successor);
+        }
+    }
+
+    fn note_stopped(&mut self, fingerprint: Option<u64>) {
+        if let Some(graph) = &mut self.graph {
+            graph.stopped = fingerprint;
+        }
+    }
+
     // Takes the steps of the state `current` holds, the state `expanding` names, whose
     // fingerprint is given: through the next-state relation, or through each of TLC's actions.
     fn expand(
@@ -1798,7 +1850,10 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         if self.successors == 0 && check_deadlock {
             let count = self.states.count() as u64;
             self.violation = Some(Found {
-                kind: ViolationKind::Deadlock { accepted: None },
+                kind: ViolationKind::Deadlock {
+                    accepted: None,
+                    atom: None,
+                },
                 parent: Some(self.expanding),
                 last: None,
                 fingerprint: None,
@@ -3253,7 +3308,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // Where an atom sets or reads TLC's registers, the checker adds each state as the search
     // expands it and asks the atoms then, as TLC evaluates them.
     let mut online = None;
-    // Why the checker declined as the search went, if it did.
+    // Why the checker declined as the search went, or the engine at its stop, if it did.
     let mut online_declined: Option<String> = None;
     if settings.is_violation_reported && search.graph.is_some() && context.is_live_registered {
         let properties: Vec<Vec<Term>> = model
@@ -4108,7 +4163,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 order_printed(
                                     &held,
                                     &tables,
-                                    &liveness,
+                                    &liveness.events,
+                                    // The interpreter replays the search to a state whose node
+                                    // accepts every behavior, printing as it goes, so there it
+                                    // checks from the start.
+                                    !matches!(
+                                        liveness.verdict,
+                                        Verdict::Declined(_)
+                                            | Verdict::Unexpanded
+                                            | Verdict::Accepted { .. }
+                                    ),
                                     context.is_invariant_printing
                                         || is_distinct_read
                                         || model.actions.len() > 1,
@@ -4414,6 +4478,58 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             };
             let is_traced = settings.is_violation_reported;
             let found = search.violation.take().filter(|_| is_traced);
+            // What TLC prints as it adds the state it stopped at to the behavior graphs, where the
+            // search placed it.
+            let mut stop_added = None;
+            // Where the engine doesn't place what TLC prints at the stop, the stop is reported as
+            // main reports it where nothing but the initial states prints, and declined otherwise.
+            // A stop it doesn't start to place, as one whose atoms read TLC's level, is also
+            // reported as main reports it where main does: with nothing held past the initial
+            // states, as a stop in the first expansion.
+            let mut found = found;
+            if let Some(stop) = &found
+                && online.is_none()
+                && !(matches!(
+                    stop.kind,
+                    ViolationKind::Error {
+                        site: ErrorSite::Next
+                    }
+                ) && bail.0 == INCOMPLETE_SUCCESSOR)
+                && search.graph.is_some()
+                && search.held.is_some()
+            {
+                let is_complete = get_stop_completeness(&context, model, &search, stop);
+                let is_printed = is_printed_past_initial(&mut machine, &context, &search, stop);
+                let is_held_past_initial = search
+                    .held
+                    .as_ref()
+                    .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
+                let placed = match is_complete {
+                    Ok(_) => Some(place_stop_prints(
+                        &mut machine,
+                        &context,
+                        model,
+                        &mut search,
+                        stop,
+                        initial_states,
+                        &|machine, search, expanded, count| {
+                            graph_tables(machine, search, expanded, count, None, None)
+                        },
+                    )),
+                    Err(why) if is_printed && is_held_past_initial => Some(Err(why)),
+                    Err(_) => None,
+                };
+                match placed {
+                    Some(Ok(added)) => stop_added = Some(added),
+                    Some(Err(_))
+                        if !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
+                    Some(Err(why)) => {
+                        online_declined = Some(why.into());
+                        found = None;
+                    }
+                    None => {}
+                }
+            }
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
             // deadlocked state too after it reports the deadlock, and stops at the first whose
             // tableau node accepts every behavior (`LiveCheck#addNextState`): the search reports
@@ -4440,16 +4556,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 Some(found) if online.is_some() => {
                     (!matches!(found.kind, ViolationKind::Deadlock { .. })).then_some(found)
                 }
-                // TLC runs Next again from a state it adds a tableau node of late, printing
-                // again what Next prints, which the search doesn't place before its stop.
-                Some(_)
-                    if search.graph.is_some()
-                        && search.held.as_ref().is_some_and(|held| {
-                            held.iter().skip(1).any(|printed| !printed.is_empty())
-                        }) =>
-                {
-                    None
-                }
+                // Where the search held what it printed for the liveness checker, TLC printed it
+                // between the states it added to the behavior graphs, and may print again as it
+                // adds the state it stopped at once it has printed the trace, even where nothing
+                // printed before: its late node of that state runs Next from it in full.
+                Some(found) if stop_added.is_some() => Some(found),
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
                     let mut count = count;
@@ -4475,21 +4586,33 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }
                     let tables =
                         graph_tables(&mut machine, &search, expanded, count, None, None).ok();
-                    let is_followed = search.states.key_width.is_none()
+                    let is_keyed = search.states.key_width.is_none()
                         && !is_symmetric
-                        && !context.diameter_atoms.contains(&true)
+                        && !context.diameter_atoms.contains(&true);
+                    let is_unprinted = tables
+                        .as_ref()
+                        .is_some_and(|tables| tables.iter().all(|table| table.prints.is_empty()));
+                    let is_followed = is_keyed
+                        && is_unprinted
                         && search
                             .held
                             .as_ref()
-                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
-                        && tables.as_ref().is_some_and(|tables| {
-                            tables.iter().all(|table| table.prints.is_empty())
+                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()));
+                    // What the initial predicate printed comes before the search, so it moves
+                    // nothing TLC prints of an atom that fails on a deadlocked state.
+                    let is_deadlock_followed = is_deadlock
+                        && is_keyed
+                        && is_unprinted
+                        && search.held.as_ref().is_none_or(|held| {
+                            held.iter().skip(1).all(|printed| printed.is_empty())
                         });
                     // TLC had added the initial states and each state before the one it was
-                    // expanding, and stopped at the first whose atom failed to evaluate.
+                    // expanding, and stopped at the first whose atom failed to evaluate. Where the
+                    // engine doesn't follow that, a deadlock is reported only where no atom is
+                    // left unanswered.
                     let unanswered = tables
                         .as_ref()
-                        .filter(|_| is_followed)
+                        .filter(|_| is_followed || is_deadlock)
                         .and_then(|tables| {
                             unanswered_at(
                                 model,
@@ -4506,17 +4629,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         .filter(|unanswered| {
                             unanswered.is_initial
                                 || (unanswered.state as usize)
-                                    < search.expanding + usize::from(is_next_failure)
+                                    < search.expanding + usize::from(is_deadlock || is_next_failure)
                         });
                     // The tables leave unanswered what the checker asks of no finished search,
                     // such as ENABLED of a state not yet expanded, as well as what fails: TLC
                     // stopped at the atom only where evaluating it fails as TLC fails. After a
-                    // failure in Next, an atom that holds may come before one that fails.
+                    // failure in Next, or on the deadlocked state, an atom that holds may come
+                    // before one that fails.
                     let unanswered = unanswered.and_then(|unanswered| {
+                        let is_stopped = is_next_failure
+                            || is_deadlock
+                                && !unanswered.is_initial
+                                && unanswered.state as usize == search.expanding;
                         let failure = atom_failure(&mut machine, &context, &search, unanswered);
                         machine.output.clear();
                         match failure {
-                            Some(Ok(_)) if !is_next_failure => None,
+                            Some(Ok(_)) if !is_stopped => None,
                             Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
                             _ => Some(None),
                         }
@@ -4527,7 +4655,28 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     match verdict {
                         _ if is_next_failure && !is_followed => None,
                         _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
-                            if !is_next_failure || unanswered.state as usize != search.expanding {
+                            let is_stopped = unanswered.state as usize == search.expanding;
+                            if !is_followed
+                                && !(is_deadlock_followed && is_stopped && !unanswered.is_initial)
+                            {
+                                return None;
+                            }
+                            // TLC reported the deadlock and its trace before it added the state,
+                            // and the check that fails there has no error state left to set: TLC
+                            // prints its call stack and exits as for the deadlock
+                            // (`Worker#doNextCheckLiveness`, `ModelChecker#doNextFailed`).
+                            if is_deadlock && is_stopped && !unanswered.is_initial {
+                                let extra = atom_extra(&context, &search, unanswered)?;
+                                found.kind = ViolationKind::Deadlock {
+                                    accepted: None,
+                                    atom: Some(DeadlockAtom {
+                                        atom: unanswered.atom,
+                                        is_extra: extra.is_some(),
+                                    }),
+                                };
+                                return Some(found);
+                            }
+                            if !is_next_failure || !is_stopped {
                                 return to_atom_failure(
                                     &context,
                                     &search,
@@ -4563,6 +4712,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                         .collect(),
                                     violated,
                                 })),
+                                atom: None,
                             };
                             Some(found)
                         }
@@ -4594,6 +4744,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             let mut violation = found.and_then(|found| {
                 to_violation(found, &mut machine, &context, &mut search, is_printing)
             });
+            if let Some(violation) = &mut violation {
+                violation.added = stop_added;
+            }
             // Past the states the search keeps, TLC's may have stopped at a tableau node that
             // accepts every behavior, as on its Github710b, whose x grows without bound. The
             // path is of the states the search keeps, which are those TLC prints where nothing
@@ -4985,6 +5138,7 @@ fn to_violation(
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
             fingerprints,
+            added: None,
         })
     })
 }
@@ -5367,6 +5521,7 @@ fn to_accepted(
         registers: std::mem::take(&mut machine.registers),
         possible: search.possible.clone(),
         fingerprints: Vec::new(),
+        added: None,
     }))
 }
 
@@ -5434,6 +5589,7 @@ fn to_lasso(
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
             fingerprints: Vec::new(),
+            added: None,
         })
     })
 }
@@ -5471,6 +5627,291 @@ pub(crate) fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed
     }
 }
 
+// The answers to the liveness checker's atoms about the first `count` states and the steps of the
+// first `expanded`.
+type GraphTables<'t> = dyn Fn(&mut Machine<'_>, &Search<'_, States>, usize, usize) -> Result<Vec<Table>, &'static str>
+    + 't;
+
+// Where a search that held what it printed for the liveness checker stopped, at a deadlock, a
+// violation or a failure of Next or of an invariant: TLC printed as it searched, adding each state
+// it expanded to the behavior graphs right after it, up to the stop, then, once it has reported
+// the stop, adds the state it stopped at, with the successors it put in its set before it stopped
+// and the stuttering step (`Worker.run`, `Worker#doNextCheckLiveness`). Reports what TLC printed
+// before the stop, and returns what it prints adding that state, or why the engine doesn't follow
+// TLC there, leaving the search as it was.
+fn place_stop_prints(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    model: &Model,
+    search: &mut Search<'_, States>,
+    found: &Found,
+    initial_states: (u64, u64),
+    graph_tables: &GraphTables<'_>,
+) -> Result<Vec<Prints>, &'static str> {
+    let output = machine.output.clone();
+    let held = search.held.clone();
+    let count = search.states.count();
+    let graph = search.graph.as_ref().expect("a graph");
+    let (offsets, partial, stopped) = (graph.edge_offsets.len(), graph.partial, graph.stopped);
+    let placed = place_held_prints(
+        machine,
+        context,
+        model,
+        search,
+        found,
+        initial_states,
+        graph_tables,
+    );
+    if placed.is_err() {
+        machine.output = output;
+        search.held = held;
+        search.states.truncate(count);
+        let graph = search.graph.as_mut().expect("a graph");
+        graph.edge_offsets.truncate(offsets);
+        graph.partial = partial;
+        graph.stopped = stopped;
+    }
+    placed
+}
+
+fn place_held_prints(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    model: &Model,
+    search: &mut Search<'_, States>,
+    found: &Found,
+    initial_states: (u64, u64),
+    graph_tables: &GraphTables<'_>,
+) -> Result<Vec<Prints>, &'static str> {
+    // As for a complete search, a late node's prints are the expansion's but where an invariant
+    // or an action property may print among them, which a late node doesn't check, anything
+    // reads the count of distinct states, or Next has several actions.
+    let is_replay_inexact = context.is_invariant_printing
+        || context.is_action_property_printing
+        || search.is_distinct_read
+        || model.actions.len() > 1;
+    // What the expansion printed up to the stop.
+    let stopped_output = std::mem::take(&mut machine.output);
+    let is_complete = get_stop_completeness(context, model, search, found)?;
+    // TLC checks an invariant the configuration lists twice twice, and the search checks the
+    // second's conjuncts once.
+    if context.is_invariant_printing
+        && model
+            .invariants
+            .iter()
+            .enumerate()
+            .any(|(position, invariant)| {
+                model.invariants[..position]
+                    .iter()
+                    .any(|earlier| earlier.root.definition == invariant.root.definition)
+            })
+    {
+        return Err("an invariant listed twice that prints, at a stop");
+    }
+    let Some(mut held) = search.held.take() else {
+        return Err("prints the search didn't hold");
+    };
+    let expanding = search.expanding;
+    let graph = search.graph.as_mut().expect("a graph");
+    graph.edge_offsets.push(graph.edges.len() as u32);
+    if !is_complete {
+        graph.partial = Some(expanding);
+    }
+    if let (Some(fingerprint), Some(last)) = (graph.stopped.take(), &found.last) {
+        search.states.push(last, &[], fingerprint, expanding as i32);
+    }
+    let count = search.states.count();
+    let tables = graph_tables(machine, search, expanding + 1, count)
+        .map_err(|_| "atoms the engine doesn't answer at a stop in a model that prints")?;
+    machine.output.clear();
+    let graph = search.graph.as_ref().expect("a graph");
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    let events = tla_live::added_events(
+        &to_terms(&model.live_formula),
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanding + 1],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+            levels: None,
+        },
+        &answers,
+    )
+    .map_err(|_| "a stop the liveness checker doesn't follow in a model that prints")?;
+    let stop = events
+        .iter()
+        .position(|&event| event == Event::Expanded(expanding as u32))
+        .ok_or("a stopped state the liveness checker didn't add")?;
+    held.push(stopped_output);
+    let is_late = events[stop + 1..].contains(&Event::Late(expanding as u32));
+    // TLC's late node of a state its search cut short runs Next from the state in full, checking
+    // no invariant (`LiveCheck#addNextState`): the engine follows it where that takes the steps the
+    // search took, so the late node's steps are the graph's.
+    let late_output = if is_late && !is_complete {
+        if matches!(found.kind, ViolationKind::Error { .. })
+            && !matches!(
+                found.kind,
+                ViolationKind::Error {
+                    site: ErrorSite::Invariant(_)
+                }
+            )
+        {
+            return Err("a late node of a state whose next states fail, which TLC fails on again");
+        }
+        if model.actions.len() > 1
+            || !context.constraints.is_empty()
+            || !context.action_constraints.is_empty()
+        {
+            return Err("a late node of the state a stop cut short, which prints");
+        }
+        let successors = run_next(machine, context, search, expanding)
+            .map_err(|_| "a late node of the state a stop cut short, whose steps fail")?;
+        let graph = search.graph.as_ref().expect("a graph");
+        let taken = &graph.edges[graph.edge_offsets[expanding] as usize..];
+        let is_taken = successors.len() == taken.len()
+            && successors
+                .iter()
+                .zip(taken)
+                .all(|(successor, &target)| search.states.state(target) == &successor[..]);
+        if !is_taken {
+            return Err(
+                "a late node of the state a stop cut short, with steps the search didn't take",
+            );
+        }
+        std::mem::take(&mut machine.output)
+    } else {
+        Vec::new()
+    };
+    let order = order_printed(&held, &tables, &events[..=stop], true, is_replay_inexact)
+        .ok_or("prints it doesn't place in TLC's order before a stop")?;
+    let mut added = Vec::new();
+    for event in &events[stop + 1..] {
+        let printed = match *event {
+            Event::Atom { atom, slot } => tables[atom as usize].printed(slot),
+            Event::Late(state) if state as usize == expanding && !is_complete => &late_output,
+            Event::Late(state) => {
+                let printed = &held[state as usize + 1];
+                if is_replay_inexact && !printed.is_empty() {
+                    return Err("prints it doesn't place in TLC's order after a stop");
+                }
+                printed
+            }
+            _ => return Err("a stop the liveness checker doesn't follow in a model that prints"),
+        };
+        added.extend(printed.iter().filter_map(|printed| match printed {
+            Printed::Values(values) => Some(values.clone()),
+            Printed::InitialStates(_) => None,
+        }));
+    }
+    for out in order {
+        match out {
+            Out::Printed(printed) => report_printed(search.reporter, &machine.store, printed),
+            Out::InitialStates => search
+                .reporter
+                .initial_states(initial_states.0, initial_states.1),
+        }
+    }
+    Ok(added)
+}
+
+// Whether the search took all the steps of the state it stopped at, a deadlock, or why the engine
+// doesn't place what TLC prints at that stop. TLC runs Next in full again from a state it adds a
+// node of late, where its search stopped part way through the state's steps.
+fn get_stop_completeness(
+    context: &EngineContext,
+    model: &Model,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> Result<bool, &'static str> {
+    // A property checked as a state or step predicate may come from a \A the front end unrolls
+    // where TLC takes it whole, which main declines in a model that prints.
+    if !model.property_invariants.is_empty()
+        || !model.action_properties.is_empty()
+        || !model.initial_predicates.is_empty()
+    {
+        return Err(
+            "a stop in a model that prints, checking a property as a state or step predicate",
+        );
+    }
+    let is_complete = match found.kind {
+        ViolationKind::Deadlock {
+            accepted: None,
+            atom: None,
+        } => true,
+        ViolationKind::Invariant(_)
+        | ViolationKind::ActionProperty(_)
+        | ViolationKind::Error {
+            site: ErrorSite::Next | ErrorSite::Invariant(_),
+        } => false,
+        _ => return Err("a stop TLC reports otherwise in a model that prints"),
+    };
+    if search.states.key_width.is_some() || search.canonicalizer.is_some() {
+        return Err("a stop under SYMMETRY or a VIEW in a model that prints");
+    }
+    if context.diameter_atoms.contains(&true) || context.level_atoms.contains(&true) {
+        return Err("a stop where the atoms read TLC's diameter or level and something prints");
+    }
+    Ok(is_complete)
+}
+
+// The successors Next gives from the stored state, as TLC's late node of it runs Next in full
+// (`TableauLiveChecker#addNextState`), with what it prints in the machine's output.
+fn run_next(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    state: usize,
+) -> Outcome<Vec<Vec<Id>>> {
+    let next = context.next.as_ref().expect("a next-state relation");
+    let current = search.states.state(state as u32).to_vec();
+    let epoch = machine.next_epoch();
+    machine.set_current(&current, epoch);
+    machine.set_slot(LEVEL_SLOT, search.level_id);
+    machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
+    machine.set_next(&vec![UNASSIGNED; current.len()]);
+    machine.reset_assigned();
+    machine.seed_random(search.states.fingerprints[state]);
+    let mut successors: Vec<Vec<Id>> = Vec::new();
+    next(machine, &mut |machine: &mut Machine<'_>| {
+        successors.push(machine.next().to_vec());
+        Ok(())
+    })?;
+    Ok(successors)
+}
+
+// Whether TLC prints anything past the initial states in a model whose search held what it
+// printed: as it expands the states, the stopped one up to its stop, as it evaluates the atoms, or
+// as its late node of the state the search stopped part way through runs Next from it in full.
+// Where nothing does, the stop is reported as in a model where nothing prints.
+fn is_printed_past_initial(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> bool {
+    let is_printed = context.is_live_printing
+        || !machine.output.is_empty()
+        || search
+            .held
+            .as_ref()
+            .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
+    if is_printed || matches!(found.kind, ViolationKind::Deadlock { .. }) {
+        return is_printed;
+    }
+    let registers = std::mem::take(&mut machine.registers);
+    // A run that fails has printed what the search's run printed before it failed.
+    let _ = run_next(machine, context, search, search.expanding);
+    machine.registers = registers;
+    let is_late_printed = !machine.output.is_empty();
+    machine.output.clear();
+    is_late_printed
+}
+
 /// What the search reports, held until the liveness checker has checked the properties.
 enum Out<'p> {
     Printed(&'p Printed),
@@ -5487,17 +5928,12 @@ enum Out<'p> {
 fn order_printed<'p>(
     held: &'p [Vec<Printed>],
     tables: &'p [Table],
-    liveness: &Liveness,
+    events: &[Event],
+    is_decided: bool,
     is_replay_inexact: bool,
 ) -> Option<Vec<Out<'p>>> {
     let is_printed = held.iter().any(|printed| !printed.is_empty())
         || tables.iter().any(|table| !table.prints.is_empty());
-    // The interpreter replays the search to a state whose node accepts every behavior, printing
-    // as it goes, so there it checks from the start.
-    let is_decided = !matches!(
-        liveness.verdict,
-        Verdict::Declined(_) | Verdict::Unexpanded | Verdict::Accepted { .. }
-    );
     if is_printed && !is_decided {
         return None;
     }
@@ -5506,7 +5942,7 @@ fn order_printed<'p>(
     order.push(Out::InitialStates);
     let mut next = 0;
     let mut is_initial = false;
-    for event in &liveness.events {
+    for event in events {
         match *event {
             // What TLC prints from here on follows the check's start.
             Event::Lasso => break,

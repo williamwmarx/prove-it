@@ -2121,6 +2121,15 @@ pub fn find_accepted(
     add_states(checker, source)
 }
 
+/// Adds the states to the behavior graphs as TLC does as it searches, and returns the evaluations
+/// logged, unless a tableau node accepts every behavior.
+pub fn add_logged(checker: &mut Checker, source: &Source<'_>) -> Result<Vec<Event>, Declined> {
+    if add_states(checker, source)?.is_some() {
+        return Err(Declined::from("a node that accepts every behavior"));
+    }
+    Ok(checker.take_events())
+}
+
 /// Adds the states to the behavior graphs as TLC does as it searches: the first whose tableau node
 /// accepts every behavior, and the path to it.
 fn add_states(

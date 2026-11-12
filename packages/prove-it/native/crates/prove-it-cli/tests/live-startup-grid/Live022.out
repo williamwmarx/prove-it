@@ -1,0 +1,11 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Live022
+Linting of module Live022
+Computing initial states...
+Error: Invariant P is violated by the initial state:
+x = 0
+
