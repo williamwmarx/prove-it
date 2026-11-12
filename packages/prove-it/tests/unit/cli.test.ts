@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1383,6 +1384,36 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       'prove-it: not native yet: the backtrace tlapm prints as it ends with Failure("Module.Parser.parse_file"), as it can\'t find Missing.tla\n',
     );
   });
+
+  // Tlapm_lib.mkdir_tlaps makes the cache directory with Unix.mkdir, which makes none above it.
+  it("declines a cache directory tlapm can't make, and writes nothing", () => {
+    const directory = copyFixtures("obligations");
+    const result = runTlapmIn(directory, ["--cache-dir", "missing/sub", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: the backtrace tlapm prints as it ends where it can't write missing/sub/Proofs.tlaps\n",
+    );
+    expect(existsSync(join(directory, "missing"))).toBe(false);
+  });
+
+  // The run expects to make the directory, which the file system then refuses.
+  it.skipIf(!existsSync("/proc/self"))(
+    "declines an operation the file system refuses, as the binary does",
+    () => {
+      const result = runTlapm("obligations", [
+        "-N",
+        "--cache-dir",
+        "/proc/prove-it-tlapm",
+        "Proofs.tla",
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a directory tlapm can't make: /proc/prove-it-tlapm\n",
+      );
+    },
+  );
 
   // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
   // UTF-8, they would be one, and the theorem proved.

@@ -835,7 +835,8 @@ times of TLC's report part way through can't be bounded from the engine's.
 `dist/`, which hands the command line to `checkSources` and applies the file operations its result
 lists (`prove-it-host`'s `files.rs`). There is no TypeScript fallback: where the native command
 declines, the CLI prints the decline and exits with 1, and where no engine loads, it throws
-`EngineUnavailableError`.
+`EngineUnavailableError`. A run either prints and writes what tlapm does or declines as a whole:
+both hold back what the run prints and writes until it ends (`prove-it-check`'s `overlay.rs`).
 
 ### What matches
 
@@ -878,7 +879,14 @@ declines, the CLI prints the decline and exits with 1, and where no engine loads
   and a theorem that they are equal proved. The binary's `read_to_string` and the CLI's fatal
   `TextDecoder` both give such a file no text.
 - **A cache it can't read or write as tlapm does:** a fingerprints file that doesn't load (tlapm
-  moves it aside), and a directory, a file or a history entry it can't make, write, copy or remove.
+  moves it aside). Where tlapm can't make its cache directory or a module's in it
+  (`Tlapm_lib.mkdir_tlaps`, a `Unix.mkdir`, which makes no directory above it), or write the
+  fingerprints file, as where a directory is there, it ends abnormally with a backtrace (`the
+  backtrace tlapm prints as it ends where it can't write …`). An empty cache directory, from
+  `--cache-dir ""` or `TLAPM_CACHE_DIR=`, has tlapm make each module's directory at the root, which
+  Prove It doesn't do. Where the file system refuses an operation the run's reads let it expect,
+  as a directory under `/proc`, the binary and the CLI decline once the run ends (`a directory
+  tlapm can't make: …`, `a file tlapm can't write: …`), with the operations before it applied.
 
 ### Known wrong outputs
 
@@ -892,4 +900,7 @@ declines, the CLI prints the decline and exits with 1, and where no engine loads
   tlapm's status, 23 decline, and 2 differ, `parse_function_comma_args.tla` #2 above and
   `tlapm/examples/Bakery.tla` #60, which Z3 proves in 3 s and Prove It's SMT back end doesn't
   within the method's 60 s.
-- The CLI of `dist/` prints what the command printed once it ends, not as it goes.
+- The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
+  The binary keeps the order in which the run wrote to stdout and stderr; the CLI writes stdout,
+  then stderr. Where both go to one file, neither need interleave them as tlapm, whose stdout is
+  buffered, does.

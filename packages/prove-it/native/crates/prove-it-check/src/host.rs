@@ -9,6 +9,7 @@ use tla_engine::search::Advice;
 use tla_front::report::ModuleOrigin;
 
 use crate::files::FileDescriber;
+use crate::overlay::FileOperation;
 use crate::zone::Zone;
 
 /// The machine TLC's banner describes.
@@ -113,20 +114,9 @@ pub trait Host {
     fn list_directory(&self, _path: &Path) -> Option<Vec<Entry>> {
         None
     }
-    /// Makes the directory and those above it that are missing; whether it could.
-    fn create_directory(&self, _path: &Path) -> bool {
-        false
-    }
-    /// Removes what the path names, a directory with what it holds, where it names something;
+    /// Applies an operation on the files tlapm's command line held back until its run ended;
     /// whether it could.
-    fn remove(&self, _path: &Path) -> bool {
-        false
-    }
-    fn rename(&self, _from: &Path, _to: &Path) -> bool {
-        false
-    }
-    /// Copies a file, with the time it was last modified; whether it could.
-    fn copy_file(&self, _from: &Path, _to: &Path) -> bool {
+    fn apply(&self, _operation: &FileOperation) -> bool {
         false
     }
     /// Whether the check may read and write the machine's files, as the Json module's operators
@@ -234,32 +224,28 @@ impl Host for SystemHost {
             .collect()
     }
 
-    fn create_directory(&self, path: &Path) -> bool {
-        std::fs::create_dir_all(path).is_ok()
-    }
-
-    fn remove(&self, path: &Path) -> bool {
-        match std::fs::symlink_metadata(path) {
-            Err(_) => true,
-            Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path).is_ok(),
-            Ok(_) => std::fs::remove_file(path).is_ok(),
+    fn apply(&self, operation: &FileOperation) -> bool {
+        match operation {
+            FileOperation::MakeDirectory(path) => std::fs::create_dir_all(path).is_ok(),
+            FileOperation::Write(path, bytes) => self.write_file(path, bytes, false),
+            FileOperation::Remove(path) => match std::fs::symlink_metadata(path) {
+                Err(_) => true,
+                Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path).is_ok(),
+                Ok(_) => std::fs::remove_file(path).is_ok(),
+            },
+            FileOperation::Rename(from, to) => std::fs::rename(from, to).is_ok(),
+            FileOperation::Copy(from, to) => {
+                let copy = || -> std::io::Result<()> {
+                    std::fs::copy(from, to)?;
+                    let modified = std::fs::metadata(from)?.modified()?;
+                    std::fs::File::options()
+                        .write(true)
+                        .open(to)?
+                        .set_modified(modified)
+                };
+                copy().is_ok()
+            }
         }
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> bool {
-        std::fs::rename(from, to).is_ok()
-    }
-
-    fn copy_file(&self, from: &Path, to: &Path) -> bool {
-        let copy = || -> std::io::Result<()> {
-            std::fs::copy(from, to)?;
-            let modified = std::fs::metadata(from)?.modified()?;
-            std::fs::File::options()
-                .write(true)
-                .open(to)?
-                .set_modified(modified)
-        };
-        copy().is_ok()
     }
 
     fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {

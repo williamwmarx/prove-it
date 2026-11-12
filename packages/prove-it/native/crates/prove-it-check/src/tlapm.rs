@@ -8,7 +8,9 @@
 //! through `Io`. Each decision runs on a thread of the `--threads` pool; in WebAssembly, everything
 //! runs in place.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::channel;
@@ -34,8 +36,10 @@ use prove_obligations::tlaps_module::TLAPS_MODULE;
 use tla_engine::clock::Instant;
 
 use crate::check::not_native;
-use crate::host::{Entry, PathKind};
+use crate::host::{Entry, Host, PathKind};
 use crate::messages::Output;
+use crate::outcome::Outcome;
+use crate::overlay::Overlay;
 use crate::time::civil_from_days;
 
 const TLAPM_VERSION: &str = "9ed0376";
@@ -112,38 +116,58 @@ fn decline<T>(reason: impl Into<String>) -> Run<T> {
     Err(Decline(reason.into()))
 }
 
-type Call<'a> = Box<dyn FnOnce(&mut Output<'_>) + Send + 'a>;
+type Call<'a> = Box<dyn FnOnce(&mut Session<'_>) + Send + 'a>;
 
-/// How the run reaches the host and the output from its own thread: each call runs on the
-/// thread that holds them.
+/// What the run reaches on the thread that holds the output: the output, which holds back what the
+/// run prints, and the overlay, which holds back what it writes.
+struct Session<'o> {
+    output: Output<'o>,
+    overlay: Overlay,
+}
+
+impl Session<'_> {
+    fn host(&self) -> &dyn Host {
+        self.output.host
+    }
+
+    fn get_kind(&self, path: &Path) -> Option<PathKind> {
+        self.overlay.get_kind(path, self.output.host)
+    }
+
+    fn read(&self, path: &Path) -> Option<Vec<u8>> {
+        self.overlay.read(path, self.output.host)
+    }
+}
+
+/// How the run reaches the session from its own thread: each call runs on the thread that holds it.
 struct Io<'a> {
     send: Box<dyn Fn(Call<'a>) + 'a>,
 }
 
 impl<'a> Io<'a> {
-    fn call<R: Send + 'a>(&self, work: impl FnOnce(&mut Output<'_>) -> R + Send + 'a) -> R {
+    fn call<R: Send + 'a>(&self, work: impl FnOnce(&mut Session<'_>) -> R + Send + 'a) -> R {
         let (answer, answered) = channel();
-        (self.send)(Box::new(move |output| {
-            let _ = answer.send(work(output));
+        (self.send)(Box::new(move |session| {
+            let _ = answer.send(work(session));
         }));
         answered.recv().expect("the output's thread answers")
     }
 
     fn out(&self, text: String) {
-        self.call(move |output| {
-            let _ = output.out.write_all(text.as_bytes());
+        self.call(move |session| {
+            let _ = session.output.out.write_all(text.as_bytes());
         });
     }
 
     fn err(&self, text: String) {
-        self.call(move |output| {
-            let _ = output.err.write_all(text.as_bytes());
+        self.call(move |session| {
+            let _ = session.output.err.write_all(text.as_bytes());
         });
     }
 
     fn get_kind(&self, path: &str) -> Option<PathKind> {
         let path = PathBuf::from(path);
-        self.call(move |output| output.host.get_path_kind(&path))
+        self.call(move |session| session.get_kind(&path))
     }
 
     fn exists(&self, path: &str) -> bool {
@@ -151,25 +175,88 @@ impl<'a> Io<'a> {
     }
 }
 
-/// Runs tlapm's command line `args`, without the word `tlapm`, and returns its exit status.
-pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
-    match run_in_place(args, output) {
-        Ok(status) => status,
-        Err(Decline(reason)) => not_native(output, &reason),
+/// What the run printed, on stdout and on stderr, in the order it printed it.
+#[derive(Default)]
+struct Recording {
+    chunks: RefCell<Vec<(bool, Vec<u8>)>>,
+}
+
+struct Recorder<'r> {
+    recording: &'r Recording,
+    is_err: bool,
+}
+
+impl Write for Recorder<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut chunks = self.recording.chunks.borrow_mut();
+        match chunks.last_mut() {
+            Some((is_err, chunk)) if *is_err == self.is_err => chunk.extend_from_slice(bytes),
+            _ => chunks.push((self.is_err, bytes.to_vec())),
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
+/// Runs tlapm's command line `args`, without the word `tlapm`, and returns its exit status. A run
+/// either prints and writes what tlapm does or declines as a whole: it holds back what it prints
+/// and writes until it ends, then has the host apply the file operations in order and prints.
+pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
+    let recording = Recording::default();
+    let (result, overlay) = {
+        let mut out = Recorder {
+            recording: &recording,
+            is_err: false,
+        };
+        let mut err = Recorder {
+            recording: &recording,
+            is_err: true,
+        };
+        let mut session = Session {
+            output: Output {
+                out: &mut out,
+                err: &mut err,
+                host: output.host,
+                outcome: Outcome::default(),
+            },
+            overlay: Overlay::default(),
+        };
+        let result = run_in_place(args, &mut session);
+        (result, session.overlay)
+    };
+    let status = match result {
+        Ok(status) => status,
+        Err(Decline(reason)) => return not_native(output, &reason),
+    };
+    for operation in overlay.into_journal() {
+        if !output.host.apply(&operation) {
+            return not_native(output, &operation.get_failure());
+        }
+    }
+    for (is_err, chunk) in recording.chunks.into_inner() {
+        let _ = if is_err {
+            output.err.write_all(&chunk)
+        } else {
+            output.out.write_all(&chunk)
+        };
+    }
+    status
+}
+
 #[cfg(target_arch = "wasm32")]
-fn run_in_place(args: &[String], output: &mut Output<'_>) -> Run<i32> {
-    let output = std::cell::RefCell::new(output);
+fn run_in_place(args: &[String], session: &mut Session<'_>) -> Run<i32> {
+    let session = RefCell::new(session);
     let io = Io {
-        send: Box::new(|call: Call<'_>| call(&mut output.borrow_mut())),
+        send: Box::new(|call: Call<'_>| call(&mut session.borrow_mut())),
     };
     run_tlapm(&io, args)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_in_place(args: &[String], output: &mut Output<'_>) -> Run<i32> {
+fn run_in_place(args: &[String], session: &mut Session<'_>) -> Run<i32> {
     std::thread::scope(|scope| {
         let (calls, received) = channel::<Call<'_>>();
         let running = std::thread::Builder::new()
@@ -180,10 +267,12 @@ fn run_in_place(args: &[String], output: &mut Output<'_>) -> Run<i32> {
                     send: Box::new(move |call| calls.send(call).expect("the output's thread")),
                 };
                 run_tlapm(&io, args)
-            })
-            .expect("a thread for tlapm");
+            });
+        let Ok(running) = running else {
+            return decline("a thread for tlapm's run, which the system refuses");
+        };
         for call in received {
-            call(output);
+            call(session);
         }
         running
             .join()
@@ -399,13 +488,12 @@ fn format_obligation_message(
 }
 
 /// The local time now.
-fn get_local_time(output: &Output<'_>) -> LocalTime {
-    let utc = output
-        .host
+fn get_local_time(host: &dyn Host) -> LocalTime {
+    let utc = host
         .now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs() as i64);
-    let seconds = utc + output.host.zone().offset(utc);
+    let seconds = utc + host.zone().offset(utc);
     let (days, second) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
     let (year, month, day) = civil_from_days(days);
     LocalTime {
@@ -460,7 +548,7 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
             return decline(format!("--threads {}, which tlapm refuses", threads[0]));
         }
         Some(threads) => usize::try_from(threads[0].max(1)).unwrap_or(1),
-        None => io.call(|output| output.host.machine().cores.max(1)),
+        None => io.call(|session| session.host().machine().cores.max(1)),
     };
     let module_paths: Vec<String> = files
         .iter()
@@ -480,8 +568,8 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
             .map(quote_shell_argument)
             .collect::<Vec<_>>()
             .join(" ");
-        let date =
-            io.call(|output| crate::time::format_date(output.host.now(), output.host.zone()));
+        let date = io
+            .call(|session| crate::time::format_date(session.host().now(), session.host().zone()));
         io.out(format!(
             "\n\\* TLAPM version {TLAPM_VERSION}\n\\* launched at {date} with command line:\n\\* {command}\n\n"
         ));
@@ -550,7 +638,7 @@ fn prove_it_obligations_reset() {
 fn get_library_directories(io: &Io<'_>, parsed: &Parsed) -> Run<Vec<String>> {
     let mut directories = vec![".".to_owned()];
     let path = io
-        .call(|output| output.host.get_variable("PATH"))
+        .call(|session| session.host().get_variable("PATH"))
         .unwrap_or_default();
     for directory in path.split(':') {
         let tlapm = join_paths(directory, "tlapm");
@@ -559,7 +647,7 @@ fn get_library_directories(io: &Io<'_>, parsed: &Parsed) -> Run<Vec<String>> {
         }
         let real = {
             let tlapm = PathBuf::from(&tlapm);
-            io.call(move |output| output.host.get_real_path(&tlapm))
+            io.call(move |session| session.host().get_real_path(&tlapm))
         };
         let Some(real) = real else {
             return decline(format!("the real path of {tlapm}"));
@@ -695,7 +783,11 @@ fn generate_obligations(
 
 fn read_text(io: &Io<'_>, path: &str) -> Option<String> {
     let path = PathBuf::from(path);
-    io.call(move |output| output.host.read_text(&path))
+    io.call(move |session| {
+        session
+            .read(&path)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -712,7 +804,7 @@ fn check_modules(
     let cache_directory = match parsed.get("--cache-dir") {
         Some(values) => values[0].clone(),
         None => io
-            .call(|output| output.host.get_variable("TLAPM_CACHE_DIR"))
+            .call(|session| session.host().get_variable("TLAPM_CACHE_DIR"))
             .unwrap_or_else(|| ".tlacache".to_owned()),
     };
     let forgotten = parsed.get_integers("--nofpl").unwrap_or(vec![0, 0]);
@@ -720,6 +812,10 @@ fn check_modules(
     let version = get_stored_version();
     let mut table = FingerprintTable::new();
     let mut statuses = Vec::new();
+    // Tlapm_lib.mkdir_tlaps would make each module's directory at the root.
+    if cache_directory.is_empty() {
+        return decline("an empty cache directory, which has tlapm write its cache at /");
+    }
     if is_processing && !read_cache(io, parsed, modules, module_names, &cache_directory) {
         return Ok(0);
     }
@@ -730,13 +826,21 @@ fn check_modules(
         let loaded_path = parsed
             .get("--usefp")
             .map_or(fingerprints_path.clone(), |values| values[0].clone());
-        create_directory(io, &directory)?;
-        if parsed.has("--cleanfp") && io.exists(&fingerprints_path) {
-            remove(io, &fingerprints_path)?;
-            io.out(format!(
-                "(* fingerprints file {} removed *)\n",
-                quote_ocaml(&fingerprints_path)
-            ));
+        make_cache_directory(io, &cache_directory, &directory)?;
+        // Sys.remove removes anything but a directory, and tlapm can't write a directory's
+        // fingerprints once it has proved.
+        if parsed.has("--cleanfp") {
+            match io.get_kind(&fingerprints_path) {
+                None => {}
+                Some(PathKind::Directory) => return Err(get_abnormal_ending(&fingerprints_path)),
+                Some(_) => {
+                    remove(io, &fingerprints_path);
+                    io.out(format!(
+                        "(* fingerprints file {} removed *)\n",
+                        quote_ocaml(&fingerprints_path)
+                    ));
+                }
+            }
         }
         if !parsed.has("--cleanfp") && io.exists(&loaded_path) && module.summary.total != 0 {
             io.out(if is_nofp {
@@ -748,7 +852,7 @@ fn check_modules(
             });
             let bytes = {
                 let path = PathBuf::from(&loaded_path);
-                io.call(move |output| output.host.read_bytes(&path))
+                io.call(move |session| session.read(&path))
             };
             let Some(bytes) = bytes else {
                 return decline(format!(
@@ -798,7 +902,7 @@ fn check_modules(
         }
         // tlapm's history holds the source of each module read so far.
         let sources = get_history_sources(module_names, &modules[..=index]);
-        let now = io.call(|output| get_local_time(output));
+        let now = io.call(|session| get_local_time(session.host()));
         save_history(io, &fingerprints_path, &sources, now)?;
         let forgotten = (forgotten[0], forgotten[1]);
         let settings = Settings {
@@ -859,19 +963,20 @@ fn read_cache(
         let history = PathBuf::from(format!("{fingerprints}.history"));
         let mut paths = vec![fingerprints, loaded.clone()];
         paths.extend(get_history_sources(module_names, &modules[..=index]));
-        io.call(move |output| {
+        io.call(move |session| {
+            let host = session.host();
             for path in &paths {
-                output.host.get_path_kind(Path::new(path));
+                host.get_path_kind(Path::new(path));
             }
-            if output.host.get_path_kind(Path::new(&loaded)).is_some() {
-                output.host.read_bytes(Path::new(&loaded));
+            if host.get_path_kind(Path::new(&loaded)).is_some() {
+                host.read_bytes(Path::new(&loaded));
             }
-            if output.host.get_path_kind(&history).is_some() {
-                output.host.list_directory(&history);
+            if host.get_path_kind(&history).is_some() {
+                host.list_directory(&history);
             }
         });
     }
-    io.call(|output| output.host.is_complete())
+    io.call(|session| session.host().is_complete())
 }
 
 fn check_strictly(
@@ -918,30 +1023,44 @@ fn check_strictly(
     statuses
 }
 
-fn create_directory(io: &Io<'_>, path: &str) -> Run<()> {
-    let target = PathBuf::from(path);
-    if io.call(move |output| output.host.create_directory(&target)) {
-        Ok(())
-    } else {
-        decline(format!("a directory tlapm can't make: {path}"))
-    }
+/// Where tlapm can't make or write its cache, an exception ends it, and it prints the backtrace of
+/// where it raised it, which only a run of tlapm knows.
+fn get_abnormal_ending(path: &str) -> Decline {
+    Decline(format!(
+        "the backtrace tlapm prints as it ends where it can't write {path}"
+    ))
 }
 
-fn remove(io: &Io<'_>, path: &str) -> Run<()> {
-    let target = PathBuf::from(path);
-    if io.call(move |output| output.host.remove(&target)) {
-        Ok(())
-    } else {
-        decline(format!("a file tlapm can't remove: {path}"))
+/// Tlapm_lib.mkdir_tlaps: `Unix.mkdir` of the cache directory, where it isn't there, and of the
+/// module's in it. Where it can't make the first, it prints why and goes on to fail on the second.
+fn make_cache_directory(io: &Io<'_>, cache: &str, directory: &str) -> Run<()> {
+    for path in [cache, directory] {
+        if io.exists(path) {
+            continue;
+        }
+        let target = PathBuf::from(path);
+        if !io.call(move |session| {
+            session
+                .overlay
+                .create_directory(&target, false, session.output.host)
+        }) {
+            return Err(get_abnormal_ending(directory));
+        }
     }
+    Ok(())
+}
+
+fn remove(io: &Io<'_>, path: &str) {
+    let target = PathBuf::from(path);
+    io.call(move |session| session.overlay.remove(&target, session.output.host));
 }
 
 fn write_file(io: &Io<'_>, path: &str, bytes: Vec<u8>) -> Run<()> {
     let target = PathBuf::from(path);
-    if io.call(move |output| output.host.write_file(&target, &bytes, false)) {
+    if io.call(move |session| session.overlay.write(&target, bytes, session.output.host)) {
         Ok(())
     } else {
-        decline(format!("a file tlapm can't write: {path}"))
+        Err(get_abnormal_ending(path))
     }
 }
 
@@ -950,8 +1069,12 @@ fn pad(value: i64) -> String {
 }
 
 /// Fpfile.fp_init: copies the fingerprints file and the sources into a new directory of the
-/// history, named by the local time, and keeps the latest ten.
+/// history, named by the local time, and keeps the latest ten, by shell commands whose failures
+/// tlapm ignores. It then writes the fingerprints file, which it can't where a directory is there.
 fn save_history(io: &Io<'_>, path: &str, sources: &[String], now: LocalTime) -> Run<()> {
+    if io.get_kind(path) == Some(PathKind::Directory) {
+        return Err(get_abnormal_ending(path));
+    }
     let history = format!("{path}.history");
     let directory = format!(
         "{history}/{}-{}-{}_{}_{}_{}",
@@ -962,35 +1085,46 @@ fn save_history(io: &Io<'_>, path: &str, sources: &[String], now: LocalTime) -> 
         pad(now.minutes),
         pad(now.seconds),
     );
-    create_directory(io, &directory)?;
-    for file in std::iter::once(path).chain(sources.iter().map(String::as_str)) {
-        if !io.exists(file) {
-            continue;
+    let sources = sources.to_vec();
+    let (path, history) = (path.to_owned(), PathBuf::from(history));
+    io.call(move |session| {
+        let host = session.output.host;
+        let overlay = &session.overlay;
+        let directory = PathBuf::from(directory);
+        // mkdir -p, then cp -p of each file there is.
+        if !overlay.create_directory(&directory, true, host) {
+            return;
         }
-        let name = Path::new(file)
-            .file_name()
-            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-        let (from, to) = (
-            PathBuf::from(file),
-            PathBuf::from(format!("{directory}/{name}")),
-        );
-        if !io.call(move |output| output.host.copy_file(&from, &to)) {
-            return decline(format!("a file tlapm can't copy into its history: {file}"));
+        for file in std::iter::once(path.as_str()).chain(sources.iter().map(String::as_str)) {
+            let file = Path::new(file);
+            if let Some(name) = file.file_name() {
+                overlay.copy(file, &directory.join(name), host);
+            }
         }
-    }
-    let entries = {
-        let history = PathBuf::from(&history);
-        io.call(move |output| output.host.list_directory(&history))
-    };
-    let Some(mut entries) = entries else {
-        return decline(format!("a history tlapm can't list: {history}"));
-    };
-    // statSync's mtimeMs, so that times Node sees as equal keep their order here too.
-    entries.sort_by(|left: &Entry, right: &Entry| right.modified.total_cmp(&left.modified));
-    for old in entries.into_iter().skip(HISTORY_SIZE) {
-        remove(io, &format!("{history}/{}", old.name))?;
-    }
+        // rm -rf `ls -1td <history>/* | tail -n +11`: the glob leaves out dotfiles, and ls lists the
+        // latest first.
+        let now = get_milliseconds(host);
+        let Some(mut entries) = overlay.list(&history, now, host) else {
+            return;
+        };
+        entries.retain(|entry| !entry.name.starts_with('.'));
+        entries.sort_by(|left: &Entry, right: &Entry| {
+            right
+                .modified
+                .total_cmp(&left.modified)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        for old in entries.into_iter().skip(HISTORY_SIZE) {
+            overlay.remove(&history.join(old.name), host);
+        }
+    });
     Ok(())
+}
+
+fn get_milliseconds(host: &dyn Host) -> f64 {
+    host.now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
 }
 
 struct ModulePaths {
@@ -1074,7 +1208,7 @@ struct Pool<'p> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> T) -> T {
+fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> Run<T> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::Sender;
@@ -1092,7 +1226,7 @@ fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> T) -> T {
             let received = received.clone();
             let decided: Sender<Decided> = decided.clone();
             let cancel = cancel.clone();
-            std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("prove-it decide".into())
                 .stack_size(DECIDE_STACK_BYTES)
                 .spawn_scoped(scope, move || {
@@ -1103,8 +1237,12 @@ fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> T) -> T {
                             break;
                         }
                     }
-                })
-                .expect("a thread for the decisions");
+                });
+            if spawned.is_err() {
+                return decline(format!(
+                    "{threads} threads for the decisions, which the system refuses"
+                ));
+            }
         }
         drop(decided);
         let answers = std::cell::RefCell::new(answers);
@@ -1123,7 +1261,7 @@ fn with_pool<T>(threads: usize, work: impl FnOnce(&mut Pool<'_>) -> T) -> T {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn with_pool<T>(_threads: usize, work: impl FnOnce(&mut Pool<'_>) -> T) -> T {
+fn with_pool<T>(_threads: usize, work: impl FnOnce(&mut Pool<'_>) -> Run<T>) -> Run<T> {
     let cancel: Cancel = Arc::new(|| false);
     let waiting = std::cell::RefCell::new(std::collections::VecDeque::new());
     let mut pool = Pool {
@@ -1175,7 +1313,7 @@ fn prove_module(
         "(* created new {} *)\n",
         quote_ocaml(&paths.theory)
     ));
-    let now = io.call(|output| get_local_time(output));
+    let now = io.call(|session| get_local_time(session.host()));
     let bytes = round
         .results
         .save(table, version, now)
@@ -1186,8 +1324,8 @@ fn prove_module(
         PathBuf::from(&temporary),
         PathBuf::from(&paths.fingerprints),
     );
-    if !io.call(move |output| output.host.rename(&from, &to)) {
-        return decline(format!("a file tlapm can't write: {}", paths.fingerprints));
+    if !io.call(move |session| session.overlay.rename(&from, &to, session.output.host)) {
+        return Err(get_abnormal_ending(&paths.fingerprints));
     }
     io.out(format!(
         "(* fingerprints written in {} *)\n",

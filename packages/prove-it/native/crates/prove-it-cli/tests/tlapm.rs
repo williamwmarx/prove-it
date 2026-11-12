@@ -480,3 +480,127 @@ fn keeps_the_latest_ten_runs_of_history() {
     expected.push("2026-11-10_12_00_00".to_owned());
     assert_eq!(kept, expected);
 }
+
+// `ls -1td <history>/*` lists no dotfile, so `rm -rf` of what it lists past the tenth keeps them.
+#[test]
+fn keeps_the_dotfiles_of_the_history() {
+    let directory = copy_fixtures("tlapm-cli");
+    let history = directory.join(".tlacache/Failures.tlaps/fingerprints.history");
+    for name in [".old", "2026-01-01_00_00_00"] {
+        let run = history.join(name);
+        fs::create_dir_all(&run).expect("a run");
+        fs::File::open(&run)
+            .expect("the run")
+            .set_modified(std::time::UNIX_EPOCH)
+            .expect("its time");
+    }
+    for day in 2..=10 {
+        fs::create_dir_all(history.join(format!("2026-01-{day:02}_00_00_00"))).expect("a run");
+    }
+    run_in(&directory, &["--noproving", "Failures.tla"]);
+    assert!(history.join(".old").exists());
+    assert!(!history.join("2026-01-01_00_00_00").exists());
+    assert!(history.join("2026-01-02_00_00_00").exists());
+}
+
+fn read_tree(directory: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(directory).expect("a directory") {
+        let path = entry.expect("an entry").path();
+        paths.push(path.to_string_lossy().into_owned());
+        if path.is_dir() {
+            paths.extend(read_tree(&path));
+        }
+    }
+    paths.sort();
+    paths
+}
+
+// Tlapm_lib.mkdir_tlaps makes the cache directory with Unix.mkdir, which makes no directory above
+// it, and ends abnormally when it can't make the module's.
+#[test]
+fn declines_a_cache_directory_tlapm_cant_make() {
+    let directory = copy_fixtures("obligations");
+    let before = read_tree(&directory);
+    let output = run_in(&directory, &["--cache-dir", "missing/sub", "Proofs.tla"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{NOT_NATIVE}the backtrace tlapm prints as it ends where it can't write missing/sub/Proofs.tlaps\n"
+        )
+    );
+    assert_eq!(read_tree(&directory), before);
+    fs::write(directory.join("file"), "").expect("a file");
+    let output = run_in(&directory, &["-N", "--cache-dir", "file", "Proofs.tla"]);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{NOT_NATIVE}the backtrace tlapm prints as it ends where it can't write file/Proofs.tlaps\n"
+        )
+    );
+}
+
+// With an empty cache directory, tlapm makes each module's directory at the root.
+#[test]
+fn declines_an_empty_cache_directory() {
+    let directory = copy_fixtures("obligations");
+    let before = read_tree(&directory);
+    let reason =
+        format!("{NOT_NATIVE}an empty cache directory, which has tlapm write its cache at /\n");
+    let output = run_in(&directory, &["-N", "--cache-dir", "", "Proofs.tla"]);
+    assert_eq!(
+        (output.status.code(), stderr(&output)),
+        (Some(1), reason.clone())
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["tlapm", "-N", "Proofs.tla"])
+        .current_dir(&directory)
+        .env("TLAPM_CACHE_DIR", "")
+        .output()
+        .expect("the binary runs");
+    assert_eq!((output.status.code(), stderr(&output)), (Some(1), reason));
+    assert_eq!(read_tree(&directory), before);
+}
+
+// A run that declines part way prints nothing tlapm would and writes nothing.
+#[test]
+fn prints_and_writes_nothing_where_it_declines_part_way() {
+    let directory = copy_fixtures("tlapm-cli");
+    fs::create_dir_all(directory.join(".tlacache/Failures.tlaps")).expect("the cache");
+    fs::write(
+        directory.join(".tlacache/Failures.tlaps/fingerprints"),
+        b"not marshaled",
+    )
+    .expect("the fingerprints");
+    let before = read_tree(&directory);
+    let output = run_in(&directory, &["Failures.tla"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{NOT_NATIVE}a fingerprints file tlapm moves aside: .tlacache/Failures.tlaps/fingerprints\n"
+        )
+    );
+    assert_eq!(read_tree(&directory), before);
+}
+
+// Where the file system refuses an operation the run's reads let it expect, it declines then.
+#[test]
+fn declines_an_operation_the_file_system_refuses() {
+    if !Path::new("/proc/self").exists() {
+        return;
+    }
+    let output = run(
+        "obligations",
+        &["-N", "--cache-dir", "/proc/prove-it-tlapm", "Proofs.tla"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}a directory tlapm can't make: /proc/prove-it-tlapm\n")
+    );
+}

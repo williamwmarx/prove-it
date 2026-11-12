@@ -1289,10 +1289,14 @@ is next.
     `tlapm_cache` reads and writes the file's bytes, and keeps each result as the driver's
     `Attempt`; the history moved to `tlapm.rs`, through the host.
   - **The host** gained what tlapm's cache needs (`Host::get_path_kind`, `get_real_path`,
-    `list_directory`, `create_directory`, `remove`, `rename`, `copy_file`). `checkSources` answers
-    them for tlapm's command line from `kind:`, `realpath:` and `entries:` keys and an overlay of
-    what the run wrote, and returns the operations as `files`, which the CLI applies once the run
-    is known not to decline. The run reads every module's cache before it proves any, so a round
+    `list_directory` and `apply`). A run holds back what it prints and what it writes: the files
+    go into an overlay (`overlay.rs`), through which the run reads back what it wrote, and a
+    journal of `FileOperation`s. Once the run ends without declining, the host applies the journal
+    in order, and the run prints; where the host can't apply an operation, the run declines then
+    (`FileOperation::get_failure`) and prints nothing. The binary applies the journal itself;
+    `checkSources` answers the reads for tlapm's command line from `kind:`, `realpath:`, `bytes:`
+    and `entries:` keys and returns the journal as `files`, which the CLI applies the same way,
+    with the same reasons. The run reads every module's cache before it proves any, so a round
     that lacks a key never proves.
   - **Checks:** `prove-it-cli/tests/tlapm.rs` and `unit/cli.test.ts` hold every recording of
     `tests/fixtures/obligations` and `tlapm-cli`, through the binary and through the addon;
