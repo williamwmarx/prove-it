@@ -1,0 +1,5 @@
+---- MODULE Spec ----
+THEOREM TRUE
+<1>1. TRUE OBVIOUS
+<1>2. QED BY DEF <1>1
+====

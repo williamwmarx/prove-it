@@ -1,0 +1,5 @@
+{
+  "root": "M",
+  "version": "master",
+  "test": "reports an operator where \"x == {\\\\cup}\" needs an expression"
+}

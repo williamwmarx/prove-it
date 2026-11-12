@@ -317,10 +317,15 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       callCurrent("prove_it_fingerprint", [file, source, known]) as ReturnType<
         NativeAddon["fingerprint"]
       >,
-    sanyText: (root, source, fileName, known) =>
-      callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
-        NativeAddon["sanyText"]
-      >,
+    sanyText: (root, source, fileName, version, rootExtendees, known) =>
+      callCurrent("prove_it_sany_text", [
+        root,
+        source,
+        fileName,
+        version,
+        rootExtendees,
+        known,
+      ]) as ReturnType<NativeAddon["sanyText"]>,
     resolveFiles: (args, given, request, known) =>
       callCurrent("prove_it_resolve_files", [args, given, request, known]) as ReturnType<
         NativeAddon["resolveFiles"]

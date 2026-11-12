@@ -1,0 +1,4 @@
+---- MODULE A ----
+CONSTANT c
+THEOREM T == ASSUME NEW TEMPORAL s PROVE c = s
+====

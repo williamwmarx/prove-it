@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 
 use crate::TlcVersion;
 use crate::ast::{
-    Assumed, Bound, BoundPattern, Expr, Expression, ExpressionKind, Location, Module, ModuleUnit,
-    Position, Statement, SymbolLevel,
+    Assumed, Bound, BoundPattern, DefinitionUnit, Expr, Expression, ExpressionKind, Fact, Location,
+    Module, ModuleUnit, Position, Proof, ProofKind, Statement, StepBody, SymbolLevel,
 };
 use crate::hash::{FastMap, FastSet};
 use crate::levels::TEMPORAL_LEVEL;
@@ -33,9 +33,9 @@ use crate::sany::selectors::{
 };
 use crate::sany::source::{
     SanyReading, SanyReadings, SourceFile, TokenSpan, create_source_file, find_name_tokens,
-    find_token, get_argument_span, get_expression_span, get_matching_index, get_pre_comments,
-    get_range_span, get_span_location, get_token_index, get_token_location, is_token,
-    read_sany_text,
+    find_token, get_argument_span, get_expression_span, get_matching_index, get_parenthesized_span,
+    get_pre_comments, get_range_span, get_span_location, get_token_index, get_token_location,
+    is_token, read_sany_text,
 };
 use crate::sany::{Result, SanySpecification, not_yet};
 use crate::sany_parse_error::get_sany_parse_error;
@@ -54,7 +54,7 @@ fn get_synonyms() -> &'static FastMap<&'static str, &'static str> {
 
 /// `resolveSynonym`: tla2sany.parser.Operators.resolveSynonym, applied to each part of a name like
 /// I!\cup.
-fn resolve_synonym(name: &str) -> Name {
+pub(crate) fn resolve_synonym(name: &str) -> Name {
     let parts: Vec<&str> = name
         .split('!')
         .map(|part| {
@@ -152,6 +152,18 @@ pub(crate) struct ModuleDependencies {
     pub(crate) extendees: Vec<Name>,
     pub(crate) instancees: Vec<Name>,
     pub(crate) importers: FastMap<Name, Name>,
+    /// The module's own EXTENDS and INSTANCEs and its inner modules', module by module.
+    pub(crate) scope: DependencyScope,
+}
+
+/// The modules a module or one of its inner modules names outside the file, and its inner
+/// modules' in order (`ModulePointer.getDirectInnerModules`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DependencyScope {
+    pub(crate) name: Name,
+    pub(crate) extendees: Vec<Name>,
+    pub(crate) instancees: Vec<Name>,
+    pub(crate) inners: Vec<DependencyScope>,
 }
 
 /// A context of the symbol table: a module's, which the module's node holds, or one of the
@@ -337,6 +349,91 @@ fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
     }
 }
 
+/// The modules the proofs of the theorems of the module and of the modules within it instantiate:
+/// ParseUnit.getInstances finds them, which SANY loads and analyzes, and `getDependencies`
+/// doesn't.
+pub(crate) fn get_proof_instances(module: &Module) -> Vec<Name> {
+    fn get_fact_instances(facts: &[Fact], found: &mut Vec<Name>) {
+        for fact in facts {
+            if let Fact::Expression(expression) = fact {
+                get_let_instances(expression, found);
+            }
+        }
+    }
+    fn get_instances(proof: &Proof, found: &mut Vec<Name>) {
+        match &proof.kind {
+            ProofKind::Obvious { .. } | ProofKind::Omitted { .. } => {}
+            ProofKind::By { facts, defs, .. } => {
+                get_fact_instances(facts, found);
+                get_fact_instances(defs, found);
+            }
+            ProofKind::Steps { steps, .. } => {
+                for step in steps {
+                    match &step.body {
+                        StepBody::Instance(instance) => found.push(instance.module.clone()),
+                        StepBody::Define { definitions, .. } => {
+                            for definition in definitions {
+                                match definition {
+                                    DefinitionUnit::Instance(instance) => {
+                                        found.push(instance.module.clone())
+                                    }
+                                    DefinitionUnit::Definition(definition) => {
+                                        get_let_instances(&definition.body, found)
+                                    }
+                                }
+                            }
+                        }
+                        StepBody::UseOrHide(use_or_hide) => {
+                            get_fact_instances(&use_or_hide.facts, found);
+                            get_fact_instances(&use_or_hide.defs, found);
+                        }
+                        StepBody::Have(expression) | StepBody::Case(expression) => {
+                            get_let_instances(expression, found)
+                        }
+                        StepBody::Witness(expressions) => expressions
+                            .iter()
+                            .for_each(|expression| get_let_instances(expression, found)),
+                        StepBody::Take { bounds, .. } => bounds
+                            .iter()
+                            .for_each(|bound| get_let_instances(&bound.set, found)),
+                        StepBody::Pick { bounds, body, .. } => {
+                            bounds
+                                .iter()
+                                .for_each(|bound| get_let_instances(&bound.set, found));
+                            get_let_instances(body, found);
+                        }
+                        StepBody::Assert { statement, .. } => match statement {
+                            Statement::Expression(expression) => {
+                                get_let_instances(expression, found)
+                            }
+                            Statement::AssumeProve(assume_prove) => get_assumed_instances(
+                                &Assumed::AssumeProve(assume_prove.clone()),
+                                found,
+                            ),
+                        },
+                        StepBody::Qed => {}
+                    }
+                    if let Some(proof) = &step.proof {
+                        get_instances(proof, found);
+                    }
+                }
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for unit in &module.units {
+        if let ModuleUnit::Theorem(theorem) = unit
+            && let Some(proof) = &theorem.proof
+        {
+            get_instances(proof, &mut found);
+        }
+    }
+    for inner in &module.modules {
+        found.extend(get_proof_instances(inner));
+    }
+    found
+}
+
 /// `isInternalInstance`: SpecObj.instanceResolvesToInternalModule, SANY finds a module that the
 /// root module instantiates among its inner modules only when its first top-level INSTANCE of the
 /// module follows the inner module, and otherwise looks for a file.
@@ -408,9 +505,18 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
         is_root: bool,
         context: &FastMap<Name, Rc<Module>>,
         dependencies: &mut ModuleDependencies,
-    ) {
+    ) -> DependencyScope {
         let is_external = |name: &Name| !context.contains_key(name);
+        let mut scope = DependencyScope {
+            name: current.name.clone(),
+            ..DependencyScope::default()
+        };
         let mut add_imports = |names: Vec<Name>, is_extension: bool| {
+            if is_extension {
+                scope.extendees.extend(names.iter().cloned());
+            } else {
+                scope.instancees.extend(names.iter().cloned());
+            }
             for name in names {
                 dependencies
                     .importers
@@ -488,12 +594,14 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
                 }
             }
             add_extended_inner_modules(inner, &mut extenders, &mut inner_context);
-            visit(inner, false, &inner_context, dependencies);
+            let inner_scope = visit(inner, false, &inner_context, dependencies);
+            scope.inners.push(inner_scope);
             peers.insert(inner.name.clone(), inner.clone());
         }
+        scope
     }
     let mut dependencies = ModuleDependencies::default();
-    visit(module, true, &FastMap::default(), &mut dependencies);
+    dependencies.scope = visit(module, true, &FastMap::default(), &mut dependencies);
     dependencies
 }
 
@@ -1686,6 +1794,35 @@ impl<'a> ModuleGenerator<'a> {
         Ok(lambda)
     }
 
+    /// The operator a name resolves to, as `resolveName` finds it.
+    fn resolve_operator(&self, name: &str) -> Option<NodeId> {
+        self.resolve_symbol(&resolve_synonym(name))
+            .filter(|&op| !matches!(self.spec.graph.kind(op), NodeKind::Module(_)))
+    }
+
+    /// generateGenID reports an operator symbol it doesn't find as the source spells it, and
+    /// generateOpArg gives its nullOpArg.
+    fn report_unknown_symbol(&mut self, argument: &Expr, location: &SanyLocation) -> NodeId {
+        let file = self.file.clone();
+        let span = get_expression_span(&file, argument);
+        let spelling: String = file.tokens[span.start..=span.end]
+            .iter()
+            .map(|token| &**token.spelling.as_ref().unwrap_or(&token.text))
+            .collect();
+        self.add_error(
+            location,
+            format!("Could not find declaration or definition of symbol '{spelling}'."),
+        );
+        self.create_null_node()
+    }
+
+    /// SANY's parser reads `@` as a name, which `selectorToNode` finds no operator of where an
+    /// operator is required, and gives its nullOAN.
+    fn report_unknown_at(&mut self, location: &SanyLocation) -> NodeId {
+        self.add_error(location, "Unknown operator: `@'.");
+        self.create_null_node()
+    }
+
     /// `getOperatorArgumentName`: an operator symbol passed as an argument, such as SUBSET or -.,
     /// is desugared into a LAMBDA without a range.
     fn get_operator_argument_name(&self, argument: &Expr) -> Name {
@@ -1708,19 +1845,36 @@ impl<'a> ModuleGenerator<'a> {
     /// `generateOperatorArgument`: Generator.generateOpArg, after an error SANY gives its
     /// nullOpArg.
     fn generate_operator_argument(&mut self, argument: &Expr, target: NodeId) -> Result<NodeId> {
-        let location = self.get_location(argument);
-        if let ExpressionKind::Lambda { operator, .. } = &argument.kind {
+        let mut location = self.get_location(argument);
+        let file = self.file.clone();
+        let span = get_expression_span(&file, argument);
+        let substituted_span = get_parenthesized_span(&file, span);
+        // A parenthesized expression is no operator.
+        let is_parenthesized = substituted_span != span;
+        if is_parenthesized {
+            location = get_span_location(&file, substituted_span);
+        }
+        if let ExpressionKind::Lambda { operator, .. } = &argument.kind
+            && !is_parenthesized
+        {
             let op = match operator {
                 None => self.generate_lambda(argument)?,
                 Some(_) => {
-                    self.resolve_name(&self.get_operator_argument_name(argument), &location)?
+                    let name = self.get_operator_argument_name(argument);
+                    match self.resolve_operator(&name) {
+                        Some(op) => op,
+                        None => return Ok(self.report_unknown_symbol(argument, &location)),
+                    }
                 }
             };
             return Ok(self.create_op_arg(op, location));
         }
+        if !is_parenthesized && matches!(argument.kind, ExpressionKind::ExceptAt) {
+            return Ok(self.report_unknown_at(&location));
+        }
         let target_node = self.spec.graph.node(target);
         let target_arity = get_symbol_arity(&self.spec.graph, target);
-        if !is_operator_argument(argument) {
+        if is_parenthesized || !is_operator_argument(argument) {
             let text = format!(
                 "Arity {target_arity} operator (not an expression) is expected \nto substitute for CONSTANT '{}'.",
                 target_node.symbol_name().expect("a symbol")
@@ -1729,7 +1883,11 @@ impl<'a> ModuleGenerator<'a> {
             return Ok(self.create_null_node());
         }
         if let ExpressionKind::OperatorReference { operator, .. } = &argument.kind {
-            let op = self.resolve_name(operator, &location)?;
+            // generateGenID reports an operator it doesn't find, and generateOpArg gives its
+            // nullOpArg.
+            let Some(op) = self.resolve_operator(operator) else {
+                return Ok(self.report_unknown_symbol(argument, &location));
+            };
             return Ok(self.create_op_arg(op, location));
         }
         let node = self.generate_selector(argument, target_arity, false, false)?;
@@ -1777,6 +1935,9 @@ impl<'a> ModuleGenerator<'a> {
         let location = get_span_location(&file, span);
         let position = format!("{} (counting from 1)", index + 1);
         let argument_span = get_argument_span(&file, span);
+        if argument_span == span && matches!(argument.kind, ExpressionKind::ExceptAt) {
+            return Ok(self.report_unknown_at(&location));
+        }
         if argument_span != span || !is_operator_argument(argument) {
             self.add_error(
                 &get_span_location(&file, argument_span),
@@ -1819,11 +1980,14 @@ impl<'a> ModuleGenerator<'a> {
         }
         let name = self.get_operator_argument_name(argument);
         let Some(symbol) = self.resolve_symbol(&resolve_synonym(&name)) else {
-            self.add_error(
-                &location,
-                format!("Could not find declaration or definition of symbol '{name}'."),
-            );
-            return Ok(self.create_null_node());
+            if matches!(argument.kind, ExpressionKind::Lambda { .. }) {
+                self.add_error(
+                    &location,
+                    format!("Could not find declaration or definition of symbol '{name}'."),
+                );
+                return Ok(self.create_null_node());
+            }
+            return Ok(self.report_unknown_symbol(argument, &location));
         };
         let arity = get_symbol_arity(&self.spec.graph, symbol);
         if arity == expected_arity {

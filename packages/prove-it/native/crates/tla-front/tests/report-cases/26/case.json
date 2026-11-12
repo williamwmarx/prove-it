@@ -1,0 +1,5 @@
+{
+  "root": "Empty",
+  "version": "master",
+  "test": "reports \"THEOREM TRUE\\n<1> USE\\n<1> QED\" with nothing after its keyword as SANY does"
+}

@@ -1,0 +1,3 @@
+---- MODULE TLC ----
+Foo == Undef
+====

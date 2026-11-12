@@ -1,0 +1,5 @@
+{
+  "root": "Apply",
+  "version": "master",
+  "test": "leaves out the arguments of a function it can't generate as SANY does"
+}

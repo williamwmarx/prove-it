@@ -1,0 +1,5 @@
+{
+  "root": "M",
+  "version": "master",
+  "test": "reports an operator where \"x == {|}\" needs an expression"
+}

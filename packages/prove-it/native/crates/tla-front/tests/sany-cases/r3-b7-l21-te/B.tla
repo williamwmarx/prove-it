@@ -1,0 +1,3 @@
+---- MODULE B ----
+EXTENDS A
+====

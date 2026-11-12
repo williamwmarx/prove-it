@@ -377,7 +377,7 @@ struct Collected {
 }
 
 /// SANY's messages for a module: its warnings and its errors.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModuleMessages {
     pub warnings: Vec<SanyError>,
     pub errors: Vec<SanyError>,
@@ -1399,6 +1399,11 @@ impl Linker<'_> {
             self.get_standard_symbols(&instance.module)
         };
         if let Some(standard_symbols) = standard_symbols {
+            if !instance.params.is_empty() {
+                return Err(FrontError::NotYet(
+                    "an INSTANCE of a standard module with parameters".to_owned(),
+                ));
+            }
             return Ok(get_standard_instance_symbols(instance, &standard_symbols));
         }
         let linked = match nested {

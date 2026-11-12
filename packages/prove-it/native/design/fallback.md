@@ -59,7 +59,67 @@ SANY's report as tla-front writes it, through the addon or the WebAssembly engin
 `src/sany` is deleted, `PROVE_IT_ENGINE=0` means that the interpreter searches, not that no native
 code runs: SANY's report still needs the addon or the WebAssembly engine. Where neither loads, the
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
-the search. Until then, the CLI prints the TypeScript report where no engine loads.
+the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
+its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
+TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34
+and 35), which the TypeScript report printed: whether to port 1.7.4's generator differences or
+retire them with 1.7.4 is open.
+
+SANY's messages come from the port of its generator and levelCheck, which declines a message whose
+shape no recording shows, and else from linking. Linking takes the standard modules as TLC ships
+them, which a spec that replaces one another standard module reads, such as its own Naturals
+under Sequences, may not keep: main's binary printed no errors for a Naturals without `..`, where SANY
+reports 24 (tests/report-cases/38), which the generator now writes. Where the generator declines
+such a spec, linking declines too ("SANY's messages of the standard modules with one of them
+replaced").
+
+Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
+2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
+spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) and review found the
+report wrong or declining for 2,113; each is a case of tla-front's `tests/sany-cases`, recorded in
+`sany-cases.json`, whose `case.json` gives the reason where the front end declines it. All print
+what TLC prints but these, which decline:
+- a module SANY's parser accepts and the front end's rejects (36 cases): a definition of the
+  postfix operator `'` (`a' == a`, `a ' == 1`), proofs nested more than 100 deep, where SANY's
+  parser stops, and mutations whose parse the front end reads otherwise;
+- a module of the CommunityModules that no file beside the spec holds, or a module of TLC's that
+  extends one, such as `_DotTrace` or `_CBORTrace` (155 cases): TLC finds it where
+  CommunityModules.jar is beside tla2tools.jar, and else reports it missing, which the TypeScript
+  report printed;
+- SANY's generator throwing on the root module after a module of the user's (2 cases; main's
+  binary declined);
+- a proof's INSTANCE of a module the spec doesn't otherwise depend on (72 cases), which SANY's
+  ParseUnit.getInstances loads and the front end doesn't yet;
+- a HIDE of an expression SANY's generator leaves null, such as `HIDE 1 + 1` without Naturals,
+  for which SANY throws a NullPointerException (9 cases);
+- a record field named like a definition whose value applies a recursive operator, on which
+  SANY's linter overflows its stack (4 cases);
+- `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
+- a module nested at the top of a module that its extender extends, which
+  ParseUnit.handleExtensions lets the extender's EXTENDS and INSTANCE name, and the front end
+  looks for in a file (21 cases);
+- LETs nested 100 deep in their definitions, where SANY's generator throws (1 case);
+- brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
+  counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or
+  angle brackets and 900 function constructors. Other forms nested as deep, such as IF or `\A`,
+  are not counted, and may print where TLC overflows (1 case).
+
+Linking declines a parameterized INSTANCE of a standard module, whose operators it gave no
+parameters (`I(p) == INSTANCE Integers` with `I(1)!Int`): main's binary printed that `I!Int`
+requires -1 arguments. Where the binary declines, the CLI falls back to the TypeScript engine,
+which still prints that error after SANY's report, as it prints other errors its linking raises,
+such as for `EXTENDS _JsonTrace`, as SANY's. How TLC finds, reads and names a spec's files, which
+the last run probed, is TLC's resolver's, as main has it; what that run found there is for the
+resolver, not the report.
+
+TLC prints a character of a message outside ASCII as `?` under a locale that isn't UTF-8, where
+Prove It prints the character; the runs above compare under `C.UTF-8`. The CLI's own command line,
+which names several specs, a spec by its configuration file or a glob, is not TLC's.
+
+A message of the generator whose shape no recording shows is printed where linking gives the same
+messages, and where linking can't give them, as the TypeScript report, a port of the same
+generator, printed them; where linking gives others, the report declines ("SANY's messages,
+which linking gives apart from SANY's generator").
 
 ### Decision: the CLI finds a spec's files with the engine
 
@@ -391,6 +451,11 @@ it from one that printed something else. Each is outside the corpus:
   the binary declines it (`applied a function outside its domain`), as it did before action
   constraint failures were native. To win them back, build a constant definition's function as
   TLC computed it at startup.
+- SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
+  that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
+  which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
+  where the jar was. The report declines it, as the binary did; winning it back takes knowing
+  whether TLC's class path holds the CommunityModules.
 
 A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
 through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
@@ -1043,7 +1108,7 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   the spec printed, and each violation or error TLC reports, as its message's code and text with
   the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
 - Where the native check stops before it searches, at a spec or configuration TLC rejects,
-  `checkSources` returns the error the TypeScript check throws for it as `thrown` (ABI 26), and
+  `checkSources` returns the error the TypeScript check throws for it as `thrown` (ABI 25), and
   the library throws it: a `TlaSyntaxError` with SANY's report (`createSanyError`), a
   `TlaConfigError` with the message of tla-front's config error, which keeps `errors.ts`'s, or a
   `TlaEvaluationError` for a temporal formula TLC can't check or a spec with no next-state action.

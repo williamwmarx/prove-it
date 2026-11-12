@@ -1,0 +1,3 @@
+---- MODULE Spec ----
+THEOREM ASSUME NEW CONSTANT _ \union _ PROVE TRUE
+====

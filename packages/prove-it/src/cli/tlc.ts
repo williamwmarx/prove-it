@@ -33,8 +33,6 @@ import { describeRange } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
 import { SANY_174_STANDARD_MODULES } from "../sany/modules";
-import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
-import { readSanySnapshot } from "../sany/snapshot";
 import type { StateDump } from "../state-graph";
 import {
   getFailureHeadline,
@@ -61,7 +59,7 @@ import {
 import type { TlcVersion } from "../tlc/version";
 import { formatState } from "../values";
 import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
-import { getNativeSanyReport } from "./sany-text";
+import { getNativeSanyReport, NOT_NATIVE_EXIT_CODE, type SanyModuleOrigin } from "./sany-text";
 import {
   getInputPaths,
   getMachine,
@@ -712,42 +710,33 @@ const checkSpec = async (
   const describeFile = (name: string, origin: SanyModuleOrigin) =>
     files.getText(`file:${origin}:${name}`);
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for, as
-  // tla-front writes them where it does. It doesn't write TLC 1.7.4's, nor the trace exploration
-  // spec's TLC parses with the spec, which the TypeScript report does.
-  const nativeSany =
-    version === "master" && !isRecorded && existsSync(specPath)
-      ? getNativeSanyReport(specPath, readFileSync(specPath, "utf8"), version, {
-          fileName: specName,
-          loadModule,
-          describeFile,
-        })
-      : undefined;
-  if (nativeSany) writeOutput(1, nativeSany.text);
-  const sany =
-    nativeSany ??
-    getSanyReport(
-      specPath,
-      // TLC 1.7.4's SANY reports each module it can't find as it looks for it.
-      version === "1.7.4"
-        ? (name: string) => {
-            const text = loadModule(name);
-            if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) {
-              console.error(files.getText(`missing:${name}.tla`));
+  // tla-front writes them. TLC 1.7.4 prints to its error stream where SANY doesn't find a module,
+  // as SANY looks for it.
+  const isFound = existsSync(specPath);
+  // SANY reads a root module no file holds from its standard modules.
+  const sany = getNativeSanyReport(
+    specPath,
+    isFound ? readFileSync(specPath, "utf8") : null,
+    version,
+    {
+      fileName: specName,
+      loadModule:
+        version === "1.7.4"
+          ? (name: string) => {
+              const text = loadModule(name);
+              if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) {
+                console.error(files.getText(`missing:${name}.tla`));
+              }
+              return text;
             }
-            return text;
-          }
-        : loadModule,
-      {
-        fileName: specName,
-        describeFile,
-        version,
-        // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-        rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
-        precomputed: version === "master" ? readSanySnapshot() : undefined,
-        onPrint: (text) => writeOutput(1, text),
-        onPrintError: (text) => writeOutput(2, text),
-      },
-    );
+          : loadModule,
+      describeFile,
+      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+      rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+    },
+  );
+  if ("declined" in sany) return declineNatively(sany.declined);
+  writeOutput(1, sany.text);
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, findClass);
     printParsingFailed();
@@ -860,6 +849,11 @@ export const checkNatively = async (commandLine: string[]) => {
   process.stdout.write(result.out);
   process.stderr.write(result.err);
   return result.exitCode;
+};
+
+const declineNatively = (reason: string) => {
+  console.error(`prove-it: not native yet: ${reason}`);
+  return NOT_NATIVE_EXIT_CODE;
 };
 
 export const checkSpecs = async (

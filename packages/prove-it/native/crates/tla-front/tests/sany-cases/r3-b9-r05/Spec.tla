@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+VARIABLE x
+THEOREM thm == TRUE
+<1>1. TRUE OBVIOUS
+<1> QED BY DEF <1>1
+====

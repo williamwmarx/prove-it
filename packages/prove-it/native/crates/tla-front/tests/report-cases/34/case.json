@@ -1,0 +1,6 @@
+{
+  "root": "Twice",
+  "version": "1.7.4",
+  "test": "prints the errors and warnings of a module together",
+  "declines": "TLC 1.7.4's semantic errors"
+}
