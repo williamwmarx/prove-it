@@ -680,8 +680,8 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
                     if is_empty(domain)? {
                         1
                     } else {
-                        let domain = cardinality(domain)? as i64;
-                        let range = cardinality(range)? as i64;
+                        let domain = printed_size(domain)?;
+                        let range = printed_size(range)?;
                         let mut size: i64 = 1;
                         for _ in 0..domain {
                             if size > i64::from(i32::MAX) {
@@ -709,7 +709,17 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
                 _ => return fail("ToString of a lazy set"),
             };
             if size < ENUM_BOUND {
-                elements(value)?.iter().try_for_each(check_unchecked)?;
+                // `elements` asks each part whether it is empty, up to an empty one, before it
+                // enumerates any (`Value.isEmpty`), which fails on a part that isn't a set.
+                let is_empty_set = match &**lazy {
+                    Lazy::RecordSet(fields, _) => parts_empty(fields.iter().map(|(_, set)| set))?,
+                    Lazy::Product(factors) => parts_empty(factors.iter())?,
+                    Lazy::FunctionSet(domain, range) => !is_empty(domain)? && is_empty(range)?,
+                    _ => false,
+                };
+                if !is_empty_set {
+                    elements(value)?.iter().try_for_each(check_unchecked)?;
+                }
             }
             Ok(())
         }
@@ -721,7 +731,7 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
 fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
     let mut size: i64 = 1;
     for part in parts {
-        let part = cardinality(part)? as i64;
+        let part = printed_size(part)?;
         if part == 0 {
             return Ok(0);
         }
@@ -730,6 +740,36 @@ fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
         }
     }
     Ok(size)
+}
+
+// Whether a part is empty, asking each in turn up to an empty one.
+fn parts_empty<'v>(mut parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> {
+    parts.try_fold(false, |is_empty_set, part| {
+        Ok(is_empty_set || is_empty(part)?)
+    })
+}
+
+// A part's `size` as TLC's `toString` of a set of functions, records or tuples asks it: a
+// function's, tuple's or record's number of keys, one TLC keeps lazy its domain's
+// (`FcnLambdaValue.size`), a set's number of elements, and a failure for any other value
+// (`IntValue.size` and its siblings).
+fn printed_size(part: &Value) -> Evaluated<i64> {
+    let kind = match part {
+        Value::Function(function) => return Ok(function.domain.len() as i64),
+        Value::Lambda(lambda) => return Ok(cardinality(lambda.domain())? as i64),
+        Value::Int(_) => "integer",
+        Value::Bool(_) => "boolean",
+        Value::Str(_) => "string",
+        Value::Model(_) => "model value",
+        _ => return Ok(cardinality(part)? as i64),
+    };
+    fail_runtime(
+        "sized a value that isn't a set",
+        format!(
+            "Attempted to compute the number of elements in the {kind} {}.",
+            format_pretty(part)
+        ),
+    )
 }
 
 /// `EC.TLC_MODULE_COMPUTING_CARDINALITY`.
@@ -6464,6 +6504,44 @@ mod tests {
 
     fn lazy(lazy: Lazy) -> Value {
         Value::Lazy(Rc::new(lazy))
+    }
+
+    // `SetOfTuplesValue.toString` and its siblings size each part, which fails on a value that
+    // isn't a set but a function, a tuple or a record, and enumerate the set, which first asks
+    // each part whether it is empty, which fails on any value that isn't a set.
+    #[test]
+    fn fails_to_print_a_set_of_a_non_set_as_tlc_does() {
+        let message = |value: Value| {
+            check_unchecked(&value)
+                .err()
+                .and_then(|error| error.message)
+                .map(|message| message.text)
+        };
+        let set = || Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2)]));
+        let tuple = Value::function(vec![Value::Int(1)], vec![Value::Int(2)], Class::Tuple);
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), Value::Int(0)]))).as_deref(),
+            Some("Attempted to compute the number of elements in the integer 0.")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), Value::Bool(false)]))).as_deref(),
+            Some("Attempted to compute the number of elements in the boolean FALSE.")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), tuple.clone()]))).as_deref(),
+            Some("Shouldn't call isEmpty() on value <<2>>")
+        );
+        assert_eq!(
+            message(lazy(Lazy::FunctionSet(set(), tuple))).as_deref(),
+            Some("Shouldn't call isEmpty() on value <<2>>")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![
+                Value::Set(Rc::new(Vec::new())),
+                Value::Int(0)
+            ]))),
+            None
+        );
     }
 
     #[test]
