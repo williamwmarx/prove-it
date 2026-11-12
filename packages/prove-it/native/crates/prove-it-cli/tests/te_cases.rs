@@ -92,9 +92,10 @@ fn normalize(text: &str) -> String {
         .find(|prefix| line.starts_with(prefix));
         match (timed, line.strip_prefix("Parsing file ")) {
             (Some(prefix), _) => prefix.to_owned(),
-            (None, Some(path)) if path.contains("/tlc-") => {
+            (None, Some(path)) if path.contains("/tlc-") || path.contains("\\tlc-") => {
                 let path = path.split(' ').next().unwrap_or(path);
-                format!("Parsing file {}", path.rsplit('/').next().unwrap_or(path))
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                format!("Parsing file {name}")
             }
             _ if line.starts_with("Finished computing initial states") => line
                 .rsplit_once(" at ")

@@ -138,10 +138,16 @@ pub fn get_windows_expectation<S: AsRef<str>>(lines: &[S]) -> OnWindows {
     for line in lines {
         let line = line.as_ref();
         if let Some(file) = line.strip_prefix("Parsing file ") {
-            if file.contains(" (") {
+            if file.contains(" (file:") {
                 return OnWindows::Declined(DECLINED_FILE_URL);
             }
-            printed.push(format!("Parsing file {}", file.replace('/', "\\")));
+            // A standard module's copy in the temporary directory, which TLC recorded with its
+            // jar's URL, stays as it was: the tests name it by its file alone.
+            if file.contains("/tlc-") {
+                printed.push(line.to_owned());
+            } else {
+                printed.push(format!("Parsing file {}", file.replace('/', "\\")));
+            }
         } else if line.contains("operator override from file:") {
             return OnWindows::Declined(DECLINED_CLASS_URL);
         } else if line.starts_with("Trace exploration spec path: ") {
