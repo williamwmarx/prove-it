@@ -534,6 +534,17 @@ the engine computes the function at every `s`, `{}` among them, and stops with "
 of \div is 0." `tests/unit/check.test.ts` ("evaluates a function over a domain TLC keeps lazy only
 where it is applied") checks it with the TypeScript check.
 
+A set of tuples, functions or records with a part TLC can't size before a part that is empty prints
+as the empty set where TLC fails: TLC prints such a set by sizing its parts in order up to an empty
+one (`SetOfTuplesValue.toString`, `SetOfFcnsValue.toString`, `SetOfRcdsValue.toString`), so
+`ASSUME PrintT(Int \X {})` stops with "Attempted to compute the number of elements in the
+overridden value Int." (exit 10), where the engine prints `{}`; an invariant `PrintT(<<Int \X {},
+x>>)` prints `<<{}, 0>>` where TLC fails (exit 75). Each is wrong on main alike. A constant
+definition TLC computes at startup that may print such a set declines ("a set TLC may fail to
+print, at startup", `may_hold_unsized`); a print anywhere else waits on the engine keeping how
+TLC built the set, since declining it by its text alone would also decline prints that match,
+such as `PrintT(SUBSET (Int \X {}))`.
+
 A function from strings whose keys are Unicode letters and digits beyond ASCII prints as a function
 where TLC prints a record: TLC tests each character of a key with Java's
 `Character.isLetterOrDigit` (FcnRcdValue), so `PrintT("x٣" :> 5)` (U+0663, a decimal digit) prints
