@@ -945,6 +945,15 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
+        // TLC evaluates a startup definition that failed as it started again where it is used,
+        // with the sources of that use's values, which the evaluator doesn't follow into the
+        // definition: a failure TLC reports as a FingerprintException there has frames it lacks.
+        if call_stack.is_fingerprinted && evaluator.failed_startup_uses > 0 {
+            return Err(Unsupported(
+                "evaluating the failure again: a FingerprintException in a startup definition that failed"
+                    .into(),
+            ));
+        }
         // TLC fails to fingerprint an initial state that holds a set it can't normalize, then to
         // print the state as it reports that, which escapes as an exception it didn't expect. A
         // next-state relation that fails in a method of a value with a source fails before TLC

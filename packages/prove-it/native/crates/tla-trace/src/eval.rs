@@ -459,6 +459,8 @@ pub struct Evaluator<'ir> {
     /// How many UNIONs the evaluator held lazy, as TLC's `UnionValue`, and how many set maps it
     /// evaluated.
     lazy_unions: usize,
+    /// How many times the evaluator evaluated a startup definition that failed as TLC started.
+    pub(crate) failed_startup_uses: usize,
     maps: usize,
     /// The functions the evaluator built that TLC keeps lazy (`FcnLambdaValue`), by address,
     /// recorded as a failure is evaluated, and how many times DOMAIN read one: TLC's DOMAIN of
@@ -830,6 +832,7 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             except_skips: 0,
             lazy_unions: 0,
+            failed_startup_uses: 0,
             kept_lazy: HashSet::new(),
             lazy_domains: 0,
             maps: 0,
@@ -2490,6 +2493,7 @@ impl<'ir> Evaluator<'ir> {
     // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
     // doesn't always, may fail elsewhere, as `fallback.md` lists.
     fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+        self.failed_startup_uses += 1;
         let (skips, lazy_unions, maps, lazy_domains) = (
             self.except_skips,
             self.lazy_unions,
