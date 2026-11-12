@@ -1,0 +1,1238 @@
+From 02f7849c5401a7e2b1d964acba9b21e03392e4b6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 21:14:20 +0000
+Subject: [PATCH] fix(front): warn of the subscript of [][Next]_v as TLC's
+ SubscriptCollector does
+
+TLC reads the subscript of the specification's [][Next]_v as it
+processes the configuration (processConfigSpec): it collects the state
+variables through tuples, LETs, labels, the operators it applies and
+the definitions it holds as operators, ignores any other builtin and a
+definition it holds as a value, and gives up at a number or a string.
+It then warns that it can't tell (2139), or of each variable the
+subscript lacks in its order of the variables (2140), between the
+warnings about the invariants and those about the properties. The
+front end printed neither: 24 runs of the upstream conformance suite
+now print what TLC prints.
+
+An operator's literal argument now keeps its expression
+(Binding::Literal), which TLC's collector reads through the LazyValue
+of a parameterized INSTANCE (Github687spec). A subscript the front end
+can't follow, as one the configuration substitutes, leaves the
+warnings unknown, which declines unless -nowarning drops them.
+---
+ .../subscript-constant-definition/M.cfg       |   1 +
+ .../subscript-constant-definition/M.tla       |   6 +
+ .../subscript-constant-definition/tlc.out     |  12 +
+ .../tests/startup_checks/subscript-if/M.cfg   |   1 +
+ .../tests/startup_checks/subscript-if/M.tla   |   6 +
+ .../tests/startup_checks/subscript-if/tlc.out |  17 +
+ .../subscript-instance-constant/M.cfg         |   2 +
+ .../subscript-instance-constant/M.tla         |  11 +
+ .../subscript-instance-constant/tlc.out       |  21 ++
+ .../subscript-instance-literal/M.cfg          |   1 +
+ .../subscript-instance-literal/M.tla          |  11 +
+ .../subscript-instance-literal/tlc.out        |  24 ++
+ .../tests/startup_checks/subscript-let/M.cfg  |   1 +
+ .../tests/startup_checks/subscript-let/M.tla  |   6 +
+ .../startup_checks/subscript-let/tlc.out      |  12 +
+ .../subscript-literal-definition/M.cfg        |   1 +
+ .../subscript-literal-definition/M.tla        |   6 +
+ .../subscript-literal-definition/tlc.out      |  12 +
+ .../subscript-missing-order/M.cfg             |   1 +
+ .../subscript-missing-order/M.tla             |   6 +
+ .../subscript-missing-order/tlc.out           |  17 +
+ .../startup_checks/subscript-numeral/M.cfg    |   1 +
+ .../startup_checks/subscript-numeral/M.tla    |   6 +
+ .../startup_checks/subscript-numeral/tlc.out  |  15 +
+ .../subscript-one-missing/M.cfg               |   1 +
+ .../subscript-one-missing/M.tla               |   6 +
+ .../subscript-one-missing/tlc.out             |  15 +
+ .../startup_checks/subscript-operator/M.cfg   |   1 +
+ .../startup_checks/subscript-operator/M.tla   |   6 +
+ .../startup_checks/subscript-operator/tlc.out |  12 +
+ .../startup_checks/subscript-string/M.cfg     |   1 +
+ .../startup_checks/subscript-string/M.tla     |   6 +
+ .../startup_checks/subscript-string/tlc.out   |  15 +
+ .../native/crates/tla-front/src/eval.rs       |   4 +-
+ .../native/crates/tla-front/src/lower.rs      |   2 +-
+ .../native/crates/tla-front/src/model.rs      | 147 +++++++-
+ .../native/crates/tla-front/src/spec.rs       | 341 +++++++++++++++---
+ 37 files changed, 674 insertions(+), 80 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.tla
+new file mode 100644
+index 00000000..b1bbc980
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1 + 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<a, b, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-constant-definition/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.tla
+new file mode 100644
+index 00000000..9085cc8d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_(IF TRUE THEN <<a, b>> ELSE <<a>>)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/tlc.out
+new file mode 100644
+index 00000000..041726b4
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-if/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable a
++(Use the -nowarning option to disable this warning.)
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable b
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.cfg
+new file mode 100644
+index 00000000..3cdff234
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++CONSTANT K = 7
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.tla
+new file mode 100644
+index 00000000..1fb17c7b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT K
++VARIABLE v
++---- MODULE Inner ----
++VARIABLES v, c
++ISpec == v = 0 /\ [][v' = v]_<<v, c>>
++====
++I(c) == INSTANCE Inner
++Spec == I(K)!ISpec
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/tlc.out
+new file mode 100644
+index 00000000..4877632b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-constant/tlc.out
+@@ -0,0 +1,21 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++*** Warnings: 1
++
++line 6, col 11 to line 6, col 11 of module M
++
++Multiple declarations or definitions for symbol v.  
++This duplicates the one at line 4, col 10 to line 4, col 10 of module M.
++
++
++
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.tla
+new file mode 100644
+index 00000000..d3d8f095
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS Naturals
++
++VARIABLE v
++---- MODULE Inner ----
++VARIABLES v, c
++ISpec == v = 0 /\ [][v' = v]_<<v, c>>
++====
++I(c) == INSTANCE Inner
++Spec == I(7)!ISpec
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/tlc.out
+new file mode 100644
+index 00000000..cfc303c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-instance-literal/tlc.out
+@@ -0,0 +1,24 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++*** Warnings: 1
++
++line 6, col 11 to line 6, col 11 of module M
++
++Multiple declarations or definitions for symbol v.  
++This duplicates the one at line 4, col 10 to line 4, col 10 of module M.
++
++
++
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.tla
+new file mode 100644
+index 00000000..1397d9c0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_(LET w == <<a, b>> IN w)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-let/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.tla
+new file mode 100644
+index 00000000..338027ad
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<a, b, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-definition/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.tla
+new file mode 100644
+index 00000000..747a0db3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/tlc.out
+new file mode 100644
+index 00000000..041726b4
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-missing-order/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable a
++(Use the -nowarning option to disable this warning.)
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable b
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.tla
+new file mode 100644
+index 00000000..9e1e64e8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<a, b, 1>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/tlc.out
+new file mode 100644
+index 00000000..19e46968
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-numeral/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.tla
+new file mode 100644
+index 00000000..d9e4c2c5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_a
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/tlc.out
+new file mode 100644
+index 00000000..2ab4c898
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-one-missing/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable b
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.tla
+new file mode 100644
+index 00000000..7f96437f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++V(v) == v
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<V(a), b>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-operator/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.tla
+new file mode 100644
+index 00000000..60c0ec48
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES b, a
++C == 1
++Spec == b = 0 /\ a = 0 /\ [][UNCHANGED <<a, b>>]_<<a, b, "s">>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/tlc.out
+new file mode 100644
+index 00000000..19e46968
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-string/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/eval.rs b/packages/prove-it/native/crates/tla-front/src/eval.rs
+index 734765ea..d55a17c2 100644
+--- a/packages/prove-it/native/crates/tla-front/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-front/src/eval.rs
+@@ -726,7 +726,9 @@ impl Evaluator<'_> {
+                 let name = expression.reference().unwrap_or_default();
+                 if expression.is_locally_resolved() {
+                     return match lookup_scope(scope, &name) {
+-                        Some((_, Binding::Value(value))) => Ok(value.clone()),
++                        Some((_, Binding::Value(value) | Binding::Literal { value, .. })) => {
++                            Ok(value.clone())
++                        }
+                         Some((node, Binding::Thunk { expression, scope })) => {
+                             let key = Rc::as_ptr(node) as usize;
+                             if let Some((_, value)) = self.thunks.borrow().get(&key) {
+diff --git a/packages/prove-it/native/crates/tla-front/src/lower.rs b/packages/prove-it/native/crates/tla-front/src/lower.rs
+index 38fe9d3c..141e87b1 100644
+--- a/packages/prove-it/native/crates/tla-front/src/lower.rs
++++ b/packages/prove-it/native/crates/tla-front/src/lower.rs
+@@ -1949,7 +1949,7 @@ impl<'a> Lowering<'a> {
+         let parent = self.get_scope_index(scope.parent.as_ref());
+         let name = self.get_text(&scope.name);
+         let binding = match &scope.binding {
+-            Binding::Value(value) => {
++            Binding::Value(value) | Binding::Literal { value, .. } => {
+                 let value = self.normalize(value)?;
+                 ScopeBinding::Value(Some(self.encode_value(&value)))
+             }
+diff --git a/packages/prove-it/native/crates/tla-front/src/model.rs b/packages/prove-it/native/crates/tla-front/src/model.rs
+index 094f41ec..81e57c6c 100644
+--- a/packages/prove-it/native/crates/tla-front/src/model.rs
++++ b/packages/prove-it/native/crates/tla-front/src/model.rs
+@@ -16,8 +16,8 @@ use crate::hash::{FastMap, FastSet};
+ use crate::lower::{Lowering, RankedTexts, is_startup_definition, reaches_effect};
+ use crate::order::{TlcOrder, get_checker_strings, get_unique};
+ use crate::spec::{
+-    Properties, Specification, check_invariants, check_search_config, create_identifier,
+-    get_properties, get_specification,
++    Properties, Specification, SubscriptCheck, check_invariants, check_search_config,
++    create_identifier, get_properties, read_specification,
+ };
+ use crate::values::ValueOrder;
+ 
+@@ -311,18 +311,73 @@ fn lower_ranked(
+             options.is_warning_enabled,
+         )?;
+         // TLC reads the specification after it warns about the invariants.
+-        let specification =
+-            get_specification(&config, &environment, &facts, version, Some(&evaluator)).map_err(
+-                |error| match (error, &constant_invariants) {
+-                    (error @ FrontError::Config(_), Some(names))
+-                        if options.is_warning_enabled && !names.is_empty() =>
+-                    {
+-                        FrontError::Warned(get_constant_invariant_warnings(names), Box::new(error))
+-                    }
+-                    (error, _) => error,
+-                },
+-            )?;
+-        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
++        let mut read_subscripts = Vec::new();
++        let specification = read_specification(
++            &config,
++            &environment,
++            &facts,
++            version,
++            Some(&evaluator),
++            &mut read_subscripts,
++        )
++        .map_err(|error| {
++            let invariants: Vec<(Rc<str>, Option<usize>)> = constant_invariants
++                .iter()
++                .flatten()
++                .map(|name| (name.clone(), None))
++                .collect();
++            let is_unknown = read_subscripts
++                .iter()
++                .any(|check| matches!(check, SubscriptCheck::Unknown(_)));
++            match error {
++                FrontError::Config(_) | FrontError::Evaluation(_)
++                    if options.is_warning_enabled && is_unknown =>
++                {
++                    FrontError::NotYet(
++                        "an error in the specification after a subscript TLC warns of".to_owned(),
++                    )
++                }
++                error @ FrontError::Config(_)
++                    if options.is_warning_enabled
++                        && !(invariants.is_empty()
++                            && read_subscripts.iter().all(|check| !check.is_warned())) =>
++                {
++                    FrontError::Warned(
++                        get_search_warnings(
++                            &invariants,
++                            &get_subscript_warnings(&read_subscripts, &variable_order),
++                            &[],
++                        ),
++                        Box::new(error),
++                    )
++                }
++                error => error,
++            }
++        })?;
++        // TLC warns of the subscript of [][Next]_v as it reads the specification, before it
++        // reads the properties.
++        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))
++            .map_err(|error| match error {
++            FrontError::Config(_) | FrontError::Evaluation(_)
++                if options.is_warning_enabled
++                    && specification
++                        .subscripts
++                        .iter()
++                        .any(SubscriptCheck::is_warned) =>
++            {
++                FrontError::NotYet(
++                    "a property TLC rejects after it warns of the subscript of [][Next]_v"
++                        .to_owned(),
++                )
++            }
++            error => error,
++        })?;
++        // TLC warns of each variable the subscript lacks in its order of the variables.
++        let subscript_warnings = if options.is_warning_enabled {
++            get_subscript_warnings(&specification.subscripts, &variable_order)
++        } else {
++            Vec::new()
++        };
+         // `getTlcOrder`: the variables in TLC's order of declarations.
+         let position = |index: &i32| {
+             let variable = &environment.variables[*index as usize];
+@@ -393,10 +448,12 @@ fn lower_ranked(
+             match error {
+                 error @ FrontError::Config(_)
+                     if options.is_warning_enabled
+-                        && !(invariants.is_empty() && properties.is_empty()) =>
++                        && !(invariants.is_empty()
++                            && subscript_warnings.is_empty()
++                            && properties.is_empty()) =>
+                 {
+                     FrontError::Warned(
+-                        get_search_warnings(&invariants, &properties),
++                        get_search_warnings(&invariants, &subscript_warnings, &properties),
+                         Box::new(error),
+                     )
+                 }
+@@ -412,6 +469,7 @@ fn lower_ranked(
+                 next: no_behavior,
+                 scope: None,
+                 temporals: Vec::new(),
++                subscripts: Vec::new(),
+             };
+             lowering.write_model(
+                 &config,
+@@ -442,6 +500,7 @@ fn lower_ranked(
+                                     .flatten()
+                                     .map(|name| (name.clone(), None))
+                                     .collect::<Vec<_>>(),
++                                &subscript_warnings,
+                                 &properties.state_level,
+                             )
+                             .into_iter()
+@@ -489,14 +548,26 @@ fn lower_ranked(
+         } else {
+             (Vec::new(), &[][..])
+         };
++        let unknown_subscript = specification
++            .subscripts
++            .iter()
++            .find_map(|check| match check {
++                SubscriptCheck::Unknown(reason) if options.is_warning_enabled => Some(reason),
++                _ => None,
++            });
+         let startup_messages = get_startup_messages(
+             &config,
+             &constant_invariants,
++            &subscript_warnings,
+             state_level,
+             branches,
+             version,
+             options.is_warning_enabled,
+-        );
++        )
++        .and_then(|messages| match unknown_subscript {
++            Some(reason) => Err(format!("TLC's warnings about {reason}")),
++            None => Ok(messages),
++        });
+         let override_messages = get_override_messages(&environment, sources.load_class)
+             .map(|messages| {
+                 // -nowarning drops a method that matches no operator.
+@@ -632,6 +703,7 @@ fn get_override_messages(
+ fn get_startup_messages(
+     config: &crate::config::ModelConfig,
+     constant_invariants: &[(Rc<str>, Option<usize>)],
++    subscript_warnings: &[StartupMessage],
+     state_level_properties: &[Rc<str>],
+     branches: Option<usize>,
+     version: TlcVersion,
+@@ -640,7 +712,11 @@ fn get_startup_messages(
+     if version == TlcVersion::V1_7_4 {
+         return Err("what TLC 1.7.4 prints as it starts".to_owned());
+     }
+-    let mut messages = get_search_warnings(constant_invariants, state_level_properties);
++    let mut messages = get_search_warnings(
++        constant_invariants,
++        subscript_warnings,
++        state_level_properties,
++    );
+     // TLC warns about a symmetry set too small as it computes the symmetry, which the engine does
+     // between the constant definitions and these warnings' place in TLC's order: unchecked yet.
+     if config.symmetry.is_some() && !messages.is_empty() {
+@@ -691,14 +767,46 @@ fn get_constant_invariants(
+ }
+ 
+ /// TLC's warnings about invariants that are TRUE constants, by name.
++// `processConfigSpec`'s warnings about the subscript of each `[][Next]_v`.
++fn get_subscript_warnings(
++    subscripts: &[SubscriptCheck],
++    variable_order: &[Rc<str>],
++) -> Vec<StartupMessage> {
++    let warning = |code: u32, text: String| StartupMessage {
++        code,
++        is_warning: true,
++        text,
++        predicate: None,
++    };
++    subscripts
++        .iter()
++        .flat_map(|check| match check {
++            SubscriptCheck::Undetermined => vec![warning(
++                2139,
++                "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.".to_owned(),
++            )],
++            SubscriptCheck::Unknown(_) => Vec::new(),
++            SubscriptCheck::Missing(missing) => variable_order
++                .iter()
++                .filter(|variable| missing.contains(*variable))
++                .map(|variable| warning(
++                    2140,
++                    format!("The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable {variable}"),
++                ))
++                .collect(),
++        })
++        .collect()
++}
++
+ pub(crate) fn get_constant_invariant_warnings(names: &[Rc<str>]) -> Vec<StartupMessage> {
+     let names: Vec<_> = names.iter().map(|name| (name.clone(), None)).collect();
+-    get_search_warnings(&names, &[])
++    get_search_warnings(&names, &[], &[])
+ }
+ 
+ // `createSearch`'s warnings about the invariants and the properties.
+ fn get_search_warnings(
+     constant_invariants: &[(Rc<str>, Option<usize>)],
++    subscript_warnings: &[StartupMessage],
+     state_level_properties: &[Rc<str>],
+ ) -> Vec<StartupMessage> {
+     let warning = |code: u32, text: String| StartupMessage {
+@@ -710,6 +818,7 @@ fn get_search_warnings(
+     constant_invariants
+         .iter()
+         .map(|(name, predicate)| StartupMessage { predicate: *predicate, ..warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")) })
++        .chain(subscript_warnings.iter().cloned())
+         .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
+         .collect()
+ }
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index 9cdaaa9d..b1d410d0 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -33,6 +33,13 @@ pub enum ScopeOf {
+ 
+ pub enum Binding {
+     Value(ConfigValue),
++    /// A value an operator's argument written as a literal gives, which reads as `Value`; TLC
++    /// holds the argument as the expression, which some of its analyses read
++    /// (`SubscriptCollector`).
++    Literal {
++        value: ConfigValue,
++        expression: Expr,
++    },
+     /// `Thunk`: an expression read in a scope.
+     Thunk {
+         expression: Expr,
+@@ -92,7 +99,7 @@ pub fn get_level(
+     let get_binding_level = |name: &str| {
+         let (node, binding) = lookup_scope(scope, name)?;
+         Some(match binding {
+-            Binding::Value(_) => Level::Constant,
++            Binding::Value(_) | Binding::Literal { .. } => Level::Constant,
+             Binding::Thunk { expression, scope } => get_level(
+                 expression,
+                 scope.resolve(node).as_ref(),
+@@ -193,6 +200,9 @@ pub struct Specification {
+     pub next: Option<Expr>,
+     pub scope: Option<Rc<Scope>>,
+     pub temporals: Vec<Expanded>,
++    /// What TLC finds of the subscript of each `[][Next]_v` of the specification, in order, which
++    /// it warns of.
++    pub subscripts: Vec<SubscriptCheck>,
+ }
+ 
+ const START: Location = Location {
+@@ -503,12 +513,14 @@ pub(crate) fn bind_operator_arguments(
+             scope: ScopeOf::Other(scope.cloned()),
+         };
+         let binding = match &argument.kind {
+-            ExpressionKind::String { value } => {
+-                Binding::Value(ConfigValue::String(value.to_string()))
+-            }
+-            ExpressionKind::Number { value, .. } if is_tlc_integer(*value) => {
+-                Binding::Value(ConfigValue::Number(*value))
+-            }
++            ExpressionKind::String { value } => Binding::Literal {
++                value: ConfigValue::String(value.to_string()),
++                expression: argument.clone(),
++            },
++            ExpressionKind::Number { value, .. } if is_tlc_integer(*value) => Binding::Literal {
++                value: ConfigValue::Number(*value),
++                expression: argument.clone(),
++            },
+             ExpressionKind::Identifier { .. } => {
+                 let reference = argument.reference().unwrap_or_default();
+                 let global = if argument.is_locally_resolved() {
+@@ -521,6 +533,10 @@ pub(crate) fn bind_operator_arguments(
+                     Some(GlobalName::Other) => thunk(),
+                     None => match lookup_scope(scope, &reference) {
+                         Some((_, Binding::Value(value))) => Binding::Value(value.clone()),
++                        Some((_, Binding::Literal { value, expression })) => Binding::Literal {
++                            value: value.clone(),
++                            expression: expression.clone(),
++                        },
+                         Some((node, Binding::Thunk { expression, scope })) => Binding::Thunk {
+                             expression: expression.clone(),
+                             scope: ScopeOf::Other(scope.resolve(node)),
+@@ -1051,6 +1067,27 @@ pub fn get_specification(
+     facts: &DefinitionFacts,
+     version: TlcVersion,
+     evaluator: Option<&Evaluator>,
++) -> Result<Specification> {
++    let mut subscripts = Vec::new();
++    read_specification(
++        config,
++        environment,
++        facts,
++        version,
++        evaluator,
++        &mut subscripts,
++    )
++}
++
++/// `get_specification`, which gives the subscripts it read in `subscripts` as it fails too: TLC
++/// warns of each as it reads it, before an error after it.
++pub fn read_specification(
++    config: &crate::config::ModelConfig,
++    environment: &Environment,
++    facts: &DefinitionFacts,
++    version: TlcVersion,
++    evaluator: Option<&Evaluator>,
++    subscripts: &mut Vec<SubscriptCheck>,
+ ) -> Result<Specification> {
+     let Some(specification) = &config.specification else {
+         let operator = |name: &Option<String>, description: &str| {
+@@ -1066,6 +1103,7 @@ pub fn get_specification(
+             next: operator(&config.next, "next state action")?,
+             scope: None,
+             temporals: Vec::new(),
++            subscripts: Vec::new(),
+         });
+     };
+     if config.init.is_some() || config.next.is_some() {
+@@ -1100,64 +1138,76 @@ pub fn get_specification(
+     let mut init_conjuncts = Vec::new();
+     let mut next_actions = Vec::new();
+     let mut temporals = Vec::new();
+-    for item in expansion.expand(&definition.body, None, &[], false, None)? {
+-        let level = || {
+-            get_level(
+-                &item.expression,
+-                item.scope.as_ref(),
+-                environment,
+-                facts,
+-                &[],
+-            )
+-        };
+-        match &item.expression.kind {
+-            ExpressionKind::Identifier { name, .. }
+-                if level() == Level::Constant
+-                    && is_constant_true(name, &item, "spec", environment, evaluator)? =>
+-            {
+-                continue;
+-            }
+-            ExpressionKind::UnboundedQuantifier {
+-                is_temporal: true, ..
+-            } => return Err(not_yet("temporal quantification in the specification")),
+-            ExpressionKind::Always(inner) => match &inner.kind {
+-                ExpressionKind::Action {
+-                    is_box: true,
+-                    action,
+-                    ..
+-                } => {
+-                    next_actions.push((action.clone(), item.scope.clone()));
+-                    continue;
+-                }
+-                _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
+-                    < Level::Action =>
++    let startup = crate::startup::get_startup_model(environment);
++    // TLC prints the warnings of a subscript as it reads it, before an error in a later conjunct.
++    let read = (|| -> Result<()> {
++        for item in expansion.expand(&definition.body, None, &[], false, None)? {
++            let level = || {
++                get_level(
++                    &item.expression,
++                    item.scope.as_ref(),
++                    environment,
++                    facts,
++                    &[],
++                )
++            };
++            match &item.expression.kind {
++                ExpressionKind::Identifier { name, .. }
++                    if level() == Level::Constant
++                        && is_constant_true(name, &item, "spec", environment, evaluator)? =>
+                 {
+-                    // TLC accepts the spec and fails when it builds the tableau of the temporal
+-                    // formulas.
+-                    return Err(FrontError::Evaluation(format!(
+-                        "TLC cannot handle the temporal formula {}",
+-                        describe_range(inner)
+-                    )));
++                    continue;
+                 }
++                ExpressionKind::UnboundedQuantifier {
++                    is_temporal: true, ..
++                } => return Err(not_yet("temporal quantification in the specification")),
++                ExpressionKind::Always(inner) => match &inner.kind {
++                    ExpressionKind::Action {
++                        is_box: true,
++                        action,
++                        subscript,
++                    } => {
++                        let collector = SubscriptCollector {
++                            environment,
++                            startup: &startup,
++                            evaluator,
++                        };
++                        subscripts.push(collector.check(subscript, item.scope.as_ref())?);
++                        next_actions.push((action.clone(), item.scope.clone()));
++                        continue;
++                    }
++                    _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
++                        < Level::Action =>
++                    {
++                        // TLC accepts the spec and fails when it builds the tableau of the temporal
++                        // formulas.
++                        return Err(FrontError::Evaluation(format!(
++                            "TLC cannot handle the temporal formula {}",
++                            describe_range(inner)
++                        )));
++                    }
++                    _ => {}
++                },
+                 _ => {}
+-            },
+-            _ => {}
+-        }
+-        match level() {
+-            Level::Temporal => temporals.push(item),
+-            Level::Action => {
+-                return Err(FrontError::Config(format!(
+-                    "TLC cannot handle the action-level conjunct of the specification {specification}"
+-                )));
+             }
+-            // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
+-            // conjunct that reaches it.
+-            _ if reaches_name(&item.expression, "PickSuccessor", environment) => {
+-                return Err(not_yet("PickSuccessor in a conjunct of the specification"));
++            match level() {
++                Level::Temporal => temporals.push(item),
++                Level::Action => {
++                    return Err(FrontError::Config(format!(
++                        "TLC cannot handle the action-level conjunct of the specification {specification}"
++                    )));
++                }
++                // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
++                // conjunct that reaches it.
++                _ if reaches_name(&item.expression, "PickSuccessor", environment) => {
++                    return Err(not_yet("PickSuccessor in a conjunct of the specification"));
++                }
++                _ => init_conjuncts.push((item.expression, item.scope)),
+             }
+-            _ => init_conjuncts.push((item.expression, item.scope)),
+         }
+-    }
++        Ok(())
++    })();
++    read?;
+     if next_actions.len() > 1 {
+         return Err(FrontError::Config(format!(
+             "The specification {specification} must contain at most one [][Next]_vars"
+@@ -1211,9 +1261,182 @@ pub fn get_specification(
+         next: (!next_actions.is_empty()).then(|| get_reference(init_conjuncts.len())),
+         scope,
+         temporals,
++        subscripts: subscripts.clone(),
+     })
+ }
+ 
++/// What `processConfigSpec` finds of the subscript of `[][Next]_v`: that it can't tell whether it
++/// holds every state variable, or the variables it doesn't hold.
++#[derive(Clone, Debug)]
++pub enum SubscriptCheck {
++    Undetermined,
++    Missing(Vec<Name>),
++    /// What the front end can't tell, with why: the warnings, which a check that prints none
++    /// doesn't need.
++    Unknown(&'static str),
++}
++
++impl SubscriptCheck {
++    pub fn is_warned(&self) -> bool {
++        !matches!(self, SubscriptCheck::Missing(missing) if missing.is_empty())
++    }
++}
++
++/// Why the front end can't follow a subscript as TLC reads it.
++struct Unfollowed(&'static str);
++
++/// `processConfigSpec`'s `SubscriptCollector`: the state variables in the subscript of
++/// `[][Next]_v`, through tuples, the operators it applies and the definitions it names, where TLC
++/// holds them as operators. Any other builtin it ignores, and anything but an operator's
++/// application it can't read, a number or a string, after which TLC warns that it can't tell.
++struct SubscriptCollector<'a, 'b> {
++    environment: &'a Environment,
++    startup: &'a crate::startup::StartupModel,
++    evaluator: Option<&'a Evaluator<'b>>,
++}
++
++impl SubscriptCollector<'_, '_> {
++    /// What TLC finds of the subscript.
++    fn check(&self, subscript: &Expr, scope: Option<&Rc<Scope>>) -> Result<SubscriptCheck> {
++        let mut found = Vec::new();
++        match self.enter(subscript, scope, &mut found) {
++            Ok(true) => {}
++            Ok(false) => return Ok(SubscriptCheck::Undetermined),
++            Err(Unfollowed(reason)) => return Ok(SubscriptCheck::Unknown(reason)),
++        }
++        Ok(SubscriptCheck::Missing(
++            self.environment
++                .variables
++                .iter()
++                .filter(|variable| !found.contains(*variable))
++                .cloned()
++                .collect(),
++        ))
++    }
++
++    // `enter`: false where TLC gives up on the subscript.
++    fn enter(
++        &self,
++        expression: &Expr,
++        scope: Option<&Rc<Scope>>,
++        found: &mut Vec<Name>,
++    ) -> std::result::Result<bool, Unfollowed> {
++        let environment = self.environment;
++        match &expression.kind {
++            ExpressionKind::Number { .. }
++            | ExpressionKind::Decimal { .. }
++            | ExpressionKind::String { .. }
++            | ExpressionKind::ExceptAt => return Ok(false),
++            ExpressionKind::Tuple(items) => {
++                for item in items {
++                    if !self.enter(item, scope, found)? {
++                        return Ok(false);
++                    }
++                }
++                return Ok(true);
++            }
++            ExpressionKind::Let {
++                definitions, body, ..
++            } => {
++                let bound = bind_definitions(definitions, scope)
++                    .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
++                return self.enter(body, bound.as_ref(), found);
++            }
++            ExpressionKind::Label { body, .. } => return self.enter(body, scope, found),
++            ExpressionKind::Subexpression { .. } => {
++                return Err(Unfollowed(
++                    "a subexpression name in the subscript of [][Next]_v",
++                ));
++            }
++            ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {}
++            // TLC ignores the other builtins.
++            _ => return Ok(true),
++        }
++        let Some(name) = expression.reference() else {
++            return Ok(true);
++        };
++        // TLC reads a name bound in the context through the LazyValue of its expression.
++        if expression.is_locally_resolved()
++            && let Some((node, binding)) = lookup_scope(scope, &name)
++        {
++            match binding {
++                Binding::Thunk {
++                    expression: bound,
++                    scope: bound_scope,
++                } => {
++                    let bound_scope = bound_scope.resolve(node);
++                    return self.enter(bound, bound_scope.as_ref(), found);
++                }
++                Binding::Literal { expression, .. } => return self.enter(expression, None, found),
++                // A value TLC holds as one: a quantifier's element, or a constant's.
++                Binding::Value(_) => return Ok(true),
++                Binding::Closure { .. } => {}
++            }
++        }
++        if !expression.is_locally_resolved() {
++            if environment.variable_index.contains_key(&name) {
++                found.push(name);
++                return Ok(true);
++            }
++            // A constant or a definition the configuration gives a value TLC holds as the value.
++            if environment.constants.contains_key(&name) {
++                return Ok(true);
++            }
++            if environment.substitutions.contains_key(&name) {
++                return Err(Unfollowed(
++                    "a subscript of [][Next]_v that names what the configuration substitutes",
++                ));
++            }
++        }
++        let Some((params, body, closure_scope)) =
++            resolve_apply_operator(expression, scope, environment)
++        else {
++            // A builtin, which TLC ignores, or a function definition, a builtin's application
++            // where TLC doesn't hold its value. A name an INSTANCE substitutes, which TLC reads
++            // through the substitution's value, the front end doesn't follow.
++            if environment.builtins.contains_key(&name)
++                || get_definition(&name, environment).is_some()
++            {
++                return Ok(true);
++            }
++            return Err(Unfollowed(
++                "a name in the subscript of [][Next]_v that the front end doesn't follow",
++            ));
++        };
++        if params.is_empty() {
++            if !expression.is_locally_resolved()
++                && let Some(definition) = get_definition(&name, environment)
++            {
++                match self.startup.read(definition) {
++                    crate::startup::Read::Literal => return Ok(true),
++                    crate::startup::Read::Attempted => {
++                        let evaluator = self.evaluator.ok_or(Unfollowed(
++                            "a subscript of [][Next]_v that TLC may compute as it starts",
++                        ))?;
++                        return match evaluator.evaluate(&body, None) {
++                            Ok(_) => Ok(true),
++                            Err(_) => Err(Unfollowed(
++                                "a subscript of [][Next]_v whose definition fails as TLC starts",
++                            )),
++                        };
++                    }
++                    crate::startup::Read::Operator => {}
++                }
++            }
++            return self.enter(&body, closure_scope.as_ref(), found);
++        }
++        let ExpressionKind::Apply { args, .. } = &expression.kind else {
++            return Ok(true);
++        };
++        if params.len() != args.len() {
++            return Ok(true);
++        }
++        let bound = bind_operator_arguments(&params, args, closure_scope, scope, environment)
++            .map_err(|_| Unfollowed("an operator's arguments the front end doesn't bind"))?;
++        self.enter(&body, bound.as_ref(), found)
++    }
++}
++
+ /// A conjunct of a property, with the name TLC gives it and the scope it reads.
+ pub struct Property {
+     pub name: Name,
+-- 
+2.43.0
+
