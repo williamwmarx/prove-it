@@ -64,6 +64,11 @@ fn loads_the_override_of_a_recursive_local_operator_as_tlc() {
     let working = common::get_working_path(&directory);
     let path = working.to_str().expect("a path");
     let text = String::from_utf8_lossy(&output.stdout);
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_CLASS_URL, "recursive");
+        std::fs::remove_dir_all(directory).expect("removed");
+        return;
+    }
     assert_eq!(output.status.code(), Some(12), "{text}");
     assert_eq!(
         get_untimed_lines(&text, path),
@@ -128,6 +133,12 @@ fn names_the_class_by_the_path_tlc_reaches_it_through_a_link() {
             .current_dir(root.join(working))
             .output()
             .expect("the binary runs");
+        // Windows names a working directory reached through a link by the link, so each spec is
+        // found by a path that isn't its real one, whose URL no run of TLC on Windows recorded.
+        if cfg!(windows) {
+            common::assert_declined(&output, common::DECLINED_FILE_URL, spec);
+            continue;
+        }
         let text = String::from_utf8_lossy(&output.stdout);
         assert_eq!(
             output.status.code(),

@@ -228,6 +228,22 @@ fn names_the_trace_exploration_spec_as_tlc_however_the_spec_is_named() {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+            if cfg!(windows) && !matches!(outcome, Outcome::Declined) {
+                // A spec named through `.`, `..` or a link is found by a path that isn't its real
+                // one; any other spec TLC writes a trace exploration spec of prints its path.
+                let reason = if ["dot", "parent", "symlink"].contains(&case.name) {
+                    Some(common::DECLINED_FILE_URL)
+                } else if let Outcome::Checked(_, Some(_)) = outcome {
+                    Some(common::DECLINED_TRACE_SPEC)
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    common::assert_declined(&output, reason, &label);
+                    std::fs::remove_dir_all(&root).expect("removed");
+                    continue;
+                }
+            }
             match outcome {
                 Outcome::Declined => {
                     assert!(
@@ -501,7 +517,7 @@ fn finds_and_names_the_modules_as_tlc_however_the_spec_is_named() {
             std::process::id()
         ));
         std::fs::create_dir_all(&created).expect("a directory");
-        let root = std::fs::canonicalize(&created).expect("the root");
+        let root = common::get_working_path(&created);
         set_up_extending(&root, resolution.is_library_used, resolution.is_shadowed);
         let root_text = root.to_string_lossy().into_owned();
         let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
@@ -511,6 +527,30 @@ fn finds_and_names_the_modules_as_tlc_however_the_spec_is_named() {
             .output()
             .expect("the binary runs");
         let text = String::from_utf8_lossy(&output.stdout);
+        let mut expected: Vec<String> = resolution
+            .parsed
+            .iter()
+            .map(|file| file.replace("{root}", &root_text))
+            .collect();
+        if cfg!(windows) {
+            let lines: Vec<String> = expected
+                .iter()
+                .map(|file| format!("Parsing file {file}"))
+                .collect();
+            match common::get_windows_expectation(&lines) {
+                common::OnWindows::Declined(reason) => {
+                    common::assert_declined(&output, reason, resolution.name);
+                    std::fs::remove_dir_all(&root).expect("removed");
+                    continue;
+                }
+                common::OnWindows::Printed(lines) => {
+                    expected = lines
+                        .iter()
+                        .map(|line| line.trim_start_matches("Parsing file ").to_owned())
+                        .collect();
+                }
+            }
+        }
         assert_eq!(
             output.status.code(),
             Some(resolution.exit),
@@ -520,12 +560,7 @@ fn finds_and_names_the_modules_as_tlc_however_the_spec_is_named() {
         let parsed: Vec<&str> = text
             .lines()
             .filter_map(|line| line.strip_prefix("Parsing file "))
-            .filter(|file| !file.contains("/tlc-"))
-            .collect();
-        let expected: Vec<String> = resolution
-            .parsed
-            .iter()
-            .map(|file| file.replace("{root}", &root_text))
+            .filter(|file| !file.contains("/tlc-") && !file.contains("\\tlc-"))
             .collect();
         assert_eq!(parsed, expected, "{}", resolution.name);
         std::fs::remove_dir_all(&root).expect("removed");

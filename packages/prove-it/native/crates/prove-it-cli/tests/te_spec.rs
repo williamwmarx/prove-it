@@ -4,6 +4,8 @@
 //! its clock fixed by PROVE_IT_TEST_NOW, and the test puts the binary's second and date in place of
 //! TLC's.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -72,6 +74,11 @@ fn writes_the_trace_exploration_spec_after_an_error_trace_as_tlc() {
     // spec of the behavior up to the error, and no trace file, since the counterexample is empty.
     for (name, exit) in [("assert", 14), ("evalinv", 76)] {
         let (output, directory) = run("written", name, "Stop", &[]);
+        if cfg!(windows) {
+            common::assert_declined(&output, common::DECLINED_TRACE_SPEC, name);
+            std::fs::remove_dir_all(directory).expect("removed");
+            continue;
+        }
         let text = String::from_utf8_lossy(&output.stdout);
         assert_eq!(output.status.code(), Some(exit), "{name}: {text}");
         let path = format!("Stop_TTrace_{NOW_SECONDS}.tla");

@@ -295,7 +295,7 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
     ];
     text.lines()
         .filter(|line| PREFIXES.iter().any(|prefix| line.starts_with(prefix)))
-        .filter(|line| !line.contains("/tlc-"))
+        .filter(|line| !line.contains("/tlc-") && !line.contains("\\tlc-"))
         .map(str::to_owned)
         .chain([format!("exit {}", code.unwrap_or(-1))])
         .collect()
@@ -304,6 +304,11 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
 #[test]
 fn finds_specs_modules_and_overrides_as_tlc_does() {
     for case in CASES {
+        // Windows has no /dev/null to link a module to.
+        if cfg!(windows) && case.name == "module-device" {
+            eprintln!("module-device: not run, as Windows has no /dev/null");
+            continue;
+        }
         let created = std::env::temp_dir().join(format!(
             "prove-it-resolver-order-{}-{}",
             case.name,
@@ -338,10 +343,20 @@ fn finds_specs_modules_and_overrides_as_tlc_does() {
                 );
             }
             Outcome::Printed(lines) => {
-                let expected: Vec<String> = lines
+                let mut expected: Vec<String> = lines
                     .iter()
                     .map(|line| line.replace("{root}", &root_text))
                     .collect();
+                if cfg!(windows) {
+                    match common::get_windows_expectation(&expected) {
+                        common::OnWindows::Declined(reason) => {
+                            common::assert_declined(&output, reason, case.name);
+                            std::fs::remove_dir_all(&root).expect("removed");
+                            continue;
+                        }
+                        common::OnWindows::Printed(lines) => expected = lines,
+                    }
+                }
                 assert_eq!(
                     get_printed(&text, output.status.code()),
                     expected,

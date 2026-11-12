@@ -797,6 +797,16 @@ fn names_the_command_lines_module_as_tlapm_does() {
     assert_eq!(stderr(&output), expected);
     let absolute = directory.join("Notes.tla").to_string_lossy().into_owned();
     let output = run_in(&directory, &["-N", &absolute]);
+    // tlapm has no Windows build to say how it reads a path with a drive.
+    if cfg!(windows) {
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "prove-it: not native yet: a module named by an absolute Windows path, which tlapm reads only on Unix: {absolute}\n"
+            )
+        );
+        return;
+    }
     assert_eq!(stderr(&output), expected.replace("./Notes.tla", &absolute));
 }
 

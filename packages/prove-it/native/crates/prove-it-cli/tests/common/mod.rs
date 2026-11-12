@@ -116,3 +116,50 @@ pub fn set_modified(directory: &Path, time: std::time::SystemTime) {
         .set_modified(time)
         .expect("its time");
 }
+
+/// What the binary does on Windows with a spec TLC ran on Unix, by the lines TLC printed there: no
+/// run of TLC on Windows has recorded how it prints a path, so the binary prints the forms whose
+/// rendering TLC's source settles and declines the others, the first in the order it prints them.
+pub enum OnWindows {
+    Declined(&'static str),
+    /// The lines, each `Parsing file` path with Windows's separator.
+    Printed(Vec<String>),
+}
+
+/// The reasons the binary gives on Windows, each up to where it names a path.
+pub const DECLINED_FILE_URL: &str =
+    "the URL TLC prints on Windows of a module whose path isn't its real one";
+pub const DECLINED_CLASS_URL: &str = "the URL TLC prints on Windows of a Java class";
+pub const DECLINED_TRACE_SPEC: &str =
+    "the path TLC prints on Windows of the trace exploration spec";
+
+pub fn get_windows_expectation<S: AsRef<str>>(lines: &[S]) -> OnWindows {
+    let mut printed = Vec::new();
+    for line in lines {
+        let line = line.as_ref();
+        if let Some(file) = line.strip_prefix("Parsing file ") {
+            if file.contains(" (") {
+                return OnWindows::Declined(DECLINED_FILE_URL);
+            }
+            printed.push(format!("Parsing file {}", file.replace('/', "\\")));
+        } else if line.contains("operator override from file:") {
+            return OnWindows::Declined(DECLINED_CLASS_URL);
+        } else if line.starts_with("Trace exploration spec path: ") {
+            return OnWindows::Declined(DECLINED_TRACE_SPEC);
+        } else {
+            printed.push(line.to_owned());
+        }
+    }
+    OnWindows::Printed(printed)
+}
+
+/// Asserts the binary declined, for the reason that starts as `reason` does.
+pub fn assert_declined(output: &Output, reason: &str, label: &str) {
+    let stderr = stderr(output);
+    assert!(
+        stderr.starts_with(&format!("prove-it: not native yet: {reason}")),
+        "{label}: declined with {stderr:?}, not {reason:?}; printed {}",
+        stdout(output)
+    );
+    assert_eq!(output.status.code(), Some(1), "{label}");
+}

@@ -99,7 +99,17 @@ fn computes_constants_and_overrides_as_tlc() {
                 get_untimed_lines(&String::from_utf8_lossy(&output.stdout), path)
             );
             let stderr = String::from_utf8_lossy(&output.stderr);
+            let windows = expected
+                .as_deref()
+                .filter(|_| cfg!(windows))
+                .map(|expected| {
+                    common::get_windows_expectation(&expected.lines().collect::<Vec<_>>())
+                });
             let is_same = match (&expected, &declined) {
+                (Some(_), None) if let Some(common::OnWindows::Declined(reason)) = windows => {
+                    stderr.starts_with(&format!("prove-it: not native yet: {reason}"))
+                        && output.status.code() == Some(1)
+                }
                 (Some(expected), None) => actual == *expected,
                 (None, Some(reason)) => {
                     stderr == format!("prove-it: not native yet: {reason}")

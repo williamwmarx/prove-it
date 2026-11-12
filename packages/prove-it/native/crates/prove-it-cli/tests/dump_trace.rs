@@ -6,6 +6,7 @@
 //! trace file. The JSON is compared byte for byte, the `.bin` but for the tokens of its strings,
 //! which no two runs share.
 
+mod common;
 #[path = "../../tla-trace/tests/dump/payload.rs"]
 mod payload;
 
@@ -63,7 +64,8 @@ fn normalize(text: &str) -> String {
             (Some(prefix), _) => prefix.to_owned(),
             (None, Some(path)) => {
                 let path = path.split(' ').next().unwrap_or(path);
-                format!("Parsing file {}", path.rsplit('/').next().unwrap_or(path))
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                format!("Parsing file {name}")
             }
             _ if line.starts_with("Finished computing initial states")
                 || line.starts_with("Checking temporal properties ") =>
@@ -231,6 +233,11 @@ fn parses_the_trace_modules_where_tlc_records_the_trace() {
         "DumpInvariant",
         &["-dumpTrace", "json", "DumpInvariant.json"],
     );
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_TRACE_SPEC, "default-violation");
+        std::fs::remove_dir_all(directory).expect("removed");
+        return;
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(12), "{text}");
     let trace_spec = |text: &str| {
