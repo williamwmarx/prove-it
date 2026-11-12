@@ -19,3 +19,26 @@ fn leaves_out_what_a_theorem_assume_declares() {
     assert_eq!(names(true), ["w", "x"]);
     assert_eq!(names(false), ["N"]);
 }
+
+// A file that instantiates its inner module of the file's name: SANY scopes the inner module's
+// context, which the front end keys by name, so it declines rather than read the file's context
+// while it builds it.
+#[test]
+fn declines_a_file_that_instantiates_its_inner_module_of_its_name() {
+    let module = |name: &str| {
+        (name == "B").then(|| {
+            "---- MODULE B ----\n---- MODULE B ----\nQ == 2\n====\nI == INSTANCE B\nR == I!Q\n===="
+                .to_owned()
+        })
+    };
+    let order = TlcOrder::new(
+        "---- MODULE Main ----\nEXTENDS B\nVARIABLE x\n====",
+        &module,
+        TlcVersion::Master,
+    )
+    .expect("an order");
+    assert!(matches!(
+        order.get_declaration_order(true),
+        Err(tla_front::errors::FrontError::NotYet(_))
+    ));
+}

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
-import { getObligations } from "../../src/obligations";
+import { getObligations } from "../../scripts/native-prover";
 
 const getTexts = (body: string) =>
   getObligations(
-    [{ file: "M.tla", source: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` }],
+    "M.tla",
+    `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n`,
     () => undefined,
-  )[0].obligations.map((obligation) => obligation.text);
+  ).obligations.map((obligation) => obligation.text);
 
 describe("proof obligations match tlapm", () => {
   it("prints an @ that no earlier step defines", () => {

@@ -4,34 +4,37 @@
 // concluded about. A freshly decided obligation that shares one is reported too, as a fingerprint
 // that may be too coarse or a module recorded without fingerprints.
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError } from "../src";
-import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { CORPORA_DIRECTORY } from "./corpora";
-import { getModuleObligations, readProofRecords } from "./proof-records";
+import { getFingerprints } from "./native-prover";
+import { readModule, readProofRecords } from "./proof-records";
 
 const counts = { reused: 0, unmatched: 0, shared: 0, unloaded: 0 };
 for (const record of readProofRecords()) {
-  const obligations = (() => {
+  const path = join(CORPORA_DIRECTORY, record.id);
+  const fingerprints = (() => {
     try {
-      return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
+      return getFingerprints(path, readFileSync(path, "utf8"), (name) => readModule(path, name));
     } catch (error) {
       if (!(error instanceof TlaError)) throw error;
       return undefined;
     }
   })();
-  if (!obligations) {
+  if (!fingerprints) {
     counts.unloaded++;
     continue;
   }
-  const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
+  const byId = new Map(fingerprints.map((entry) => [entry.id, entry.fingerprint]));
   // The first obligation with each fingerprint, and the provers that concluded about one.
   const seen = new Map<string, { id: number; provers: Set<string> }>();
   record.obligations.forEach((expected) => {
-    const obligation = byId.get(expected.id);
-    if (!obligation || (expected.status !== "proved" && expected.status !== "failed")) return;
-    const fingerprint = getFingerprint(obligation.sequent);
+    const fingerprint = byId.get(expected.id);
+    if (fingerprint === undefined || (expected.status !== "proved" && expected.status !== "failed"))
+      return;
+    if (fingerprint instanceof Error) throw fingerprint;
     const prior = seen.get(fingerprint);
     const isShared = prior?.provers.has(expected.prover) ?? false;
     if (expected.status === "proved" && expected.timeUsed === undefined) {

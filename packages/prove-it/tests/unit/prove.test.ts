@@ -2,10 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { encodeForBackend } from "../../scripts/native-prover";
 import { type ProofObligation, prove, type ProveOptions, TlaUnsupportedError } from "../../src";
-import { getObligations } from "../../src/obligations";
-import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
 
 // HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
 // SMT solver for that obligation.
@@ -29,19 +27,18 @@ const getCommands = (script: string) =>
     .join(" ")
     .trim();
 
-const encodeFixture = (name: string, id: number) => {
-  const obligation = getObligations(
-    [{ file: `${name}.tla`, source: loadModule(name) ?? "" }],
+// TLAPS, where the fixtures have none, is the one the obligations know.
+const encodeFixture = (name: string, id: number) =>
+  encodeForBackend(
+    `${name}.tla`,
+    loadModule(name) ?? "",
     (moduleName) => {
-      const source = loadModule(moduleName) ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const source = loadModule(moduleName);
       return source === undefined ? undefined : { file: `${moduleName}.tla`, source };
     },
-  )
-    .flatMap((result) => result.obligations)
-    .find((innerObligation) => innerObligation.id === id);
-  if (!obligation) throw new Error(`no obligation ${id}`);
-  return encodeForBackend(obligation, "smt", { caseErrors: 0 });
-};
+    id,
+    "smt",
+  );
 
 const PATH = process.env.PATH;
 
@@ -106,6 +103,32 @@ describe("prove follows tlapm's default method", () => {
         { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
         { status: "trivial" },
       ]);
+    },
+  );
+
+  // The module that defines the strings is one the Rust driver gives way to the TypeScript one for.
+  it.each(["rust", "ts"])(
+    "proves neither string = nor # the other where a module it extends defines them, with the %s driver",
+    async (driver) => {
+      const setting = process.env.PROVE_IT_PROVER_DRIVER;
+      process.env.PROVE_IT_PROVER_DRIVER = driver;
+      const library = '---- MODULE Lib ----\nC1 == "\uD800"\nC2 == "\uDC00"\n====\n';
+      const results = await Promise.all(
+        ["=", "#"].map((operator) =>
+          prove({
+            source: `---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM C1 ${operator} C2 BY SMT DEF C1, C2\n====\n`,
+            loadModule: (name) => (name === "Lib" ? library : undefined),
+          }),
+        ),
+      ).finally(() => {
+        if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
+        else process.env.PROVE_IT_PROVER_DRIVER = setting;
+      });
+      for (const result of results)
+        expect(result.obligations).toMatchObject([
+          { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
+          { status: "trivial" },
+        ]);
     },
   );
 
