@@ -64,14 +64,12 @@ jobs:
       matrix:
         include:
           - task: Cargo Build
-            # The native tests load the addon in Bun from the sources and in Node from dist, the
-            # store and fingerprint tests run on the native store too, and the native search's tests
-            # compare it with the interpreter.
+            # The native tests load the addon in Bun from the sources and in Node from dist.
             command: |
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts
           # The engine as WebAssembly: its code for wasm32 linted, then the native tests with it
           # standing in for the addon, as where there is no process.dlopen (DESIGN.md 7.4).
           - task: WebAssembly
@@ -81,25 +79,19 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts
           # Every unit test, with the native engine that bun run test builds searching
           # (tests/setup.ts).
           - task: Test
             command: bun run test
-          # The Rust front end against the TypeScript one, on every module of the corpora and the
-          # fixtures (native/DESIGN.md section 14). resolve and ir link each module as a spec's root
-          # and lower it; model, order and model-ir link, order and lower each corpus model. The
-          # binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid, and
-          # what SANY's XMLExporter printed on SANY's corpus and the XML fixtures, with each flag set.
+          # The binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid,
+          # and what SANY's XMLExporter printed on SANY's corpus and the XML fixtures, with each flag
+          # set.
           - task: Front End
             command: |
               cd packages/prove-it
-              bun scripts/front-modules.ts --check
               bun scripts/fetch-corpora.ts
-              cd native && cargo build --release --locked -p tla-front --bin front-dump -p prove-it-cli --bin prove-it && cd ..
-              for mode in tokens ast sany-ast config resolve model ir order model-ir; do
-                bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
-              done
+              cd native && cargo build --release --locked -p prove-it-cli --bin prove-it && cd ..
               bun scripts/sany-corpus.ts --recorded tests/conformance/sany-stdout/corpus.json
               bun scripts/sany-corpus.ts --specs native/crates/tla-front/tests/recursive-shapes --recorded tests/conformance/sany-stdout/grid.json
               xml=tests/conformance/sany-stdout/xml

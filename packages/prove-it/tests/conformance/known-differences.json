@@ -276,21 +276,6 @@
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
-    "mode": "default",
-    "pair": "rust/interpreter",
-    "reason": "The interpreter prints TLCGet(\"config\") with its fields in the order it built them and a fingerprint setting of 0, where the native check prints the record as TLC does, with TLC's fingerprint setting. The interpreter checks only what the native check declines.",
-    "diff": [
-      "-[ mode |-> \"bfs\",",
-      "-  deadlock |-> TRUE,",
-      "-  worker |-> 1,",
-      "-  seed |-> \"4\",",
-      "-  fingerprint |-> \"-7992595565342442794\",",
-      "-  install |-> \"unknown\" ]",
-      "+[install |-> \"unknown\", mode |-> \"bfs\", deadlock |-> TRUE, seed |-> \"4\", fingerprint |-> \"0\", worker |-> 1]"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "tool",
     "pair": "tlc/rust",
     "reason": "TLCGet(\"config\") holds where TLC is installed, which TLC prints from its own runtime and the native checker has none of. This depends on TLC's runtime, not on Prove It.",
@@ -307,21 +292,6 @@
     "diff": [
       "-  install |-> \"/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar\" ]",
       "+  install |-> \"unknown\" ]"
-    ]
-  },
-  {
-    "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
-    "mode": "tool",
-    "pair": "rust/interpreter",
-    "reason": "The interpreter prints TLCGet(\"config\") with its fields in the order it built them and a fingerprint setting of 0, where the native check prints the record as TLC does, with TLC's fingerprint setting. The interpreter checks only what the native check declines.",
-    "diff": [
-      "-[ mode |-> \"bfs\",",
-      "-  deadlock |-> TRUE,",
-      "-  worker |-> 1,",
-      "-  seed |-> \"4\",",
-      "-  fingerprint |-> \"-7992595565342442794\",",
-      "-  install |-> \"unknown\" ]",
-      "+[install |-> \"unknown\", mode |-> \"bfs\", deadlock |-> TRUE, seed |-> \"4\", fingerprint |-> \"0\", worker |-> 1]"
     ]
   },
   {

@@ -13,7 +13,6 @@ export const OUTCOME_FIELDS = [
   "distinctStates",
   "depth",
   "traceLength",
-  "fingerprintProbability",
   "error",
 ] as const;
 
@@ -34,7 +33,6 @@ export const compareOutcome = (
     "distinctStates",
     "depth",
     "traceLength",
-    "fingerprintProbability",
   ] as const;
   const differences = fields
     .filter((field) => expected[field] !== undefined && expected[field] !== actual[field])

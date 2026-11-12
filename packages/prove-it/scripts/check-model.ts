@@ -1,9 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
-import { checkParsed } from "../src/parallel";
-import { formatProbability, getActualProbability } from "../src/tlc/summary";
+import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
 import { getLibraryModules, TLC_SEED } from "./corpora";
 
 export interface ModelOutcome {
@@ -13,9 +11,6 @@ export interface ModelOutcome {
   distinctStates?: number;
   depth?: number;
   traceLength?: number;
-  // TLC's estimate "based on the actual fingerprints" of the chance that two distinct states had
-  // the same fingerprint, as it prints it. It depends on every state's fingerprint.
-  fingerprintProbability?: string;
   error?: string;
   milliseconds: number;
 }
@@ -38,7 +33,7 @@ export const checkModel = async (
       `File name ${basename(specPath, ".tla")} does not match the name ${moduleName} of the top level module it contains`,
     );
   }
-  const result = await checkParsed({
+  const result = await check({
     isWarningEnabled,
     source,
     config: readFileSync(configPath, "utf8"),
@@ -64,12 +59,9 @@ export const checkModel = async (
     livenessCheck: "final",
   });
   const milliseconds = Math.round(performance.now() - startedAt);
-  if (result.failure) {
-    return {
-      status: "error",
-      error: `TlaEvaluationError: ${result.failure.message}`,
-      milliseconds,
-    };
+  const reported = result.violations[0];
+  if (result.status === "error") {
+    return { status: "error", error: `TlaEvaluationError: ${reported?.headline}`, milliseconds };
   }
   if (result.status === "success") {
     return {
@@ -77,18 +69,16 @@ export const checkModel = async (
       generatedStates: result.generatedStates,
       distinctStates: result.distinctStates,
       depth: result.depth,
-      ...(result.fingerprintDistance !== undefined && {
-        fingerprintProbability: formatProbability(getActualProbability(result.fingerprintDistance)),
-      }),
       milliseconds,
     };
   }
-  const trace = result.violation?.trace;
+  const trace = reported?.states;
   // TLC numbers the stuttering step at the end of a lasso like a state.
-  const isStuttering = trace !== undefined && result.violation?.loopStart === trace.length - 1;
+  const isStuttering = trace !== undefined && reported?.loopStart === trace.length - 1;
   return {
     status: result.status,
-    violation: result.violation?.name,
+    // The name TLC's report gives, as record-tlc.ts reads it.
+    violation: /(?:Invariant|property) (\S+) is violated/.exec(reported?.headline ?? "")?.[1],
     traceLength: trace && trace.length + (isStuttering ? 1 : 0),
     milliseconds,
   };
