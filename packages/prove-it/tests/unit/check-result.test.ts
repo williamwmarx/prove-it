@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check, type CheckResult } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -390,6 +391,36 @@ describe("check's result", () => {
     ).toEqual([
       [0, 1],
       [0, 1, 2],
+    ]);
+  });
+});
+
+// TLC reports a successor it can't fingerprint three times: the exception with the trace, the
+// exception again as it prints the trace, and where it failed to fingerprint.
+describe("check's result holds each report TLC prints", () => {
+  it("reports a successor TLC can't fingerprint as TLC does", async () => {
+    const result = await checkOnEngine({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x' = SUBSET (SUBSET (1..32))\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+    });
+    const exception =
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Overflow when computing the number of elements in:\nSUBSET (1..32)";
+    expect(
+      result.violations.map((violation) => [
+        violation.code,
+        violation.headline,
+        violation.states.length,
+      ]),
+    ).toEqual([
+      [1000, exception, 1],
+      [1000, exception, 0],
+      [
+        2147,
+        "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n1) line 5, col 22 to line 5, col 35 of module M\n0) line 5, col 14 to line 5, col 36 of module M\n\nReason:\nOverflow when computing the number of elements in:\nSUBSET (1..32)",
+        0,
+      ],
     ]);
   });
 });
