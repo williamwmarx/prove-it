@@ -1,7 +1,5 @@
-//! The operators that tla-ts implements natively, as `CORE_OPERATORS` and `getStandardModule` in
-//! `src/standard-modules.ts` give them for each TLC version, with the arities of their
-//! parameters and their ranges from `src/standard-definitions.ts`. `scripts/front-modules.ts`
-//! writes this file; don't edit it by hand.
+//! The operators that tla-ts implements natively for each TLC version, with the arities of their
+//! parameters and their ranges.
 
 /// A builtin's flags: state-level, level-constant, lazy, Naturals' >=, a method of Naturals, as
 /// the IR writes them.

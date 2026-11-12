@@ -40,7 +40,7 @@ const isAheadOfTime = process.argv.includes("--aot");
 const outfile = join(PACKAGE_DIRECTORY, isAheadOfTime ? "dist/prove-it-aot" : "dist/prove-it");
 
 const result = await Bun.build({
-  entrypoints: ["src/cli.ts", "src/parallel-worker.ts", "src/prover/prove-worker.ts"].map((entry) =>
+  entrypoints: ["src/cli.ts", "src/prover/prove-worker.ts"].map((entry) =>
     join(PACKAGE_DIRECTORY, entry),
   ),
   compile: {
@@ -51,7 +51,7 @@ const result = await Bun.build({
     autoloadDotenv: false,
     autoloadBunfig: false,
   },
-  // The library finds its workers and the addon beside itself, as dist does. The bytecode
+  // The prover finds its workers and the addon beside itself, as dist does. The bytecode
   // executable embeds the entries and the addon side by side at its root, and the ahead-of-time
   // one the addon at its path from the package, so the entries go beside it.
   naming: isAheadOfTime ? `${EMBEDDED_DIRECTORY}/[name].[ext]` : "[name].[ext]",
@@ -76,8 +76,8 @@ const result = await Bun.build({
 result.logs.forEach((log) => console.error(log));
 if (!result.success) process.exit(1);
 
-// The executable throws a MissingBuildFileError for a worker it can't find: the interpreter starts
-// its workers with -workers when the engine is off, and tlapm starts the prover's with --threads.
+// The executable checks with the addon it embeds, and throws a MissingBuildFileError for a worker
+// it can't find, which tlapm starts with --threads.
 const cacheDirectory = mkdtempSync(join(tmpdir(), "prove-it-binary-"));
 // SANY's report needs the engine, so a check of a model needs the embedded addon.
 const checks = [
@@ -86,20 +86,8 @@ const checks = [
     : [
         {
           directory: "tests/fixtures/commit",
-          args: ["-workers", "2", "Commit.cfg"],
-          env: { PROVE_IT_ENGINE: "0" },
-        },
-        {
-          directory: "tests/fixtures/commit",
           args: ["Commit.cfg"],
-          // A state log leaves the check to the TypeScript check, which searches the engine IR
-          // past the binary's own check; where the log can't be created, the engine writes none.
-          env: {
-            PROVE_IT_ENGINE: "debug",
-            PROVE_IT_ENGINE_ADDON: undefined,
-            PROVE_IT_STATE_LOG: join("missing", "states.jsonl"),
-          },
-          expected: ["[engine] native: complete: ", " on 1 thread "],
+          env: { PROVE_IT_ENGINE_ADDON: undefined },
         },
       ]),
   {
@@ -114,9 +102,7 @@ const failures = checks.flatMap((check) => {
     env: { ...process.env, ...check.env },
     encoding: "utf8",
   });
-  const isPassed =
-    run.status === 0 && (check.expected ?? []).every((expected) => run.stderr.includes(expected));
-  return isPassed ? [] : [`${check.args.join(" ")} in ${check.directory}:\n${run.stderr}`];
+  return run.status === 0 ? [] : [`${check.args.join(" ")} in ${check.directory}:\n${run.stderr}`];
 });
 rmSync(cacheDirectory, { recursive: true, force: true });
 if (failures.length > 0) {

@@ -13,11 +13,7 @@ import { useBuiltAddon } from "./platform-packages";
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, ".scripts");
 
-const WORKER_ENTRIES = [
-  "src/parallel-worker.ts",
-  "src/prover/prove-worker.ts",
-  "scripts/check-model.ts",
-];
+const WORKER_ENTRIES = ["src/prover/prove-worker.ts", "scripts/check-model.ts"];
 
 const name = process.argv[2];
 const build = spawnSync(

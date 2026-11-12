@@ -4,8 +4,7 @@ import { join } from "node:path";
 
 import { TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
-import { checkParsed } from "../../src/parallel";
-import { checkNatively } from "../native-check";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/operator-constants");
 
@@ -15,15 +14,8 @@ const SOURCE =
 const getConfig = (constants: string) =>
   `INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTANT ${constants}`;
 
-// The check of the module with these constants, which the engine answers.
-const checkConstants = async (constants: string) => {
-  const { result, declined } = await checkNatively({
-    source: SOURCE,
-    config: getConfig(constants),
-  });
-  expect(declined).toBeUndefined();
-  return result;
-};
+const checkConstants = (constants: string) =>
+  checkOnEngine({ source: SOURCE, config: getConfig(constants) });
 
 const getTrace = async (constants: string) => {
   const result = await checkConstants(constants);
@@ -32,11 +24,10 @@ const getTrace = async (constants: string) => {
 
 describe("operator constants match TLC", () => {
   it("assigns an operator constant from a table", async () => {
-    const { result, declined } = await checkNatively({
+    const result = await checkOnEngine({
       source: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.cfg"), "utf8"),
     });
-    expect(declined).toBeUndefined();
     expect([result.status, result.violations[0]?.headline]).toEqual([
       "invariant-violation",
       "Invariant Inv is violated.",
@@ -100,8 +91,6 @@ describe("operator constants match TLC", () => {
     }
   });
 
-  // The engine stops before its search at a configuration TLC rejects and leaves the error to the
-  // TypeScript check, until it throws TLC's typed errors itself.
   it("rejects configurations TLC rejects", async () => {
     const cases = [
       [
@@ -130,9 +119,7 @@ describe("operator constants match TLC", () => {
       ],
     ];
     for (const [constants, message] of cases) {
-      await expect(checkParsed({ source: SOURCE, config: getConfig(constants) })).rejects.toThrow(
-        new TlaConfigError(message),
-      );
+      await expect(checkConstants(constants)).rejects.toThrow(new TlaConfigError(message));
     }
   });
 });

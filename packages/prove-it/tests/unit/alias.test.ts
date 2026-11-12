@@ -2,19 +2,18 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseConfig, TlaConfigError, type TraceStep } from "../../src";
-import { checkOnEngine } from "../native-check";
+import { check, parseConfig, TlaConfigError, type TraceStep } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/alias");
 
 const checkAlias = (configName: string) =>
-  checkOnEngine({
+  check({
     source: readFileSync(join(DIRECTORY, "Alias.tla"), "utf8"),
     config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
   });
 
 const checkModule = (body: string, config: string) =>
-  checkOnEngine({
+  check({
     source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n${body}\n====`,
     config: `INIT Init\nNEXT Next\n${config}`,
   });
@@ -101,7 +100,7 @@ describe("ALIAS matches TLC", () => {
   });
 
   it("marks the message of _ALIASEvalError as TLC does in -tool output", async () => {
-    const result = await checkOnEngine({
+    const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\n====`,
       config: "INIT Init\nNEXT Next\nALIAS Argument",
       isTool: true,

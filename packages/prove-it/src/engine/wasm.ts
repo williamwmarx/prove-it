@@ -6,10 +6,7 @@
 //
 // A trap leaves the instance's stack pointer and borrows where they were, so it is replaced with
 // a new one. The engine runs on the host's call stack, which is shallower than the addon's search
-// thread's, so a check that exhausts it stops without handing anything over, and the interpreter
-// searches from the start, as for any such stop. So that what the search reported and printed
-// before then isn't reported again, its events are held until the check returns, and dropped where
-// it ran out of stack. The call blocks the thread throughout, so nothing sees them sooner either way.
+// thread's, so a check that exhausts it declines.
 
 import { isStackOverflow } from "../errors";
 import type { NativeAddon } from "./native";
@@ -46,17 +43,12 @@ interface Exports {
   prove_it_alloc: (length: number) => number;
   prove_it_free: (pointer: number, length: number) => void;
   prove_it_abi_version: () => number;
-  prove_it_check: Call;
   prove_it_decide: Call;
   prove_it_prove: Call;
   prove_it_obligations: Call;
   prove_it_fingerprint: Call;
-  prove_it_sany_text: Call;
-  prove_it_resolve_files: Call;
   prove_it_check_sources: Call;
   prove_it_store_perform: Call;
-  prove_it_store_decode: Call;
-  prove_it_store_encode: Call;
   prove_it_store_fingerprints: Call;
   prove_it_store_reset_fingerprints: Call;
 }
@@ -66,13 +58,6 @@ type Call = (pointer: number, length: number) => number;
 type CallName = {
   [Name in keyof Exports]: Exports[Name] extends Call ? Name : never;
 }[keyof Exports];
-
-// The events of the check that is running, each a call of its callbacks, in the order it made them.
-interface Running {
-  report: Parameters<NativeAddon["check"]>[3];
-  print: Parameters<NativeAddon["check"]>[4];
-  events: (() => void)[];
-}
 
 const getSize = (value: Argument): number =>
   value === undefined || value === null || typeof value === "boolean"
@@ -189,32 +174,8 @@ const callExport = (exports: Exports, call: Call, args: Argument[]) => {
   return value;
 };
 
-// What a check returned, after its events, or a stop that hands nothing over and drops them where
-// it ran out of stack. Once a callback throws, the rest aren't called, as with the addon, and the
-// check throws that.
-const getChecked = (check: Running, call: () => unknown): ReturnType<NativeAddon["check"]> => {
-  const outcome = (() => {
-    try {
-      return call() as ReturnType<NativeAddon["check"]>;
-    } catch (error) {
-      if (!isStackOverflow(error)) throw error;
-      return undefined;
-    }
-  })();
-  if (outcome === undefined) {
-    return {
-      status: "stopped",
-      reason: "WebAssembly ran out of stack",
-      counts: Float64Array.of(0),
-    };
-  }
-  check.events.forEach((event) => event());
-  return outcome;
-};
-
 // The addon's functions over a compiled module of the engine.
 export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
-  const running: { check?: Running } = {};
   const imports = {
     env: {
       prove_it_now: () => performance.now(),
@@ -241,30 +202,9 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
           return;
         }
       },
-      prove_it_report: (
-        kind: number,
-        a: number,
-        b: number,
-        c: number,
-        d: number,
-        e: number,
-        f: number,
-      ) => {
-        const check = running.check;
-        check?.events.push(() => check.report(kind, a, b, c, d, e, f));
-      },
-      // The values are read now, while the memory holds them.
-      prove_it_print: (pointer: number) => {
-        const check = running.check;
-        if (check === undefined) return;
-        const [memory, view] = getMemory(current.exports);
-        const [width, words, strings] = read(memory, view, pointer)[0] as [
-          number,
-          Int32Array,
-          string[],
-        ];
-        check.events.push(() => check.print(width, words, strings));
-      },
+      // The IR check's callbacks, which the module imports but nothing here calls.
+      prove_it_report: () => undefined,
+      prove_it_print: () => undefined,
     },
   };
   const instantiate = () => new WebAssembly.Instance(module, imports).exports as unknown as Exports;
@@ -281,15 +221,6 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
   };
   return {
     abiVersion: () => current.exports.prove_it_abi_version(),
-    check: (ir, settings, stateLog, report, print) => {
-      const check: Running = { report, print, events: [] };
-      running.check = check;
-      try {
-        return getChecked(check, () => callCurrent("prove_it_check", [ir, settings, stateLog]));
-      } finally {
-        running.check = undefined;
-      }
-    },
     // A check that runs out of the host's stack declines, which the library's check throws as
     // WebAssemblyStackError.
     checkSources: (args, known, machine) => {
@@ -317,32 +248,9 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       callCurrent("prove_it_fingerprint", [file, source, known]) as ReturnType<
         NativeAddon["fingerprint"]
       >,
-    sanyText: (root, source, fileName, version, rootExtendees, known) =>
-      callCurrent("prove_it_sany_text", [
-        root,
-        source,
-        fileName,
-        version,
-        rootExtendees,
-        known,
-      ]) as ReturnType<NativeAddon["sanyText"]>,
-    resolveFiles: (args, given, request, known) =>
-      callCurrent("prove_it_resolve_files", [args, given, request, known]) as ReturnType<
-        NativeAddon["resolveFiles"]
-      >,
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as
         number | boolean | null | string,
-    storeDecode: (words, strings, width, count, ids) => {
-      const decoded = callCurrent("prove_it_store_decode", [words, strings, width, count, ids]);
-      if (typeof decoded === "string") return decoded;
-      ids.set(decoded as Int32Array);
-      return null;
-    },
-    storeEncode: (states, width) =>
-      callCurrent("prove_it_store_encode", [states, width]) as ReturnType<
-        NativeAddon["storeEncode"]
-      >,
     storeFingerprints: (states, width, order, parents, isReference, fingerprints) => {
       fingerprints.set(
         callCurrent("prove_it_store_fingerprints", [

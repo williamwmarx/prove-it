@@ -1,44 +1,32 @@
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkOnEngine } from "../native-check";
+import { expectDeclined } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-set");
 
-describe("TLCGet revision and configuration match TLC", () => {
-  it.each(["TLCSet", "TLCSetPost"])("passes TLC's TLCSet test with %s.cfg", async (name) => {
-    const config = `${readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8")}\nCHECK_DEADLOCK FALSE\n`;
-    const result = await checkOnEngine(
+const TLC_GET = "an assumption that fails to evaluate: evaluating the assumption again: TLCGet";
+
+describe("TLCGet revision and configuration", () => {
+  it.each(["TLCSet", "TLCSetPost"])("declines TLC's TLCSet test with %s.cfg", async (name) => {
+    await expectDeclined(
       {
         source: readFileSync(join(DIRECTORY, "TLCSet.tla"), "utf8"),
-        config,
+        config: `${readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8")}\nCHECK_DEADLOCK FALSE\n`,
       },
-      "an assumption that fails to evaluate: evaluating the assumption again: TLCGet",
+      TLC_GET,
     );
-    expect(result.status).toBe("success");
-    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
-      4225, 4225, 4225,
-    ]);
   });
 
-  it("reports a development build like TLC without a manifest", async () => {
-    const printed: string[] = [];
+  it('declines TLCGet("revision")', async () => {
     const fields = ["calver", "count", "date", "tag", "timestamp"];
-    await checkOnEngine(
+    await expectDeclined(
       {
         source: `---- MODULE M ----\nEXTENDS TLC\nASSUME DOMAIN TLCGet("revision") = {${fields.map((field) => `"${field}"`).join(", ")}}\n${fields.map((field) => `ASSUME PrintT(TLCGet("revision").${field})`).join("\n")}\nASSUME PrintT(TLCGet("config").install)\n====`,
         config: "",
-        onPrint: (text) => printed.push(text),
       },
-      "an assumption that fails to evaluate: evaluating the assumption again: TLCGet",
+      TLC_GET,
     );
-    expect(printed).toHaveLength(6);
-    expect(printed[0]).toMatch(/^"\d{4}\.\d{2}\.\d{2}\.\d{6}"$/);
-    expect(printed[1]).toBe("0");
-    expect(printed[2]).toMatch(/^"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,3}Z"$/);
-    expect(printed.slice(3, 4)).toEqual(['"development"']);
-    expect(printed[4]).toMatch(/^\d+$/);
-    expect(printed[5]).toBe('"unknown"');
   });
 });

@@ -4,7 +4,15 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { cpus, release, tmpdir, totalmem, type } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -179,6 +187,37 @@ describe("checkSources", () => {
     ]);
     expect(getOutcome(CASES[3])).toBeUndefined();
   });
+
+  // The CLI says before the search whether it can write each file the check writes after it, so
+  // writing a counterexample's files asks for nothing that would search again.
+  it.each([[[]], [["-dumpTrace", "json", "x.json"]], [["-dumpTrace", "tlc", "out/x.bin"]]])(
+    "asks for every key before it searches, with %j",
+    (options) => {
+      const directory = getDirectory({ name: "", fixture: "water-jugs", args: [] });
+      mkdirSync(join(directory, "out"));
+      const getRounds = (args: string[]) => {
+        const addon = getAddon();
+        const rounds: string[] = [];
+        const result = checkAllSources(
+          {
+            ...addon,
+            checkSources: (...inputs) => {
+              const round = addon.checkSources(...inputs);
+              rounds.push(round.kind);
+              return round;
+            },
+          },
+          [...args, getSpecPath(directory, ["WaterJugs.tla"])],
+          [type(), release(), process.arch, 1, 1024, process.pid, Date.now(), "UTC0", [], false],
+          (key) => readKey(directory, key),
+        );
+        expect(result.kind).toBe("checked");
+        return rounds.length;
+      };
+      expect(getRounds(options)).toBe(getRounds(["-noGenerateSpecTE"]));
+      rmSync(directory, { recursive: true, force: true });
+    },
+  );
 
   // The library answers for files itself: the files the check writes come back in order, and the
   // binary writes the same bytes to the machine's.

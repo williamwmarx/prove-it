@@ -1,5 +1,4 @@
-//! The standard modules compiled into the crate, which `scripts/front-modules.ts --check` holds to
-//! the TypeScript front end's texts.
+//! The standard modules compiled into the crate.
 
 use tla_front::parser::parse_sany_module;
 use tla_front::standard_modules::{BUNDLED, MASTER, TLC_174};

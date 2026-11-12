@@ -1,7 +1,6 @@
 import type { SourceRange } from "./ast";
-import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
+import { EXIT_STATUS } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
-import type { Value } from "./values";
 
 // The start of TLC's message for an exception of a Java class it didn't expect.
 export const getUnexpectedException = (exceptionClass: string) =>
@@ -137,48 +136,6 @@ export class TlaEvaluationError extends TlaError {
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 
-// A Java StackOverflowError, which TLC catches only at the top, unlike the exceptions of evaluation.
-export class TlaStackOverflowError extends TlaEvaluationError {
-  constructor() {
-    super(STACK_OVERFLOW_MESSAGE);
-  }
-}
-
-// TLC reports a stack overflow outside the computation of states on its own, and exits with 255.
-export const createStackOverflowError = () =>
-  setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
-
-// A next-state action left variables of a successor state unassigned. TLC reports the partial
-// state, with null for each unassigned variable.
-export class TlaIncompleteSuccessorError extends TlaEvaluationError {
-  state: (Value | undefined)[];
-  action: string | undefined;
-  variables: string[];
-
-  constructor(
-    message: string,
-    state: (Value | undefined)[],
-    action: string | undefined,
-    variables: string[],
-  ) {
-    super(message);
-    this.state = state;
-    this.action = action;
-    this.variables = variables;
-  }
-}
-
-// An expression read a variable that its state doesn't assign. It keeps the name
-// TlaEvaluationError, and index.ts doesn't export it.
-export class TlaUnassignedError extends TlaEvaluationError {
-  variable: string;
-
-  constructor(message: string, variable: string) {
-    super(message);
-    this.variable = variable;
-  }
-}
-
 // An evaluation error that TLC raises as an EvalException from a standard module's Java code. It
 // keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaModuleError extends TlaEvaluationError {
@@ -188,17 +145,6 @@ export class TlaModuleError extends TlaEvaluationError {
     super(message);
     this.name = "TlaEvaluationError";
     this.exitCode = exitCode;
-  }
-}
-
-// TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
-export class TlaIllegalStateError extends TlaEvaluationError {
-  state: (Value | undefined)[];
-
-  constructor(state: (Value | undefined)[]) {
-    super("current state is not a legal state");
-    this.name = "TlaEvaluationError";
-    this.state = state;
   }
 }
 
@@ -254,13 +200,11 @@ export class EngineInvariantError extends TlaError {
 }
 
 // No native engine loads: no platform package for this system is installed, its addon fails to
-// load, or, where there is no process.dlopen, the WebAssembly engine doesn't. check doesn't fall
-// back to a slower search unasked: PROVE_IT_ENGINE=0 checks with the interpreter, except where the
-// CLI finds a spec's files, which only the engine does, whatever the setting.
+// load, or, where there is no process.dlopen, the WebAssembly engine doesn't.
 export class EngineUnavailableError extends Error {
-  constructor(reason: string, isInterpreterEnough = true) {
+  constructor(reason: string) {
     super(
-      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform${isInterpreterEnough ? ", or set PROVE_IT_ENGINE=0 to check with the interpreter" : ""}.`,
+      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform.`,
     );
     this.name = "EngineUnavailableError";
   }
@@ -268,11 +212,11 @@ export class EngineUnavailableError extends Error {
 
 // The engine as WebAssembly runs on the host's call stack, so it stops a recursion deeper than that
 // stack holds (MAXIMUM_RECURSION in machine.rs), or traps where a deeper frame exhausts it. check
-// doesn't search again with a slower engine unasked: the addon and the binary recurse further.
+// doesn't search again with another engine: the addon and the binary recurse further.
 export class WebAssemblyStackError extends Error {
   constructor() {
     super(
-      "The WebAssembly engine ran out of stack: the spec recurses or nests deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls, or set PROVE_IT_ENGINE=0 to check with the interpreter.",
+      "The WebAssembly engine ran out of stack: the spec recurses or nests deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls.",
     );
     this.name = "WebAssemblyStackError";
   }
@@ -289,14 +233,13 @@ export class MissingBuildFileError extends TlaError {
 }
 
 export const getErrorExitCode = (error: TlaError) =>
-  getExitCode(error) ??
-  (error instanceof TlaSyntaxError
+  error instanceof TlaSyntaxError
     ? EXIT_STATUS.specParseError
     : error instanceof TlaConfigError
       ? EXIT_STATUS.configParseError
       : error instanceof TlaEvaluationError
         ? EXIT_STATUS.specEvaluationFailure
-        : EXIT_STATUS.error);
+        : EXIT_STATUS.error;
 
 // pcal.UnrecoverableException and its subclasses: an error the PlusCal translator reports as
 // "Unrecoverable error". UnrecoverablePositionedException adds the statement the error is at.

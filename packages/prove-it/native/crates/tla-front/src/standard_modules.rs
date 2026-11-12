@@ -1,6 +1,4 @@
-//! The standard modules of SANY for each TLC version, and the modules TLC bundles, as
-//! `src/sany/modules.ts` and `src/bundled-modules.ts` hold them. `scripts/front-modules.ts`
-//! writes this file and the texts it includes; don't edit them by hand.
+//! The standard modules of SANY for each TLC version, and the modules TLC bundles.
 
 macro_rules! module {
     ($directory:literal, $name:literal) => {
