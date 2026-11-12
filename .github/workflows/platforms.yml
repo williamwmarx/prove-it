@@ -100,6 +100,11 @@ jobs:
           npm install --global --no-audit --no-fund bun@1.4.4
           cd packages/prove-it/native
           rustup toolchain install
+          # The runner's TEMP is a short (8.3) path, and TLC names a module found through a path
+          # other than its real one by a URL the binary declines on Windows, so the tests, which
+          # check specs in temporary directories, use the runner's own.
+          TEMP="$(cygpath -w "$RUNNER_TEMP")"
+          export TEMP TMP="$TEMP"
           cargo test --locked --no-fail-fast
           cd ..
           bun install --frozen-lockfile --ignore-scripts
