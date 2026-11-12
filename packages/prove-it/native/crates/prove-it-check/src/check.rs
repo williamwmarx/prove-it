@@ -2282,9 +2282,10 @@ pub(crate) fn print_violation(
         for line in first_output.clone().chain(&trace.trace_output) {
             printer.line(line);
         }
-        // What the atoms print as TLC finds the properties the lasso it rebuilt violates.
+        // What the atoms print as TLC finds the properties the lasso it rebuilt violates, as it
+        // checks them rather than as it rebuilds the trace.
         for line in &lasso_printed {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.report(code, &text);
         (

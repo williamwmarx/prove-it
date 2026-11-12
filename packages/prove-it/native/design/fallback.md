@@ -702,7 +702,11 @@ no full `tlc-stdout`. Recording them is deferred.
   (`src/native-progress.ts`), which it reports once the check ends. On the corpus models the native
   check answers, the events and their order equal the TypeScript check's (746 of the 762 it answers
   of 920; of the other 16, six were the report of a violation, fixed since, five the clock's, one
-  a warning below, and four differ in the result or the prints, not in the events), but for
+  a warning below, and four differed in the result or the prints: TLC's recordings side with the
+  native check on Github696b's error and VoteProof's deadlock, where the TypeScript check differs,
+  and the two UserModuleOverride models printed what the property prints as TLC finds the behavior
+  violating it only through the TypeScript check, which the native check's `onPrint` now
+  receives too), but for
   the events TLC schedules by the clock: natively a caller gets a `progress` event for each report
   the native search made, every minute, and a `liveness-started` with `isComplete` false for each
   check part way through it, at the native search's own times. Where the two differ otherwise:

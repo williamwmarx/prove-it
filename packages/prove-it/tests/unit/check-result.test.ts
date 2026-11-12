@@ -373,6 +373,11 @@ describe("check's result", () => {
       'VARIABLE x\nInit == x = 0\nNext == x\' = [x EXCEPT !["c"] = 1]\nC == TRUE',
       "INIT Init\nNEXT Next\nINVARIANT C",
     ],
+    // What the property prints as TLC finds the behavior that violates it, before the report.
+    [
+      'VARIABLE x\nInit == x = FALSE\nNext == x\' = FALSE\nSpec == Init /\\ [][Next]_x\nProp == <>[](Print(x, x = TRUE) /\\ TLCGet("diameter") > 0)',
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    ],
   ])("reports the progress the TypeScript check reports, in order: %s", async (body, config) => {
     const source = `---- MODULE M ----\nEXTENDS Naturals, TLC\n${body}\n====`;
     const run = async (checker: typeof check) => {
