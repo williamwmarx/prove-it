@@ -1,5 +1,4 @@
 {
   "root": "Spec",
-  "version": "master",
-  "declines": "a module nested in a module its extender extends"
+  "version": "master"
 }

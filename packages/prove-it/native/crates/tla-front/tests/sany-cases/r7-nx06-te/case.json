@@ -1,6 +1,5 @@
 {
   "root": "Spec",
   "version": "master",
-  "mode": "default",
-  "declines": "a module nested in a module its extender extends"
+  "mode": "default"
 }

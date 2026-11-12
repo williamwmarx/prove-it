@@ -97,7 +97,8 @@ what TLC prints but these, which decline:
 - `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
 - a module nested at the top of a module that its extender extends, which
   ParseUnit.handleExtensions lets the extender's EXTENDS and INSTANCE name, and the front end
-  looks for in a file (21 cases);
+  looks for in a file, where the loader that binds names to inner modules of extended files
+  doesn't bind them unambiguously (12 cases; it prints the other 9 of the 21 as TLC does);
 - LETs nested 100 deep in their definitions, where SANY's generator throws (1 case);
 - brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
   counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or

@@ -907,13 +907,18 @@ fn get_root_text(
     // file for it, and finds none. The loader binds it only where every module of the spec has a
     // name of its own, where binding by name is SANY's binding by scope, and the name names no
     // file or standard module; elsewhere it reports what it found without binding.
-    let is_missing = matches!(&written, Err(Stop::Fatal { message, .. })
-        if message.starts_with("Cannot find source file for module "))
-        || matches!(&written, Err(Stop::Front(FrontError::NotYet(reason)))
+    // The loader that doesn't bind declines a name of a module nested in a module its extender
+    // extends; the loader that binds reads a file for it where it binds nothing, as SANY does.
+    let is_nested = matches!(&written, Err(Stop::Front(FrontError::NotYet(reason)))
         if reason == NESTED_IN_EXTENDEE);
+    let is_missing = is_nested
+        || matches!(&written, Err(Stop::Fatal { message, .. })
+            if message.starts_with("Cannot find source file for module "));
     if is_missing {
         let (bound, bound_written) = load_spec(&root, source, root_origin, options, true);
-        if !matches!(bound_written, Err(Stop::Front(_))) && bound.is_unambiguous() {
+        if !matches!(bound_written, Err(Stop::Front(_)))
+            && (bound.is_unambiguous() || is_nested && bound.inner_bindings.is_empty())
+        {
             (loader, written) = (bound, bound_written);
         }
     }
@@ -1329,7 +1334,9 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         };
         // ParseUnit.handleExtensions lets a module name the modules nested in the modules it
         // extends, which the front end looks for in files.
-        if loader.is_nested_in_extendee(&importer, &name, &mut FastSet::default()) {
+        if !loader.is_binding
+            && loader.is_nested_in_extendee(&importer, &name, &mut FastSet::default())
+        {
             return Err(not_yet(NESTED_IN_EXTENDEE));
         }
         if !loader.modules.contains_key(&name) {
