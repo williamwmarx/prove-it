@@ -162,6 +162,19 @@ describe("check's result", () => {
     ]);
   });
 
+  // TLC normalizes {1, TRUE} to print the alias, and reports Invariant Inv violated, then its
+  // exception "Attempted to compare boolean TRUE with non-boolean: 1" in place of the states.
+  it("declines an alias TLC fails to print", async () => {
+    await expectDeclined(
+      {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, v |-> {1, TRUE}]\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      },
+      "an ALIAS of a set TLC fails to normalize as it prints it",
+    );
+  });
+
   it("declines a failure TLC fails again to evaluate as it rebuilds the trace", async () => {
     await expectDeclined(
       {

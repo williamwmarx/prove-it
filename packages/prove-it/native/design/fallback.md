@@ -762,7 +762,6 @@ TLC answer the test held is here:
 | a function over a domain TLC keeps lazy, applied only where defined (`\div 0` elsewhere) | success | the assumption fails: "The second argument of \div is 0." |
 | an error in a module nested in a nested module | SANY's errors | SANY's errors and "A VARIABLE declaration may not appear within a recursive definition section." |
 | an ALIAS field holding a lazy function that fails to apply | the field's lazy text, `[i \in 1..1 \|-> <expression …>]` | `_ALIASEvalError` "The second argument of \div is 0." in each state |
-| an exception TLC raises printing a state of a violation | 2110 with no states, then 1000 "Attempted to compare boolean TRUE with non-boolean:\n1" | 2110 with both states, no 1000 |
 | `onProgress` of a spec whose INSTANCE adds definitions TLC warns about (EXCEPT warnings, check.test.ts "computes the definitions an INSTANCE adds…") | three warnings, at Cases lines 4, 6 and 5 | none, from the library or the CLI |
 | `onProgress` of a state-level PROPERTY before a CONSTRAINT equal to FALSE | the `state-level-property` warning for P, then the error | the error alone |
 
