@@ -1949,7 +1949,7 @@ impl<'a> Lowering<'a> {
         let parent = self.get_scope_index(scope.parent.as_ref());
         let name = self.get_text(&scope.name);
         let binding = match &scope.binding {
-            Binding::Value(value) => {
+            Binding::Value(value) | Binding::Literal { value, .. } => {
                 let value = self.normalize(value)?;
                 ScopeBinding::Value(Some(self.encode_value(&value)))
             }

@@ -33,6 +33,13 @@ pub enum ScopeOf {
 
 pub enum Binding {
     Value(ConfigValue),
+    /// A value an operator's argument written as a literal gives, which reads as `Value`; TLC
+    /// holds the argument as the expression, which some of its analyses read
+    /// (`SubscriptCollector`).
+    Literal {
+        value: ConfigValue,
+        expression: Expr,
+    },
     /// `Thunk`: an expression read in a scope.
     Thunk {
         expression: Expr,
@@ -92,7 +99,7 @@ pub fn get_level(
     let get_binding_level = |name: &str| {
         let (node, binding) = lookup_scope(scope, name)?;
         Some(match binding {
-            Binding::Value(_) => Level::Constant,
+            Binding::Value(_) | Binding::Literal { .. } => Level::Constant,
             Binding::Thunk { expression, scope } => get_level(
                 expression,
                 scope.resolve(node).as_ref(),
@@ -193,6 +200,9 @@ pub struct Specification {
     pub next: Option<Expr>,
     pub scope: Option<Rc<Scope>>,
     pub temporals: Vec<Expanded>,
+    /// What TLC finds of the subscript of each `[][Next]_v` of the specification, in order, which
+    /// it warns of.
+    pub subscripts: Vec<SubscriptCheck>,
 }
 
 const START: Location = Location {
@@ -503,12 +513,14 @@ pub(crate) fn bind_operator_arguments(
             scope: ScopeOf::Other(scope.cloned()),
         };
         let binding = match &argument.kind {
-            ExpressionKind::String { value } => {
-                Binding::Value(ConfigValue::String(value.to_string()))
-            }
-            ExpressionKind::Number { value, .. } if is_tlc_integer(*value) => {
-                Binding::Value(ConfigValue::Number(*value))
-            }
+            ExpressionKind::String { value } => Binding::Literal {
+                value: ConfigValue::String(value.to_string()),
+                expression: argument.clone(),
+            },
+            ExpressionKind::Number { value, .. } if is_tlc_integer(*value) => Binding::Literal {
+                value: ConfigValue::Number(*value),
+                expression: argument.clone(),
+            },
             ExpressionKind::Identifier { .. } => {
                 let reference = argument.reference().unwrap_or_default();
                 let global = if argument.is_locally_resolved() {
@@ -521,6 +533,10 @@ pub(crate) fn bind_operator_arguments(
                     Some(GlobalName::Other) => thunk(),
                     None => match lookup_scope(scope, &reference) {
                         Some((_, Binding::Value(value))) => Binding::Value(value.clone()),
+                        Some((_, Binding::Literal { value, expression })) => Binding::Literal {
+                            value: value.clone(),
+                            expression: expression.clone(),
+                        },
                         Some((node, Binding::Thunk { expression, scope })) => Binding::Thunk {
                             expression: expression.clone(),
                             scope: ScopeOf::Other(scope.resolve(node)),
@@ -1052,6 +1068,27 @@ pub fn get_specification(
     version: TlcVersion,
     evaluator: Option<&Evaluator>,
 ) -> Result<Specification> {
+    let mut subscripts = Vec::new();
+    read_specification(
+        config,
+        environment,
+        facts,
+        version,
+        evaluator,
+        &mut subscripts,
+    )
+}
+
+/// `get_specification`, which gives the subscripts it read in `subscripts` as it fails too: TLC
+/// warns of each as it reads it, before an error after it.
+pub fn read_specification(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    version: TlcVersion,
+    evaluator: Option<&Evaluator>,
+    subscripts: &mut Vec<SubscriptCheck>,
+) -> Result<Specification> {
     let Some(specification) = &config.specification else {
         let operator = |name: &Option<String>, description: &str| {
             name.as_deref()
@@ -1066,6 +1103,7 @@ pub fn get_specification(
             next: operator(&config.next, "next state action")?,
             scope: None,
             temporals: Vec::new(),
+            subscripts: Vec::new(),
         });
     };
     if config.init.is_some() || config.next.is_some() {
@@ -1100,64 +1138,76 @@ pub fn get_specification(
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
     let mut temporals = Vec::new();
-    for item in expansion.expand(&definition.body, None, &[], false, None)? {
-        let level = || {
-            get_level(
-                &item.expression,
-                item.scope.as_ref(),
-                environment,
-                facts,
-                &[],
-            )
-        };
-        match &item.expression.kind {
-            ExpressionKind::Identifier { name, .. }
-                if level() == Level::Constant
-                    && is_constant_true(name, &item, "spec", environment, evaluator)? =>
-            {
-                continue;
-            }
-            ExpressionKind::UnboundedQuantifier {
-                is_temporal: true, ..
-            } => return Err(not_yet("temporal quantification in the specification")),
-            ExpressionKind::Always(inner) => match &inner.kind {
-                ExpressionKind::Action {
-                    is_box: true,
-                    action,
-                    ..
-                } => {
-                    next_actions.push((action.clone(), item.scope.clone()));
+    let startup = crate::startup::get_startup_model(environment);
+    // TLC prints the warnings of a subscript as it reads it, before an error in a later conjunct.
+    let read = (|| -> Result<()> {
+        for item in expansion.expand(&definition.body, None, &[], false, None)? {
+            let level = || {
+                get_level(
+                    &item.expression,
+                    item.scope.as_ref(),
+                    environment,
+                    facts,
+                    &[],
+                )
+            };
+            match &item.expression.kind {
+                ExpressionKind::Identifier { name, .. }
+                    if level() == Level::Constant
+                        && is_constant_true(name, &item, "spec", environment, evaluator)? =>
+                {
                     continue;
                 }
-                _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
-                    < Level::Action =>
-                {
-                    // TLC accepts the spec and fails when it builds the tableau of the temporal
-                    // formulas.
-                    return Err(FrontError::Evaluation(format!(
-                        "TLC cannot handle the temporal formula {}",
-                        describe_range(inner)
+                ExpressionKind::UnboundedQuantifier {
+                    is_temporal: true, ..
+                } => return Err(not_yet("temporal quantification in the specification")),
+                ExpressionKind::Always(inner) => match &inner.kind {
+                    ExpressionKind::Action {
+                        is_box: true,
+                        action,
+                        subscript,
+                    } => {
+                        let collector = SubscriptCollector {
+                            environment,
+                            startup: &startup,
+                            evaluator,
+                        };
+                        subscripts.push(collector.check(subscript, item.scope.as_ref())?);
+                        next_actions.push((action.clone(), item.scope.clone()));
+                        continue;
+                    }
+                    _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
+                        < Level::Action =>
+                    {
+                        // TLC accepts the spec and fails when it builds the tableau of the temporal
+                        // formulas.
+                        return Err(FrontError::Evaluation(format!(
+                            "TLC cannot handle the temporal formula {}",
+                            describe_range(inner)
+                        )));
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            match level() {
+                Level::Temporal => temporals.push(item),
+                Level::Action => {
+                    return Err(FrontError::Config(format!(
+                        "TLC cannot handle the action-level conjunct of the specification {specification}"
                     )));
                 }
-                _ => {}
-            },
-            _ => {}
-        }
-        match level() {
-            Level::Temporal => temporals.push(item),
-            Level::Action => {
-                return Err(FrontError::Config(format!(
-                    "TLC cannot handle the action-level conjunct of the specification {specification}"
-                )));
+                // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
+                // conjunct that reaches it.
+                _ if reaches_name(&item.expression, "PickSuccessor", environment) => {
+                    return Err(not_yet("PickSuccessor in a conjunct of the specification"));
+                }
+                _ => init_conjuncts.push((item.expression, item.scope)),
             }
-            // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
-            // conjunct that reaches it.
-            _ if reaches_name(&item.expression, "PickSuccessor", environment) => {
-                return Err(not_yet("PickSuccessor in a conjunct of the specification"));
-            }
-            _ => init_conjuncts.push((item.expression, item.scope)),
         }
-    }
+        Ok(())
+    })();
+    read?;
     if next_actions.len() > 1 {
         return Err(FrontError::Config(format!(
             "The specification {specification} must contain at most one [][Next]_vars"
@@ -1211,7 +1261,180 @@ pub fn get_specification(
         next: (!next_actions.is_empty()).then(|| get_reference(init_conjuncts.len())),
         scope,
         temporals,
+        subscripts: subscripts.clone(),
     })
+}
+
+/// What `processConfigSpec` finds of the subscript of `[][Next]_v`: that it can't tell whether it
+/// holds every state variable, or the variables it doesn't hold.
+#[derive(Clone, Debug)]
+pub enum SubscriptCheck {
+    Undetermined,
+    Missing(Vec<Name>),
+    /// What the front end can't tell, with why: the warnings, which a check that prints none
+    /// doesn't need.
+    Unknown(&'static str),
+}
+
+impl SubscriptCheck {
+    pub fn is_warned(&self) -> bool {
+        !matches!(self, SubscriptCheck::Missing(missing) if missing.is_empty())
+    }
+}
+
+/// Why the front end can't follow a subscript as TLC reads it.
+struct Unfollowed(&'static str);
+
+/// `processConfigSpec`'s `SubscriptCollector`: the state variables in the subscript of
+/// `[][Next]_v`, through tuples, the operators it applies and the definitions it names, where TLC
+/// holds them as operators. Any other builtin it ignores, and anything but an operator's
+/// application it can't read, a number or a string, after which TLC warns that it can't tell.
+struct SubscriptCollector<'a, 'b> {
+    environment: &'a Environment,
+    startup: &'a crate::startup::StartupModel,
+    evaluator: Option<&'a Evaluator<'b>>,
+}
+
+impl SubscriptCollector<'_, '_> {
+    /// What TLC finds of the subscript.
+    fn check(&self, subscript: &Expr, scope: Option<&Rc<Scope>>) -> Result<SubscriptCheck> {
+        let mut found = Vec::new();
+        match self.enter(subscript, scope, &mut found) {
+            Ok(true) => {}
+            Ok(false) => return Ok(SubscriptCheck::Undetermined),
+            Err(Unfollowed(reason)) => return Ok(SubscriptCheck::Unknown(reason)),
+        }
+        Ok(SubscriptCheck::Missing(
+            self.environment
+                .variables
+                .iter()
+                .filter(|variable| !found.contains(*variable))
+                .cloned()
+                .collect(),
+        ))
+    }
+
+    // `enter`: false where TLC gives up on the subscript.
+    fn enter(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        found: &mut Vec<Name>,
+    ) -> std::result::Result<bool, Unfollowed> {
+        let environment = self.environment;
+        match &expression.kind {
+            ExpressionKind::Number { .. }
+            | ExpressionKind::Decimal { .. }
+            | ExpressionKind::String { .. }
+            | ExpressionKind::ExceptAt => return Ok(false),
+            ExpressionKind::Tuple(items) => {
+                for item in items {
+                    if !self.enter(item, scope, found)? {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
+            ExpressionKind::Let {
+                definitions, body, ..
+            } => {
+                let bound = bind_definitions(definitions, scope)
+                    .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
+                return self.enter(body, bound.as_ref(), found);
+            }
+            ExpressionKind::Label { body, .. } => return self.enter(body, scope, found),
+            ExpressionKind::Subexpression { .. } => {
+                return Err(Unfollowed(
+                    "a subexpression name in the subscript of [][Next]_v",
+                ));
+            }
+            ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {}
+            // TLC ignores the other builtins.
+            _ => return Ok(true),
+        }
+        let Some(name) = expression.reference() else {
+            return Ok(true);
+        };
+        // TLC reads a name bound in the context through the LazyValue of its expression.
+        if expression.is_locally_resolved()
+            && let Some((node, binding)) = lookup_scope(scope, &name)
+        {
+            match binding {
+                Binding::Thunk {
+                    expression: bound,
+                    scope: bound_scope,
+                } => {
+                    let bound_scope = bound_scope.resolve(node);
+                    return self.enter(bound, bound_scope.as_ref(), found);
+                }
+                Binding::Literal { expression, .. } => return self.enter(expression, None, found),
+                // A value TLC holds as one: a quantifier's element, or a constant's.
+                Binding::Value(_) => return Ok(true),
+                Binding::Closure { .. } => {}
+            }
+        }
+        if !expression.is_locally_resolved() {
+            if environment.variable_index.contains_key(&name) {
+                found.push(name);
+                return Ok(true);
+            }
+            // A constant or a definition the configuration gives a value TLC holds as the value.
+            if environment.constants.contains_key(&name) {
+                return Ok(true);
+            }
+            if environment.substitutions.contains_key(&name) {
+                return Err(Unfollowed(
+                    "a subscript of [][Next]_v that names what the configuration substitutes",
+                ));
+            }
+        }
+        let Some((params, body, closure_scope)) =
+            resolve_apply_operator(expression, scope, environment)
+        else {
+            // A builtin, which TLC ignores, or a function definition, a builtin's application
+            // where TLC doesn't hold its value. A name an INSTANCE substitutes, which TLC reads
+            // through the substitution's value, the front end doesn't follow.
+            if environment.builtins.contains_key(&name)
+                || get_definition(&name, environment).is_some()
+            {
+                return Ok(true);
+            }
+            return Err(Unfollowed(
+                "a name in the subscript of [][Next]_v that the front end doesn't follow",
+            ));
+        };
+        if params.is_empty() {
+            if !expression.is_locally_resolved()
+                && let Some(definition) = get_definition(&name, environment)
+            {
+                match self.startup.read(definition) {
+                    crate::startup::Read::Literal => return Ok(true),
+                    crate::startup::Read::Attempted => {
+                        let evaluator = self.evaluator.ok_or(Unfollowed(
+                            "a subscript of [][Next]_v that TLC may compute as it starts",
+                        ))?;
+                        return match evaluator.evaluate(&body, None) {
+                            Ok(_) => Ok(true),
+                            Err(_) => Err(Unfollowed(
+                                "a subscript of [][Next]_v whose definition fails as TLC starts",
+                            )),
+                        };
+                    }
+                    crate::startup::Read::Operator => {}
+                }
+            }
+            return self.enter(&body, closure_scope.as_ref(), found);
+        }
+        let ExpressionKind::Apply { args, .. } = &expression.kind else {
+            return Ok(true);
+        };
+        if params.len() != args.len() {
+            return Ok(true);
+        }
+        let bound = bind_operator_arguments(&params, args, closure_scope, scope, environment)
+            .map_err(|_| Unfollowed("an operator's arguments the front end doesn't bind"))?;
+        self.enter(&body, bound.as_ref(), found)
+    }
 }
 
 /// A conjunct of a property, with the name TLC gives it and the scope it reads.

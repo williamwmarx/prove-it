@@ -1,0 +1,24 @@
+exit 0
+Semantic processing of module Naturals
+Semantic processing of module M
+*** Warnings: 1
+
+line 6, col 11 to line 6, col 11 of module M
+
+Multiple declarations or definitions for symbol v.  
+This duplicates the one at line 4, col 10 to line 4, col 10 of module M.
+
+
+
+Linting of module M
+Warning: TLC could not determine if the subscript of the next-state relation contains
+all state variables. Proceed with fingers crossed.
+(Use the -nowarning option to disable this warning.)
+Computing initial states...
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
