@@ -21,7 +21,7 @@ use tla_values::fingerprint::{
     Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
 };
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -179,6 +179,10 @@ pub trait Reporter {
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
     fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// Whether each of the IR's startup predicates TLC accepted evaluated to TRUE, which TLC warns
+    /// about for an invariant (2149, `TLC_INVARIANT_CONSTANT_LEVEL`): all of them, or those before
+    /// the one whose value it rejects, before [`SearchOutcome::ConfigError`].
+    fn startup_predicates(&mut self, _holding: &[bool]) {}
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
@@ -329,6 +333,10 @@ pub enum SearchOutcome {
     /// A constant definition the configuration names has a value TLC rejects, with TLC's
     /// configuration error, after the startup reported what the constant definitions printed.
     ConfigError { message: String },
+    /// TLC's startup threw a RuntimeException with this message, which TLC reports as an
+    /// exception it didn't expect, after the startup reported what the constant definitions
+    /// printed.
+    StartupException { message: String },
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
@@ -528,6 +536,7 @@ const TLC_FAILURES: &[&str] = &[
     "EXCEPT on a non-function",
     "Head of an empty sequence",
     "IsFiniteSet of a non-set",
+    "PickSuccessor of a successor TLC fingerprints incomplete",
     "RandomElement of the empty set",
     "SortSeq of a non-sequence",
     "SubBag of a non-bag",
@@ -669,8 +678,9 @@ struct Graph {
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
     /// Each step's bits of the action atoms whose pieces of Next the walk that took it passed
-    /// through, kept only where an atom is made of them.
+    /// through, kept only where an atom is made of them: `piece_width` bytes a step.
     pieces: Option<Vec<u8>>,
+    piece_width: usize,
     initial_counts: Vec<u64>,
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
@@ -1079,13 +1089,16 @@ struct Search<'r, T, E = Dense> {
     // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
     // fingerprint one.
     is_lambda_built: bool,
+    // Whether PickSuccessor reads whether TLC has seen a successor as its action constraints are
+    // checked.
+    is_picking: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
     // that took it was in.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
-    pending_pieces: u8,
+    pending_pieces: u64,
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
@@ -1133,6 +1146,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             checked: None,
             is_pipelined,
             is_lambda_built: false,
+            is_picking: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
@@ -1498,7 +1512,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         &mut self,
         machine: &mut Machine<'_>,
         context: &EngineContext,
-        known: Option<u64>,
+        mut known: Option<u64>,
     ) -> Outcome<()> {
         self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
@@ -1526,7 +1540,26 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             Ok(is_state_in_model)
         });
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
-        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
+        let is_in_model = is_state_in_model? && {
+            // PickSuccessor asks whether TLC has seen the successor (`theFPSet.contains`), with
+            // no VIEW or symmetry, so its fingerprint is the state's.
+            if self.is_picking {
+                self.swap_successor(machine, successor_epoch, self.next_level_id);
+                let fingerprint =
+                    known.map_or_else(|| self.compute_key(machine, context, true), Ok);
+                self.swap_successor(machine, self.expansion_epoch, self.level_id);
+                let fingerprint = fingerprint?;
+                known = Some(fingerprint);
+                let key = self
+                    .states
+                    .key_width()
+                    .map_or(&self.successor, |_| &self.key);
+                machine.is_successor_seen = Some(self.states.find(key, fingerprint).is_ok());
+            }
+            let holds = holds_all(machine, &context.action_constraints);
+            machine.is_successor_seen = None;
+            holds?
+        };
         // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
         // (Worker.addElement).
         let fingerprint = match known {
@@ -1642,7 +1675,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 labels.push(self.action);
             }
             if let Some(pieces) = &mut graph.pieces {
-                pieces.push(machine.piece_bits);
+                pieces.extend_from_slice(&machine.piece_bits.to_le_bytes()[..graph.piece_width]);
             }
             if let Some(reals) = &mut graph.reals {
                 reals.extend_from_slice(&self.successor);
@@ -2124,7 +2157,8 @@ struct Shared<'s> {
 #[derive(Clone, Copy)]
 struct Recording {
     is_labelled: bool,
-    is_pieced: bool,
+    // The bytes of pieces' bits a step keeps, none where it keeps none.
+    piece_width: usize,
     is_real: bool,
 }
 
@@ -2159,7 +2193,8 @@ fn expand_claimed(
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
         labels: recording.is_labelled.then(Vec::new),
-        pieces: recording.is_pieced.then(Vec::new),
+        pieces: (recording.piece_width > 0).then(Vec::new),
+        piece_width: recording.piece_width,
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
@@ -2265,7 +2300,7 @@ impl Search<'_, States> {
             actions,
             recording: self.graph.as_ref().map(|graph| Recording {
                 is_labelled: graph.labels.is_some(),
-                is_pieced: graph.pieces.is_some(),
+                piece_width: graph.pieces.as_ref().map_or(0, |_| graph.piece_width),
                 is_real: graph.reals.is_some(),
             }),
         };
@@ -2563,7 +2598,9 @@ impl Search<'_, States> {
                         labels.extend_from_slice(&labels_of[steps.clone()]);
                     }
                     if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
-                        pieces.extend_from_slice(&pieces_of[steps.clone()]);
+                        let width = graph.piece_width;
+                        pieces
+                            .extend_from_slice(&pieces_of[steps.start * width..steps.end * width]);
                     }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
@@ -2659,6 +2696,8 @@ struct Started {
     printed: Vec<Prints>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
+    /// Whether each startup predicate evaluated to TRUE, up to the one whose value TLC rejects.
+    holding: Vec<bool>,
     group: Option<Group>,
     assumed: Vec<Prints>,
     violated: Option<String>,
@@ -2666,6 +2705,8 @@ struct Started {
     failed: Option<(u32, Bail)>,
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
+    /// The message of the RuntimeException the symmetry threw, which ends the startup.
+    exception: Option<&'static str>,
     /// The assumption the engine left to its caller, by its position.
     // The assumption left to the caller, and why the engine didn't evaluate it.
     delegated: Option<(u32, Bail)>,
@@ -2707,11 +2748,22 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         }
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
+    let mut holding = Vec::with_capacity(startup.predicates.len());
     for (evaluate, form, kind, name) in &startup.predicates {
         let value = match evaluate(machine) {
             Ok(value) => value,
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
-            Err(_) => continue,
+            // TLC takes a conjunct of the specification it fails to compute as part of the
+            // initial predicate.
+            Err(_) if *form == PredicateForm::Conjunct => {
+                return Err(Bail(
+                    "unsupported: a constant conjunct of the specification that fails at startup",
+                ));
+            }
+            Err(_) => {
+                holding.push(false);
+                continue;
+            }
         };
         // The store forgets how TLC built some values, whose text then depends on it.
         let format = |machine: &Machine<'_>| {
@@ -2724,7 +2776,17 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             }
         };
         let message = match form {
-            PredicateForm::Predicate if value == TRUE => continue,
+            PredicateForm::Predicate | PredicateForm::Conjunct if value == TRUE => {
+                holding.push(true);
+                continue;
+            }
+            PredicateForm::Conjunct if value == FALSE => {
+                format!("The spec is trivially false because {name} is false.")
+            }
+            PredicateForm::Conjunct => format!(
+                "The operator {name}, which equals {},\ncannot be used as a {kind}",
+                format(machine)?
+            ),
             PredicateForm::Predicate => {
                 format!("The {kind} of {name} is equal to {}", format(machine)?)
             }
@@ -2736,11 +2798,30 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         return Ok(Started {
             printed: take(machine),
             small_sets: Vec::new(),
+            holding,
             group: None,
             assumed: Vec::new(),
             violated: None,
             failed: None,
             config_error: Some(message),
+            exception: None,
+            delegated: None,
+        });
+    }
+    if let Some(symmetry) = &startup.symmetry
+        && let Some(failure) = symmetry.failure
+    {
+        (symmetry.definition)(machine)?;
+        return Ok(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            holding,
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: None,
+            exception: Some(failure),
             delegated: None,
         });
     }
@@ -2753,11 +2834,13 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
     Ok(Started {
         printed,
         small_sets,
+        holding,
         group,
         assumed: take(machine),
         violated: assumed.violated,
         failed: assumed.failed,
         config_error: None,
+        exception: None,
         delegated: assumed.delegated,
     })
 }
@@ -2913,8 +2996,14 @@ pub(crate) fn start(
                     .for_each(|values| reporter.startup_print(&machine.store, values));
             };
             report(reporter, &started.printed);
+            reporter.startup_predicates(&started.holding);
             if let Some(message) = started.config_error {
                 return Err(Box::new(SearchOutcome::ConfigError { message }));
+            }
+            if let Some(message) = started.exception {
+                return Err(Box::new(SearchOutcome::StartupException {
+                    message: message.to_owned(),
+                }));
             }
             if !started.small_sets.is_empty() {
                 reporter.symmetry_sets_too_small(&started.small_sets);
@@ -3034,6 +3123,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
     // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
+    let is_picking = compiler.is_picking;
     let is_pipelined = !is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -3052,6 +3142,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
         && !compiler.is_ranking
+        && !is_picking
         && !compiler.is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -3141,6 +3232,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
+    search.is_picking = is_picking;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
@@ -3151,12 +3243,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .map(|_| Vec::new()),
         // Under SYMMETRY or a VIEW the liveness checker reads the real successors, which the
         // pieces' bits don't follow.
-        pieces: context
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom, Atom::Action { piece: Some(_), .. }))
+        pieces: (context.piece_width > 0)
             .then(Vec::new)
             .filter(|_| search.states.key_width.is_none()),
+        piece_width: context.piece_width,
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
@@ -3264,7 +3354,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_enabled_exact,
                 is_next_taken,
                 partial: graph.partial,
-                pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
+                pieces: graph
+                    .pieces
+                    .as_ref()
+                    .map(|pieces| (&pieces[..edge_count * graph.piece_width], graph.piece_width)),
                 levels: levels.as_deref(),
             },
         };
@@ -3323,7 +3416,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         if context.atoms.iter().any(|atom| {
             matches!(
                 atom,
-                Atom::Action { is_next: true, .. } | Atom::Action { piece: Some(_), .. }
+                Atom::Action { is_next: true, .. }
+                    | Atom::Action { split: Some(_), .. }
+                    | Atom::Action { piece: Some(_), .. }
             )
         }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());

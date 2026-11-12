@@ -379,14 +379,26 @@ TLC evaluates a parameterless substitute for a declared constant at startup and 
 when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
 Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
 `levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
-(`is_started: false`, with no string ranks). Two failures are TLC's:
+(`is_started: false`, with no string ranks). These failures are TLC's:
 
 - a variable, which no state assigns: TLC's "is either undefined or not an operator";
-- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
-  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config)
+  or of a register, which `TLCGetSet.TLCGetEval` reports as its own failure on master, where
+  TLCGet("level") is 1, the level of `TLCState.Empty`;
+- a CHOOSE no element satisfies, `=` of values of two kinds, a membership in a value that isn't a
+  set, and a quantifier bound that isn't one, worded as TLC's classes word them where the
+  evaluator knows how TLC prints the values;
+- a division by zero, an EvalException.
 
-Either becomes TLC's configuration error "substitutes constant C with non-constant D -
-specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+Each becomes TLC's configuration error "substitutes constant C with non-constant D", with
+" - specifically: …" and the failure's message unless it is an EvalException
+(`processConstantDefns`). Anything else the evaluator can't compute is still `NotYet`.
+
+`tlc_messages::is_eval_exception` tells the failures TLC throws as EvalExceptions by their
+messages' codes. `processConfigProps` lets one escape from a property's `\A` as an exception TLC
+didn't expect, and leaves the `\A` to the liveness checker for any other, whose `astToLive` takes
+a quantifier whose sets or body fail for a formula it can't handle, under `\A` with the message of
+a failure that isn't an EvalException.
 
 ## Constant parts of the liveness formula
 
@@ -457,6 +469,15 @@ assumptions, and swallows a failure to evaluate, as `getConstantValue` does.
 `Definition::NORMALIZED` marks each definition TLC computes and deep-normalizes in
 `processConstantDefns`: `isStartupDefinition` over the startup definitions, which skip the
 modules an INSTANCE gives parameters to.
+
+`Definition::READ_DECLINED` marks a definition TLC computes as the run can't, whose body the
+engine and the trace evaluator decline to compute where they reach it, so a read in code TLC
+never evaluates keeps the run native. One is the copy of a definition the configuration
+substitutes for another definition's name, `C <- D` with D showing effects outside a TLCEval:
+TLC holds C as D's definition and computes it again, with its effects, at each read, where the IR
+computes it once. C's reads resolve to the copy, whose body is `IF TRUE THEN body ELSE body`, a
+node of its own. The other is an operator a TLCOverrides index replaces with a Java method, which
+TLC no longer computes as it starts, so it carries no `NORMALIZED`.
 
 ## Models without a next-state relation, and properties in a scope
 

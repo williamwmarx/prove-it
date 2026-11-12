@@ -1,0 +1,10 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module I
+Semantic processing of module M
+Linting of module I
+Linting of module M
+Computing initial states...
+Error: Invariant Inv is violated by the initial state:
+x = 3
+

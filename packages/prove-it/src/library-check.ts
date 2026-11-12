@@ -84,7 +84,9 @@ const checkWithEngine = (options: CheckOptions) => {
           : kind === "class"
             ? options.loadClass?.(path)
             : // SANY's report names the file of each module it parses, which the result doesn't hold.
-              "";
+              kind === "file"
+              ? ""
+              : undefined;
   };
   const result = checkAllSources(
     addon,
@@ -109,8 +111,15 @@ const checkWithEngine = (options: CheckOptions) => {
   }
   // The check stops before it searches at a spec or a configuration TLC rejects, for which the
   // TypeScript check throws its error.
-  if (result.outcome === undefined) return undefined;
+  if (result.outcome === undefined) {
+    reportEngine(
+      `native: check takes the TypeScript path: the engine stopped before it searched (exit ${result.exitCode})`,
+    );
+    return undefined;
+  }
   const print = options.onPrint ?? console.log;
+  // The TypeScript check prints SANY's warnings as it links the spec, where the caller didn't.
+  if (!options.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
   result.outcome.prints.forEach((text) => print(text));
   return fromNativeOutcome(result.outcome);
 };

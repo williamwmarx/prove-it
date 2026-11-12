@@ -2,22 +2,37 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkParsed } from "../../src/parallel";
+import { checkNatively, getAssumptionFailure } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/bags");
 
-const checkBagsFixture = (name: string, onPrint?: (text: string) => void) =>
-  checkParsed({
+const checkBagsFixture = async (name: string, onPrint?: (text: string) => void) => {
+  const { result, declined } = await checkNatively({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
     onPrint,
   });
+  expect(declined).toBeUndefined();
+  return result;
+};
 
-const checkBags = (body: string) =>
-  checkParsed({
+// The bodies the engine declines, with its reason, which the TypeScript check answers until the
+// engine does.
+const DECLINED: Record<string, string> = {
+  'ASSUME PrintT(SubBag(<<"a">>))':
+    "an assumption that fails to evaluate: evaluating the assumption again: SubBag's >=, which may be Naturals' or Integers'",
+};
+
+// A check of the body at line 7 of a module with Bags, which the engine answers unless it is one
+// of DECLINED.
+const checkBags = async (body: string) => {
+  const { result, declined } = await checkNatively({
     source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
     config: "CONSTANT C = C\nINIT Init\nNEXT Next",
   });
+  expect(declined).toBe(DECLINED[body]);
+  return result;
+};
 
 const getPassedLines = (numbers: number[]) => numbers.map((number) => `"Test ${number} OK"  TRUE`);
 
@@ -96,7 +111,9 @@ describe("the Bags module matches TLC", () => {
   ])("rejects %s", async (expression, message) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
     expect(result.status).toBe("assumption-violation");
-    expect(result.violation?.message).toBe(message);
+    expect(result.violations[0]?.headline).toBe(
+      getAssumptionFailure(7, `PrintT(${expression})`, message),
+    );
   });
 
   it.each([
@@ -105,8 +122,12 @@ describe("the Bags module matches TLC", () => {
     ['BagOfAll(LAMBDA e : TRUE, <<"a", 1>>)', "tlc2.value.impl.Value tlc2.module.Bags.BagOfAll"],
   ])("fails to cast a count that isn't an integer in %s", async (expression, method) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
-    expect(result.violation?.message).toBe(
-      `Attempted to apply the operator overridden by the Java method\npublic static ${method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nclass tlc2.value.impl.StringValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.StringValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')`,
+    expect(result.violations[0]?.headline).toBe(
+      getAssumptionFailure(
+        7,
+        `PrintT(${expression})`,
+        `Attempted to apply the operator overridden by the Java method\npublic static ${method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nclass tlc2.value.impl.StringValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.StringValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')`,
+      ),
     );
   });
 
@@ -127,8 +148,12 @@ describe("the Bags module matches TLC", () => {
   ])("rejects an operator with a literal body in %s", async (expression, literal) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
     expect(result.status).toBe("assumption-violation");
-    expect(result.violation?.message).toBe(
-      `The first argument of BagOfAll should be an operator, but instead it is:\n${literal}`,
+    expect(result.violations[0]?.headline).toBe(
+      getAssumptionFailure(
+        7,
+        `PrintT(${expression})`,
+        `The first argument of BagOfAll should be an operator, but instead it is:\n${literal}`,
+      ),
     );
   });
 

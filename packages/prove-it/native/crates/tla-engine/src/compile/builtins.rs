@@ -233,7 +233,9 @@ impl Compiler<'_> {
             "Nat" => Self::infinite_set("Nat", NAT, "enumerated Nat"),
             "Int" => Self::infinite_set("Int", INT, "enumerated Int"),
             "STRING" => Self::infinite_set("STRING", STRINGS, "enumerated STRING"),
-            "EmptyBag" => super::constant(EMPTY_TUPLE),
+            // TLC's Bags class overrides a user's module named Bags too, whose definition the
+            // front end keys as `EmptyBag@Bags`.
+            "EmptyBag" | "EmptyBag@Bags" => super::constant(EMPTY_TUPLE),
             name => {
                 return decline(format!(
                     "the builtin {name}, whose value the interpreter computes"
@@ -325,11 +327,21 @@ impl Compiler<'_> {
         if name == "Print" || name == "PrintT" {
             return self.compile_print(name, operands, context);
         }
+        let is_checked = self.is_native && builtin.flags & Builtin::DECLINED == 0;
+        if is_checked && name == "AssertEq" {
+            return self.compile_assert_eq(operands, context);
+        }
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
         if self.is_native && name == "TLCSet" {
             return self.compile_register(operands, context, true);
+        }
+        if is_checked && matches!(name, "TLCGetOrDefault" | "TLCGetAndSet") {
+            return self.compile_get_or_default(operands, context, name == "TLCGetAndSet");
+        }
+        if is_checked && name == "PickSuccessor" {
+            return self.compile_pick_successor(operands);
         }
         if self.is_native && name == "TLCFP" {
             return self.compile_tlc_fp(operands);
@@ -610,43 +622,64 @@ impl Compiler<'_> {
                     for evaluate in &evaluators {
                         values.push(evaluate(machine)?);
                     }
-                    let texts = match &constructions {
-                        Some(constructions) => values
-                            .iter()
-                            .zip(constructions)
-                            .map(|(&value, construction)| {
-                                let mut text = Vec::new();
-                                write_constructed(
-                                    &machine.store,
-                                    value,
-                                    construction,
-                                    true,
-                                    &mut text,
-                                )
-                                .then_some(text)
-                            })
-                            .collect(),
-                        None => {
-                            for &value in &values {
-                                if !is_printable(&machine.store, value) {
-                                    return Err(Bail(
-                                        "printing a value whose text depends on how TLC built it",
-                                    ));
-                                }
-                                // The addon hands what it prints to the interpreter, whose
-                                // encoding has no Nat, Int or STRING.
-                                if machine.store.holds_lazy_function(value) {
-                                    return Err(UNENCODABLE);
-                                }
-                            }
-                            None
-                        }
-                    };
                     let result = if is_print { values[1] } else { TRUE };
-                    machine
-                        .output
-                        .push(Printed::Values(Prints { values, texts }));
+                    push_prints(machine, values, constructions.as_deref())?;
                     Ok(result)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // AssertEq(a, b), which TLCExt defines in TLA+ as `IF a # b THEN PrintT("Assertion failed")
+    // /\ PrintT(a) /\ PrintT(b) /\ a = b ELSE a = b`: where a and b differ, it prints the string
+    // and each value as PrintT does, and is FALSE. TLC evaluates each argument once, which an
+    // argument without effects shows nowhere, so an argument that prints declines.
+    fn compile_assert_eq(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        if !context.can_print {
+            return self.decline_print("AssertEq");
+        }
+        if operands.len() != 2 {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let operands: Vec<Operand> = operands
+            .iter()
+            .map(|operand| Operand {
+                context: operand.context.without_print(),
+                ..operand.clone()
+            })
+            .collect();
+        let differs = self
+            .compile_native_builtin("#", 0, &operands, context)?
+            .expect("a comparison");
+        let printed = [
+            self.compile_print("PrintT", &operands[..1], context)?,
+            self.compile_print("PrintT", &operands[1..], context)?,
+        ];
+        let footprint = differs
+            .footprint
+            .merge(&printed[0].footprint)
+            .merge(&printed[1].footprint);
+        let message = self
+            .store
+            .str(&"Assertion failed".encode_utf16().collect::<Vec<u16>>());
+        let (differs, printed) = (differs.eval, printed.map(|print| print.eval));
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    if differs(machine)? != TRUE {
+                        return Ok(TRUE);
+                    }
+                    push_prints(machine, vec![message], Some(&[Construction::Held]))?;
+                    for print in &printed {
+                        print(machine)?;
+                    }
+                    Ok(FALSE)
                 }),
                 footprint,
             )
@@ -979,7 +1012,9 @@ impl Compiler<'_> {
                 ),
                 ("deadlock", Field::Bool(model.check_deadlock)),
                 ("seed", Field::Text(simulation.seed.to_string())),
-                ("aril", Field::Text(simulation.aril.to_string())),
+                // TLC caches the record as it builds its simulator, before it reads the aril
+                // (`Simulator.createConfig`), so it keeps 0.
+                ("aril", Field::Text("0".into())),
                 ("worker", Field::Int(self.workers as i64)),
                 ("install", Field::Text("unknown".into())),
                 ("sched", Field::Text("random".into())),
@@ -1056,6 +1091,150 @@ impl Compiler<'_> {
                     let value = evaluate_value(machine)?;
                     set_register(machine, key, value)?;
                     Ok(TRUE)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // TLCGetOrDefault(key, default), TLCExt's Java method, is the register's value, or the default
+    // where the key names no register or TLC hasn't set it. TLCGetAndSet(key, Op, val, default),
+    // which TLCExt defines in TLA+ as `LET oldVal == TLCGetOrDefault(key, defaultVal) IN CHOOSE v
+    // \in {oldVal} : TLCSet(key, Op(oldVal, val))`, then sets the register to Op(oldVal, val),
+    // and is oldVal. TLC evaluates its arguments lazily, which arguments without effects show
+    // nowhere but where one fails, within TLCExt's definition, so an argument that prints declines.
+    fn compile_get_or_default(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+        is_set: bool,
+    ) -> Compiling<Compiled> {
+        if is_set && !context.can_print {
+            return unsupported("TLCGetAndSet");
+        }
+        let (operator, values) = match operands {
+            [key, default] if !is_set => (None, [key, default]),
+            [key, operator, value, default] if is_set => {
+                if !self.is_operator_argument(operator) {
+                    return unsupported("TLCGetAndSet of an argument that isn't an operator");
+                }
+                let operator = self.compile_applier(operator, context)?;
+                if operator.slots.len() != 2 {
+                    return unsupported("an operator applied to the wrong number of arguments");
+                }
+                let value = self.operand(&Operand {
+                    context: value.context.without_print(),
+                    ..value.clone()
+                })?;
+                (Some((operator, value)), [key, default])
+            }
+            _ => return unsupported("an operator applied to the wrong number of arguments"),
+        };
+        self.is_printing = true;
+        let [key, default] = values.map(|operand| Operand {
+            context: operand.context.without_print(),
+            ..operand.clone()
+        });
+        let (key, default) = (self.operand(&key)?, self.operand(&default)?);
+        let mut footprint = key
+            .footprint
+            .merge(&default.footprint)
+            .merge(&Footprint::slot(super::REGISTER_SLOT));
+        if let Some((operator, value)) = &operator {
+            footprint = footprint
+                .merge(&operator.footprint)
+                .merge(&value.footprint)
+                .merge(&Footprint::slot(super::PRINT_SLOT));
+        }
+        let (key, default) = (key.eval, default.eval);
+        let operator =
+            operator.map(|(operator, value)| (operator.slots, operator.body, value.eval));
+        Ok(leaf(
+            eval(move |machine| {
+                let key = key(machine)?;
+                let default = default(machine)?;
+                let old = match get_register_key(&machine.store, key) {
+                    Some(_) => get_register(machine, key).unwrap_or(default),
+                    None if machine.store.kind_of(key) == KIND_INT => {
+                        return Err(Bail("TLCGetOrDefault of a negative number"));
+                    }
+                    None => default,
+                };
+                let Some((slots, body, value)) = &operator else {
+                    return Ok(old);
+                };
+                // A key that stops or configures TLC, such as "exit", which the search and the
+                // simulation follow only for TLCSet.
+                if get_register_key(&machine.store, key).is_none() {
+                    return Err(Bail(
+                        "unsupported: TLCGetAndSet of a key that stops or configures TLC",
+                    ));
+                }
+                let value = value(machine)?;
+                let saved = [slots[0], slots[1]].map(|slot| machine.locals[slot as usize]);
+                machine.locals[slots[0] as usize] = old;
+                machine.locals[slots[1] as usize] = value;
+                let new = body(machine);
+                for (&slot, saved) in slots.iter().zip(saved) {
+                    machine.locals[slot as usize] = saved;
+                }
+                set_register(machine, key, new?)?;
+                Ok(old)
+            }),
+            footprint,
+        ))
+    }
+
+    // PickSuccessor(exp) as TLC's model checker evaluates it (`TLCExt.pickSuccessor`): TRUE of a
+    // successor TLC has seen, then exp where it holds; where it doesn't, TLC asks its user to pick.
+    // TLC fingerprints the successor first, which fails where it isn't complete, as in an
+    // invariant, so that stops the search, for the trace evaluator to word. The search tells
+    // whether TLC has seen the successor only as it checks the action constraints.
+    fn compile_pick_successor(&mut self, operands: &[Operand]) -> Compiling<Compiled> {
+        let model = &self.ir.model;
+        if model.view.is_some() || model.startup.symmetry.is_some() {
+            return unsupported("PickSuccessor under a VIEW or SYMMETRY");
+        }
+        // TLC takes PickSuccessor for an action (its minLevel), which the properties' levels
+        // here don't follow.
+        if !model.property_invariants.is_empty()
+            || !model.action_properties.is_empty()
+            || !model.atoms.is_empty()
+            || !model.live_formula.is_empty()
+        {
+            return unsupported("PickSuccessor with temporal properties");
+        }
+        // TLC's workers share what PickSuccessor has seen, which the counts of its search on
+        // several workers follow in an order the engine's don't.
+        if self.workers > 1 {
+            return unsupported("PickSuccessor on several workers");
+        }
+        let [operand] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        self.is_picking = true;
+        let guard = self.operand(&Operand {
+            context: operand.context.without_print(),
+            ..operand.clone()
+        })?;
+        let footprint = (0..self.ir.variables.len() as u32)
+            .fold(guard.footprint, |footprint, variable| {
+                footprint.merge(&Footprint::prime(variable))
+            });
+        let guard = guard.eval;
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| match machine.is_successor_seen {
+                    None => Err(Bail(
+                        "PickSuccessor of a successor TLC fingerprints incomplete",
+                    )),
+                    Some(true) => Ok(TRUE),
+                    Some(false) => match guard(machine)? {
+                        TRUE => Ok(TRUE),
+                        FALSE => Err(Bail("unsupported: PickSuccessor, which asks TLC's user")),
+                        _ => Err(Bail("a PickSuccessor condition that isn't a boolean")),
+                    },
                 }),
                 footprint,
             )
@@ -2186,6 +2365,45 @@ const NAMED_REGISTER_PREFIX: &str = "s:";
 /// The prefix of a key of TLCGet and TLCSet that names a Java system property, whose value
 /// `System.getProperty` gives with the key as the default.
 const JAVA_PROPERTY_PREFIX: &str = "-D";
+
+// Prints the values of a Print or PrintT, with TLC's text of each where the native checker knows
+// how TLC built it.
+fn push_prints(
+    machine: &mut Machine<'_>,
+    values: Vec<Id>,
+    constructions: Option<&[Construction]>,
+) -> Outcome<()> {
+    let texts = match constructions {
+        Some(constructions) => values
+            .iter()
+            .zip(constructions)
+            .map(|(&value, construction)| {
+                let mut text = Vec::new();
+                write_constructed(&machine.store, value, construction, true, &mut text)
+                    .then_some(text)
+            })
+            .collect(),
+        None => {
+            for &value in &values {
+                if !is_printable(&machine.store, value) {
+                    return Err(Bail(
+                        "printing a value whose text depends on how TLC built it",
+                    ));
+                }
+                // The addon hands what it prints to the interpreter, whose encoding has no Nat,
+                // Int or STRING.
+                if machine.store.holds_lazy_function(value) {
+                    return Err(UNENCODABLE);
+                }
+            }
+            None
+        }
+    };
+    machine
+        .output
+        .push(Printed::Values(Prints { values, texts }));
+    Ok(())
+}
 
 /// Where the JVM and its libraries name the system properties they set themselves.
 const JVM_PROPERTY_NAMESPACES: [&str; 16] = [

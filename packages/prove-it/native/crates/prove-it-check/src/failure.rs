@@ -326,7 +326,8 @@ pub fn print_failure(
 }
 
 // Whether an atom of the temporal properties may print as TLC evaluates it: one read in an
-// instance's scope, or one that reaches Print or PrintT, through the definitions it names.
+// instance's scope, or one that reaches Print, PrintT or AssertEq, through the definitions it
+// names.
 fn atoms_print(ir: &Ir) -> bool {
     let arena = &ir.nodes.arena;
     if ir.model.atoms.iter().any(|atom| atom.scope.is_some()) {
@@ -343,7 +344,10 @@ fn atoms_print(ir: &Ir) -> bool {
         | NodeKind::Apply { name, .. }
         | NodeKind::OperatorReference(name) = kind
         {
-            if matches!(&*ir.texts[name.text as usize], "Print" | "PrintT") {
+            if matches!(
+                &*ir.texts[name.text as usize],
+                "Print" | "PrintT" | "AssertEq"
+            ) {
                 return true;
             }
             if let tla_ir::Resolution::Definition(index) = name.resolution {
@@ -455,6 +459,7 @@ fn evaluate(
             Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
+                is_successor_lost: false,
             }
         } else {
             // An atom's state past the path is no state of the trace.

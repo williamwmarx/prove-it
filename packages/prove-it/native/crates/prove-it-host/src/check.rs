@@ -22,7 +22,7 @@
 //! it reads each printed state's plain data, which the CLI doesn't, so only it has the check write
 //! them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prove_it_check::zone::{Zone, parse_rule};
@@ -64,8 +64,12 @@ fn get_origin(origin: ModuleOrigin) -> &'static str {
 }
 
 impl Host for SourcesHost {
+    // A path there that isn't a file, such as a directory, TLC finds but can't read.
     fn is_file(&self, path: &Path) -> bool {
         self.read_text(path).is_some()
+            || self
+                .get(format!("unreadable:{}", path.display()))
+                .is_some_and(|found| !found.is_empty())
     }
 
     fn read_text(&self, path: &Path) -> Option<String> {
@@ -76,12 +80,23 @@ impl Host for SourcesHost {
         self.sources.get_bytes(format!("bytes:{}", path.display()))
     }
 
-    fn load_module(&self, _directories: &[&Path], name: &str) -> Option<String> {
-        self.get(format!("module:{name}"))
+    fn load_module(&self, _directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
+        match self
+            .get(format!("unreadable-module:{name}"))
+            .filter(|path| !path.is_empty())
+        {
+            Some(path) => Err(PathBuf::from(path)),
+            None => Ok(self.get(format!("module:{name}"))),
+        }
     }
 
-    fn load_class(&self, _directory: &Path, name: &str) -> Option<Vec<u8>> {
-        self.sources.get_bytes(format!("class:{name}"))
+    fn load_class(&self, _directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
+        let bytes = self.sources.get_bytes(format!("class:{name}"))?;
+        let path = self
+            .get(format!("class-path:{name}"))
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| format!("{name}.class"));
+        Some((PathBuf::from(path), bytes))
     }
 
     fn get_file_describer<'h>(&'h self, _files: &Files) -> FileDescription<'h> {
@@ -296,6 +311,16 @@ fn get_outcome(outcome: Outcome) -> HostValue {
             HostValue::Array(
                 outcome
                     .prints
+                    .iter()
+                    .map(|text| HostValue::text(text))
+                    .collect(),
+            ),
+        ),
+        (
+            "sanyWarnings",
+            HostValue::Array(
+                outcome
+                    .sany_warnings
                     .iter()
                     .map(|text| HostValue::text(text))
                     .collect(),

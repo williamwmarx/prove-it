@@ -1,0 +1,58 @@
+Implied-temporal checking--satisfiability problem has 2 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ c = (p1 :> 0 @@ p2 :> 0 @@ p3 :> 0)
+/\ pc = (p1 :> "a" @@ p2 :> "a" @@ p3 :> "a")
+
+State 2: <a(p1) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 1 @@ p2 :> 0 @@ p3 :> 0)
+/\ pc = (p1 :> "a" @@ p2 :> "a" @@ p3 :> "a")
+
+State 3: <a(p2) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 1 @@ p2 :> 1 @@ p3 :> 0)
+/\ pc = (p1 :> "a" @@ p2 :> "a" @@ p3 :> "a")
+
+State 4: <a(p1) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 1 @@ p3 :> 0)
+/\ pc = (p1 :> "a" @@ p2 :> "a" @@ p3 :> "a")
+
+State 5: <a(p2) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 2 @@ p3 :> 0)
+/\ pc = (p1 :> "a" @@ p2 :> "a" @@ p3 :> "a")
+
+State 6: <a(p1) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 2 @@ p3 :> 0)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 7: <a(p3) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 2 @@ p3 :> 1)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 8: <a(p2) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 0 @@ p3 :> 1)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 9: <a(p3) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 0 @@ p3 :> 2)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 10: <a(p3) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 0 @@ p3 :> 0)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 11: <a(p3) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 0 @@ p3 :> 1)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+State 12: <a(p2) line 24, col 12 to line 29, col 31 of module PcalModel>
+/\ c = (p1 :> 2 @@ p2 :> 1 @@ p3 :> 1)
+/\ pc = (p1 :> "Done" @@ p2 :> "a" @@ p3 :> "a")
+
+Back to state 7: <a(p2) line 24, col 12 to line 29, col 31 of module PcalModel>
+
+100 states generated, 36 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 8.

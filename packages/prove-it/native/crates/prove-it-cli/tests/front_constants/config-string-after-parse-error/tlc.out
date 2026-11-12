@@ -1,0 +1,3 @@
+exit 151
+Error: TLC found an error in the configuration file at line 3
+It was expecting }, but did not find it.

@@ -5,8 +5,9 @@
 //! booleans, integers, strings, model values, records and finite sets of them, and returns `NotYet`
 //! for anything else, which TLC's own evaluation at startup handles.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::TlcVersion;
@@ -15,7 +16,7 @@ use crate::config::ConfigValue;
 use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
 use crate::resolve::Result;
-use crate::spec::{Binding, Scope, bind_definitions, get_definition, lookup_scope};
+use crate::spec::{Binding, Scope, ScopeOf, bind_definitions, get_definition, lookup_scope};
 use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
 use crate::values::{ValueOrder, get_model_value_type};
 
@@ -79,6 +80,26 @@ fn get_elements(value: ConfigValue) -> Result<Vec<ConfigValue>> {
     }
 }
 
+/// The longest text of a value the evaluator prints, which TLC's pretty-printer, 80 columns wide,
+/// leaves on one line.
+const MAXIMUM_PLAIN_TEXT: usize = 60;
+
+/// The text TLC prints of a natural number, a string of letters, digits and spaces, or a boolean.
+fn format_scalar(value: &ConfigValue) -> Option<String> {
+    match value {
+        ConfigValue::Number(number) if *number >= 0.0 => Some(format!("{number}")),
+        ConfigValue::String(text)
+            if text
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == ' ') =>
+        {
+            Some(format!("\"{text}\""))
+        }
+        ConfigValue::Boolean(value) => Some(if *value { "TRUE" } else { "FALSE" }.to_owned()),
+        _ => None,
+    }
+}
+
 /// The sets of numbers and strings TLC knows by name, which have no elements to list.
 enum Infinite {
     Nat,
@@ -95,6 +116,13 @@ pub struct Evaluator<'a> {
     depth: Cell<usize>,
     /// Whether a value it couldn't compute was left to the engine's startup.
     is_deferring: Cell<bool>,
+    /// The constant conjuncts of the specification, by name, whose values it left to the
+    /// engine's startup.
+    deferred_conjuncts: RefCell<Vec<Name>>,
+    /// The value of each thunk it computed, by the node that binds it, which it keeps alive: TLC
+    /// computes an operator's argument where the body first uses it, and keeps the value
+    /// (`LazyValue`).
+    thunks: RefCell<HashMap<usize, (Rc<Scope>, ConfigValue)>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -111,6 +139,8 @@ impl<'a> Evaluator<'a> {
             is_started,
             depth: Cell::new(0),
             is_deferring: Cell::new(false),
+            deferred_conjuncts: RefCell::new(Vec::new()),
+            thunks: RefCell::new(HashMap::new()),
         }
     }
 
@@ -121,6 +151,16 @@ impl<'a> Evaluator<'a> {
 
     pub fn is_deferring(&self) -> bool {
         self.is_deferring.get()
+    }
+
+    /// Leaves the value of a constant conjunct of the specification to the engine's startup.
+    pub fn defer_conjunct(&self, name: Name) {
+        self.defer();
+        self.deferred_conjuncts.borrow_mut().push(name);
+    }
+
+    pub fn deferred_conjuncts(&self) -> Vec<Name> {
+        self.deferred_conjuncts.borrow().clone()
     }
 }
 
@@ -147,6 +187,41 @@ impl Evaluator<'_> {
             }
             _ => Err(not_yet("values TLC can't compare")),
         }
+    }
+
+    /// `=` of two operands, `Value#equals` of the left one's value: an integer, a string or a
+    /// boolean fails for a value of another kind but a model value, with both values' texts.
+    fn equals_operands(&self, args: &[Expr], scope: Option<&Rc<Scope>>) -> Result<bool> {
+        let left = self.evaluate(&args[0], scope)?;
+        let right = self.evaluate(&args[1], scope)?;
+        let failure = match (&left, &right) {
+            (ConfigValue::Number(_), ConfigValue::Number(_))
+            | (ConfigValue::String(_), ConfigValue::String(_))
+            | (ConfigValue::Boolean(_), ConfigValue::Boolean(_))
+            | (_, ConfigValue::ModelValue(_)) => None,
+            (ConfigValue::Number(_), _) => Some(("check equality of integer", "non-integer")),
+            (ConfigValue::String(_), _) => Some(("check equality of string", "non-string")),
+            (ConfigValue::Boolean(_), _) => Some(("compare equality of boolean", "non-boolean")),
+            _ => None,
+        };
+        let Some((check, other)) = failure else {
+            return self.equals(&left, &right);
+        };
+        // The values' texts, which TLC pretty-prints, the right one's as its class prints it.
+        let left_text = format_scalar(&left).ok_or_else(|| not_yet("values TLC can't compare"))?;
+        let right_text = match (&right, &args[1].kind) {
+            (ConfigValue::Set(elements), ExpressionKind::SetEnumeration(_)) => elements
+                .iter()
+                .map(format_scalar)
+                .collect::<Option<Vec<_>>>()
+                .map(|elements| format!("{{{}}}", elements.join(", "))),
+            _ => format_scalar(&right),
+        }
+        .filter(|text| text.len() <= MAXIMUM_PLAIN_TEXT)
+        .ok_or_else(|| not_yet("values TLC can't compare"))?;
+        Err(FrontError::Evaluation(format!(
+            "Attempted to {check} {left_text} with {other}:\n{right_text}"
+        )))
     }
 
     fn create_set(&self, elements: Vec<ConfigValue>) -> Result<ConfigValue> {
@@ -308,6 +383,37 @@ impl Evaluator<'_> {
             .map_or(name, |target| &**target)
     }
 
+    /// `S.member(e)` of `e \in S`, which an integer, a string or a boolean S fails with both
+    /// values' texts.
+    fn is_element(
+        &self,
+        element: &ConfigValue,
+        set: &Expr,
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<bool> {
+        let reason = match self.is_member(element, set, scope) {
+            Err(FrontError::NotYet(reason)) if self.get_infinite(set).is_none() => reason,
+            is_member => return is_member,
+        };
+        let value = self.evaluate(set, scope)?;
+        let kind = match &value {
+            ConfigValue::Number(_) => "integer",
+            ConfigValue::String(_) => "string",
+            ConfigValue::Boolean(_) => "boolean",
+            _ => return Err(FrontError::NotYet(reason)),
+        };
+        match (format_scalar(element), format_scalar(&value)) {
+            (Some(element), Some(value))
+                if element.len() <= MAXIMUM_PLAIN_TEXT && value.len() <= MAXIMUM_PLAIN_TEXT =>
+            {
+                Err(FrontError::Evaluation(format!(
+                    "Attempted to check if the value:\n{element}\nis an element of the {kind} {value}"
+                )))
+            }
+            _ => Err(FrontError::NotYet(reason)),
+        }
+    }
+
     fn is_member(
         &self,
         element: &ConfigValue,
@@ -333,11 +439,21 @@ impl Evaluator<'_> {
     }
 
     /// Each binding of the bounds to their sets' elements, the last bound outermost, as
-    /// `forEachBoundElement` visits them.
+    /// `forEachBoundElement` visits them, and as `Tool.contexts` enumerates them for a quantifier
+    /// or a set of the form {e : x \in S}.
     pub fn get_bindings(
         &self,
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
+    ) -> Result<Vec<Option<Rc<Scope>>>> {
+        self.bind(bounds, scope, true)
+    }
+
+    fn bind(
+        &self,
+        bounds: &[Bound],
+        scope: Option<&Rc<Scope>>,
+        is_contexts: bool,
     ) -> Result<Vec<Option<Rc<Scope>>>> {
         let mut names = Vec::new();
         let mut sets = Vec::new();
@@ -346,7 +462,32 @@ impl Evaluator<'_> {
                 return Err(not_yet("a tuple of bound names"));
             };
             names.push(name.clone());
-            sets.push(self.get_set_elements(&bound.set, scope)?);
+            sets.push(match self.get_set_elements(&bound.set, scope) {
+                // `Tool.contexts` fails on a bound that isn't a set with the value's text and the
+                // bound's, a numeral's as it is written.
+                Err(FrontError::NotYet(reason))
+                    if is_contexts && self.version == TlcVersion::Master =>
+                {
+                    let value = self.evaluate(&bound.set, scope)?;
+                    let text = match &bound.set.kind {
+                        ExpressionKind::Number { text, .. }
+                            if text.chars().all(|character| character.is_ascii_digit()) =>
+                        {
+                            text.to_string()
+                        }
+                        _ => describe_range(&bound.set),
+                    };
+                    return Err(match format_scalar(&value) {
+                        Some(value) if value.len() <= MAXIMUM_PLAIN_TEXT => {
+                            FrontError::Evaluation(format!(
+                                "TLC encountered a non-enumerable quantifier bound\n{value}.\n{text}"
+                            ))
+                        }
+                        _ => FrontError::NotYet(reason),
+                    });
+                }
+                elements => elements?,
+            });
         }
         let mut bindings = Vec::new();
         fn visit(
@@ -389,16 +530,20 @@ impl Evaluator<'_> {
         };
         let arity = args.len();
         Ok(match (get_canonical_name(name), arity) {
-            // TLCGetSet.TLCGetEval fails on the keys TLC's model checker holds before it exists.
+            // TLCGetSet.TLCGetEval fails on the keys and registers TLC's model checker holds
+            // before it exists, and reads the level of TLCState.Empty, the initial level.
             ("TLCGet", 1) if !self.is_started && self.version == TlcVersion::Master => {
-                match value(0)? {
-                    ConfigValue::String(key) if CHECKER_KEYS.contains(&key.as_str()) => {
-                        return Err(FrontError::Evaluation(format!(
-                            "Attempted to apply the operator overridden by the Java method\n{TLC_GET_EVAL},\nbut it produced the following error:\nTLCGet({key}) was undefined."
-                        )));
+                let key = match value(0)? {
+                    ConfigValue::String(key) if key == "level" => {
+                        return Ok(ConfigValue::Number(1.0));
                     }
+                    ConfigValue::String(key) if CHECKER_KEYS.contains(&key.as_str()) => key,
+                    ConfigValue::Number(index) if index >= 0.0 => index.to_string(),
                     _ => return Err(not_yet("TLCGet")),
-                }
+                };
+                return Err(FrontError::Evaluation(format!(
+                    "Attempted to apply the operator overridden by the Java method\n{TLC_GET_EVAL},\nbut it produced the following error:\nTLCGet({key}) was undefined."
+                )));
             }
             ("+", 2) => {
                 let (left, right) = integers()?;
@@ -436,7 +581,10 @@ impl Evaluator<'_> {
             ("\\div", 2) => {
                 let (left, right) = integers()?;
                 if right == 0 {
-                    return Err(not_yet("a division by zero"));
+                    // Naturals.Divide's EvalException.
+                    return Err(FrontError::Evaluation(
+                        "The second argument of \\div is 0.".to_owned(),
+                    ));
                 }
                 to_integer(
                     left.div_euclid(right) - i64::from(right < 0 && left.rem_euclid(right) != 0),
@@ -476,10 +624,12 @@ impl Evaluator<'_> {
                 let (left, right) = integers()?;
                 ConfigValue::Boolean(left >= right)
             }
-            ("=", 2) => ConfigValue::Boolean(self.equals(&value(0)?, &value(1)?)?),
-            ("/=", 2) => ConfigValue::Boolean(!self.equals(&value(0)?, &value(1)?)?),
-            ("\\in", 2) => ConfigValue::Boolean(self.is_member(&value(0)?, &args[1], scope)?),
-            ("\\notin", 2) => ConfigValue::Boolean(!self.is_member(&value(0)?, &args[1], scope)?),
+            ("=", 2) => ConfigValue::Boolean(self.equals_operands(args, scope)?),
+            ("/=", 2) => ConfigValue::Boolean(!self.equals_operands(args, scope)?),
+            ("\\in", 2) => ConfigValue::Boolean(self.is_element(&value(0)?, &args[1], scope)?),
+            ("\\notin", 2) => {
+                ConfigValue::Boolean(!self.is_element(&value(0)?, &args[1], scope)?)
+            }
             ("\\subseteq", 2) => {
                 let left = get_elements(value(0)?)?;
                 let mut is_subset = true;
@@ -578,7 +728,15 @@ impl Evaluator<'_> {
                     return match lookup_scope(scope, &name) {
                         Some((_, Binding::Value(value))) => Ok(value.clone()),
                         Some((node, Binding::Thunk { expression, scope })) => {
-                            self.evaluate(expression, scope.resolve(node).as_ref())
+                            let key = Rc::as_ptr(node) as usize;
+                            if let Some((_, value)) = self.thunks.borrow().get(&key) {
+                                return Ok(value.clone());
+                            }
+                            let value = self.evaluate(expression, scope.resolve(node).as_ref())?;
+                            self.thunks
+                                .borrow_mut()
+                                .insert(key, (node.clone(), value.clone()));
+                            Ok(value)
                         }
                         _ => Err(not_yet("an operator as a value")),
                     };
@@ -633,7 +791,10 @@ impl Evaluator<'_> {
                     }
                     bound = Some(Rc::new(Scope {
                         name: param.name.clone(),
-                        binding: Binding::Value(self.evaluate(argument, scope)?),
+                        binding: Binding::Thunk {
+                            expression: argument.clone(),
+                            scope: ScopeOf::Other(scope.cloned()),
+                        },
                         parent: bound,
                     }));
                 }
@@ -714,7 +875,10 @@ impl Evaluator<'_> {
                         return Ok(element);
                     }
                 }
-                Err(not_yet("a CHOOSE no element of which satisfies"))
+                Err(FrontError::Evaluation(format!(
+                    "Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n{}",
+                    describe_range(expression)
+                )))
             }
             ExpressionKind::SetEnumeration(elements) => {
                 let elements = elements
@@ -738,7 +902,8 @@ impl Evaluator<'_> {
             }
             ExpressionKind::SetFilter { bound, predicate } => {
                 let mut kept = Vec::new();
-                for binding in self.get_bindings(std::slice::from_ref(bound), scope)? {
+                // TLC keeps {x \in S : P} lazy where S isn't a set.
+                for binding in self.bind(std::slice::from_ref(bound), scope, false)? {
                     if self.is_true(predicate, binding.as_ref())? {
                         let Some(node) = &binding else {
                             continue;

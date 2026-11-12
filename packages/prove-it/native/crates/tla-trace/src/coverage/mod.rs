@@ -54,7 +54,7 @@ impl Rebuilder<'_> {
     pub fn coverage(
         &mut self,
         sources: &dyn Fn(&str) -> Option<String>,
-        polynomial: usize,
+        polynomial: Option<usize>,
     ) -> Result<CoverageReport, Unsupported> {
         let ir = self.evaluator().ir;
         decline_unported(ir)?;
@@ -366,7 +366,7 @@ fn label(sem: &Sem, def: DefId, pred: SId) -> Result<String, Halt> {
     ))
 }
 
-fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport, Halt> {
+fn run(tool: &mut Tool, plan: &Plan, polynomial: Option<usize>) -> Result<CoverageReport, Halt> {
     let sem = tool.sem;
     // TLC's actions, split as `Tool.getActions` splits the next-state relation.
     let mut split = Vec::new();
@@ -505,7 +505,7 @@ fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport
         queue: Queue::new(),
         records: Vec::new(),
         seen: HashSet::default(),
-        fingerprints: Fingerprints::new(Polynomial::get(polynomial)),
+        fingerprints: Fingerprints::new(Polynomial::get(polynomial.unwrap_or(0))),
         generated: 0,
         distinct: hll::Distinct::new(tool.width, polynomial),
         order: tlc_order(sem.ir),
@@ -524,7 +524,11 @@ fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport
         });
     }
     tool.mismatch_check()?;
-    let counts = search.distinct.counts();
+    let Some(counts) = search.distinct.counts() else {
+        return Err(Halt::No(
+            "without -fp, estimates that differ by the polynomial TLC draws".into(),
+        ));
+    };
     let mut messages = Vec::new();
     for &position in &search.order {
         let place = describe(sem, Some(plan.variables[position]));

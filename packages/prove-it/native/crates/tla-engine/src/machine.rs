@@ -165,7 +165,7 @@ pub struct Machine<'p> {
     /// does. Then the shapes the walks joined don't cover TLC's predicate evaluation.
     pub is_membership_unsafe: bool,
     /// The bits of the action atoms whose pieces of Next the walk is in (`pieces.rs`).
-    pub(crate) piece_bits: u8,
+    pub(crate) piece_bits: u64,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
@@ -177,6 +177,9 @@ pub struct Machine<'p> {
     pub(crate) startup_random: u64,
     /// TLC's registers, which TLCSet sets and TLCGet reads.
     pub registers: Registers,
+    /// Whether TLC has seen the successor whose action constraints the search checks, which
+    /// PickSuccessor reads; None elsewhere.
+    pub(crate) is_successor_seen: Option<bool>,
     /// TLCCache's value of each expression it caches, by the expression's node and the key's
     /// fingerprint (`tlcEval2`).
     pub(crate) tlc_caches: HashMap<(NodeId, u64), Id>,
@@ -252,6 +255,7 @@ impl<'p> Machine<'p> {
             random: JavaRandom::seeded(program.random_seed),
             startup_random: 0,
             registers: Registers::default(),
+            is_successor_seen: None,
             tlc_caches: HashMap::new(),
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),

@@ -36,7 +36,7 @@ impl Context {
         theory.is_model_initialized = theory.solver.init_model();
     }
 
-    fn lra_is_relevant_and_shared(&mut self, node: EnodeId) -> bool {
+    fn lra_is_relevant_and_shared(&self, node: EnodeId) -> bool {
         self.is_relevant(self.node(node).owner) && self.lra_is_shared(node)
     }
 
@@ -283,16 +283,11 @@ impl Context {
         }
     }
 
-    /// context::is_shared, whose answer the root keeps until a node is made over the class, or
-    /// the class is merged or split (smt_context.cpp:4833-4903). It is not cleared when a pop
-    /// deletes a parent, so it can answer from a parent that is gone, as Z3 does.
-    fn lra_is_shared(&mut self, node: EnodeId) -> bool {
+    /// context::is_shared of Z3 4.8.9 (smt_context.cpp:4493-4560), which keeps no answer and asks
+    /// again each time.
+    fn lra_is_shared(&self, node: EnodeId) -> bool {
         let root = self.root(node);
-        if let Some(is_shared) = self.node(root).is_shared() {
-            return is_shared;
-        }
         if self.m.get_op(self.node(root).owner) == OP_ITE {
-            self.node_mut(root).set_is_shared(Some(true));
             return true;
         }
         if self.node(root).th_var < 0 {
@@ -301,17 +296,13 @@ impl Context {
         if self.qmanager.is_shared(root) {
             return true;
         }
-        let has_foreign_parent = self.node(root).parents.iter().any(|parent| {
+        for parent in &self.node(root).parents {
             let family = self.m.get_family(self.node(*parent).owner);
-            family != FAMILY_ARITH && family != FAMILY_BASIC
-        });
-        if has_foreign_parent {
-            self.node_mut(root).set_is_shared(Some(true));
-            return true;
+            if family != FAMILY_ARITH && family != FAMILY_BASIC {
+                return true;
+            }
         }
-        let is_shared = self.lra_is_shared_with_underspecified(root);
-        self.node_mut(root).set_is_shared(Some(is_shared));
-        is_shared
+        self.lra_is_shared_with_underspecified(root)
     }
 
     /// theory_lra::is_shared: whether the class is an argument of a division by a term or by
@@ -387,11 +378,10 @@ mod tests {
     use crate::core::smtlib_parser::parse_smtlib;
     use crate::util::rlimit::ResourceLimit;
 
-    // context::is_shared keeps its answer in the root (smt_enode.h:80): a pop that deletes the
-    // parent that made a class shared leaves the answer, and a node made over the class clears it
-    // (smt_enode.cpp:57).
+    // context::is_shared of Z3 4.8.9 keeps no answer (smt_context.cpp:4493): a pop that deletes
+    // the parent that made a class shared makes it unshared again.
     #[test]
-    fn keeps_whether_a_class_is_shared_until_a_node_is_made_over_it() {
+    fn asks_again_whether_a_class_is_shared() {
         let mut m = AstManager::new(ResourceLimit::new(&Limits::new(f64::INFINITY, None, None)));
         let text = "(declare-fun x () Int) (declare-fun f (Int) Int) (assert (<= x 0)) \
                     (assert (= (f x) 1)) (assert (<= (+ x 1) 0))";
@@ -417,7 +407,7 @@ mod tests {
         assert!(context.lra_is_shared(x));
         context.pop(1).unwrap();
         assert_eq!(context.node(x).parents.len(), num_parents);
-        assert!(context.lra_is_shared(x));
+        assert!(!context.lra_is_shared(x));
         context.internalize_assertion(sum, 0).unwrap();
         assert!(!context.lra_is_shared(x));
     }

@@ -1,6 +1,7 @@
 //! `prove-it tla2sany.xml.XMLExporter ...`: `exportXml` in `src/cli/xml-exporter.ts`, SANY's
 //! XMLExporter of TLC master, which prints a spec's semantic tree as XML.
 
+use std::cell::Cell;
 use std::path::Path;
 
 use tla_front::TlcVersion;
@@ -208,7 +209,14 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
         },
     };
     let host = output.host;
-    let load_module = |module: &str| host.load_module(&directories, module);
+    // SANY prints that it can't read a module's file it finds, and goes on as if it found none.
+    let unreadable = Cell::new(false);
+    let load_module = |module: &str| {
+        host.load_module(&directories, module).unwrap_or_else(|_| {
+            unreadable.set(true);
+            None
+        })
+    };
     let options = XmlExportOptions {
         is_restricted: flags.iter().any(|flag| flag == "-r"),
         is_uncommented: flags.iter().any(|flag| flag == "-u"),
@@ -219,6 +227,12 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
             FrontError::NotYet(reason) => reason,
             other => format!("{other:?}"),
         })?;
+    if unreadable.get() {
+        return Err(
+            "a module's file the front end can't read, such as a directory or text not in UTF-8"
+                .to_owned(),
+        );
+    }
     let _ = write!(output.err, "{}", exported.stderr);
     let _ = write!(output.out, "{}", exported.stdout);
     Ok(exported.exit_code)

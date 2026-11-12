@@ -1243,6 +1243,28 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
+- P6a, the driver (#315): `prove-it-prover::driver` and the host export `prove`, selected with
+  `PROVE_IT_PROVER_DRIVER=rust`; the TypeScript driver stays the default.
+  - **Rounds:** the driver asks JavaScript for each module read (`module:<name>#<n>`) and each
+    decision (keyed by obligation, method, prover, limit and text), and proves again with the
+    answers. A run's obligations, Prep and encodings stay on a long-lived thread, which takes
+    tcp_proof from over two hours to 57 s.
+  - **Fallback:** a source or module that isn't well-formed UTF-16, or escapes a lone surrogate,
+    goes to the TypeScript driver, since a Rust string can't hold it.
+  - **Checks:** `scripts/prover-driver-differential.ts` gives 304 of 304 corpus modules the same
+    under both drivers with decisions replayed from the record; `tests/unit/prove-driver.test.ts`
+    holds the cases seven break-it rounds found.
+  - **Open:** three inputs where the Rust encoders emulate a JavaScript engine's exception, and
+    the TypeScript throws it, where both should do what tlapm does. They differ between the
+    drivers until the next PR makes the Rust follow tlapm:
+    - `\h`, `\o` and `\b` numerals in an SMT obligation (`BigInt` in `smt/rewrite.ts`);
+    - numerals large enough to reach a string length limit in the Zenon and Isabelle encodings
+      (`String.prototype.repeat`);
+    - proof-step levels past 2^53, or 2^32 in WebAssembly, where the Rust reads a `usize`.
+  - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
+    overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
+    "Stack overflow" (#308).
+
 ### Deviations from Z3
 
 Where a back end does what the tool it ports does not. The Rust mirrored the TypeScript, so that
@@ -1250,6 +1272,55 @@ the differential stayed exact; with the TypeScript SMT deleted, these are fixed 
 the inputs they move re-recorded from it. smt-core.md §4 lists the SMT core's and points here for
 the evidence. Lines are as of
 b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
+
+**The gate is tlapm's record; Z3 4.8.9 breaks ties.** tlapm's build pins and bundles Z3 4.8.9
+(`deps/z3/Makefile` at ff40755) and runs it as `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`
+(`src/params.ml:230`). `proofs.json` was recorded with tlapm 5f5037f's release build on macOS
+(the configuration `tlapm.json` keeps), whose `deps/z3/dune` installs that Z3 4.8.9
+(`z3-4.8.9-x64-osx-10.14.6`) to `lib/tlapm/backends/bin`, first on the PATH tlapm runs it with.
+On Simple's `Init => Inv` (`smt/5e53b781a834c8ec`, tlapm's `13e58ea1eeb4ae17`), which `proofs.json`
+records as proved by tlapm's SMT, Z3 4.8.9's release binary answers `unsat` in 0.3 s, where Z3
+5.3.3 times out at 5 s and 30 s. Over the 10,373 `smt` and `z3` inputs matched to tlapm's, 4.8.9 and tlapm's
+record both prove 10,074, 4.8.9 alone 121 and tlapm alone 33; 5.3.3 disagrees with the record on
+44, 4.8.9 on 154: the recording ran 4.8.9 on another machine under a 5 s wall-clock limit, so
+an input near the limit can go either way, and the audit is read input by input. The audit below
+was run against 5.3.3, and causes 1 and 4 were fixed toward it, which lost Simple's four
+`Init => Inv` obligations.
+Against Z3 4.8.9's source:
+
+| Cause | Z3 4.8.9 | Now |
+|---|---|---|
+| 1. `flatten_clauses` | distributes `(or a (not d))` when `d` has one reference or `a` is a literal, with no count of occurrences (`smt/asserted_formulas.cpp:378-415`) | as 4.8.9 |
+| 2. `false` in the model | `get_assignment` answers `l_false` for false (`smt/smt_context.cpp:1503-1510`) | as 4.8.9 and 5.3.3 |
+| 3. a released rewriter's last result | `m_r` is declared last, so released first (`ast/rewriter/rewriter.h:221-223`) | as 4.8.9 and 5.3.3 |
+| 4. `is_shared` | no cache: asks again each time (`smt/smt_context.cpp:4493-4560`) | as 4.8.9 |
+
+The ported core is of a later generation than 4.8.9, which has no `dioph_eq`, `nla_grobner`,
+`nla_throttle`, `nla_patcher` or `nla_divisions`, a 279-line `nra_solver.cpp` (1,108 in 5.3.3),
+and fewer limit checks in the polynomial managers (`polynomial.cpp` 10 against 5.3.3's 18) and
+nlsat (7 against 10). So the gate is tlapm's record, `proofs.json`: what tlapm proves, the port
+must prove; Z3 4.8.9 decides between two searches where the port's loses an obligation tlapm
+proves. A 4.8.9 audit is read input by input, not as a target of all same. The 5.3.3 audit below
+stays as the record of that run.
+
+The limit checks ported from 5.3.3's polynomial managers (#262) stay: of the 10 `smt` inputs they
+moved, 7 belong to obligations tlapm proves with SMT (SumAndMax #28 and #30, AddTwo #14,
+FiniteSetsExtTheorems_proofs #148 and #171, BagsTheorems_proofs #67, DiningPhilosophers_proof #14)
+and 3 to ones it proves with Zenon (DiningPhilosophers_proof #33, #241 and #519), and on the record
+recalibrated since, the port proves all 10 with tlapm's prover.
+
+With causes 1 and 4 as 4.8.9 has them, the record was decided again (`prover-inputs --record`), and
+each input whose search did not move, by `prover-differential` at the earlier limits, kept its
+earlier entry, so a recalibration moves only the limits of searches that moved (247 kept, two of
+them flips the clock alone made). Against tlapm's record, prove then proves 33,019 of the 33,025
+obligations tlapm proves, against 33,016 before: Simple's four `Init => Inv` come back, and
+Boulanger #240 (`smt/b2ca9ee96f3db516`) is lost. Its 4 distributions are the ones 4.8.9's source
+makes, all of a disjunction with one reference, and Simple needs the same kind; without any, it is
+`unsat` in 1,332,097 steps and Simple is not proved. The port's search after them takes 8,170,365
+steps and 534,764 instances where it took 1,807,047 and 94,446, which places the divergence past
+`flatten_clauses`, in the later generation of the solver. Z3 4.8.9 is itself near its limit
+there: run as tlapm runs it with `-T:5` on a 4-core machine, it timed out once (rlimit 3,357,441)
+and proved it once in 3.98 s with 162,971 instances (rlimit 4,021,756). It stays open.
 
 - **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
   c0119d516427b279, f57d6baf800a11d6, 44fea97e4ee0312c and a50910e8b0798813 (all `unknown` at
@@ -1388,13 +1459,16 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
 
 The record holds what the decider answers (the TypeScript until a692935, the Rust since), so it
 cannot show where the decider leaves Z3.
-`scripts/z3-parity.ts` runs Z3 5.3.3, the version the solver ports, on every `smt` and `z3` input
-of the record as tlapm runs it: `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`, under the time
-limit prove sent the input with (5 s for all but 24 inputs; 2 have an `rlimit` budget and no time
-limit), which prover-inputs now writes to
-`.prover-inputs/time-limits.json`. The script's header cites tlapm's source for each part of the
-invocation. It fails unless the binary is Z3 5.3.3, records the binary's SHA-256 (`f6aa070c…6470`,
-the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity.json`.
+`scripts/z3-parity.ts` runs Z3 4.8.9, the version tlapm bundles, or with `--version 5.3.3` that
+one, on every `smt` and `z3` input of the record as tlapm runs it:
+`z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`, under the time limit prove sent the input with
+(5 s for all but 24 inputs; 2 have an `rlimit` budget and no time limit), which prover-inputs now
+writes to `.prover-inputs/time-limits.json`. The script's header cites tlapm's source for each part
+of the invocation. It fails unless the binary is the pinned one of its version by SHA-256 (4.8.9's
+`4321b0c0…1436`, of the `z3-4.8.9-x64-ubuntu-16.04` release; 5.3.3's `f6aa070c…6470`, of the
+`z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity-<version>.json`.
+`parity-compare.ts` joins a 4.8.9 audit with tlapm's verdicts in `proofs.json`, the record, the
+record of another commit and a 5.3.3 audit. The runs below were of Z3 5.3.3.
 
 On the TypeScript's record of `main` at b830769, and on the record recalibrated on the Rust decider
 with causes 1 to 4 below fixed (a692935):
@@ -1554,7 +1628,8 @@ limit and a step limit of twice Z3's `rlimit-count`.
      `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`, `fa51a87ba4ebf399` and
      `8df9b72d29f8a626` keep Z3's streams.
 
-**Status: causes 1 to 4 are fixed in Rust** (ab973e2, dbbcb78, 42f742f, b385778). The TypeScript
+**Status: causes 1 to 4 were fixed in Rust toward Z3 5.3.3** (ab973e2, dbbcb78, 42f742f, b385778);
+causes 1 and 4 now follow Z3 4.8.9 instead, as above. The TypeScript
 is deleted; the SMT tables' lines the fixes move were printed by its scripts with the same fixes
 (`smt/tests/tables/README.md`). The record is recalibrated on the Rust decider (a692935, P0 above).
 Of the 13 inputs above, 12 follow Z3:

@@ -1,0 +1,22 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 0.0
+The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).
+<x line 3, col 11 to line 3, col 11 of module Agreed>: 2
+<y line 3, col 14 to line 3, col 14 of module Agreed>: 1
+<Init line 4, col 1 to line 4, col 4 of module Agreed>: 1:1
+  line 4, col 9 to line 4, col 22 of module Agreed: 1
+<Next line 5, col 1 to line 5, col 4 of module Agreed>: 2:2
+  line 5, col 9 to line 5, col 13 of module Agreed: 2
+  |line 5, col 9 to line 5, col 9 of module Agreed: 3
+  line 5, col 18 to line 5, col 27 of module Agreed: 2
+  line 5, col 32 to line 5, col 37 of module Agreed: 2
+End of statistics.
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in _ at (_)

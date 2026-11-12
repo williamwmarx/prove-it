@@ -1,0 +1,8 @@
+exit 255
+Semantic processing of module M
+Linting of module M
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.ClassCastException
+: class tlc2.value.impl.SetEnumValue cannot be cast to class tlc2.value.impl.OpRcdValue (tlc2.value.impl.SetEnumValue and tlc2.value.impl.OpRcdValue are in unnamed module of loader 'app')

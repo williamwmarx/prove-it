@@ -1,0 +1,18 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property Live was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ lock = 0
+/\ pc = <<"a", "a">>
+
+State 2: <a(2) line 26, col 12 to line 29, col 45 of module PcalGuard>
+/\ lock = 2
+/\ pc = <<"a", "b">>
+
+Back to state 1: <b(2) line 31, col 12 to line 33, col 45 of module PcalGuard>
+
+5 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

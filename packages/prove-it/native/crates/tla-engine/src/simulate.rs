@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use tla_ir::Ir;
+use tla_values::print::is_printable;
 use tla_values::random::{JavaRandom, next_prime};
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
@@ -73,6 +74,41 @@ pub fn add_length(lengths: i64, length: i64, traces: u64) -> i64 {
     let mean = mean.wrapping_add((delta / traces.max(1) as i64) as i32);
     let squares = squares.wrapping_add(delta.wrapping_mul(length.wrapping_sub(i64::from(mean))));
     squares.wrapping_shl(32) | (i64::from(mean) & 0xFFFF_FFFF)
+}
+
+// The states of a trace TLC's worker walks, end to end in one vector of `width` ids each, and
+// the position among TLC's actions of the action that took each step: a long trace keeps eight
+// bytes a step for a state of one variable.
+struct Path {
+    width: usize,
+    length: usize,
+    ids: Vec<Id>,
+    actions: Vec<u32>,
+}
+
+impl Path {
+    fn new(initial: &[Id]) -> Path {
+        Path {
+            width: initial.len(),
+            length: 1,
+            ids: initial.to_vec(),
+            actions: Vec::new(),
+        }
+    }
+
+    fn state(&self, position: usize) -> &[Id] {
+        &self.ids[position * self.width..(position + 1) * self.width]
+    }
+
+    fn last(&self) -> &[Id] {
+        self.state(self.length - 1)
+    }
+
+    fn push(&mut self, state: &[Id], action: u32) {
+        self.ids.extend_from_slice(state);
+        self.actions.push(action);
+        self.length += 1;
+    }
 }
 
 // The trace a violation stopped, with the registers as they were then.
@@ -310,8 +346,7 @@ impl Run<'_, '_> {
         initial: &[Vec<Id>],
         random: &mut JavaRandom,
     ) -> Outcome<bool> {
-        let mut states = vec![initial[random.next_index(initial.len())].clone()];
-        let mut labels: Vec<Option<u32>> = vec![None];
+        let mut path = Path::new(&initial[random.next_index(initial.len())]);
         let count = actions.len();
         let mut step = 0;
         while step < self.simulation.depth {
@@ -325,8 +360,8 @@ impl Run<'_, '_> {
                     .simulation_progress(self.generated, self.traces, self.lengths);
             }
             self.next_states.clear();
-            let current = states.last().expect("a state").clone();
-            let level = states.len() as i64;
+            let current = path.last().to_vec();
+            let level = path.length as i64;
             let level_id = machine.store.int(level)?;
             let next_level_id = machine.store.int(level + 1)?;
             let mut index = random.next_index(count);
@@ -347,11 +382,9 @@ impl Run<'_, '_> {
                     Ok(()) => {}
                     Err(Bail(VIOLATED)) => {
                         let (successor, owner) = std::mem::take(&mut self.violated);
-                        let mut trace = states;
-                        trace.push(successor);
-                        labels.push(Some(index as u32));
+                        path.push(&successor, index as u32);
                         let kind = ViolationKind::Invariant(owner);
-                        self.stop(machine, trace, labels, kind)?;
+                        self.stop(machine, &path, kind)?;
                         return Ok(true);
                     }
                     Err(bail) => return Err(bail),
@@ -364,51 +397,54 @@ impl Run<'_, '_> {
             if self.next_states.is_empty() {
                 if self.check_deadlock {
                     let kind = ViolationKind::Deadlock { accepted: None };
-                    self.stop(machine, states, labels, kind)?;
+                    self.stop(machine, &path, kind)?;
                     return Ok(true);
                 }
                 break;
             }
             let chosen = random.next_index(self.next_states.len());
-            states.push(std::mem::take(&mut self.next_states[chosen]));
-            labels.push(Some(index as u32));
+            path.push(&self.next_states[chosen], index as u32);
         }
-        let length = i64::from(self.simulation.depth).min(states.len() as i64);
+        let length = i64::from(self.simulation.depth).min(path.length as i64);
         self.lengths = add_length(self.lengths, length, self.traces);
         Ok(false)
     }
 
     // A trace a violation stopped, without the steps that stutter, as TLC prints it
     // (`SimulationWorker.getTrace`).
-    fn stop(
-        &mut self,
-        machine: &mut Machine<'_>,
-        states: Vec<Vec<Id>>,
-        labels: Vec<Option<u32>>,
-        kind: ViolationKind,
-    ) -> Outcome<()> {
+    fn stop(&mut self, machine: &mut Machine<'_>, path: &Path, kind: ViolationKind) -> Outcome<()> {
         // From the last state back, a state equal to the one before it is dropped. TLC compares
         // the states' values in its order of the variables, up to the first that differs, which
         // fails where TLC can't compare them.
-        let mut kept = Vec::with_capacity(states.len());
-        for position in (0..states.len()).rev() {
-            let is_stuttering =
-                position > 0 && self.is_equal(machine, &states[position], &states[position - 1])?;
+        let mut kept = Vec::new();
+        for position in (0..path.length).rev() {
+            let is_stuttering = position > 0
+                && self.is_equal(machine, path.state(position), path.state(position - 1))?;
             if !is_stuttering {
                 kept.push(position);
             }
         }
         kept.reverse();
+        // With -depth -1 TLC prints the last state alone (`Simulator.printBehavior`): where the
+        // store prints it as TLC does, that state is all the report takes.
+        let last = path.state(*kept.last().expect("the initial state"));
+        if self.simulation.depth == i32::MAX
+            && last
+                .iter()
+                .all(|&value| is_printable(&machine.store, value))
+        {
+            kept.drain(..kept.len() - 1);
+        }
         self.stopped = Some(Stopped {
             kind,
             states: kept
                 .iter()
-                .map(|&position| states[position].clone())
+                .map(|&position| path.state(position).to_vec())
                 .collect(),
             labels: kept
                 .iter()
                 .skip(1)
-                .map(|&position| labels[position])
+                .map(|&position| Some(path.actions[position - 1]))
                 .collect(),
             registers: machine.registers.clone(),
         });

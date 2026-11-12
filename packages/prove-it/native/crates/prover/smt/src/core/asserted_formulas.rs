@@ -14,8 +14,6 @@
 //! - The recursions of `pushAssertion` and `isGreater` stop past `MAX_RECURSION_DEPTH`
 //!   (design/smt-core.md, recursion).
 
-use std::collections::HashMap;
-
 use crate::core::ast::{
     AstManager, Expr, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL,
 };
@@ -626,8 +624,10 @@ impl AssertedFormulas {
         nnf.release(m)
     }
 
-    // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
-    // that occurs in one binary clause and nowhere else is distributed.
+    // asserted_formulas::flatten_clauses of Z3 4.8.9 (smt/asserted_formulas.cpp:378-415): an ite at
+    // the top becomes two clauses, and a binary clause with a conjunction (not (or ...)) as a
+    // disjunct is distributed when nothing else holds the disjunction or the other disjunct is a
+    // literal.
     fn flatten_clauses(&mut self, m: &mut AstManager) -> Result<(), SmtError> {
         let mk_negation = |m: &mut AstManager, expr: Expr| -> Result<Expr, SmtError> {
             if m.is_not(expr) {
@@ -636,37 +636,31 @@ impl AssertedFormulas {
                 m.mk_app(OP_NOT, &[expr], SORT_BOOL)
             }
         };
-        let is_conjunction =
-            |m: &AstManager, expr: Expr| m.is_not(expr) && m.get_op(m.get_arg(expr, 0)) == OP_OR;
+        // is_literal: past one negation, a variable, a quantifier or a constant.
+        let is_literal = |m: &AstManager, expr: Expr| {
+            let atom = if m.is_not(expr) {
+                m.get_arg(expr, 0)
+            } else {
+                expr
+            };
+            !m.is_app(atom) || m.get_num_args(atom) == 0
+        };
+        let can_distribute = |m: &AstManager, conjunction: Expr, other: Expr| {
+            m.is_not(conjunction)
+                && m.get_op(m.get_arg(conjunction, 0)) == OP_OR
+                && (m.get_ref_count(m.get_arg(conjunction, 0)) == 1 || is_literal(m, other))
+        };
         let mut is_changed = true;
         while is_changed {
             is_changed = false;
             let mut formulas = RefVector::new();
-            let mut occurrences: HashMap<Expr, usize> = HashMap::new();
-            for index in self.qhead..self.formulas.len() {
-                let formula = self.formulas.items[index];
-                if m.get_op(formula) != OP_OR || m.get_num_args(formula) != 2 {
-                    continue;
-                }
-                for arg_index in 0..2 {
-                    let arg = m.get_arg(formula, arg_index);
-                    if is_conjunction(m, arg) {
-                        *occurrences.entry(arg).or_insert(0) += 1;
-                    }
-                }
-            }
-            // can_distribute: the conjunction (not d) is a disjunct of this one pending clause, and
-            // the negation is d's only holder. A d shared with another formula has, or gets, a
-            // literal, so distributing would copy its disjuncts next to it.
-            let can_distribute = |m: &AstManager, expr: Expr| {
-                occurrences.get(&expr) == Some(&1) && m.get_ref_count(m.get_arg(expr, 0)) == 1
-            };
             for index in self.qhead..self.formulas.len() {
                 let formula = self.formulas.items[index];
                 if m.get_op(formula) == OP_OR && m.get_num_args(formula) == 2 {
-                    let conjunction_index = [1, 0]
-                        .into_iter()
-                        .find(|position| can_distribute(m, m.get_arg(formula, *position)));
+                    let conjunction_index = [1, 0].into_iter().find(|position| {
+                        let conjunction = m.get_arg(formula, *position);
+                        can_distribute(m, conjunction, m.get_arg(formula, 1 - *position))
+                    });
                     if let Some(conjunction_index) = conjunction_index {
                         let other = m.get_arg(formula, 1 - conjunction_index);
                         let disjunction = m.get_arg(m.get_arg(formula, conjunction_index), 0);
@@ -715,18 +709,24 @@ mod tests {
         manager.mk_app(OP_NOT, &[expr], SORT_BOOL).unwrap()
     }
 
-    // flatten_clauses on (or p (not (or q r))) and, when is_shared, (or s (or q r)), which holds
-    // (or q r) as well: the manager, p, q, r, the formulas and the flattened formulas.
-    fn flatten(is_shared: bool) -> (AstManager, [Expr; 3], Vec<Expr>, Vec<Expr>) {
+    // flatten_clauses on (or o (not (or q r))) and, when is_shared, (or s (or q r)), which holds
+    // (or q r) as well, where o is the constant p or, when is_literal is false, (or p s): the
+    // manager, o, q, r, the formulas and the flattened formulas.
+    fn flatten(is_shared: bool, is_literal: bool) -> (AstManager, [Expr; 3], Vec<Expr>, Vec<Expr>) {
         let limits = Limits::new(f64::INFINITY, None, None);
         let mut manager = AstManager::new(ResourceLimit::new(&limits));
         let consts: Vec<Expr> = (0..4)
             .map(|_| manager.mk_fresh_const(None, SORT_BOOL).unwrap())
             .collect();
         let (p, q, r, s) = (consts[0], consts[1], consts[2], consts[3]);
+        let other = if is_literal {
+            p
+        } else {
+            mk_or(&mut manager, p, s)
+        };
         let disjunction = mk_or(&mut manager, q, r);
         let conjunction = mk_not(&mut manager, disjunction);
-        let mut formulas = vec![mk_or(&mut manager, p, conjunction)];
+        let mut formulas = vec![mk_or(&mut manager, other, conjunction)];
         if is_shared {
             formulas.push(mk_or(&mut manager, s, disjunction));
         }
@@ -736,21 +736,31 @@ mod tests {
         }
         asserted.flatten_clauses(&mut manager).unwrap();
         let flattened = asserted.formulas.items;
-        (manager, [p, q, r], formulas, flattened)
+        (manager, [other, q, r], formulas, flattened)
+    }
+
+    fn get_distributed(manager: &mut AstManager, [other, q, r]: [Expr; 3]) -> [Expr; 2] {
+        let not_q = mk_not(manager, q);
+        let not_r = mk_not(manager, r);
+        [mk_or(manager, other, not_q), mk_or(manager, other, not_r)]
     }
 
     #[test]
     fn distributes_a_conjunction_whose_disjunction_nothing_else_holds() {
-        let (mut manager, [p, q, r], _, flattened) = flatten(false);
-        let not_q = mk_not(&mut manager, q);
-        let not_r = mk_not(&mut manager, r);
-        let expected = [mk_or(&mut manager, p, not_q), mk_or(&mut manager, p, not_r)];
+        let (mut manager, exprs, _, flattened) = flatten(false, false);
+        assert_eq!(flattened, get_distributed(&mut manager, exprs));
+    }
+
+    #[test]
+    fn distributes_a_shared_conjunction_next_to_a_literal() {
+        let (mut manager, exprs, formulas, flattened) = flatten(true, true);
+        let expected = [&get_distributed(&mut manager, exprs)[..], &formulas[1..]].concat();
         assert_eq!(flattened, expected);
     }
 
     #[test]
-    fn keeps_a_conjunction_whose_disjunction_another_formula_holds() {
-        let (_, _, formulas, flattened) = flatten(true);
+    fn keeps_a_shared_conjunction_next_to_a_clause() {
+        let (_, _, formulas, flattened) = flatten(true, false);
         assert_eq!(flattened, formulas);
     }
 }

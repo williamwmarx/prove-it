@@ -782,8 +782,11 @@ pub struct Compiler<'a> {
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
     /// The nodes of Next's walk that make up an action atom, each with the bit a walk through it
-    /// sets on the step it takes (`pieces.rs`).
-    pub(crate) pieces: Vec<(NodeId, u8)>,
+    /// sets on the step it takes and the values it fixes (`pieces.rs`).
+    pub(crate) pieces: Vec<pieces::Piece>,
+    /// The `\E`s of Next the walk being compiled is inside: each one's node, the position of a
+    /// bound and the slot its name takes.
+    pub(crate) binders: Vec<(NodeId, usize, u32)>,
     // The fused predicate of each walk whose first step is a guard, by the walk's address.
     first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
@@ -833,6 +836,8 @@ pub struct Compiler<'a> {
     pub is_lambda_built: bool,
     /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
     pub is_cached: bool,
+    /// Whether anything compiled applies PickSuccessor, which reads the states TLC has seen.
+    pub is_picking: bool,
     /// Whether anything compiled applies TLCCache, whose cache is the machine's own, where TLC
     /// keeps one for every worker.
     pub is_tlc_cache_used: bool,
@@ -900,6 +905,7 @@ impl<'a> Compiler<'a> {
             reads: None,
             leading_guards: HashMap::new(),
             pieces: Vec::new(),
+            binders: Vec::new(),
             first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),
@@ -922,6 +928,7 @@ impl<'a> Compiler<'a> {
             simulation: None,
             is_lambda_built: false,
             is_cached: false,
+            is_picking: false,
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
             normalized_definitions: OnceCell::new(),
@@ -1335,8 +1342,9 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
-                        | "Assert" | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
+                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCGetOrDefault"
+                        | "TLCGetAndSet" | "TLCFP" | "TLCCache" | "Assert" | "AssertEq"
+                        | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
                         | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
@@ -1377,9 +1385,11 @@ impl<'a> Compiler<'a> {
                         self.builtin_name(index),
                         "Print"
                             | "PrintT"
+                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
+                            | "TLCGetAndSet"
                             | "JsonSerialize"
                             | "ndJsonSerialize"
                             | "JsonDeserialize"
@@ -1427,10 +1437,12 @@ impl<'a> Compiler<'a> {
                         "\\cdot"
                             | "Print"
                             | "PrintT"
+                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
                             | "TLCGet"
+                            | "TLCGetOrDefault"
                             | "TLCGetAndSet"
                             | "TLCCache"
                             | "TLCDefer"

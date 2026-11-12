@@ -3104,6 +3104,90 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
     }
 }
 
+// tests/processes: the fairness PlusCal writes, `\A self \in S : WF_vars(p(self))`, whose atoms are
+// each the action under one value of `self`: one process set over an interval, two sets with WF on
+// both, SF, a process waiting on a guard, model values, a constant set, WF on some processes only
+// and on an action that is no process's, and a Next whose `\E` is over a set of the state, which
+// the engine evaluates. Each is run as it stands, where the search labels its steps with TLC's
+// actions and an atom answers from those of its process, and under a CONSTRAINT, where the steps
+// aren't labelled and an atom answers from the walks through its process's actions under its
+// value. The Share specs reach an operator around the atom's action from more than one place:
+// with the same argument, with `self + 1` directly and through another operator, a constant, an
+// inner `\E`, a LET, a RECURSIVE operator, an INSTANCE (of `Inner`) and nested calls, under WF,
+// SF and an ACTION_CONSTRAINT, where only the walk whose name the action reads has its value may
+// mark a step. TLC's output on each at d8fb231 is beside it.
+#[test]
+fn answers_fairness_of_each_process_as_tlc() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("processes");
+    let names = [
+        "PcalOne",
+        "PcalTwo",
+        "PcalStrong",
+        "PcalGuard",
+        "PcalModel",
+        "PcalSet",
+        "PcalSome",
+        "PcalFallback",
+        "ShareOffset",
+        "ShareThrough",
+        "ShareInner",
+        "ShareConstant",
+        "ShareStrong",
+        "ShareAction",
+        "ShareSame",
+        "ShareNested",
+        "ShareNestedOffset",
+        "ShareSeparate",
+        "ShareLet",
+        "ShareRecursive",
+        "ShareProcess",
+        "ShareRing",
+        "ShareRingWork",
+        "ShareInstance",
+        "ShareInstanceArg",
+    ];
+    let inner = std::fs::read_to_string(directory.join("Inner.tla")).expect("Inner");
+    for name in names {
+        let read = |file: String| std::fs::read_to_string(directory.join(file)).expect("a file");
+        let spec = read(format!("{name}.tla"));
+        let config = read(format!("{name}.cfg"));
+        for (config, suffix) in [
+            (config.clone(), ""),
+            (format!("{config}CONSTRAINT Always\n"), ".constrained"),
+        ] {
+            let tlc = read(format!("{name}{suffix}.txt"));
+            for workers in ["1", "4"] {
+                let test = format!("processes-{name}{suffix}-{workers}");
+                let run = std::env::temp_dir()
+                    .join(format!("prove-it-cli-{test}-{}", std::process::id()));
+                std::fs::create_dir_all(&run).expect("a directory");
+                std::fs::write(run.join("Inner.tla"), &inner).expect("Inner");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                assert_eq!(
+                    get_untimed(&stdout(&output)),
+                    tlc,
+                    "{name}{suffix} at {workers} workers: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+        }
+    }
+}
+
 // What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
 fn get_untimed(text: &str) -> String {
     let start = text.find("Starting... (").expect("the start");
@@ -3270,6 +3354,66 @@ fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
 #[test]
 fn answers_fairness_of_pieces_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
     check_grid("pieces-grid", 792);
+}
+
+// tests/process-grid: fairness over each process, `\A self \in F : WF_vars(P(self))` with
+// `P(self) == a(self) \/ b(self)`, under WF and SF, over `a` alone, and over `a` and `b` each as
+// StarkMutex is; Next's `\E self \in S` over P, over the disjunction written out, and twice, the
+// second under a guard; S an interval, an enumeration, a constant, a definition, a union and a set
+// of the state; F the same set, a subset, and a superset with a value no `\E` of Next takes. Weak is
+// fair over pieces of Next, which the engine answers from TLC's actions or the walks' bits where it
+// can, and AliasWeak over copies `P(self) /\ TRUE` that are none, which it evaluates; each as it
+// stands and under `CONSTRAINT Always`, where the steps aren't labelled. TLC's output on each at
+// d8fb231 is beside it: each run prints it exactly, at 1 and 4 workers.
+#[test]
+fn answers_fairness_of_each_process_as_tlc_whatever_set_its_exists_ranges_over() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("process-grid");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the grid")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 216);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        for (constraint, infix) in [("", ""), ("CONSTRAINT Always\n", ".c")] {
+            for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+                let tlc =
+                    std::fs::read_to_string(directory.join(format!("{name}{infix}{suffix}.txt")))
+                        .expect("TLC's output");
+                let config = format!(
+                    "CONSTANT N = 3\nCONSTANT Procs = {{1, 2, 3}}\nSPECIFICATION {specification}\nPROPERTY Live\n{constraint}"
+                );
+                for workers in ["1", "4"] {
+                    let test = format!("process-grid-{name}{infix}-{specification}-{workers}");
+                    let args = [
+                        "-workers",
+                        workers,
+                        "-nowarning",
+                        "-seed",
+                        "4",
+                        "-fp",
+                        "0",
+                        "-lncheck",
+                        "final",
+                    ];
+                    let (output, run) = run_front(&test, &spec, &config, &args);
+                    assert_eq!(
+                        get_untimed(&stdout(&output)),
+                        tlc,
+                        "{name}{infix} {specification} {workers}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    std::fs::remove_dir_all(run).expect("removed");
+                }
+            }
+        }
+    }
 }
 
 // Runs each spec of a grid under Weak and AliasWeak, at 1 and 4 workers: each run prints TLC's
@@ -3906,19 +4050,19 @@ fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
 }
 
 #[test]
-fn declines_a_violating_successor_tlc_fails_to_draw_again() {
+fn reports_a_violating_successor_tlc_fails_to_draw_again() {
     // TLC finds the violating successor of an initial state it holds by drawing on from its
     // worker's generator as the search left it (`TLCTrace.printTrace`, `Tool.getState`): where
-    // the draw differs it finds none, and throws a NullPointerException.
+    // the draw differs it finds none, and throws a NullPointerException, as TLC at d8fb231 does
+    // with -seed 0.
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC, Randomization\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x < 4 /\\ x' = x + 1 /\\ y' = RandomElement(1..1000)\nInv == y < 400\n====\n";
     let config = "INIT Init\nNEXT Next\nINVARIANT Inv\n";
     let (output, directory) = run_lowered("held-draw", spec, config);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "prove-it: not native yet: a violating successor TLC fails to find again from its generator"
-        ),
-        "{}",
-        stdout(&output)
+        text.contains("Error: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null\n2 states generated, 2 distinct states found, 0 states left on queue.\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x, y\nInit == x = 1 /\\ y = 0\nNext == x < 9 /\\ x' = x + 1 /\\ y' = RandomElement(1..2)\nInv == y < 2\n====\n";
