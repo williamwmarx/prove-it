@@ -111,6 +111,8 @@ export type NativeCheckSources =
       out: string;
       err: string;
       outcome: NativeCheckOutcome | undefined;
+      // Each file the library's check wrote, in order, which the library writes.
+      writes: { path: string; bytes: Uint8Array; isAppended: boolean }[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
@@ -478,7 +480,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 23;
+const ABI_VERSION = 24;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
