@@ -878,9 +878,11 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
     limit, and an input a back end can't read.
-- **What Prove It can't try as tlapm does:** a method with no back end in Prove It (cvc3, Cooper,
-  …), and a method whose encoder can't take the obligation (`smt can't encode …`), where tlapm
-  would try it.
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, and a method
+  whose encoder can't take the obligation (`smt can't encode …`), where tlapm would try it. tlapm
+  has no back end for Cooper either: it fails the method and warns `Cooper's method is not
+  available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
+  tlapm can't run cvc3, the error it prints holds the machine's PATH.
 - **Command lines it doesn't model:** an option outside `src/cli/options.ts`'s list,
   `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
   option without its arguments or without an integer (as OCaml's `int_of_string` reads one, with
@@ -923,6 +925,9 @@ Runs origin/main's TypeScript CLI printed as tlapm does only by chance:
 - Toolbox mode with more than one thread, where two decisions are in flight together: the
   TypeScript printed each obligation's messages in order, which tlapm does only where the results
   happen to come back in that order.
+- A method Prove It can't encode the obligation for (`smt can't encode …`) or has no back end for:
+  the TypeScript left the method out, which printed what tlapm prints only where tlapm's attempt
+  also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
 
@@ -933,13 +938,19 @@ Runs origin/main's TypeScript CLI printed as tlapm does only by chance:
   `Smtlib.pp_print_expr` writes them outside it and Z3 rejects its input
   (`scripts/tlapm-deviations.ts`). tlapm reports a failure and Prove It a proof.
 - An obligation a back end decides otherwise than tlapm's, within the same time limit, prints the
-  other status. Run with `--threads 4 --toolbox 0 0` on the 248 modules of `proofs.json` with at
-  most 120 obligations, against the statuses tlapm recorded there: 223 give every obligation
-  tlapm's status, 23 decline, and 2 differ, `parse_function_comma_args.tla` #2 above and
-  `tlapm/examples/Bakery.tla` #60, which Z3 proves in 3 s and Prove It's SMT back end doesn't
-  within the method's 60 s.
+  other status. Run with `--threads 1 --toolbox 0 0` on the 248 modules of `proofs.json` with at
+  most 120 obligations, against the statuses tlapm recorded there (measured 2026-11-12): 242 give
+  every obligation tlapm's status, 5 decline (two `smt can't encode a temporal formula`, one `smt
+  can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
+  `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
+  flight together declines in toolbox mode.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
+- tlapm writes each proof Zenon finds to the theory file (`Prep.save_result`, `Isabelle.thy_write`),
+  with Zenon's input and the command it ran on a temporary file; Prove It's theory holds
+  Isabelle's proofs alone.
+- tlapm warns, on stderr or as a toolbox warning, where it reuses a proof found with a longer time
+  limit than the method's (`Prep.already_processed`'s `success_warning`), which Prove It doesn't.
 - tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
   (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
