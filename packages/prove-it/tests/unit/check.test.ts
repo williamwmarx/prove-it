@@ -233,15 +233,14 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
-  it("declines a module that cannot be found", async () => {
-    await expectDeclined(
-      {
+  it("reports a module that cannot be found as a syntax error", async () => {
+    await expect(
+      check({
         source: "---- MODULE M ----\nEXTENDS Missing\n====",
         config: "",
         loadModule: () => undefined,
-      },
-      "the engine stopped before it searched (exit 150)",
-    );
+      }),
+    ).rejects.toThrow(TlaSyntaxError);
   });
 
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
@@ -3495,12 +3494,22 @@ describe("name resolution matches SANY", () => {
   });
   const checkSource = (source: string) => checkOnEngine(getOptions(source));
 
-  it.each(["EXTENDS Strings", "N == INSTANCE Nowhere"])(
-    "declines a spec that imports a module it cannot find: %s",
-    async (source) => {
-      await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
-    },
-  );
+  it.each([
+    ["EXTENDS Strings", "Strings"],
+    ["N == INSTANCE Nowhere", "Nowhere"],
+  ])("fails to parse a spec that imports a module it cannot find: %s", async (source, name) => {
+    await expect(checkSource(source)).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: `Cannot find source file for module ${name} imported in module M.`,
+          },
+        ],
+        true,
+      ),
+    );
+  });
 
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
