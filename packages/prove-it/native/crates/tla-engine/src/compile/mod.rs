@@ -40,8 +40,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use tla_ir::{
-    Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution,
-    TextId, Value,
+    Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Pattern,
+    Resolution, TextId, Value,
 };
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Bail, Id, Store};
@@ -73,6 +73,16 @@ const SEARCH_SLOTS: [u32; 6] = [
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
 const MAXIMUM_EXPANSION: u32 = 2000;
+/// The builtins that write a value's text, or keep a value another may write.
+const TEXT_BUILTINS: [&str; 7] = [
+    "Print",
+    "PrintT",
+    "AssertEq",
+    "ToString",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "TLCSet",
+];
 
 /// Why an expression didn't compile.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1523,9 +1533,7 @@ impl<'a> Compiler<'a> {
                             args.iter().any(|&arg| self.may_be_lazy(arg, seen))
                         }
                         "TLCEval" => self.may_be_lazy(args[0], seen),
-                        "Print" | "PrintT" => {
-                            args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen))
-                        }
+                        "Print" => args.last().is_some_and(|&arg| self.may_be_lazy(arg, seen)),
                         _ => false,
                     }
                 }
@@ -1540,6 +1548,378 @@ impl<'a> Compiler<'a> {
         };
         seen.remove(&node);
         is_lazy
+    }
+
+    // Whether an expression, through the definitions it names, may build a set of tuples,
+    // functions or records that TLC may fail to print: TLC prints one by sizing its parts in order
+    // up to one it finds empty (`SetOfTuplesValue.toString` and its siblings), and fails on a part
+    // it can't size, where the engine, having enumerated the set as TLC does to compute with it,
+    // prints what it holds. A subexpression selector, which names what it reaches by text, may
+    // reach anything.
+    fn may_hold_unsized(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        let (node, kind) = self.node(node);
+        if !seen.insert(node) {
+            return false;
+        }
+        let is_unsized = match kind {
+            // TLC sizes the factors in order and stops at an empty one.
+            NodeKind::Product(factors) => self.may_size_unsized(factors.iter().copied()),
+            // TLC takes [{} -> T] as the one function, and sizes the domain, then the range.
+            NodeKind::FunctionSet { domain, range } => {
+                !self.is_empty_as_written(*domain)
+                    && !(self.is_sized(*domain, &mut HashSet::new())
+                        && self.is_sized(*range, &mut HashSet::new()))
+            }
+            // TLC sizes the fields in the order of their names' ranks.
+            NodeKind::RecordSet(fields) => {
+                let mut fields = fields.clone();
+                fields.sort_by_key(|&(name, _)| name);
+                if fields.iter().all(|&(name, _)| name < self.ir.ranked_count) {
+                    self.may_size_unsized(fields.into_iter().map(|(_, field)| field))
+                } else {
+                    fields
+                        .iter()
+                        .any(|&(_, field)| !self.is_sized(field, &mut HashSet::new()))
+                }
+            }
+            NodeKind::Identifier(name)
+            | NodeKind::OperatorReference(name)
+            | NodeKind::Apply { name, .. }
+                if !name.is_local =>
+            {
+                matches!(name.resolution, Resolution::Definition(index)
+                    if self.may_hold_unsized(self.ir.definitions[index as usize], seen))
+            }
+            NodeKind::Subexpression(_) => true,
+            _ => false,
+        };
+        is_unsized
+            || self
+                .unsized_children(kind)
+                .into_iter()
+                .any(|child| self.may_hold_unsized(child, seen))
+    }
+
+    // Whether TLC, sizing the parts in order up to one empty as written, meets one it may fail to
+    // size.
+    fn may_size_unsized(&self, parts: impl Iterator<Item = NodeId>) -> bool {
+        parts
+            .take_while(|&part| !self.is_empty_as_written(part))
+            .any(|part| !self.is_sized(part, &mut HashSet::new()))
+    }
+
+    // Whether an expression, through the definitions it names, writes the text of a value, or
+    // keeps one another may write (`TEXT_BUILTINS`), that may be a set `may_hold_unsized` finds.
+    // `scope` holds the names bound around it, each with whether its value may hold one.
+    fn may_write_unsized(
+        &self,
+        node: NodeId,
+        scope: &mut Vec<(TextId, bool)>,
+        seen: &mut HashSet<(NodeId, Vec<bool>)>,
+    ) -> bool {
+        let kind = self.node(node).1;
+        if let NodeKind::Identifier(name)
+        | NodeKind::OperatorReference(name)
+        | NodeKind::Apply { name, .. } = kind
+            && !name.is_local
+        {
+            match name.resolution {
+                Resolution::Builtin(index) if TEXT_BUILTINS.contains(&self.builtin_name(index)) => {
+                    let NodeKind::Apply { args, .. } = kind else {
+                        return true;
+                    };
+                    if args
+                        .iter()
+                        .any(|&arg| self.reads_unsized(arg, scope, &mut HashSet::new()))
+                    {
+                        return true;
+                    }
+                }
+                Resolution::Definition(index) => {
+                    let (body, mut bound) = self.applied_definition(index, kind, scope);
+                    if seen.insert((body, bound.iter().map(|&(_, may_hold)| may_hold).collect()))
+                        && self.may_write_unsized(body, &mut bound, seen)
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if matches!(kind, NodeKind::Subexpression(_)) {
+            return true;
+        }
+        let (before, bound, after) = self.binders(kind);
+        if before
+            .iter()
+            .any(|&child| self.may_write_unsized(child, scope, seen))
+        {
+            return true;
+        }
+        let depth = scope.len();
+        scope.extend(bound);
+        let is_written = after
+            .iter()
+            .any(|&child| self.may_write_unsized(child, scope, seen));
+        scope.truncate(depth);
+        is_written
+    }
+
+    // Whether the value of an expression may hold a set `may_hold_unsized` finds: one it builds,
+    // through the definitions it names, or one a name bound around it holds (`scope`), or TLC's
+    // registers. A name `scope` doesn't hold is bound where the walk didn't see.
+    fn reads_unsized(
+        &self,
+        node: NodeId,
+        scope: &mut Vec<(TextId, bool)>,
+        seen: &mut HashSet<(NodeId, Vec<bool>)>,
+    ) -> bool {
+        if self.may_hold_unsized(node, &mut HashSet::new()) {
+            return true;
+        }
+        self.reads_unsized_name(node, scope, seen)
+    }
+
+    fn reads_unsized_name(
+        &self,
+        node: NodeId,
+        scope: &mut Vec<(TextId, bool)>,
+        seen: &mut HashSet<(NodeId, Vec<bool>)>,
+    ) -> bool {
+        let kind = self.node(node).1;
+        match kind {
+            NodeKind::Identifier(name)
+            | NodeKind::OperatorReference(name)
+            | NodeKind::Apply { name, .. } => {
+                let is_read = if name.is_local {
+                    scope
+                        .iter()
+                        .rev()
+                        .find(|(bound, _)| *bound == name.text)
+                        .is_none_or(|&(_, may_hold)| may_hold)
+                } else {
+                    match name.resolution {
+                        Resolution::Builtin(index) => self.builtin_name(index) == "TLCGet",
+                        Resolution::Definition(index) => {
+                            let (body, mut bound) = self.applied_definition(index, kind, scope);
+                            seen.insert((
+                                body,
+                                bound.iter().map(|&(_, may_hold)| may_hold).collect(),
+                            )) && self.reads_unsized_name(body, &mut bound, seen)
+                        }
+                        _ => false,
+                    }
+                };
+                if is_read {
+                    return true;
+                }
+            }
+            NodeKind::Subexpression(_) => return true,
+            _ => {}
+        }
+        let (before, bound, after) = self.binders(kind);
+        if before
+            .iter()
+            .any(|&child| self.reads_unsized_name(child, scope, seen))
+        {
+            return true;
+        }
+        let depth = scope.len();
+        scope.extend(bound);
+        let is_read = after
+            .iter()
+            .any(|&child| self.reads_unsized_name(child, scope, seen));
+        scope.truncate(depth);
+        is_read
+    }
+
+    // What a definition an expression names evaluates, and its parameters, each with whether its
+    // value may hold a set `may_hold_unsized` finds: the argument's, where the expression applies
+    // the definition to arguments in `scope`. A definition passed by name may be applied to
+    // anything.
+    fn applied_definition(
+        &self,
+        index: Index,
+        kind: &NodeKind,
+        scope: &mut Vec<(TextId, bool)>,
+    ) -> (NodeId, Vec<(TextId, bool)>) {
+        let node = self.ir.definitions[index as usize];
+        let definition = self.definition(node);
+        let DefinitionForm::Operator(params) = &definition.form else {
+            return (node, Vec::new());
+        };
+        let args: &[NodeId] = match kind {
+            NodeKind::Apply { args, .. } => args,
+            _ => &[],
+        };
+        let bound = params
+            .iter()
+            .enumerate()
+            .map(|(position, param)| {
+                let may_hold = args
+                    .get(position)
+                    .is_none_or(|&arg| self.reads_unsized(arg, scope, &mut HashSet::new()));
+                (param.name, may_hold)
+            })
+            .collect();
+        (definition.body, bound)
+    }
+
+    // The expressions an expression holds: those evaluated before the names it binds, the names,
+    // each with whether its value may hold a set `may_hold_unsized` finds (a parameter's may hold
+    // anything), and those evaluated where the names are bound.
+    fn binders(&self, kind: &NodeKind) -> (Vec<NodeId>, Vec<(TextId, bool)>, Vec<NodeId>) {
+        let names = |pattern: &Pattern, set: Option<NodeId>| {
+            let may_hold = set.is_none_or(|set| self.may_hold_unsized(set, &mut HashSet::new()));
+            match pattern {
+                Pattern::Name(name) => vec![(*name, may_hold)],
+                Pattern::Tuple(names) => names.iter().map(|&name| (name, may_hold)).collect(),
+            }
+        };
+        let bounds_names = |bounds: &[Bound]| -> Vec<(TextId, bool)> {
+            bounds
+                .iter()
+                .flat_map(|bound| names(&bound.pattern, Some(bound.set)))
+                .collect()
+        };
+        let sets = |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect();
+        match kind {
+            NodeKind::Definition(definition) => match &definition.form {
+                DefinitionForm::Operator(params) => (
+                    Vec::new(),
+                    params.iter().map(|param| (param.name, true)).collect(),
+                    vec![definition.body],
+                ),
+                DefinitionForm::Function(bounds) => {
+                    (sets(bounds), bounds_names(bounds), vec![definition.body])
+                }
+            },
+            NodeKind::Let {
+                definitions, body, ..
+            } => (
+                Vec::new(),
+                definitions
+                    .iter()
+                    .filter_map(|&definition| match self.node(definition).1 {
+                        NodeKind::Definition(named) => Some((
+                            named.name,
+                            self.may_hold_unsized(definition, &mut HashSet::new()),
+                        )),
+                        _ => None,
+                    })
+                    .collect(),
+                definitions.iter().copied().chain([*body]).collect(),
+            ),
+            NodeKind::Forall { bounds, body }
+            | NodeKind::Exists { bounds, body }
+            | NodeKind::FunctionConstruction { bounds, body, .. } => {
+                (sets(bounds), bounds_names(bounds), vec![*body])
+            }
+            NodeKind::SetMap { expression, bounds } => {
+                (sets(bounds), bounds_names(bounds), vec![*expression])
+            }
+            NodeKind::SetFilter { bound, predicate } => (
+                vec![bound.set],
+                names(&bound.pattern, Some(bound.set)),
+                vec![*predicate],
+            ),
+            NodeKind::Choose { pattern, set, body } => (
+                set.iter().copied().collect(),
+                names(pattern, *set),
+                vec![*body],
+            ),
+            NodeKind::UnboundedQuantifier { names, body, .. } => (
+                Vec::new(),
+                names.iter().map(|&name| (name, true)).collect(),
+                vec![*body],
+            ),
+            NodeKind::Lambda { params, body } => (
+                Vec::new(),
+                params.iter().map(|&name| (name, true)).collect(),
+                vec![*body],
+            ),
+            _ => (kind.children(), Vec::new(), Vec::new()),
+        }
+    }
+
+    // The expressions an expression holds, the set a filter ranges over among them.
+    fn unsized_children(&self, kind: &NodeKind) -> Vec<NodeId> {
+        let mut children = kind.children();
+        if let NodeKind::SetFilter { bound, .. } = kind {
+            children.push(bound.set);
+        }
+        children
+    }
+
+    // Whether TLC sizes a set without failing, as it does to print a set the set is a part of, and
+    // the engine prints that set as TLC does: an enumeration, an interval or BOOLEAN, or a set TLC
+    // builds of such sets, which it enumerates to size. `seen` holds the definitions being looked
+    // through, one met again being a recursion.
+    fn is_sized(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        let (node, kind) = self.node(node);
+        if !seen.insert(node) {
+            return false;
+        }
+        // The sets it is sized by sizing, or none where it isn't sized.
+        let parts = match kind {
+            NodeKind::SetEnumeration(_) => Some(Vec::new()),
+            NodeKind::Label { body, .. } => Some(vec![*body]),
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => Some(vec![*consequent, *alternative]),
+            NodeKind::Product(parts) => Some(parts.clone()),
+            NodeKind::FunctionSet { domain, range } => Some(vec![*domain, *range]),
+            NodeKind::RecordSet(fields) => Some(fields.iter().map(|&(_, field)| field).collect()),
+            NodeKind::SetFilter { bound, .. } => Some(vec![bound.set]),
+            NodeKind::SetMap { bounds, .. } => Some(bounds.iter().map(|bound| bound.set).collect()),
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => {
+                    (self.builtin_name(index) == "BOOLEAN").then(Vec::new)
+                }
+                Resolution::Definition(index) => {
+                    let definition = self.definition(self.ir.definitions[index as usize]);
+                    matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                        .then(|| vec![definition.body])
+                }
+                _ => None,
+            },
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => match (self.builtin_name(index), args.as_slice()) {
+                    ("..", [_, _]) => Some(Vec::new()),
+                    ("SUBSET", [_]) | ("\\cup" | "\\cap" | "\\", [_, _]) => Some(args.clone()),
+                    ("UNION", &[sets]) => match self.node(sets).1 {
+                        NodeKind::SetEnumeration(sets) => Some(sets.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        let is_sized =
+            parts.is_some_and(|parts| parts.iter().all(|&part| self.is_sized(part, seen)));
+        seen.remove(&node);
+        is_sized
+    }
+
+    // Whether a set is empty as written: `{}`, or an interval of numerals down.
+    fn is_empty_as_written(&self, node: NodeId) -> bool {
+        match self.node(node).1 {
+            NodeKind::SetEnumeration(elements) => elements.is_empty(),
+            NodeKind::Apply { name, args } if !name.is_local => {
+                let is_interval = matches!(name.resolution,
+                    Resolution::Builtin(index) if self.builtin_name(index) == "..");
+                is_interval
+                    && matches!(args.as_slice(), &[low, high] if matches!(
+                        (self.node(low).1, self.node(high).1),
+                        (NodeKind::Number(low), NodeKind::Number(high)) if low > high
+                    ))
+            }
+            _ => false,
+        }
     }
 
     fn builtin_name(&self, index: Index) -> &'a str {
@@ -1941,6 +2321,11 @@ impl<'a> Compiler<'a> {
             || self.may_be_lazy(definition.body, &mut HashSet::new())
         {
             return unsupported("a value TLC computed at startup with effects");
+        }
+        if self.may_hold_unsized(definition.body, &mut HashSet::new())
+            && self.may_write_unsized(definition.body, &mut Vec::new(), &mut HashSet::new())
+        {
+            return unsupported("a set TLC may fail to print, at startup");
         }
         if context.is_expanding(node) {
             return unsupported("a recursive zero-arity definition");
