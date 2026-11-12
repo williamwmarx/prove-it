@@ -615,6 +615,13 @@ Checks the binary answered and now declines, because the answer matched TLC only
   of strings the search made`), and the library's tests assert TLC's output through the interpreter.
   Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
   every successor and every expression in TLC's order, which a later change would have to show.
+- **Live progress during a native check.** The native check reports `onProgress`'s events once it
+  ends, where the TypeScript check reported them as the search reached them. Live delivery would
+  take a callback the check calls as the printer prints: a threadsafe function in the napi binding,
+  since the check runs on its own thread, and an import in the WebAssembly binding. `checkSources`
+  reruns the check from the start each round it needs another file, so the events of a round may
+  go out only once it is the last: the library would hold them until the check returns without
+  asking for more, or the check would ask for every file before it searches.
 
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
@@ -689,9 +696,15 @@ no full `tlc-stdout`. Recording them is deferred.
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
-- **Native progress events (a blocker for S4).** `check` hands a call with `onProgress` to the
-  TypeScript check, since the native check reports none of the points of the search at which TLC
-  prints a message. It must report them, in `CheckProgress`'s shape, before the interpreter goes.
+- **Native progress events (done).** The native check records each message TLC prints, with its
+  code and its place among the spec's prints, and `check` turns them into `CheckProgress` events
+  (`src/native-progress.ts`), which it reports once the check ends. On the first 300 corpus models
+  the native check answers, the events and their order equal the TypeScript check's, but for the
+  search's periodic progress and periodic liveness checks, which TLC times by the clock. What the
+  printer can't supply: `liveness-initializing` without a warning takes `isSymmetric` and
+  `isConstrained` from the configuration, where the interpreter drops a constraint that is a true
+  constant formula first; and the search's statistics carry their four counts, which the
+  TypeScript check's events now narrow to as well.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the

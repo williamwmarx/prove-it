@@ -112,6 +112,9 @@ export interface NativeCheckOutcome {
   prints: string[];
   // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
   sanyWarnings: string[];
+  // TLC's messages as the check printed them: each one's code, level and text, and how many of
+  // `prints` came before it.
+  messages: [code: number, level: number, text: string, printsBefore: number][];
   violations: {
     code: number;
     headline: string;
@@ -392,7 +395,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 19;
+const ABI_VERSION = 22;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

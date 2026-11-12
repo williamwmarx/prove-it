@@ -19,6 +19,16 @@ pub struct Outcome {
     /// didn't print SANY's report.
     pub sany_warnings: Vec<String>,
     pub violations: Vec<Reported>,
+    /// TLC's messages as the check printed them, the library's progress events: each one's code,
+    /// level and text, and how many of `prints` came before it.
+    pub messages: Vec<Message>,
+}
+
+pub struct Message {
+    pub code: u32,
+    pub level: u8,
+    pub text: String,
+    pub prints_before: usize,
 }
 
 #[derive(Clone, Copy, Default)]

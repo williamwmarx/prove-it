@@ -47,6 +47,23 @@ export const checkNatively = (options: CheckOptions): Promise<NativeCheck> => {
   return checked;
 };
 
+// The TypeScript check's result, where a test asserts what only it reports so far:
+// PROVE_IT_ENGINE=0 asks for it, and is global too, so the call waits its turn.
+export const checkWithInterpreter = (options: CheckOptions): Promise<CheckResult> => {
+  const checked = queue.then(async () => {
+    const setting = process.env.PROVE_IT_ENGINE;
+    process.env.PROVE_IT_ENGINE = "0";
+    try {
+      return await check(options);
+    } finally {
+      if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
+      else process.env.PROVE_IT_ENGINE = setting;
+    }
+  });
+  queue = checked.catch(() => undefined);
+  return checked;
+};
+
 // TLC's report of an assumption that fails to evaluate, whose text starts at column 8 of `line`.
 export const getAssumptionFailure = (line: number, assumption: string, message: string) => {
   const lines = assumption.split("\n");

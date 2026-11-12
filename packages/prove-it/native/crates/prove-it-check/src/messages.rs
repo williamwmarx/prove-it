@@ -209,6 +209,14 @@ impl<'o> Printer<'o> {
         if is_warning && !self.warnings.insert(message.clone()) {
             return;
         }
+        if self.host.is_plain() {
+            self.outcome.messages.push(crate::outcome::Message {
+                code,
+                level: level as u8,
+                text: text.to_string(),
+                prints_before: self.outcome.prints.len(),
+            });
+        }
         self.line(&message);
     }
 

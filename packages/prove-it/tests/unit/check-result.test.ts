@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check, type CheckResult } from "../../src";
+import { checkNatively, checkWithInterpreter } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -193,13 +194,12 @@ describe("check's result", () => {
 
   // TLC at d8fb231 prints a function it keeps lazy, and fails to apply, as its lazy text. The
   // native check prints the ALIAS's error in its place, which isn't TLC's, so only the TypeScript
-  // check, which onProgress asks for, is checked here until the trace printer follows TLC.
+  // check is checked here until the trace printer follows TLC.
   it("carries a lazy function that fails to apply as its lazy text", async () => {
-    const result = await check({
+    const result = await checkWithInterpreter({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nf[i \\in 1..1] == IF i = 1 THEN 1 \\div 0 ELSE f[i]\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, f |-> f]\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-      onProgress: () => {},
     });
     const text = "[i \\in 1..1 |-> <expression line 4, col 18 to line 4, col 49 of module M>]";
     expect(result.violations.map((violation) => violation.states)).toEqual([
@@ -213,14 +213,13 @@ describe("check's result", () => {
 
   // TLC at d8fb231 reports the violation, fails to print its first state, whose ALIAS holds a set
   // it can't normalize, and reports the exception with no states. The native check prints the
-  // whole trace, which isn't TLC's, so only the TypeScript check, which onProgress asks for, is
-  // checked here until the trace printer follows TLC.
+  // whole trace, which isn't TLC's, so only the TypeScript check is checked here until the trace
+  // printer follows TLC.
   it("reports the exception TLC raises printing a state, after the states it printed", async () => {
-    const result = await check({
+    const result = await checkWithInterpreter({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, v |-> {1, TRUE}]\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-      onProgress: () => {},
     });
     expect([result.status, result.violations]).toEqual([
       "invariant-violation",
@@ -363,9 +362,40 @@ describe("check's result", () => {
     expect(entries.filter((entry) => entry.module === "Helper").length).toBeGreaterThan(0);
   });
 
-  it("reports each violation -continue goes on past, through the TypeScript check", async () => {
+  // The native check reports the events once it ends, the TypeScript check as it goes; both in
+  // the same order among what the spec prints. The search's periodic progress depends on the time.
+  it.each([
+    [
+      "VARIABLE x\nInit == x \\in 0..20 /\\ PrintT(x = 0)\nNext == x' = (x + 1) % 21\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 0)\nSafe == x < 21\nP == x >= 0",
+      "SPECIFICATION Spec\nPROPERTY Live\nPROPERTY P\nINVARIANT Safe",
+    ],
+    [
+      'VARIABLE x\nInit == x = 0\nNext == x\' = [x EXCEPT !["c"] = 1]\nC == TRUE',
+      "INIT Init\nNEXT Next\nINVARIANT C",
+    ],
+  ])("reports the progress the TypeScript check reports, in order: %s", async (body, config) => {
+    const source = `---- MODULE M ----\nEXTENDS Naturals, TLC\n${body}\n====`;
+    const run = async (checker: typeof check) => {
+      const reported: unknown[] = [];
+      await checker({
+        source,
+        config,
+        onPrint: (text) => reported.push(text),
+        onProgress: (progress) => {
+          if (progress.kind !== "progress") reported.push(progress);
+        },
+      });
+      return reported;
+    };
+    const reference = await run(checkWithInterpreter);
+    const native = await checkNatively({ source, config, onProgress: () => {} });
+    expect(native.declined).toBeUndefined();
+    expect(await run(check)).toEqual(reference);
+  });
+
+  it("reports each violation -continue goes on past", async () => {
     const reported: string[] = [];
-    const result = await check({
+    const checked = await checkNatively({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x # 1 /\\ x # 2\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
@@ -374,6 +404,8 @@ describe("check's result", () => {
         if (progress.kind === "violation") reported.push(progress.violation.headline);
       },
     });
+    expect(checked.declined).toBeUndefined();
+    const result = checked.result;
     expect(reported).toEqual(["Invariant Inv is violated.", "Invariant Inv is violated."]);
     expect(
       result.violations.map((violation) =>

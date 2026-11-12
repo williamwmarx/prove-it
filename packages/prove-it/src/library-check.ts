@@ -3,7 +3,7 @@
 // files. Where it declines the model, or the options ask for what only the TypeScript check does,
 // the TypeScript check checks it and its result converts.
 
-import type { CheckOptions as SearchOptions } from "./check";
+import type { CheckOptions as SearchOptions, SearchStatistics } from "./check";
 import {
   type CheckProgress,
   type CheckResult,
@@ -12,13 +12,15 @@ import {
   toContinuedViolation,
   type Violation,
 } from "./check-result";
+import { parseConfig } from "./config";
 import { checkAllSources, getNativeAddon, loadWasmEngine } from "./engine/native";
 import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "./engine/settings";
+import { getNativeProgress } from "./native-progress";
 import { checkUnlogged, logCheck } from "./parallel";
 
 export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
-  // Reports the points of the search at which TLC prints a message. Only the TypeScript check
-  // reports them as it goes, so the check takes this path where it's given.
+  // Reports the points of the search at which TLC prints a message. The native check reports them
+  // once it ends, in order among what the spec printed; the TypeScript check, as it goes.
   onProgress?: (progress: CheckProgress) => void;
 }
 
@@ -36,7 +38,6 @@ const getDeclined = (options: CheckOptions) =>
       [options.version === "1.7.4", "TLC 1.7.4"],
       [options.dump !== undefined, "-dump"],
       [options.systemProperties !== undefined, "system properties"],
-      [options.onProgress !== undefined, "onProgress"],
       [options.onPause !== undefined, "onPause"],
     ] as const
   ).find((entry) => entry[0])?.[1];
@@ -115,9 +116,33 @@ const checkWithEngine = (options: CheckOptions) => {
   const print = options.onPrint ?? console.log;
   // The TypeScript check prints SANY's warnings as it links the spec, where the caller didn't.
   if (!options.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
-  result.outcome.prints.forEach((text) => print(text));
-  return fromNativeOutcome(result.outcome);
+  const prints = result.outcome.prints;
+  const checked = fromNativeOutcome(result.outcome);
+  const onProgress = options.onProgress;
+  const events = onProgress
+    ? getNativeProgress(
+        result.outcome,
+        checked.violations,
+        parseConfig(config),
+        options.isContinued ?? false,
+      )
+    : [];
+  let printed = 0;
+  events.forEach((event) => {
+    prints.slice(printed, event.printsBefore).forEach((text) => print(text));
+    printed = Math.max(printed, event.printsBefore);
+    onProgress?.(event.progress);
+  });
+  prints.slice(printed).forEach((text) => print(text));
+  return checked;
 };
+
+const toStatistics = (statistics: SearchStatistics): SearchStatistics => ({
+  generatedStates: statistics.generatedStates,
+  distinctStates: statistics.distinctStates,
+  queuedStates: statistics.queuedStates,
+  depth: statistics.depth,
+});
 
 // What the TypeScript check finds, converted. With -continue it reports each violation it goes on
 // past as it finds it.
@@ -131,6 +156,11 @@ const checkWithInterpreter = async (options: CheckOptions) => {
     onProgress:
       onProgress || options.isContinued
         ? (progress) => {
+            // The search's statistics are its whole result so far, of which the event carries
+            // the counts.
+            if (progress.kind === "progress" || progress.kind === "liveness-started") {
+              return onProgress?.({ ...progress, statistics: toStatistics(progress.statistics) });
+            }
             if (progress.kind !== "violation") return onProgress?.(progress);
             const reported = toContinuedViolation(
               progress.status,
