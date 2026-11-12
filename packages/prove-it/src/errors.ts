@@ -265,6 +265,18 @@ export class EngineUnavailableError extends Error {
   }
 }
 
+// The engine as WebAssembly runs on the host's call stack, so it stops a recursion deeper than that
+// stack holds (MAXIMUM_RECURSION in machine.rs), or traps where a deeper frame exhausts it. check
+// doesn't search again with a slower engine unasked: the addon and the binary recurse further.
+export class WebAssemblyStackError extends Error {
+  constructor() {
+    super(
+      "The WebAssembly engine ran out of stack: the spec recurses or nests deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls, or set PROVE_IT_ENGINE=0 to check with the interpreter.",
+    );
+    this.name = "WebAssemblyStackError";
+  }
+}
+
 // A file the build puts beside the bundle, such as a worker's entry or SANY's snapshot of the
 // standard modules, isn't there: the build left it out, or put it where the bundle doesn't look.
 // index.ts doesn't export it.
