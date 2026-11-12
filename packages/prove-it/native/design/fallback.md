@@ -401,15 +401,18 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
   path rather than its name; and options TLC doesn't know, which it rejects.
 
 `prove-it tlapm` declines a module file with a byte that isn't UTF-8 where it reaches what the
-obligations are read from (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and
-read with U+FFFD for each such byte, two different strings would be one and a theorem that they are
-equal proved. The lexer the obligations are read with judges it: each such byte reads as a character
-the file doesn't hold, and the CLI declines where a token, the lexer's error or a pragma's
-`(*{ }*)` holds one. Elsewhere, before the first module's header, in a comment or past the module's
-end, it reads as a U+FFFD of its own, so that columns count it as tlapm's, which count bytes, do.
-That lexer ends a `\*` comment at a line feed alone, where tlapm's ends it at a carriage return too,
-so after a bare carriage return in a `\*` comment the rest of the line is a comment to tla-ts and
-tokens to tlapm.
+obligations hold (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
+with U+FFFD for each such byte, two different strings would be one and a theorem that they are equal
+proved. Each such byte value reads as a private-use character of its own, which no module read
+holds, one character for one byte so that columns count it as tlapm's, which count bytes, do, and a
+run declines where one is held by the obligations, a warning or an error. Elsewhere, as in a
+comment, before the module's header or past its end, it changes nothing printed or proved.
+
+Declines to win back: the obligations hold more than they print or prove, such as the theorems of
+an extended module, so a byte that isn't UTF-8 in a string there declines, where reading it as
+U+FFFD printed what tlapm prints only because nothing read it. tla-ts's lexer ends a `\*` comment at a line feed
+alone, where tlapm's ends it at a carriage return too, so after a bare carriage return in a `\*`
+comment the rest of the line is a comment to tla-ts and tokens to tlapm, with or without such bytes.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT

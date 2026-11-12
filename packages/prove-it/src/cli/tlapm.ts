@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 
 import { TlaProofError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
-import { type Token, tokenize } from "../lexer";
 import {
   formatSummary,
   getObligations,
@@ -15,7 +14,6 @@ import {
 import { getAtPrefix, getLocusText } from "../obligations/expression";
 import { format, renderDoc } from "../obligations/format";
 import type { LineRange } from "../obligations/generate";
-import { findPragma } from "../obligations/pragma";
 import { printSequent } from "../obligations/printer";
 import {
   encodeProofTheory,
@@ -110,6 +108,7 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   try {
     return generate();
   } catch (error) {
+    declineHeldNotUtf8([error instanceof Error ? error.message : String(error), error]);
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
     return undefined;
@@ -244,18 +243,48 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 };
 
 // tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
-// strings would be one, and a theorem that they are equal proved. So each such byte reads as a
-// character the file doesn't hold, and where the lexer the obligations are read with puts one in a
-// token, or a pragma the obligations read holds one, it declines; elsewhere, as in a comment or past the module's end,
-// each reads as a U+FFFD of its own, so that a column counts it once, as tlapm's, which count bytes,
-// do.
+// strings would be one, and a theorem that they are equal proved. So each such byte value reads as a
+// private-use character of its own, which no module read holds, one character for one byte, so
+// that columns count it once, as tlapm's, which count bytes, do; and a run declines where one
+// reaches what the obligations hold, a warning or an error. Elsewhere, as in a comment, it can't
+// change what is printed or proved.
 class NotUtf8Error extends Error {
   constructor(readonly path: string) {
     super(`a byte that isn't UTF-8 outside a comment in ${path}`);
   }
 }
 
-const decodeEach = (bytes: Uint8Array, replacement: string) => {
+const notUtf8 = {
+  texts: [] as string[],
+  paths: new Map<string, string>(),
+};
+
+const findNotUtf8 = (text: string) => {
+  for (const character of text) {
+    const path = notUtf8.paths.get(character);
+    if (path !== undefined) return path;
+  }
+  return undefined;
+};
+
+const allocateMarker = (bytes: Buffer, path: string) => {
+  for (let code = 0xe000; code <= 0xf8ff; code++) {
+    const marker = String.fromCharCode(code);
+    if (
+      notUtf8.paths.has(marker) ||
+      notUtf8.texts.some((text) => text.includes(marker)) ||
+      bytes.includes(Buffer.from(marker))
+    )
+      continue;
+    notUtf8.paths.set(marker, path);
+    return marker;
+  }
+  throw new NotUtf8Error(path);
+};
+
+const readModule = (path: string) => {
+  const bytes = readFileSync(path);
+  const markers = new Map<number, string>();
   const parts: string[] = [];
   let start = 0;
   for (let index = 0; index < bytes.length;) {
@@ -264,52 +293,41 @@ const decodeEach = (bytes: Uint8Array, replacement: string) => {
       index += length;
       continue;
     }
-    parts.push(Buffer.from(bytes.subarray(start, index)).toString("utf8"), replacement);
+    if (!markers.has(bytes[index])) markers.set(bytes[index], allocateMarker(bytes, path));
+    parts.push(bytes.toString("utf8", start, index), markers.get(bytes[index]) ?? "");
     start = ++index;
   }
-  parts.push(Buffer.from(bytes.subarray(start)).toString("utf8"));
-  return parts.join("");
+  parts.push(bytes.toString("utf8", start));
+  const text = parts.join("");
+  const ownMarkers = new Set(markers.values());
+  if ([...text].some((character) => notUtf8.paths.has(character) && !ownMarkers.has(character)))
+    throw new NotUtf8Error(path);
+  notUtf8.texts.push(text);
+  return text;
 };
 
-// Whether a pragma holds the sentinel: the obligations read one where it opens after a token, past
-// blanks and line ends (findPragma), up to its `}*)`.
-const isInPragma = (lines: string[], tokens: Token[], sentinel: string) =>
-  tokens.some((token) => {
-    if (token.kind === "ModuleEnd" || token.kind === "End") return false;
-    const open = findPragma(lines, { line: token.line - 1, column: token.endColumn });
-    if (open === undefined) return false;
-    for (let index = open.line; index < lines.length; index++) {
-      const start = index === open.line ? open.column : 0;
-      const close = lines[index].indexOf("}*)", start);
-      if (lines[index].slice(start, close === -1 ? undefined : close).includes(sentinel))
-        return true;
-      if (close !== -1) return false;
-    }
-    return false;
-  });
-
-const readModule = (path: string) => {
-  const bytes = readFileSync(path);
-  const text = decodeEach(bytes, "\uFFFD");
-  if (!text.includes("\uFFFD")) return text;
-  let code = 0xe000;
-  while (text.includes(String.fromCharCode(code))) code++;
-  const sentinel = String.fromCharCode(code);
-  const judged = decodeEach(bytes, sentinel);
-  if (judged === text) return text;
-  let tokens: Token[];
-  try {
-    tokens = tokenize(judged);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes(sentinel)) throw new NotUtf8Error(path);
-    return text;
+// The module a marker of findNotUtf8 comes from, wherever one is held.
+const findHeldNotUtf8 = (value: unknown, seen = new WeakSet<object>()): string | undefined => {
+  if (typeof value === "string") return findNotUtf8(value);
+  if (typeof value !== "object" || value === null || seen.has(value)) return undefined;
+  seen.add(value);
+  const values =
+    value instanceof Map
+      ? [...value.keys(), ...value.values()]
+      : value instanceof Set
+        ? [...value]
+        : Object.values(value);
+  for (const held of values) {
+    const path = findHeldNotUtf8(held, seen);
+    if (path !== undefined) return path;
   }
-  if (
-    tokens.some((token) => `${token.text}${token.spelling ?? ""}`.includes(sentinel)) ||
-    isInPragma(judged.split("\n"), tokens, sentinel)
-  )
-    throw new NotUtf8Error(path);
-  return text;
+  return undefined;
+};
+
+const declineHeldNotUtf8 = (value: unknown) => {
+  if (notUtf8.paths.size === 0) return;
+  const path = findHeldNotUtf8(value);
+  if (path !== undefined) throw new NotUtf8Error(path);
 };
 
 export const runTlapm = async (args: string[]) => {
@@ -395,6 +413,7 @@ const runTlapmOrDecline = async (args: string[]) => {
       {
         lines,
         onWarning: (warning) => {
+          declineHeldNotUtf8(warning);
           if (warning.channel === "stdout") return console.log(warning.text);
           const isToolboxMessage =
             warning.channel === "toolbox" || warning.channel === "toolboxOnly";
@@ -405,6 +424,7 @@ const runTlapmOrDecline = async (args: string[]) => {
       },
     );
   });
+  declineHeldNotUtf8(modules);
   if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
