@@ -26,4 +26,17 @@ describe("check", () => {
     expect(nativeCheck.distinctStates).toBe(4);
     expect(console.error).toBe(report);
   });
+
+  // The library's check writes no trace exploration spec unless it is asked to, so it answers a
+  // violation of several states on Windows too, where the binary declines to print that spec's path.
+  it("answers a violation of several states without a trace exploration spec", async () => {
+    const result = await checkOnEngine({
+      source: getSource("Init == x = 0\nNext == x' = x + 1\nInv == x < 2"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([
+      result.status,
+      result.violations[0]?.states.map((step) => step.variables.x?.value),
+    ]).toEqual<unknown[]>(["invariant-violation", [0, 1, 2]]);
+  });
 });

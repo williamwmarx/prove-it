@@ -304,9 +304,8 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
 #[test]
 fn finds_specs_modules_and_overrides_as_tlc_does() {
     for case in CASES {
-        // Windows has no /dev/null to link a module to.
-        if cfg!(windows) && case.name == "module-device" {
-            eprintln!("module-device: not run, as Windows has no /dev/null");
+        // A link to /dev/null, which exists only on Unix.
+        if !cfg!(unix) && case.name == "module-device" {
             continue;
         }
         let created = std::env::temp_dir().join(format!(
