@@ -6,7 +6,8 @@
 //!   `{ id, location, kind, text, methods }`, every result's in order, a submodule's before the
 //!   module that contains it. `kind` is `Main`, `Support`, `Error` or `Omitted`, and `methods` the
 //!   methods Prep tries, each `{ prover, timeLimitMs }`, or the error that stops it. `encode` holds
-//!   `[id, prover]` pairs, and `encodings` the text each backend receives for each, as `prove`
+//!   `[index, prover]` pairs, each an obligation's place in `obligations`, as a submodule's ids
+//!   start again at 1, and `encodings` the text each backend receives for each, as `prove`
 //!   would send it, or the error that stops it: `{ kind: "text", text }` or an error. They are
 //!   encoded in turn in one run, so that the SMT encoder counts its CASE errors across them;
 //! - `fingerprint(file, source, known)` returns `{ kind: "fingerprints", fingerprints }`, each
@@ -56,11 +57,10 @@ pub fn obligations(arguments: &[HostValue]) -> HookResult {
         let mut session = EncodingSession::default();
         let encodings = requests
             .iter()
-            .map(|(id, prover)| {
+            .map(|(index, prover)| {
                 let obligation = obligations
-                    .iter()
-                    .find(|obligation| obligation.id == *id)
-                    .ok_or_else(|| format!("there is no obligation {id} to encode"))?;
+                    .get(*index)
+                    .ok_or_else(|| format!("there is no obligation at {index} to encode"))?;
                 Ok(match encode_for_backend(obligation, prover, &mut session) {
                     Ok(text) => HostValue::Object(vec![
                         ("kind", HostValue::text("text")),
@@ -114,7 +114,7 @@ pub fn fingerprint(arguments: &[HostValue]) -> HookResult {
     })
 }
 
-// The `[id, prover]` pairs to encode.
+// The `[index, prover]` pairs to encode.
 fn get_requests(encode: &HostValue) -> Result<Vec<(usize, String)>, String> {
     let wrong = || "what to encode must be an array of [id, prover] pairs".to_owned();
     let HostValue::Array(pairs) = encode else {
@@ -124,8 +124,8 @@ fn get_requests(encode: &HostValue) -> Result<Vec<(usize, String)>, String> {
         .iter()
         .map(|pair| match pair {
             HostValue::Array(pair) => match pair.as_slice() {
-                [HostValue::Number(id), prover] if *id >= 0.0 && id.fract() == 0.0 => {
-                    Ok((*id as usize, get_text(prover, "a prover")?))
+                [HostValue::Number(index), prover] if *index >= 0.0 && index.fract() == 0.0 => {
+                    Ok((*index as usize, get_text(prover, "a prover")?))
                 }
                 _ => Err(wrong()),
             },

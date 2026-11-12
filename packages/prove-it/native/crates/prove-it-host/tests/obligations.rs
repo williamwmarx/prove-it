@@ -69,8 +69,8 @@ fn get_obligations(
     let encode = HostValue::Array(
         encode
             .iter()
-            .map(|(id, prover)| {
-                HostValue::Array(vec![HostValue::Number(*id), HostValue::text(prover)])
+            .map(|(index, prover)| {
+                HostValue::Array(vec![HostValue::Number(*index), HostValue::text(prover)])
             })
             .collect(),
     );
@@ -136,16 +136,19 @@ fn counts_the_case_errors_across_the_encodings() {
             .map(|encoding| text(&get(encoding, "text")))
             .collect::<Vec<_>>()
     };
-    let twice = encode(&[(1.0, "smt"), (1.0, "smt")]);
-    assert_eq!(twice[0], encode(&[(1.0, "smt")])[0]);
+    let twice = encode(&[(0.0, "smt"), (0.0, "smt")]);
+    assert_eq!(twice[0], encode(&[(0.0, "smt")])[0]);
     assert_ne!(twice[0], twice[1]);
 }
+
+// Where MAIN's Zenon obligation is among its obligations.
+const ZENON_INDEX: f64 = 2.0;
 
 #[test]
 fn encodes_each_obligation_asked_for_in_turn() {
     let (result, _) = get_obligations(
         MAIN,
-        &[(3.0, "zenon"), (1.0, "smt"), (1.0, "cvc4")],
+        &[(ZENON_INDEX, "zenon"), (0.0, "smt"), (0.0, "cvc4")],
         read_library,
     );
     let encodings = items(&get(&result, "encodings"));
@@ -169,7 +172,10 @@ fn refuses_an_obligation_it_does_not_have() {
             HostValue::text("smt"),
         ])]),
     ]);
-    assert_eq!(result, Err("there is no obligation 1 to encode".to_owned()));
+    assert_eq!(
+        result,
+        Err("there is no obligation at 1 to encode".to_owned())
+    );
 }
 
 // An error names the file the module came from.
@@ -206,4 +212,35 @@ fn fingerprints_each_obligation() {
     let first = text(&get(&fingerprints[0], "fingerprint"));
     assert_eq!(first.len(), 32);
     assert_eq!(first, text(&get(&fingerprints[1], "fingerprint")));
+}
+
+// A submodule's own result comes first, its ids starting at 1, so id 1 is its theorem there and the
+// module's first theorem in the module's result: an obligation is asked for by its place.
+#[test]
+fn encodes_the_obligation_at_its_place_where_ids_repeat() {
+    let source = "---- MODULE Main ----\nEXTENDS Naturals, TLAPS\nTHEOREM 3 = 3 BY Zenon\n---- MODULE Inner ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 = 1 BY Zenon\n====\nTHEOREM 2 = 2 BY Zenon\n====\n";
+    let (result, _) = get_obligations(source, &[], |_| None);
+    let obligations = items(&get(&result, "obligations"));
+    let ids = obligations
+        .iter()
+        .map(|obligation| get(obligation, "id"))
+        .collect::<Vec<_>>();
+    let places = (0..obligations.len())
+        .map(|index| (index as f64, "zenon"))
+        .collect::<Vec<_>>();
+    let (encoded, _) = get_obligations(source, &places, |_| None);
+    let texts = items(&get(&encoded, "encodings"))
+        .iter()
+        .map(|encoding| text(&get(encoding, "text")))
+        .collect::<Vec<_>>();
+    let first = ids
+        .iter()
+        .position(|id| *id == HostValue::Number(1.0))
+        .expect("an obligation 1");
+    let last = ids
+        .iter()
+        .rposition(|id| *id == HostValue::Number(1.0))
+        .expect("an obligation 1");
+    assert_ne!(first, last);
+    assert_ne!(texts[first], texts[last]);
 }

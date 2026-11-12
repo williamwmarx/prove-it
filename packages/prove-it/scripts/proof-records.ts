@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import type { NativeObligation } from "../src/engine/native";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules, getOption } from "./corpora";
-import { getObligations } from "./native-prover";
+import { getObligationIndex, getObligations } from "./native-prover";
 import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
@@ -169,18 +169,21 @@ export const getModuleEncodings = (
   prover: string,
   isEncoded = (_obligation: NativeObligation) => true,
 ) => {
-  const obligations = new Map(
-    getModuleObligations(path).obligations.map((obligation) => [obligation.id, obligation]),
-  );
+  const listed = getModuleObligations(path).obligations;
+  const indexes = new Map(ids.map((id) => [id, getObligationIndex(listed, id)]));
   const encoded = ids.filter((id) => {
-    const obligation = obligations.get(id);
-    return obligation !== undefined && isEncoded(obligation);
+    const index = indexes.get(id) ?? -1;
+    return index !== -1 && isEncoded(listed[index]);
   });
   const encodings = getModuleObligations(
     path,
-    encoded.map((id): [number, string] => [id, prover]),
+    encoded.map((id): [number, string] => [indexes.get(id) ?? -1, prover]),
   ).encodings;
-  return { obligations, encodings: new Map(encoded.map((id, index) => [id, encodings[index]])) };
+  return {
+    // As in a map, the last obligation with an id is the one it names.
+    obligations: new Map(listed.map((obligation) => [obligation.id, obligation])),
+    encodings: new Map(encoded.map((id, index) => [id, encodings[index]])),
+  };
 };
 
 // Prints how many results have each verdict, then the ones worth a look, all of them with

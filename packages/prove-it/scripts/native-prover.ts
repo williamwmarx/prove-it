@@ -75,8 +75,8 @@ const readModules = <Result extends { kind: string }>(
 };
 
 // The obligations of the module in file, every result's in order, and the text each backend
-// receives for each [id, prover] of encode, or the error that stops it. The SMT encoder counts its
-// CASE errors across encode, in order.
+// receives for each [index, prover] of encode, the obligation at that index, or the error that stops
+// it. The SMT encoder counts its CASE errors across encode, in order.
 export const getObligations = (
   file: string,
   source: string,
@@ -95,6 +95,12 @@ export const getObligations = (
   };
 };
 
+// Where the obligation with this id is: a submodule's own result comes first and numbers its
+// obligations from 1 again, so the last with the id is the one of the module's result, which
+// tlapm's records name.
+export const getObligationIndex = (obligations: { id: number }[], id: number) =>
+  obligations.findLastIndex((obligation) => obligation.id === id);
+
 // The text one backend receives for an obligation, as prove would send it.
 export const encodeForBackend = (
   file: string,
@@ -103,7 +109,8 @@ export const encodeForBackend = (
   id: number,
   prover: string,
 ) => {
-  const encoding = getObligations(file, source, loadModule, [[id, prover]]).encodings[0];
+  const index = getObligationIndex(getObligations(file, source, loadModule).obligations, id);
+  const encoding = getObligations(file, source, loadModule, [[index, prover]]).encodings[0];
   if (encoding instanceof Error) throw encoding;
   return encoding;
 };

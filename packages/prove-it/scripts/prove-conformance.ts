@@ -22,7 +22,7 @@ import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpor
 import { runWithCpuLimit } from "./cpu-limit";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
-import { getObligationError } from "./native-prover";
+import { getObligationError, getObligationIndex } from "./native-prover";
 import {
   getModuleLoader,
   getModuleObligations,
@@ -128,7 +128,8 @@ const getCpuProof = async (
   id: number,
   method: NativeMethod,
 ): Promise<CpuProof | undefined> => {
-  const text = getModuleObligations(path, [[id, method.prover]]).encodings[0];
+  const index = getObligationIndex(getModuleObligations(path).obligations, id);
+  const text = getModuleObligations(path, [[index, method.prover]]).encodings[0];
   if (text instanceof TlaError) return undefined;
   const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);
   return run.verdict === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
