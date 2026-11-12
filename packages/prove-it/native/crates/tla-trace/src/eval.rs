@@ -2126,7 +2126,8 @@ impl<'ir> Evaluator<'ir> {
                 };
                 let inner = own_context(bound, frame, *is_self)
                     .primed(context.is_primed || bound.is_primed);
-                self.defined_function(bounds, definition.body, &inner)
+                let is_recursive = definition.flags & Definition::SELF_REFERENTIAL != 0;
+                self.defined_function(bounds, definition.body, &inner, is_recursive)
             }
             Binding::Operator(_) => fail("an operator used as a value"),
         }
@@ -2483,11 +2484,15 @@ impl<'ir> Evaluator<'ir> {
             // TLC evaluates the function constructor SANY makes of the definition, which has the
             // definition's range.
             DefinitionForm::Function(bounds) => {
-                self.in_frame(StackFrame::Node(node), &mut |evaluator| {
+                let keeps_lazy = u32::from(definition.flags & Definition::SELF_REFERENTIAL != 0);
+                self.keeping_lazy += keeps_lazy;
+                let value = self.in_frame(StackFrame::Node(node), &mut |evaluator| {
                     evaluator.nested(|evaluator| {
                         evaluator.construct_function(bounds, definition.body, &context.global())
                     })
-                })?
+                });
+                self.keeping_lazy -= keeps_lazy;
+                value?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
                 self.evaluate_definition(node, definition.body, &context.global())?
@@ -3287,14 +3292,20 @@ impl<'ir> Evaluator<'ir> {
 
     // A function a definition or a LET defines. TLC builds it in the frame of the definition,
     // which the replay doesn't record, so a failure building it isn't one the replay follows.
+    // TLC keeps a function whose definition reaches itself lazy (SANY's RecursiveFcnSpec, which
+    // `Tool`'s OPCODE_rfs never builds), whatever its domain.
     fn defined_function(
         &mut self,
         bounds: &[Bound],
         body: NodeId,
         context: &Context,
+        is_recursive: bool,
     ) -> Evaluated<Value> {
         // A function whose definition reaches itself as it is built recurses as an operator does.
+        let keeps_lazy = u32::from(is_recursive);
+        self.keeping_lazy += keeps_lazy;
         let result = self.nested(|evaluator| evaluator.construct_function(bounds, body, context));
+        self.keeping_lazy -= keeps_lazy;
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {

@@ -758,7 +758,6 @@ TLC answer the test held is here:
 | Repro | TLC | Native |
 |---|---|---|
 | an error in a module nested in a nested module | SANY's errors | SANY's errors and "A VARIABLE declaration may not appear within a recursive definition section." |
-| an ALIAS field holding a lazy function that fails to apply | the field's lazy text, `[i \in 1..1 \|-> <expression …>]` | `_ALIASEvalError` "The second argument of \div is 0." in each state |
 | `onProgress` of a spec whose INSTANCE adds definitions TLC warns about (EXCEPT warnings, check.test.ts "computes the definitions an INSTANCE adds…") | three warnings, at Cases lines 4, 6 and 5 | none, from the library or the CLI |
 | `onProgress` of a state-level PROPERTY before a CONSTRAINT equal to FALSE | the `state-level-property` warning for P, then the error | the error alone |
 
