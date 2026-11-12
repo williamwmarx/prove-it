@@ -515,6 +515,16 @@ substitute a bare name, operator arguments naming an INSTANCE's copy), so it wai
 
 #### Known wrong outputs
 
+A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
+with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
+tests each element of the other operand for membership in it, which fails on a value of the
+wrong kind, where the engine finds the set empty and tests nothing. `Init == x = Cardinality({(Int
+\X {}) \cap {"a"}})`, `Init == x = DOMAIN [a |-> (Int \X {}) \cap {"a"}]` and, printed at startup
+and read by Init, `Test == PrintT(DOMAIN [a |-> <<BOOLEAN \X ((Int \X {}) \cap {"a"})>>])` stop
+TLC with "Attempted to check if non-tuple\n"a"\nis in the set of tuples:\n(Int \X {})" (exit
+75, as a state it fails to fingerprint), where the native checker goes on with the value it
+computed, printing `{"a"}` for the last. On main alike; found by the startup fuzz of PR 366.
+
 A failure of a value TLC builds in the initial predicate, as in `Init == x = (DOMAIN <<1>> =
 TRUE)`, TLC reports as a state it fails to fingerprint ("TLC was unable to fingerprint", with the
 value's frames and the reason), where the native checker reports the failure with nested frames:
