@@ -16,6 +16,7 @@ use tla_ir::{
     Pattern, Resolution, ScopeBinding, TextId,
 };
 
+use tla_values::store::NO_VALUE;
 use tla_values::{Id, Store};
 
 use crate::Unsupported;
@@ -401,6 +402,9 @@ pub struct Evaluator<'ir> {
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
+    /// The startup definitions that failed as TLC started, which it evaluates again where they are
+    /// used (`processConstantDefns` swallows what one throws).
+    failed_startup: HashSet<NodeId>,
     /// The value the search computed of each constant definition whose body is a CHOOSE over a
     /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
     chosen: HashMap<NodeId, Value>,
@@ -747,6 +751,7 @@ impl<'ir> Evaluator<'ir> {
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
+            failed_startup: HashSet::new(),
             chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
@@ -2213,6 +2218,11 @@ impl<'ir> Evaluator<'ir> {
             // it as an operator, evaluated again, and failing again, where it is used. The front
             // end has rejected a substitute TLC checks and finds failing.
             let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
+                if ir.model.startup.definitions.contains(&index)
+                    && !self.may_reach(self.definition(node).body, EFFECTS)
+                {
+                    self.failed_startup.insert(node);
+                }
                 continue;
             };
             if ir.model.startup.definitions.contains(&index) {
@@ -2281,6 +2291,11 @@ impl<'ir> Evaluator<'ir> {
     pub fn set_startup(&mut self, store: &Store, values: &[Id]) -> Result<(), Unsupported> {
         for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
             let node = self.ir.definitions[index as usize];
+            // The search keeps no value of one that failed, which TLC evaluates again at each use.
+            if id == NO_VALUE {
+                self.failed_startup.insert(node);
+                continue;
+            }
             let value = from_store(store, id)?;
             self.cache.insert((node, false), value.clone());
             self.cache.insert((node, true), value);
@@ -2339,14 +2354,16 @@ impl<'ir> Evaluator<'ir> {
         if let Some(value) = self.cache.get(&key) {
             return Ok(value.clone());
         }
-        // The value TLC computed at startup, which the search computed and hands on.
-        if self
-            .ir
-            .model
-            .startup
-            .definitions
-            .iter()
-            .any(|&index| self.ir.definitions[index as usize] == node)
+        // The value TLC computed at startup, which the search computed and hands on, but for one
+        // that failed there, which TLC evaluates again here.
+        if !self.failed_startup.contains(&node)
+            && self
+                .ir
+                .model
+                .startup
+                .definitions
+                .iter()
+                .any(|&index| self.ir.definitions[index as usize] == node)
         {
             return fail("a value TLC computed at startup with effects");
         }

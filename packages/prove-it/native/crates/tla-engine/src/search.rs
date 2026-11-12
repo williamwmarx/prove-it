@@ -21,7 +21,7 @@ use tla_values::fingerprint::{
     Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
 };
 use tla_values::random::JavaRandom;
-use tla_values::store::{FALSE, KIND_SET, Outcome, ShapeJoin, TRUE};
+use tla_values::store::{FALSE, KIND_SET, NO_VALUE, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -67,6 +67,11 @@ pub struct Settings {
     /// Whether the caller reports a violation the search stops at itself: the search passes on
     /// what the spec printed before it, and finds the action of each step of its trace.
     pub is_violation_reported: bool,
+    /// Whether a startup definition that fails as TLC starts is evaluated again where it is used,
+    /// as TLC does (`processConstantDefns`), rather than declined: the caller vouches that nothing
+    /// in the configuration, such as a substitute scoped to a module, makes what the model
+    /// evaluates otherwise than the IR says.
+    pub is_failed_startup_retried: bool,
     /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
     /// machine runs at once.
     pub threads: usize,
@@ -130,6 +135,7 @@ impl Default for Settings {
             state_log: None,
             is_live_checked: false,
             is_violation_reported: false,
+            is_failed_startup_retried: false,
             threads: 1,
             workers: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
@@ -2774,7 +2780,12 @@ struct Started {
 // fails, since its evaluator of failures words TLC's error or finds none, which keeps the run
 // from being native; otherwise one the engine can't follow is the interpreter's, as is a
 // substitute that fails.
-fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) -> Outcome<Started> {
+fn run_startup(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+    settings: &Settings,
+) -> Outcome<Started> {
+    let is_native = settings.is_violation_reported;
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
             .into_iter()
@@ -2793,10 +2804,13 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         }
     }
     // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
-    // an operator, which evaluates it again, with its effects, at every use, where the engine
-    // would keep the first value it computes.
-    for evaluate in &startup.definitions {
-        if evaluate(machine).is_err() {
+    // an operator, which evaluates it again, with its effects, at every use. The engine keeps no
+    // value of one that fails, and evaluates it again at each use, where its body has no effect
+    // and reads no state.
+    for (evaluate, is_retried) in &startup.definitions {
+        if let Err(Bail(reason)) = evaluate(machine)
+            && (!is_retried || !settings.is_failed_startup_retried || is_engine_limit(reason))
+        {
             return Err(Bail(
                 "unsupported: a definition TLC computes at startup that fails there",
             ));
@@ -2991,7 +3005,8 @@ fn symmetry_group(
     Ok(((!group.is_empty()).then_some(group), names(small)))
 }
 
-// The values the startup definitions computed, which reading them again gives without effects.
+// The values the startup definitions computed, which reading them again gives without effects,
+// and `NO_VALUE` for one that failed, which TLC evaluates again where it is used.
 pub(crate) fn startup_values(
     machine: &mut Machine<'_>,
     context: &EngineContext,
@@ -3000,7 +3015,10 @@ pub(crate) fn startup_values(
         .startup
         .definitions
         .iter()
-        .map(|evaluate| evaluate(machine))
+        .map(|(evaluate, is_retried)| match evaluate(machine) {
+            Err(Bail(reason)) if *is_retried && !is_engine_limit(reason) => Ok(NO_VALUE),
+            result => result,
+        })
         .collect()
 }
 
@@ -3017,6 +3035,11 @@ pub(crate) fn chosen_values(machine: &mut Machine<'_>, context: &EngineContext) 
 // The startup definitions' values as one row of shared states.
 fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
     let values = startup_values(machine, context)?;
+    if values.contains(&NO_VALUE) {
+        return Err(Bail(
+            "unsupported: a startup definition that failed, in a shared row",
+        ));
+    }
     let mut encoder = SharedEncoder::new(&machine.store);
     encoder.encode(&machine.store, &values)?;
     Ok(encoder.finish())
@@ -3034,7 +3057,7 @@ pub(crate) fn start(
     // TLCGet("level") is 0 while TLC starts.
     let startup = machine.store.int(0).and_then(|zero| {
         machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(machine, &context.startup, settings.is_violation_reported)
+        run_startup(machine, &context.startup, settings)
     });
     let group = match startup {
         Err(Bail(reason)) => return Err(Box::new(SearchOutcome::Declined(reason.into()))),

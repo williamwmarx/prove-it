@@ -142,6 +142,29 @@ Still approximate: the order of the attempts is the substitutes, then the defini
 before its definitions; and a definition another one reaches counts as computed only by its own
 level, where TLC counts a held value as level 0 whether or not it reaches the state.
 
+## A startup definition that fails
+
+TLC swallows what a constant definition throws as it starts and keeps the definition as an
+operator, which it evaluates again, and fails again, wherever it is used (`processConstantDefns`).
+The engine did the same for none: a failure declined the model.
+
+Now `run_startup` goes on past a startup definition that fails with a failure TLC reports (not
+one of the engine's limits) where TLC's evaluation again at each use is the engine's evaluation
+at the use (`is_retried_at_use`): an operator without parameters whose body, through the
+definitions it names, neither reads the state nor has an effect or a value that depends on when
+or how often TLC evaluates it. Its `once` keeps no value, so each use evaluates the body. The
+startup values hand on `NO_VALUE` for it, which the trace evaluator takes as a definition to
+evaluate again where it is used, as it does one its own startup finds failing.
+
+The native checker allows it only where the configuration scopes no substitute or value to a
+module (`<- [M]`, `= [M]`), which the front end leaves out where TLC applies it; a model whose
+startup failed would then read past it what TLC doesn't (fallback.md, "Known wrong outputs").
+The interpreter's route and the simulation keep declining.
+
+A failing definition that prints, draws, reads or sets a register, or reads the state, still
+declines, as does a definition TLC keeps lazy (`may_be_lazy`, "a value TLC computed at startup
+with effects").
+
 ## Asks
 
 - **constant-alias:** land LITERAL as it is. Step 2 then folds it into Defns.
