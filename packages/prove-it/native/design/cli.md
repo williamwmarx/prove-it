@@ -323,7 +323,13 @@ reads back is twice the file: what `-loadTrace tlc` prints, the trace it rebuild
 again, which compares the spec's variables alone and so misses an ALIAS's fields; and TLCExt's
 `TLCFP` of the whole value TLC's `_TLCTrace` deserialises, which a module of the run's own named
 `_TLCTrace` makes reachable beside the spec (a fingerprint, since a value such as a SUBSET of 20
-elements is too large to print). Each model with an ALIAS is also run with `-tool -dumpTrace tlc`,
+elements is too large to print). The wrapper module holds the spec's file after it, whose trailing
+modules SANY reads only in the root file, and reaches TLC's operators through instances of its own,
+so a spec's definitions of the same names don't stand in for them; a file whose value TLC doesn't
+read, as the wrapper failing to parse, fails the run rather than comparing two failures. TLCFP
+normalizes the value it fingerprints, so two representations TLC prints differently, as `1..3` and
+`{1, 2, 3}`, compare alike: the check holds the binary to TLC's values, not to its classes of them.
+Each model with an ALIAS is also run with `-tool -dumpTrace tlc`,
 by the jar and the binary, whose files must read back the same: TLC words the message of an ALIAS
 that fails as -tool prints it (`Tool.evalAlias`), which its file holds. `tests/dump_trace.rs` compares the values, references followed
 and tokens skipped as TLC's reader skips them, with TLC's for an ALIAS of an initial state's
