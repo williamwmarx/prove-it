@@ -111,6 +111,8 @@ export type NativeCheckSources =
       out: string;
       err: string;
       outcome: NativeCheckOutcome | undefined;
+      // Each file the library's check wrote, in order, which the library writes.
+      writes: { path: string; bytes: Uint8Array; isAppended: boolean }[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };

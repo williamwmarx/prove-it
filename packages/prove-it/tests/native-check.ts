@@ -160,3 +160,43 @@ export const runOnEngine = (options: TlcRunOptions, declinedFor?: string) => {
   expect(run.declined).toBe(declinedFor);
   return run;
 };
+
+// The lines with which TLC reports the search, which end the message before them.
+const SEARCH_LINE =
+  /^(Error: |\d+ states generated, |The depth of the complete state graph search is |The average outdegree |Finished in |Starting\.\.\.|Computing initial states|Finished computing initial states|Model checking completed|Checking temporal properties|Implied-temporal checking|Progress\()/;
+
+// Each error TLC printed, without its "Error: " and the empty lines after it.
+export const getErrors = (output: string) => {
+  const errors: string[][] = [];
+  let current: string[] | undefined;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("Error: ")) {
+      current = [line.slice("Error: ".length)];
+      errors.push(current);
+    } else if (SEARCH_LINE.test(line)) current = undefined;
+    else current?.push(line);
+  }
+  return errors.map((lines) => lines.join("\n").replace(/\n+$/, ""));
+};
+
+// The counts TLC printed as it ended the search.
+export const getStatistics = (output: string) =>
+  output
+    .split("\n")
+    .filter((line) =>
+      /^(\d+ states generated, |The depth of the complete state graph search is |The average outdegree )/.test(
+        line,
+      ),
+    );
+
+export const findError = (output: string, start: string) =>
+  getErrors(output).find((error) => error.startsWith(start));
+
+// The positions TLC printed of the expressions it was evaluating when it failed.
+export const getNestedExpressions = (output: string) =>
+  findError(
+    output,
+    "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n",
+  )
+    ?.split("\n")
+    .filter((line) => /^\d+\. /.test(line));

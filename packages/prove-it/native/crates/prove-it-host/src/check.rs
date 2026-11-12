@@ -2,9 +2,10 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err, outcome }`, what the binary prints to stdout and
-//!   stderr, its exit code, and what the check found where it searched, as the library reports it
-//!   (`get_outcome`);
+//! - `{ kind: "checked", exitCode, out, err, outcome, writes }`, what the binary prints to stdout
+//!   and stderr, its exit code, what the check found where it searched, as the library reports it
+//!   (`get_outcome`), and each file the library's check wrote, in order, as
+//!   `{ path, bytes, isAppended }`;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
 //!   everything before it searches, so a round never searches;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
@@ -27,6 +28,7 @@
 //! it reads each printed state's plain data, which the CLI doesn't, so only it has the check write
 //! them.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -55,6 +57,9 @@ struct SourcesHost {
     zone: Zone,
     variables: Vec<(String, String)>,
     is_library: bool,
+    /// What the library's check wrote, in order, as `(path, bytes, is_appended)`, which
+    /// JavaScript writes (`writes` in the result).
+    writes: RefCell<Vec<(String, Vec<u8>, bool)>>,
 }
 
 impl SourcesHost {
@@ -175,6 +180,18 @@ impl Host for SourcesHost {
         !self.is_library
     }
 
+    // The library answers for files itself, so the check's writes go back to it.
+    fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
+        if self.is_library {
+            self.writes.borrow_mut().push((
+                path.display().to_string(),
+                bytes.to_vec(),
+                is_appended,
+            ));
+        }
+        self.is_library
+    }
+
     fn is_plain(&self) -> bool {
         self.is_library
     }
@@ -280,6 +297,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
         is_library,
+        writes: RefCell::default(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut output = Output {
@@ -310,6 +328,22 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
         ("outcome", get_outcome(outcome)),
+        (
+            "writes",
+            HostValue::Array(
+                host.writes
+                    .take()
+                    .into_iter()
+                    .map(|(path, bytes, is_appended)| {
+                        HostValue::Object(vec![
+                            ("path", HostValue::text(&path)),
+                            ("bytes", HostValue::Uint8s(bytes)),
+                            ("isAppended", HostValue::Bool(is_appended)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ]))
 }
 
@@ -438,6 +472,7 @@ pub fn resolve_files(arguments: &[HostValue]) -> HookResult {
         zone: Zone::UTC,
         variables: Vec::new(),
         is_library: false,
+        writes: RefCell::default(),
     };
     let resolved = resolve::resolve_files(
         &args,
@@ -545,6 +580,7 @@ mod tests {
             zone: Zone::UTC,
             variables: Vec::new(),
             is_library: false,
+            writes: RefCell::default(),
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));

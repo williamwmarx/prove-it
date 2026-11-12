@@ -214,6 +214,23 @@ fn orders_strings_by_rank_and_ranked_before_unranked() {
     assert_eq!(order, ["b", "a", "m"]);
 }
 
+// A model's name takes its rank in TLC's order of strings when the model value is made, before
+// the texts ranked after it.
+#[test]
+fn ranks_a_models_name_before_the_texts_ranked_after_it() {
+    let mut store = Store::new();
+    let m = store.model(&utf16("m"));
+    rank(&mut store, &["a"]);
+    let a = str(&mut store, "a");
+    assert!(store.text_rank_of(a) > store.text_rank_of(m));
+    let order: Vec<String> = store
+        .get_string_order()
+        .into_iter()
+        .map(String::from_utf16_lossy)
+        .collect();
+    assert_eq!(order, ["m", "a"]);
+}
+
 #[test]
 fn asks_a_function_that_is_no_record_whether_it_equals_a_record() {
     // FcnRcdValue.equals takes any function; RecordValue.equals fails on one that is no record.

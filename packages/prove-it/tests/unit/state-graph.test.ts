@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, type CheckOptions } from "../../src";
+import type { CheckOptions } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -17,20 +18,24 @@ const dumpFixture = async (
   name: string,
   dump: NonNullable<CheckOptions["dump"]>,
   options: Partial<CheckOptions> = {},
+  declinedFor = "-dump",
 ) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    loadModule: (module) => {
-      const path = join(FIXTURES, directory, `${module}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  const result = await checkOnEngine(
+    {
+      source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
+      config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+      loadModule: (module) => {
+        const path = join(FIXTURES, directory, `${module}.tla`);
+        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+      },
+      onPrint: () => {},
+      writeFile: (path, content) => written.set(path, content),
+      dump,
+      ...options,
     },
-    onPrint: () => {},
-    writeFile: (path, content) => written.set(path, content),
-    dump,
-    ...options,
-  });
+    declinedFor,
+  );
   return { result, written };
 };
 
@@ -89,9 +94,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
       "Picks",
       { path: "Picks174.dot", dot: true, actionLabels: true },
       options,
+      "TLC 1.7.4",
     );
     expect(dot.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
-    const plain = await dumpFixture("state-graph", "Picks", { path: "Picks174.dump" }, options);
+    const plain = await dumpFixture(
+      "state-graph",
+      "Picks",
+      { path: "Picks174.dump" },
+      options,
+      "TLC 1.7.4",
+    );
     expect(plain.written.get("Picks174.dump")).toBe(readTlcDump("Picks174.dump"));
   });
 
