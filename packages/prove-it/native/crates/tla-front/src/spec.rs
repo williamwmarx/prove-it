@@ -584,6 +584,13 @@ pub(crate) fn bind_operator_arguments(
     Ok(bound)
 }
 
+/// Whether a LET definition is what an INSTANCE in the LET substitutes for a declaration
+/// (`instantiateLocally`), named `v#0`, which no definition written in the spec can be named, and
+/// unlike the copies of its definitions, keyed `vars@Inner#0.1`.
+fn is_substitution(definition: &Definition) -> bool {
+    definition.name.contains('#') && !definition.name.contains(crate::resolve::KEY_SEPARATOR)
+}
+
 /// The value of a literal TLC holds as a value: a string, or a number within its integers.
 fn get_literal(expression: &Expr) -> Option<ConfigValue> {
     match &expression.kind {
@@ -1215,6 +1222,10 @@ pub fn read_specification(
                         };
                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
                         next_actions.push((action.clone(), item.scope.clone()));
+                        // TLC fails at the second next-state relation, reading nothing after it.
+                        if next_actions.len() > 1 {
+                            break;
+                        }
                         continue;
                     }
                     _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
@@ -1250,9 +1261,10 @@ pub fn read_specification(
     })();
     read?;
     if next_actions.len() > 1 {
-        return Err(FrontError::Config(format!(
-            "The specification {specification} must contain at most one [][Next]_vars"
-        )));
+        // `processConfigSpec`: EC.TLC_CANT_HANDLE_TOO_MANY_NEXT_STATE_RELS.
+        return Err(FrontError::Config(
+            "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.".to_owned(),
+        ));
     }
     let items: Vec<&(Expr, Option<Rc<Scope>>)> =
         init_conjuncts.iter().chain(&next_actions).collect();
@@ -1476,8 +1488,43 @@ impl SubscriptCollector<'_, '_> {
             ExpressionKind::Let {
                 definitions, body, ..
             } => {
-                let bound = bind_definitions(definitions, scope)
-                    .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
+                // TLC's collector binds no LET definition: it looks one up as it looks up any
+                // operator, so a function definition, whose body is a function constructor, a
+                // builtin it ignores, reads as a value would.
+                let mut bound = scope.cloned();
+                for definition in definitions {
+                    let binding = match &definition.kind {
+                        DefinitionKind::Function { .. } => {
+                            Binding::Value(ConfigValue::Boolean(true))
+                        }
+                        DefinitionKind::Operator { params, .. } if !params.is_empty() => {
+                            Binding::Closure {
+                                name: definition.name.clone(),
+                                params: params.clone(),
+                                body: definition.body.clone(),
+                                scope: ScopeOf::Own,
+                            }
+                        }
+                        // What an INSTANCE in the LET substitutes for a declaration, which TLC
+                        // binds as a LazyValue of the substitution (`SubstInKind`), so a literal
+                        // there is one it reads, not one it holds.
+                        DefinitionKind::Operator { .. } if is_substitution(definition) => {
+                            Binding::Thunk {
+                                expression: definition.body.clone(),
+                                scope: ScopeOf::Other(scope.cloned()),
+                            }
+                        }
+                        DefinitionKind::Operator { .. } => Binding::Thunk {
+                            expression: definition.body.clone(),
+                            scope: ScopeOf::Own,
+                        },
+                    };
+                    bound = Some(Rc::new(Scope {
+                        name: definition.name.clone(),
+                        binding,
+                        parent: bound,
+                    }));
+                }
                 return self.enter(body, bound.as_ref(), found);
             }
             ExpressionKind::Label { body, .. } => return self.enter(body, scope, found),
@@ -1493,10 +1540,15 @@ impl SubscriptCollector<'_, '_> {
         let Some(name) = expression.reference() else {
             return Ok(true);
         };
-        // TLC reads a name bound in the context through the LazyValue of its expression.
-        if expression.is_locally_resolved()
-            && let Some((node, binding)) = lookup_scope(scope, &name)
-        {
+        // TLC reads a name bound in the context through the LazyValue of its expression. The
+        // definitions an INSTANCE in a LET makes are the LET's, which the copies' bodies name by
+        // keys no global definition, variable or constant has.
+        let is_scoped = expression.is_locally_resolved()
+            || (get_definition(&name, environment).is_none()
+                && !environment.variable_index.contains_key(&name)
+                && !environment.constants.contains_key(&name)
+                && !environment.builtins.contains_key(&name));
+        if is_scoped && let Some((node, binding)) = lookup_scope(scope, &name) {
             match binding {
                 // A LET definition whose body is a literal TLC holds as the literal's value
                 // (`processConstants`), which the collector ignores.
@@ -1533,20 +1585,37 @@ impl SubscriptCollector<'_, '_> {
                 return Ok(true);
             }
             if let Some(target) = environment.substitutions.get(&name) {
-                // TLC gives a declared constant the configuration substitutes the OpDefNode of
-                // what substitutes it (`processConstants`), which the collector enters as an
-                // operator, whatever TLC computed of it as it started.
-                let substitute = environment.definitions.get(target).filter(|definition| {
-                    !environment.definitions.contains_key(&name)
-                        && !environment.builtins.contains_key(target)
-                        && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-                });
-                return match substitute {
-                    Some(definition) => self.enter(&definition.body, None, found),
-                    None => Err(Unfollowed(
-                        "a subscript of [][Next]_v that names what the configuration substitutes",
-                    )),
+                // TLC gives a declared constant or a definition the configuration substitutes the
+                // OpDefNode of what substitutes it (`processConstants`), which the collector
+                // enters as an operator, whatever TLC computed of either as it started.
+                // The node is the substitute's own, never the value of its body, a literal too.
+                let unfollowed = Unfollowed(
+                    "a subscript of [][Next]_v that names what the configuration substitutes",
+                );
+                // A builtin, which TLC holds as its Java method's value, the collector ignores, as
+                // it ignores a builtin the subscript names.
+                if environment.builtins.contains_key(target) {
+                    return Ok(true);
+                }
+                let Some(definition) = environment.definitions.get(target) else {
+                    return Err(unfollowed);
                 };
+                // A function definition's body is a function constructor, a builtin it ignores.
+                let DefinitionKind::Operator { params, .. } = &definition.kind else {
+                    return Ok(true);
+                };
+                let args: &[Expr] = match &expression.kind {
+                    ExpressionKind::Apply { args, .. } => args,
+                    _ => &[],
+                };
+                if params.len() != args.len() {
+                    return Err(unfollowed);
+                }
+                let bound = bind_operator_arguments(params, args, None, scope, environment)
+                    .map_err(|_| {
+                        Unfollowed("an operator's arguments the front end doesn't bind")
+                    })?;
+                return self.enter(&definition.body, bound.as_ref(), found);
             }
         }
         let Some((params, body, closure_scope)) =

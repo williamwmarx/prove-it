@@ -537,6 +537,22 @@ it from one that printed something else. Each is outside the corpus:
   far deeper than a subscript's operators nest (`a subscript of [][Next]_v that an operator leads
   back to itself`). To win them back, prove the reading doesn't end, as for a cycle of operators
   that names no parameter, and print TLC's StackOverflowError.
+- a subscript of `[][Next]_v` the subscript collector can't follow, which declines where TLC may
+  print its warnings, unless -nowarning, and is read as TLC reads it otherwise. Main printed no
+  warning for any subscript, so each matched where TLC prints none. What the collector still
+  doesn't follow (`spec.rs`, `Unfollowed`):
+  - a builtin passed as an operator argument, `Ap2(F(_, _)) == F(<<x>>, <<y>>)` with
+    `[][...]_(Ap2(\o))`: TLC reads one its Java method replaces, `\o`, as a value it ignores
+    and warns that the subscript holds neither variable, and one it doesn't, `\cup`, as a node
+    without a body, failing to read it (could not determine); main printed neither warning.
+  - a substitute applied with other than its own arguments, which TLC's configuration rejects
+    before (`CONSTANT C <- G` with `G(a)`: "substitutes for C with G of different number of
+    arguments"), so no run reaches it.
+  - a subexpression name, a name the front end doesn't follow, and a definition TLC may compute
+    as it starts that the front end neither computes nor reads to the end: none of 470 probes of
+    the subscript (`scratch/upstream/fuzz/subscript-position` on `upstream-results`) reaches
+    them, the front end resolving subexpression names and INSTANCE copies before.
+  To win them back, tell a builtin TLC replaces by a Java method from one it doesn't.
 - SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
   that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
@@ -569,6 +585,12 @@ exit 75), where TLC checks the model. On main alike. A SPECIFICATION that reache
 parameterized INSTANCE in a LET of the specification`); a property or an invariant reads it as
 TLC does. To fix it, level the definitions a parameterized INSTANCE in a LET makes by their
 arguments.
+
+A subscript of `[][Next]_v` that names a subexpression, `V!lab` with `V == lab :: <<x, y>>`, or
+`V!1`: TLC's SubscriptCollector ignores it and warns that the subscript holds no variable, where
+the front end, which resolves a subexpression name to the expression it names before it reads
+the specification, reads the expression and finds the variables. On main alike. To fix it, keep
+a subexpression name's identity through its resolution to the subscript collector.
 
 A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
 with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
