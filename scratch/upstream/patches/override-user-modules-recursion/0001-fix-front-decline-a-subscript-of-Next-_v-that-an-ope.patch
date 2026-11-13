@@ -1,0 +1,511 @@
+From d0120e3435ba0119248914d4d0715c3168e79d6a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 06:53:24 +0000
+Subject: [PATCH] fix(front): decline a subscript of [][Next]_v that an
+ operator leads back to itself
+
+TLC's SubscriptCollector enters the body of each operator the
+subscript applies, as an operator, never computing it, so an operator
+that leads back to itself, as `RECURSIVE F(_)`, `F(n) == F(n)` does in
+`[][x' = x]_<<x, F(0)>>`, directly, mutually, or through a LET, an
+operator argument or an INSTANCE, is entered until TLC's stack
+overflows. TLC prints the StackOverflowError and exits 255, whatever
+-nowarning says. The front end's collector read it without end and
+overflowed the process's stack. It now declines where its reading
+nests deeper than any subscript's operators do: an operator TLC enters
+only as far as an IF or a function application, which it ignores, or
+nested applications that end, read as before. No run of the upstream
+conformance suite changes.
+---
+ .../subscript-deep-nesting/M.cfg              |  1 +
+ .../subscript-deep-nesting/M.tla              |  6 ++++
+ .../subscript-deep-nesting/tlc.out            | 12 ++++++++
+ .../subscript-literal-before-recursion/M.cfg  |  1 +
+ .../subscript-literal-before-recursion/M.tla  |  7 +++++
+ .../tlc.out                                   | 15 ++++++++++
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  8 +++++
+ .../declined                                  |  1 +
+ .../subscript-nested-applications/M.cfg       |  1 +
+ .../subscript-nested-applications/M.tla       |  6 ++++
+ .../subscript-nested-applications/tlc.out     | 12 ++++++++
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  8 +++++
+ .../declined                                  |  1 +
+ .../subscript-recursive-function/M.cfg        |  1 +
+ .../subscript-recursive-function/M.tla        |  6 ++++
+ .../subscript-recursive-function/tlc.out      | 12 ++++++++
+ .../subscript-recursive-let-operator/M.cfg    |  1 +
+ .../subscript-recursive-let-operator/M.tla    |  7 +++++
+ .../subscript-recursive-let-operator/declined |  1 +
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  7 +++++
+ .../args                                      |  1 +
+ .../declined                                  |  1 +
+ .../subscript-recursive-operator/M.cfg        |  1 +
+ .../subscript-recursive-operator/M.tla        |  7 +++++
+ .../subscript-recursive-operator/declined     |  1 +
+ .../subscript-terminating-recursion/M.cfg     |  1 +
+ .../subscript-terminating-recursion/M.tla     |  7 +++++
+ .../subscript-terminating-recursion/tlc.out   | 12 ++++++++
+ .../native/crates/tla-front/src/spec.rs       | 30 +++++++++++++++++++
+ packages/prove-it/native/design/fallback.md   |  9 ++++++
+ 33 files changed, 187 insertions(+)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.tla
+new file mode 100644
+index 00000000..cfaf4429
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++F(a) == <<a>>
++Spec == x = 0 /\ [][x' = x]_<<x, F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(F(x))))))))))))))))))))))))))))))))))))))))>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-deep-nesting/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.tla
+new file mode 100644
+index 00000000..75abf814
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_)
++F(n) == <<1, F(n)>>
++Spec == x = 0 /\ [][x' = x]_<<x, F(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/tlc.out
+new file mode 100644
+index 00000000..19e46968
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-literal-before-recursion/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.tla
+new file mode 100644
+index 00000000..1509a7cc
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_), G(_)
++F(n) == G(n)
++G(n) == F(n)
++Spec == x = 0 /\ [][x' = x]_<<x, F(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-mutually-recursive-operators/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.tla
+new file mode 100644
+index 00000000..bf11ddd2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++F(a) == <<a>>
++Spec == x = 0 /\ [][x' = x]_<<x, F(F(x))>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nested-applications/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.tla
+new file mode 100644
+index 00000000..e3089073
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_)
++H(v) == v
++F(n) == H(F(n))
++Spec == x = 0 /\ [][x' = x]_<<x, F(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursion-through-argument/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.tla
+new file mode 100644
+index 00000000..28de2300
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++f[n \in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]
++Spec == x = 0 /\ [][x' = x]_<<x, f[3]>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-function/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.tla
+new file mode 100644
+index 00000000..b8761e59
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Spec == LET RECURSIVE G(_)
++            G(n) == G(n)
++        IN x = 0 /\ [][x' = x]_<<x, G(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-let-operator/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.tla
+new file mode 100644
+index 00000000..349593df
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_)
++F(n) == F(n)
++Spec == x = 0 /\ [][x' = x]_<<x, F(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/args
+new file mode 100644
+index 00000000..6d8e45ab
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/args
+@@ -0,0 +1 @@
++-nowarning
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator-nowarning/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.tla
+new file mode 100644
+index 00000000..349593df
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_)
++F(n) == F(n)
++Spec == x = 0 /\ [][x' = x]_<<x, F(0)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-recursive-operator/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.tla
+new file mode 100644
+index 00000000..7c4c1301
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++RECURSIVE F(_)
++F(n) == IF n = 0 THEN 0 ELSE F(n - 1)
++Spec == x = 0 /\ [][x' = x]_<<x, F(3)>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-terminating-recursion/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index bc7dcff6..0f843858 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -1209,6 +1209,7 @@ pub fn read_specification(
+                             environment,
+                             startup: &startup,
+                             evaluator,
++                            depth: std::cell::Cell::default(),
+                         };
+                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
+                         next_actions.push((action.clone(), item.scope.clone()));
+@@ -1323,6 +1324,15 @@ impl SubscriptCheck {
+ /// Why the front end can't follow a subscript as TLC reads it.
+ struct Unfollowed(&'static str);
+ 
++/// Why the collector stops where an operator leads back to itself: TLC's collector reads it again
++/// and again, overflowing its stack, a StackOverflowError it doesn't catch, whatever -nowarning
++/// says.
++/// How deep the collector reads before it takes the reading for one that doesn't end, far deeper
++/// than a subscript's operators nest, and short of the front end's stack.
++const MAXIMUM_SUBSCRIPT_DEPTH: usize = 256;
++
++const RECURSIVE_SUBSCRIPT: &str = "a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows";
++
+ /// `processConfigSpec`'s `SubscriptCollector`: the state variables in the subscript of
+ /// `[][Next]_v`, through tuples, the operators it applies and the definitions it names, where TLC
+ /// holds them as operators. Any other builtin it ignores, and anything but an operator's
+@@ -1331,6 +1341,8 @@ struct SubscriptCollector<'a, 'b> {
+     environment: &'a Environment,
+     startup: &'a crate::startup::StartupModel,
+     evaluator: Option<&'a Evaluator<'b>>,
++    /// How deep the reading is.
++    depth: std::cell::Cell<usize>,
+ }
+ 
+ impl SubscriptCollector<'_, '_> {
+@@ -1340,6 +1352,7 @@ impl SubscriptCollector<'_, '_> {
+         match self.enter(subscript, scope, &mut found) {
+             Ok(true) => {}
+             Ok(false) => return Ok(SubscriptCheck::Undetermined),
++            Err(Unfollowed(RECURSIVE_SUBSCRIPT)) => return Err(not_yet(RECURSIVE_SUBSCRIPT)),
+             Err(Unfollowed(reason)) => return Ok(SubscriptCheck::Unknown(reason)),
+         }
+         Ok(SubscriptCheck::Missing(
+@@ -1402,6 +1415,23 @@ impl SubscriptCollector<'_, '_> {
+         expression: &Expr,
+         scope: Option<&Rc<Scope>>,
+         found: &mut Vec<Name>,
++    ) -> std::result::Result<bool, Unfollowed> {
++        // The collector reads every expression a finite spec gives it but where an operator leads
++        // back to itself, so a reading this deep is one that doesn't end.
++        if self.depth.get() >= MAXIMUM_SUBSCRIPT_DEPTH {
++            return Err(Unfollowed(RECURSIVE_SUBSCRIPT));
++        }
++        self.depth.set(self.depth.get() + 1);
++        let entered = self.enter_once(expression, scope, found);
++        self.depth.set(self.depth.get() - 1);
++        entered
++    }
++
++    fn enter_once(
++        &self,
++        expression: &Expr,
++        scope: Option<&Rc<Scope>>,
++        found: &mut Vec<Name>,
+     ) -> std::result::Result<bool, Unfollowed> {
+         let environment = self.environment;
+         match &expression.kind {
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index 9b6f7a60..811169de 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -527,6 +527,15 @@ it from one that printed something else. Each is outside the corpus:
+   the binary declines it (`applied a function outside its domain`), as it did before action
+   constraint failures were native. To win them back, build a constant definition's function as
+   TLC computed it at startup.
++- a subscript of `[][Next]_v` that an operator leads back to itself, such as `RECURSIVE F(_)`,
++  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, directly, mutually, or through a LET, an operator
++  argument or an INSTANCE. TLC's SubscriptCollector enters the operator's body again and again
++  until its stack overflows, and prints the StackOverflowError (exit 255), whatever -nowarning
++  says; the front end read it without end and aborted the process, or on main took no subscript
++  warning from it and checked the model. It declines where its reading nests deeper than 256,
++  far deeper than a subscript's operators nest (`a subscript of [][Next]_v that an operator leads
++  back to itself`). To win them back, prove the reading doesn't end, as for a cycle of operators
++  that names no parameter, and print TLC's StackOverflowError.
+ - SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
+   that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
+   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
+-- 
+2.43.0
+
