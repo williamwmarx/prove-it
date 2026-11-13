@@ -1,0 +1,159 @@
+From 15459560024a31db4c8cac19ab805715ef4831f0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 06:05:53 +0000
+Subject: [PATCH 3/3] fix(front): decline a LET of a temporal formula that
+ holds an INSTANCE
+
+The front end binds a LET's definitions as it reads the specification
+and the properties, but not the INSTANCEs a LET holds, so a
+specification written `LET I == INSTANCE Inner WITH ... IN I!Spec`
+read as one without an initial predicate, and the check reported that
+the configuration specified none, where TLC checks the model. Such a
+LET now declines, in the specification, the properties and the
+subscript of [][Next]_v.
+---
+ .../specification-let-instance/Inner.tla      |  4 +++
+ .../specification-let-instance/M.cfg          |  3 ++
+ .../specification-let-instance/M.tla          | 12 +++++++
+ .../specification-let-instance/declined       |  1 +
+ .../native/crates/tla-front/src/live.rs       | 11 +++++-
+ .../native/crates/tla-front/src/spec.rs       | 35 +++++++++++++++++--
+ 6 files changed, 62 insertions(+), 4 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/Inner.tla
+new file mode 100644
+index 00000000..6567c87f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/Inner.tla
+@@ -0,0 +1,4 @@
++---- MODULE Inner ----
++VARIABLES a, b, p
++ISpec == a = 0 /\ b = 0 /\ [][a' = a /\ b' = b]_<<a, p>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.cfg
+new file mode 100644
+index 00000000..62f02736
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.cfg
+@@ -0,0 +1,3 @@
++SPECIFICATION Spec
++CONSTANT C = 3
++CONSTANT G = 4
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.tla
+new file mode 100644
+index 00000000..3a68a5b3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/M.tla
+@@ -0,0 +1,12 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++CONSTANT C, G
++D1 == y
++D2 == 1
++D3 == <<y>>
++D4 == C
++D5 == <<x, y>>
++Spec == LET L == 1
++       I == INSTANCE Inner WITH a <- x, b <- y, p <- L IN I!ISpec
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
+new file mode 100644
+index 00000000..0140c474
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
+@@ -0,0 +1 @@
++an INSTANCE in a LET of a temporal formula
+diff --git a/packages/prove-it/native/crates/tla-front/src/live.rs b/packages/prove-it/native/crates/tla-front/src/live.rs
+index 012060ac..d51ff8ea 100644
+--- a/packages/prove-it/native/crates/tla-front/src/live.rs
++++ b/packages/prove-it/native/crates/tla-front/src/live.rs
+@@ -331,8 +331,17 @@ impl Converter<'_> {
+         match &expression.kind {
+             ExpressionKind::Label { body, .. } => self.convert(body, scope),
+             ExpressionKind::Let {
+-                definitions, body, ..
++                definitions,
++                instances,
++                body,
++                ..
+             } => {
++                if instances
++                    .as_ref()
++                    .is_some_and(|instances| !instances.is_empty())
++                {
++                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
++                }
+                 let bound = bind_definitions(definitions, scope)?;
+                 self.convert(body, bound.as_ref())
+             }
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index fbfba50f..bc7dcff6 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -285,8 +285,17 @@ impl Expansion<'_> {
+                 return self.expand(body, scope, expanding, is_substituted, name);
+             }
+             ExpressionKind::Let {
+-                definitions, body, ..
++                definitions,
++                instances,
++                body,
++                ..
+             } => {
++                if instances
++                    .as_ref()
++                    .is_some_and(|instances| !instances.is_empty())
++                {
++                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
++                }
+                 let bound = bind_definitions(definitions, scope)?;
+                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
+             }
+@@ -952,8 +961,17 @@ fn find_next(
+     };
+     match &expression.kind {
+         ExpressionKind::Let {
+-            definitions, body, ..
++            definitions,
++            instances,
++            body,
++            ..
+         } => {
++            if instances
++                .as_ref()
++                .is_some_and(|instances| !instances.is_empty())
++            {
++                return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
++            }
+             let bound = bind_definitions(definitions, scope)?;
+             return recurse(body, bound.as_ref(), substitution, found);
+         }
+@@ -1400,8 +1418,19 @@ impl SubscriptCollector<'_, '_> {
+                 return Ok(true);
+             }
+             ExpressionKind::Let {
+-                definitions, body, ..
++                definitions,
++                instances,
++                body,
++                ..
+             } => {
++                if instances
++                    .as_ref()
++                    .is_some_and(|instances| !instances.is_empty())
++                {
++                    return Err(Unfollowed(
++                        "an INSTANCE in a LET in the subscript of [][Next]_v",
++                    ));
++                }
+                 let bound = bind_definitions(definitions, scope)
+                     .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
+                 return self.enter(body, bound.as_ref(), found);
+-- 
+2.43.0
+

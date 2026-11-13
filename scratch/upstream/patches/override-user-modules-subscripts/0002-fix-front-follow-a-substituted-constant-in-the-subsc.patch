@@ -1,0 +1,293 @@
+From 8e23fc52e94f44ae2860c13d78642314a8737b2b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 05:58:21 +0000
+Subject: [PATCH 2/3] fix(front): follow a substituted constant in the
+ subscript of [][Next]_v as TLC does
+
+TLC gives a declared constant the configuration substitutes, `C <- D`,
+the OpDefNode of D as its tool object (processConstants), so its
+SubscriptCollector enters D's body as an operator, whatever TLC
+computed of D as it started. The front end declined any subscript that
+named such a constant. It now enters the body of a definition without
+parameters that substitutes a declared constant, and declines only
+where the substitute is something else: a definition the
+configuration substitutes for, or a Java method's.
+---
+ .../M.cfg                                     |  3 +++
+ .../M.tla                                     | 11 +++++++++++
+ .../tlc.out                                   | 17 +++++++++++++++++
+ .../subscript-substitute-definition/M.cfg     |  2 ++
+ .../subscript-substitute-definition/M.tla     |  7 +++++++
+ .../subscript-substitute-definition/tlc.out   | 12 ++++++++++++
+ .../subscript-substitute-literal/M.cfg        |  3 +++
+ .../subscript-substitute-literal/M.tla        | 11 +++++++++++
+ .../subscript-substitute-literal/tlc.out      | 15 +++++++++++++++
+ .../M.cfg                                     |  3 +++
+ .../M.tla                                     | 12 ++++++++++++
+ .../tlc.out                                   |  6 ++++++
+ .../subscript-substitute-variable/M.cfg       |  3 +++
+ .../subscript-substitute-variable/M.tla       | 11 +++++++++++
+ .../subscript-substitute-variable/tlc.out     |  6 ++++++
+ .../native/crates/tla-front/src/spec.rs       | 19 +++++++++++++++----
+ 16 files changed, 137 insertions(+), 4 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.cfg
+new file mode 100644
+index 00000000..60325b56
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.cfg
+@@ -0,0 +1,3 @@
++SPECIFICATION Spec
++CONSTANT C = 3
++CONSTANT G <- D4
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.tla
+new file mode 100644
+index 00000000..76ef91ad
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++CONSTANT C, G
++D1 == y
++D2 == 1
++D3 == <<y>>
++D4 == C
++D5 == <<x, y>>
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_G
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/tlc.out
+new file mode 100644
+index 00000000..6ef6f540
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-constant-definition/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable x
++(Use the -nowarning option to disable this warning.)
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable y
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.cfg
+new file mode 100644
+index 00000000..3d3c7a42
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++CONSTANT C <- D
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.tla
+new file mode 100644
+index 00000000..9f6ff498
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT C
++VARIABLE x
++D == TRUE
++Spec == x = 0 /\ [][x' = x]_<<x, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/tlc.out
+new file mode 100644
+index 00000000..d42017c6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-definition/tlc.out
+@@ -0,0 +1,12 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.cfg
+new file mode 100644
+index 00000000..a87efc77
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.cfg
+@@ -0,0 +1,3 @@
++SPECIFICATION Spec
++CONSTANT C = 3
++CONSTANT G <- D2
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.tla
+new file mode 100644
+index 00000000..098d500f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++CONSTANT C, G
++D1 == y
++D2 == 1
++D3 == <<y>>
++D4 == C
++D5 == <<x, y>>
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, G>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/tlc.out
+new file mode 100644
+index 00000000..19e46968
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-literal/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Warning: TLC could not determine if the subscript of the next-state relation contains
++all state variables. Proceed with fingers crossed.
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.cfg
+new file mode 100644
+index 00000000..e81f43c8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.cfg
+@@ -0,0 +1,3 @@
++SPECIFICATION Spec
++CONSTANT C = 3
++CONSTANT G <- D1
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.tla
+new file mode 100644
+index 00000000..193b885b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/M.tla
+@@ -0,0 +1,12 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++CONSTANT C, G
++D1 == y
++D2 == 1
++D3 == <<y>>
++D4 == C
++D5 == <<x, y>>
++S(v) == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, v>>
++Spec == S(G)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/tlc.out
+new file mode 100644
+index 00000000..ceb90e2d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-through-operator/tlc.out
+@@ -0,0 +1,6 @@
++exit 151
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Error: The configuration file substitutes constant G with non-constant D1 - specifically: In evaluation, the identifier y is either undefined or not an operator.
++line 5, col 7 to line 5, col 7 of module M
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.cfg
+new file mode 100644
+index 00000000..e81f43c8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.cfg
+@@ -0,0 +1,3 @@
++SPECIFICATION Spec
++CONSTANT C = 3
++CONSTANT G <- D1
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.tla
+new file mode 100644
+index 00000000..098d500f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++CONSTANT C, G
++D1 == y
++D2 == 1
++D3 == <<y>>
++D4 == C
++D5 == <<x, y>>
++Spec == x = 0 /\ y = 0 /\ [][x' = x /\ y' = y]_<<x, G>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/tlc.out
+new file mode 100644
+index 00000000..ceb90e2d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-substitute-variable/tlc.out
+@@ -0,0 +1,6 @@
++exit 151
++Semantic processing of module Naturals
++Semantic processing of module M
++Linting of module M
++Error: The configuration file substitutes constant G with non-constant D1 - specifically: In evaluation, the identifier y is either undefined or not an operator.
++line 5, col 7 to line 5, col 7 of module M
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index 518e7e87..fbfba50f 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -1458,10 +1458,21 @@ impl SubscriptCollector<'_, '_> {
+             if environment.constants.contains_key(&name) {
+                 return Ok(true);
+             }
+-            if environment.substitutions.contains_key(&name) {
+-                return Err(Unfollowed(
+-                    "a subscript of [][Next]_v that names what the configuration substitutes",
+-                ));
++            if let Some(target) = environment.substitutions.get(&name) {
++                // TLC gives a declared constant the configuration substitutes the OpDefNode of
++                // what substitutes it (`processConstants`), which the collector enters as an
++                // operator, whatever TLC computed of it as it started.
++                let substitute = environment.definitions.get(target).filter(|definition| {
++                    !environment.definitions.contains_key(&name)
++                        && !environment.builtins.contains_key(target)
++                        && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
++                });
++                return match substitute {
++                    Some(definition) => self.enter(&definition.body, None, found),
++                    None => Err(Unfollowed(
++                        "a subscript of [][Next]_v that names what the configuration substitutes",
++                    )),
++                };
+             }
+         }
+         let Some((params, body, closure_scope)) =
+-- 
+2.43.0
+
