@@ -1,0 +1,13 @@
+classes base: {'match': 46904, 'decline': 24573, 'wrong': 1347, 'noncompletion': 3}
+classes cand: {'match': 46952, 'decline': 24848, 'wrong': 1024, 'noncompletion': 3}
+changed runs: 339
+transitions: {'wrong->match': 53, 'wrong->decline': 270, 'decline->decline': 10, 'match->decline': 5, 'wrong->wrong': 1}
+matches lost: 5
+  LOST tlc/standard/transitive_closure/reverse_order_chain#assume decline an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+  LOST tlc/standard/transitive_closure/reverse_order_chain#init decline an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+  LOST tlc/standard/transitive_closure/reverse_order_chain#invariant decline an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+  LOST tlc/standard/transitive_closure/reverse_order_chain#next decline an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+  LOST tlc/standard/transitive_closure/reverse_order_chain#property decline an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+wrong outputs that changed: 1 without a jar run: 0
+   WRONG tlc/temporal/next_subscript/instance_substituted_expression base wrong
+noncompletions: 3 [('tlc/engine262/print_sum', 'time-limit', 'noncompletion'), ('tlc/engine262/functions_and_arrays', 'time-limit', 'noncompletion'), ('tlc/engine262/uncaught_type_error', 'time-limit', 'noncompletion')]
