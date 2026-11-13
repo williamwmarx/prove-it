@@ -595,6 +595,7 @@ impl<'ir> Evaluator<'ir> {
                                         ),
                                             code: Some(2148),
                                             is_eval_exception: false,
+                                            inner: None,
                                         },
                                     )
                                 }

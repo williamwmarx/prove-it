@@ -1090,6 +1090,7 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
                             ),
                             code: Some(OVERFLOW),
                             is_eval_exception: false,
+                            inner: None,
                         }),
                     });
                 }
@@ -1144,6 +1145,7 @@ fn parts_size<'v>(
                     text,
                     code,
                     is_eval_exception: false,
+                    inner: None,
                 }),
             });
         }

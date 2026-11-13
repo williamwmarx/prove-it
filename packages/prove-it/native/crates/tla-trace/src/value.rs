@@ -34,6 +34,9 @@ pub struct TlcMessage {
     pub text: String,
     pub code: Option<u32>,
     pub is_eval_exception: bool,
+    /// The message of the error this one reports, which its text ends with, as a Java method's
+    /// failure reports the error the method produced (`MP.getMessage`'s nested message).
+    pub inner: Option<Box<TlcMessage>>,
 }
 
 pub type Evaluated<T> = Result<T, EvalError>;
@@ -53,6 +56,7 @@ pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T> 
             text,
             code: None,
             is_eval_exception: false,
+            inner: None,
         }),
     })
 }
@@ -73,6 +77,7 @@ pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Eval
             text,
             code: Some(code),
             is_eval_exception: true,
+            inner: None,
         }),
     })
 }
