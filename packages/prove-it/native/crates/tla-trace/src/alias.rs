@@ -57,6 +57,7 @@ impl Rebuilder<'_> {
             text,
             code: Some(code),
             is_eval_exception: false,
+            inner: None,
         };
         // TLC finds the alias by its name as it evaluates it, and fails on a name it has no
         // definition of, on a definition that takes arguments and on one it computed as it

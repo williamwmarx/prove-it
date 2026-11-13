@@ -1794,6 +1794,17 @@ impl<'a> Compiler<'a> {
             lets.truncate(depth);
             return is_held;
         }
+        // TLC writes a \cup, \cap or \ as its enumeration (`SetCupValue.toString` and its
+        // siblings), which holds the operands' elements, but not the operands as built.
+        if let NodeKind::Apply { name, args } = kind
+            && !name.is_local
+            && let Resolution::Builtin(index) = name.resolution
+            && matches!(self.builtin_name(index), "\\cup" | "\\cap" | "\\")
+        {
+            return args
+                .iter()
+                .any(|&arg| self.elements_may_hold_unsized(arg, seen, lets));
+        }
         let is_unsized = match kind {
             // TLC sizes the factors in order and stops at an empty one.
             NodeKind::Product(factors) => self.may_size_unsized(factors.iter().copied()),
@@ -1843,6 +1854,33 @@ impl<'a> Compiler<'a> {
                 .carried_children(kind)
                 .into_iter()
                 .any(|child| self.may_hold_unsized_in(child, seen, lets))
+    }
+
+    // Whether the elements of a set may hold a set `may_hold_unsized` finds: those of a set of
+    // functions, records or tuples written there are built of its parts' elements, and those of
+    // SUBSET S are sets of S's elements.
+    fn elements_may_hold_unsized(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<NodeId>,
+        lets: &mut Vec<(TextId, NodeId, usize)>,
+    ) -> bool {
+        let parts: Vec<NodeId> = match self.node(node).1 {
+            NodeKind::FunctionSet { domain, range } => vec![*domain, *range],
+            NodeKind::RecordSet(fields) => fields.iter().map(|&(_, field)| field).collect(),
+            NodeKind::Product(factors) => factors.clone(),
+            NodeKind::Apply { name, args }
+                if !name.is_local
+                    && matches!(name.resolution, Resolution::Builtin(index)
+                        if self.builtin_name(index) == "SUBSET") =>
+            {
+                args.clone()
+            }
+            _ => return self.may_hold_unsized_in(node, seen, lets),
+        };
+        parts
+            .into_iter()
+            .any(|part| self.elements_may_hold_unsized(part, seen, lets))
     }
 
     // Whether an expression's value is a boolean, a number or a string, whatever sets it reads:
@@ -1934,6 +1972,14 @@ impl<'a> Compiler<'a> {
             .any(|&child| self.may_write_unsized(child, scope, seen));
         scope.truncate(depth);
         is_written
+    }
+
+    // Whether a value a builtin writes may hold a set `may_hold_unsized` finds, as
+    // `may_write_unsized` asks of each argument: a print's argument TLC's own check of the set
+    // settles doesn't.
+    pub(crate) fn may_write_held(&self, node: NodeId, is_print: bool) -> bool {
+        !(is_print && self.is_print_settled(node, &mut Vec::new()))
+            && self.reads_unsized(node, &mut Vec::new(), &mut HashSet::new())
     }
 
     // Whether the value of an expression may hold a set `may_hold_unsized` finds: one it builds,

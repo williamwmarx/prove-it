@@ -634,7 +634,11 @@ impl Compiler<'_> {
         is_forall: bool,
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        // TLC enumerates each bound's set (`Tool.contexts`).
+        for level in &mut levels {
+            level.set = Self::listed(&level.set);
+        }
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
@@ -881,7 +885,12 @@ impl Compiler<'_> {
         bounds: &[Bound],
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        // TLC enumerates each bound's set into the set it builds (`Tool.evalImpl`'s
+        // OPCODE_soa).
+        for level in &mut levels {
+            level.set = Self::listed(&level.set);
+        }
         let body = self.compile(expression, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
@@ -916,7 +925,11 @@ impl Compiler<'_> {
         body: NodeId,
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        // TLC enumerates each bound's set (`Tool.contexts`).
+        for level in &mut levels {
+            level.set = Self::listed(&level.set);
+        }
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
@@ -1049,8 +1062,15 @@ impl Compiler<'_> {
                     };
                     lazy.push(set);
                 }
-                if lazy.iter().any(is_lazy_domain) {
-                    return lazy_function::build(machine, &definition, lazy);
+                // TLC prints, compares and fingerprints a function it keeps lazy as the one
+                // `toFcnRcd` builds over its domain's enumeration, and a \cup, \cap or \ prints
+                // as its enumeration too, so over one it enumerates the engine builds that one.
+                for set in &lazy {
+                    if is_lazy_domain(set)
+                        && !(matches!(set, Lazy::Operation(..)) && set.enumerate(machine).is_ok())
+                    {
+                        return lazy_function::build(machine, &definition, lazy);
+                    }
                 }
                 // A function TLC builds at once (`toFcnRcd`), over the sets just evaluated.
                 let mut sets = Vec::with_capacity(lazy.len());

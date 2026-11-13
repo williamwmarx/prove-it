@@ -5236,7 +5236,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\n"
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = {1, 3000000000} |  :: ",
@@ -5244,7 +5244,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = {1, 3000000000}\n"
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S(a) == a",
@@ -5418,7 +5418,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(1) = 3000000000\n"
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 1 | F(3000000000) = 1 |  :: ",
@@ -5426,7 +5426,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(3000000000) = 1\n"
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = -3000000000 | F(1) = 2 |  :: ",
@@ -5447,7 +5447,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isTool": true
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
@@ -5456,7 +5456,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isWarningEnabled": false
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
@@ -5465,7 +5465,7 @@
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
       "isContinued": true
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "CONSTANT K = 2147483648 | F(1) = 2 |  :: ",
@@ -5473,7 +5473,7 @@
       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
       "config": "INIT Init\nNEXT Next\nCONSTANT K = 2147483648\nF(1) = 2\n"
     },
-    "declined": "the engine stopped before it searched (exit 75)"
+    "declined": "the engine stopped before it searched (exit 255)"
   },
   {
     "test": "\"INIT Init\\nNEXT Nope\\n\"{}",

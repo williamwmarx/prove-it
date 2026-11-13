@@ -1,18 +1,20 @@
 //! Sets the engine tests for membership without building them, and the sets of functions, records
 //! and tuples, which it builds only when it must, as `compileLazySet` and `memberTest` do.
 
+use std::sync::atomic::Ordering;
+
 use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
-    is_tested_set_kind,
+    is_function_kind, is_tested_set_kind,
 };
 use tla_values::{Bail, Id};
 
 use super::builtins::expect_int;
-use super::lazy::Lazy;
+use super::lazy::{Lazy, PrintedSet};
 use super::nodes::expect_set;
 use super::{
-    Compiled, Compiler, Compiling, Context, combine_references, eval, leaf, member, parts,
+    Compiled, Compiler, Compiling, Context, Shape, combine_references, eval, leaf, member, parts,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
@@ -229,10 +231,45 @@ impl Compiler<'_> {
         };
         Compiled {
             eval: eval(move |machine| {
-                let elements = reference(machine)?.enumerate(machine)?;
+                let set = reference(machine)?;
+                let elements = set.enumerate(machine)?;
+                // TLC holds the set lazily. It compares, fingerprints, sizes and enumerates it as
+                // its enumeration, which decides emptiness before it asks a part, but prints its
+                // parts where it can't size one before an empty one, which the engine's writes
+                // of a value check (`Program::holds_collapsed`).
+                if set.is_infinite()
+                    && !matches!(
+                        set.check_printed(machine),
+                        Ok(PrintedSet::Empty | PrintedSet::OfEmptyFunction)
+                    )
+                {
+                    machine.program.is_collapsed.store(true, Ordering::Relaxed);
+                }
                 machine.store.set_of(&elements)
             }),
             ..set
+        }
+    }
+
+    /// The set as an operation that only enumerates it takes it, such as a quantifier over it:
+    /// TLC's enumeration of a set it keeps lazy, which may be empty where the set's own value is
+    /// one the engine doesn't hold.
+    pub(crate) fn listed(set: &Compiled) -> Compiled {
+        let Some(reference) = set
+            .reference
+            .clone()
+            .filter(|_| set.has_infinite_part && set.infinite.is_none())
+        else {
+            return set.clone();
+        };
+        Compiled {
+            eval: eval(move |machine| {
+                let elements = reference(machine)?.enumerate(machine)?;
+                machine.store.set_of(&elements)
+            }),
+            shape: Shape::Other,
+            predicate: None,
+            ..set.clone()
         }
     }
 
@@ -250,6 +287,10 @@ impl Compiler<'_> {
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
         let member_parts = set_parts.clone();
+        // TLC compares a function's domain with the set of functions' domain, which fails where
+        // that is a set it overrides, such as Nat or Seq(S) (`SetOfFcnsValue.member`,
+        // `UserValue.equals`).
+        let is_domain_overridden = matches!(domain.infinite, Some(name) if name != "Combined");
         // A part TLC keeps lazy, as SUBSET S, isn't built to find the one function of an empty
         // domain.
         let is_part_lazy = !domain.is_normalized || !range.is_normalized;
@@ -275,6 +316,9 @@ impl Compiler<'_> {
                         element,
                         "a mistyped membership in a set of functions",
                     );
+                }
+                if is_domain_overridden {
+                    return Err(Bail("equality of values TLC can't compare"));
                 }
                 let domain_set = member_domain(machine)?;
                 if !equals_domain(machine, element, domain_set)? {
@@ -353,14 +397,22 @@ impl Compiler<'_> {
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
-                if machine.store.kind_of(element) != KIND_FUNCTION {
+                // `toRcd` makes a record of a function whose keys are strings, as the empty
+                // tuple's are, and of no other value.
+                let size = machine.store.size_of(element);
+                let is_record = is_function_kind(machine.store.kind_of(element))
+                    && (0..size).all(|index| {
+                        let key = machine.store.get_key(element, index);
+                        machine.store.kind_of(key) == KIND_STRING
+                    });
+                if !is_record {
                     return not_in(
                         machine,
                         element,
                         "a mistyped membership in a set of records",
                     );
                 }
-                if machine.store.size_of(element) as usize != member_keys.len() {
+                if size as usize != member_keys.len() {
                     return Ok(false);
                 }
                 for (index, (&key, test)) in member_keys.iter().zip(&members).enumerate() {

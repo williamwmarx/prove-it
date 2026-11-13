@@ -192,6 +192,7 @@ pub fn simulate(
                 states: stopped.states,
                 labels: stopped.labels,
                 counts: StopCounts::default(),
+                holds_collapsed: machine.program.holds_collapsed(),
                 store: std::mem::replace(&mut machine.store, Store::new()),
                 startup,
                 startup_random: machine.startup_random,
@@ -433,6 +434,7 @@ impl Run<'_, '_> {
         // store prints it as TLC does, that state is all the report takes.
         let last = path.state(*kept.last().expect("the initial state"));
         if self.simulation.depth == i32::MAX
+            && !machine.program.holds_collapsed()
             && last
                 .iter()
                 .all(|&value| is_printable(&machine.store, value))

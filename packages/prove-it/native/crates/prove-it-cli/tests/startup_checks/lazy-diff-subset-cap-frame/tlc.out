@@ -1,0 +1,33 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to check if non-tuple
+FALSE
+is in the set of tuples:
+(STRING \X {} \X STRING)
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 104 in M
+1. Line 6, column 9 to line 6, column 13 in M
+2. Line 6, column 18 to line 6, column 104 in M
+3. Line 6, column 23 to line 6, column 103 in M
+4. Line 6, column 23 to line 6, column 96 in M
+5. Line 6, column 31 to line 6, column 95 in M
+6. Line 6, column 45 to line 6, column 94 in M
+7. Line 6, column 46 to line 6, column 67 in M
+
+
+Reason:
+Attempted to check if non-tuple
+FALSE
+is in the set of tuples:
+(STRING \X {} \X STRING)
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

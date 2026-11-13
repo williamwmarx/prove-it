@@ -400,6 +400,17 @@ impl Parser {
     fn parse_value(&mut self, token: (Kind, String, u32)) -> Parsed<ConfigValue> {
         let (kind, text, line) = token;
         if kind == Kind::Number {
+            // `Integer.parseInt` throws on a number past TLC's integers, which TLC reports as
+            // an exception it didn't expect.
+            if text.parse::<i32>().is_err() {
+                return Err(ConfigError {
+                    message: format!(
+                        "{}java.lang.NumberFormatException\n: For input string: \"{text}\"",
+                        crate::errors::UNEXPECTED_HEAD
+                    ),
+                    unworded: None,
+                });
+            }
             return Ok(ConfigValue::Number(text.parse().unwrap_or(f64::NAN)));
         }
         // TLC reads a string's contents as written, and rejects a backslash in them.

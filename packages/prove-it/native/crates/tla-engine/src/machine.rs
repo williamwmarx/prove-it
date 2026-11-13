@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tla_ir::NodeId;
 use tla_values::fingerprint::{Fingerprints, Polynomial};
@@ -119,6 +119,10 @@ pub struct Program {
     /// search may evaluate between them, and how many they have.
     pub(crate) evaluation_budget: Option<u64>,
     pub(crate) evaluations: AtomicU64,
+    /// Whether a machine enumerated a set of functions, records or tuples TLC keeps lazy and
+    /// prints by its parts (`Lazy::check_printed`), whose enumeration the store holds and would
+    /// print instead.
+    pub(crate) is_collapsed: AtomicBool,
 }
 
 impl Program {
@@ -127,6 +131,12 @@ impl Program {
     pub(crate) fn is_evaluation_budget_spent(&self) -> bool {
         self.evaluation_budget
             .is_some_and(|budget| self.evaluations.load(Ordering::Relaxed) > budget)
+    }
+
+    /// Whether a value the store holds may print otherwise than TLC prints it: an enumeration of
+    /// a set TLC prints by its parts (`Program::is_collapsed`).
+    pub(crate) fn holds_collapsed(&self) -> bool {
+        self.is_collapsed.load(Ordering::Relaxed)
     }
 
     pub(crate) fn polynomial(&self) -> &'static Polynomial {

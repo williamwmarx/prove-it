@@ -264,10 +264,10 @@ describe("check's result", () => {
     const directory = mkdtempSync(join(tmpdir(), "prove-it-check-log-"));
     const logPath = join(directory, "checks.jsonl");
     process.env.PROVE_IT_CHECK_LOG = logPath;
+    // TLC computes Bad as it starts, printing before it fails, which the native check declines.
     const source =
-      "---- MODULE M ----\nEXTENDS Naturals, Helper\nCONSTANT K\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
-    // TLC reports this number as a NumberFormatException, which the native check declines.
-    const config = "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nCHECK_DEADLOCK FALSE";
+      "---- MODULE M ----\nEXTENDS Naturals, Helper, TLC\nCONSTANT K\nVARIABLE x\nBad == PrintT(K) /= 7\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
+    const config = "INIT Init\nNEXT Next\nCONSTANT K = 3\nCHECK_DEADLOCK FALSE";
     try {
       await expect(
         check({

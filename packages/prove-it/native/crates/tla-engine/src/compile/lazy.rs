@@ -761,6 +761,85 @@ impl Lazy {
         Ok(PrintedSet::Enumerated)
     }
 
+    /// TLC's `isFinite` of the set: `None` where TLC fails, as it does asking whether
+    /// `{x \in S : p}` is finite for an infinite S, or where the engine can't tell what TLC
+    /// answers.
+    pub(crate) fn is_finite(&self, machine: &mut Machine<'_>) -> Option<bool> {
+        self.finiteness(machine).flatten()
+    }
+
+    // TLC's `isFinite`: `None` where TLC may fail, `Some(None)` where it answers without failing
+    // but the engine can't tell which way, as for Seq(S), which is finite where S is empty.
+    fn finiteness(&self, machine: &mut Machine<'_>) -> Option<Option<bool>> {
+        let is_empty = |set: &Lazy, machine: &mut Machine<'_>| set.printed_is_empty(machine).ok();
+        Some(match self {
+            Lazy::Set(id) => {
+                if machine.store.kind_of(*id) != KIND_SET {
+                    return None;
+                }
+                Some(true)
+            }
+            Lazy::Enumeration(_) => Some(true),
+            // Nat, Int and STRING (`UserValue.isFinite`), and Seq(S), whose S isn't held.
+            Lazy::Infinite(name) => (*name != "Seq").then_some(false),
+            Lazy::Tested(_) | Lazy::Union(_) => return None,
+            Lazy::Subset(base) | Lazy::Kept(base) => base.finiteness(machine)?,
+            // `SetOfFcnsValue.isFinite`: the first of these that holds.
+            Lazy::FunctionSet(domain, range) => {
+                let is_finite_domain = domain.finiteness(machine)?;
+                let is_empty_domain = Some(is_empty(domain, machine)?);
+                let is_finite_range = range.finiteness(machine)?;
+                let is_empty_range = Some(is_empty(range, machine)?);
+                let is_range_of_one = if is_finite_range == Some(false) {
+                    Some(false)
+                } else {
+                    Some(range.printed_size(machine).ok()? == 1)
+                };
+                any([
+                    all([is_finite_domain, is_empty_domain]),
+                    all([is_finite_range, is_empty_range]),
+                    all([is_finite_domain, is_finite_range]),
+                    all([is_finite_range, is_range_of_one]),
+                ])
+            }
+            // `SetOfRcdsValue.isFinite` and `SetOfTuplesValue.isFinite`: a finite empty part, or
+            // every part finite.
+            Lazy::RecordSet(_, parts) | Lazy::Product(parts) => {
+                let mut empty_parts = Vec::with_capacity(parts.len());
+                let mut finite_parts = Vec::with_capacity(parts.len());
+                for part in parts {
+                    let is_finite = part.finiteness(machine)?;
+                    finite_parts.push(is_finite);
+                    empty_parts.push(all([is_finite, Some(is_empty(part, machine)?)]));
+                }
+                any([any(empty_parts), all(finite_parts)])
+            }
+            // `SetPredValue.isFinite`, which fails where S isn't finite.
+            Lazy::Filtered(base, _) => match base.finiteness(machine)? {
+                Some(true) => Some(true),
+                _ => return None,
+            },
+            // `SetCupValue.isFinite`, `SetCapValue.isFinite` and `SetDiffValue.isFinite`, which
+            // answer as the set enumeration TLC reduces the operation to does.
+            Lazy::Operation(operator, left, right) => {
+                let is_left_finite = left.finiteness(machine)?;
+                match (operator, is_left_finite) {
+                    (Operator::Union, Some(false)) => Some(false),
+                    (Operator::Union, _) => all([is_left_finite, right.finiteness(machine)?]),
+                    (Operator::Intersection | Operator::Difference, Some(true)) => Some(true),
+                    (Operator::Intersection, _) => match right.finiteness(machine)? {
+                        Some(true) => Some(true),
+                        _ => return None,
+                    },
+                    (Operator::Difference, _) => match right.finiteness(machine)? {
+                        Some(true) => is_left_finite,
+                        _ => return None,
+                    },
+                }
+            }
+        })
+    }
+
     // A part's `size`: a set's count, a function's, tuple's or record's number of keys, and a
     // failure for any other value or a set TLC can't enumerate.
     fn printed_size(&self, machine: &mut Machine<'_>) -> Outcome<u64> {
@@ -813,6 +892,32 @@ impl Lazy {
             _ => Err(UNSURE_PRINT),
         }
     }
+}
+
+// Kleene's conjunction, of values `None` leaves unknown: false where one is, true where all are.
+fn all(values: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+    let mut result = Some(true);
+    for value in values {
+        match value {
+            Some(false) => return Some(false),
+            None => result = None,
+            Some(true) => {}
+        }
+    }
+    result
+}
+
+// Kleene's disjunction: true where one is, false where all are.
+fn any(values: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+    let mut result = Some(false);
+    for value in values {
+        match value {
+            Some(true) => return Some(true),
+            None => result = None,
+            Some(false) => {}
+        }
+    }
+    result
 }
 
 // Whether elements streamed differ from their normalized set's, in order.

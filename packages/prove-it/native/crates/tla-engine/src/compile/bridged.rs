@@ -16,6 +16,9 @@ use crate::machine::Machine;
 
 // Beyond these the interpreter would build more values than a model can use.
 const MAXIMUM_PERMUTED: usize = 10;
+/// What IsFiniteSet stops with where TLC fails asking a set it keeps lazy whether it is finite,
+/// or the engine can't tell what TLC answers.
+const LAZY_FINITE: Bail = Bail("unsupported: IsFiniteSet of a set TLC keeps lazy");
 const MAXIMUM_SUB_BAGS: f64 = 1e6;
 
 type Bridged = fn(&mut Machine<'_>, &[Id], &[Applier]) -> Outcome<Id>;
@@ -62,8 +65,25 @@ impl Compiler<'_> {
                 // TLC asks a set it keeps lazy whether it is finite by its parts
                 // (`SetOfFcnsValue.isFinite` and the like), where the engine would enumerate it.
                 if name == "IsFiniteSet" && value.may_be_infinite() {
+                    let reference = value.reference.clone();
+                    // TLC evaluates the set before it asks it, which a reference, as Seq(S)'s,
+                    // may not: its parts run first.
+                    let parts = value.parts.clone();
                     return Ok(Some(leaf(
-                        eval(|_| Err(Bail("unsupported: IsFiniteSet of a set TLC keeps lazy"))),
+                        eval(move |machine| {
+                            if let Some(parts) = &parts {
+                                machine.run_parts(parts)?;
+                            }
+                            let lazy = match &reference {
+                                Some(reference) => reference(machine)?,
+                                None => return Err(LAZY_FINITE),
+                            };
+                            match lazy.is_finite(machine) {
+                                Some(true) => Ok(TRUE),
+                                Some(false) => Ok(FALSE),
+                                None => Err(LAZY_FINITE),
+                            }
+                        }),
                         value.footprint,
                     )));
                 }

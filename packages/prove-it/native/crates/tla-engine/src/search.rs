@@ -232,6 +232,19 @@ impl Default for Settings {
 }
 
 /// What a search tells its caller as it runs, as `runEngine`'s callbacks.
+/// What `-dump` stops with where a state may hold a set TLC prints by its parts, which the store
+/// holds as its enumeration (`Program::holds_collapsed`).
+const COLLAPSED_DUMP: &str = "dumping a state that may hold a set TLC prints by its parts";
+
+// Hands the states to the reporter for `-dump`, or why it can't write them as TLC does.
+fn dump(machine: &Machine<'_>, reporter: &mut dyn Reporter, states: &[Id], width: usize) {
+    if machine.program.holds_collapsed() {
+        reporter.undumped(COLLAPSED_DUMP);
+    } else {
+        reporter.dumped(&machine.store, states, width);
+    }
+}
+
 pub trait Reporter {
     fn initial_states_started(&mut self);
     fn initial_states_progress(&mut self, count: u64);
@@ -301,6 +314,9 @@ pub trait Reporter {
     /// `Settings::is_dumped`. A search that ends without calling it, such as one stopped computing
     /// its initial states, leaves the dump to its caller.
     fn dumped(&mut self, _store: &Store, _states: &[Id], _width: usize) {}
+    /// In place of `dumped`, where the store may hold a value of a state that it prints otherwise
+    /// than TLC writes it: why.
+    fn undumped(&mut self, _reason: &'static str) {}
     /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
     /// it.
     fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
@@ -497,6 +513,9 @@ pub struct Violation {
     pub labels: Vec<Option<u32>>,
     /// The counts TLC reports after the trace.
     pub counts: StopCounts,
+    /// Whether a value of `store` may print otherwise than TLC prints it: an enumeration of a set
+    /// TLC prints by its parts (`Program::holds_collapsed`).
+    pub holds_collapsed: bool,
     pub store: Store,
     /// The value TLC computed at startup of each of the model's startup definitions, ids of
     /// `store`.
@@ -2999,7 +3018,9 @@ fn run_startup(
         };
         // The store forgets how TLC built some values, whose text then depends on it.
         let format = |machine: &Machine<'_>| {
-            if tla_values::print::is_printable(&machine.store, value) {
+            if tla_values::print::is_printable(&machine.store, value)
+                && !machine.program.holds_collapsed()
+            {
                 tla_values::print::format_value(&machine.store, value)
             } else {
                 Err(Bail(
@@ -4179,9 +4200,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             if settings.is_dumped {
-                search
-                    .reporter
-                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+                dump(
+                    &machine,
+                    search.reporter,
+                    &search.states.ids[..count * width],
+                    width,
+                );
             }
             let lasso_actions = match &liveness.verdict {
                 Verdict::Lasso {
@@ -4253,9 +4277,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             if settings.is_dumped {
-                search
-                    .reporter
-                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+                dump(
+                    &machine,
+                    search.reporter,
+                    &search.states.ids[..count * width],
+                    width,
+                );
             }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
@@ -4640,7 +4667,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 {
                     states.extend_from_slice(last);
                 }
-                search.reporter.dumped(&machine.store, &states, width);
+                dump(&machine, search.reporter, &states, width);
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;
@@ -5354,6 +5381,7 @@ fn to_violation(
             states,
             labels,
             counts: found.counts,
+            holds_collapsed: machine.program.holds_collapsed(),
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             chosen,
@@ -5737,6 +5765,7 @@ fn to_accepted(
             .collect(),
         labels,
         counts,
+        holds_collapsed: machine.program.holds_collapsed(),
         store: std::mem::replace(&mut machine.store, Store::new()),
         startup,
         chosen,
@@ -5805,6 +5834,7 @@ fn to_lasso(
                 depth: counts.depth,
                 ..StopCounts::default()
             },
+            holds_collapsed: machine.program.holds_collapsed(),
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             chosen,

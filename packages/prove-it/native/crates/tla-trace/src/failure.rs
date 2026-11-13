@@ -140,13 +140,18 @@ const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was
 /// A coded message in -tool output, which TLC marks inside the message that holds it, as it marks
 /// the failure of a Java method that one reports (`formatNestedMessage`).
 pub(crate) fn nested(message: &TlcMessage) -> String {
-    match message.code {
-        Some(code) => format!(
-            "@!@!@STARTMSG {code}:0 @!@!@\n{}\n@!@!@ENDMSG {code} @!@!@",
-            nested_java_failure(&message.text)
+    let Some(code) = message.code else {
+        return message.text.clone();
+    };
+    let text = match &message.inner {
+        Some(inner) if message.text.ends_with(&inner.text) => format!(
+            "{}{}",
+            &message.text[..message.text.len() - inner.text.len()],
+            nested(inner)
         ),
-        None => message.text.clone(),
-    }
+        _ => nested_java_failure(&message.text),
+    };
+    format!("@!@!@STARTMSG {code}:0 @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@")
 }
 
 const JAVA_METHOD_FAILED: u32 = 2154;
@@ -169,6 +174,7 @@ fn nested_java_failure(text: &str) -> String {
                 text: text[at..].to_owned(),
                 code: Some(JAVA_METHOD_FAILED),
                 is_eval_exception: false,
+                inner: None,
             })
         ),
         _ => text.to_owned(),
@@ -389,6 +395,7 @@ impl<'ir> Rebuilder<'ir> {
                 ),
                 code: Some(EXPECTED_VALUE),
                 is_eval_exception: false,
+                inner: None,
             },
             Ok(_) => {
                 return Err(Unsupported(
@@ -2136,6 +2143,7 @@ fn constraint_value_holds(
                 ),
                 code: Some(EXPECTED_VALUE),
                 is_eval_exception: false,
+                inner: None,
             },
         ),
         _ => fail("a constraint that isn't a boolean, without a range"),
@@ -2155,11 +2163,39 @@ mod tests {
             text: format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{inner}"),
             code: Some(JAVA_METHOD_FAILED),
             is_eval_exception: false,
+            inner: None,
         };
         assert_eq!(
             nested(&outer),
             format!(
                 "@!@!@STARTMSG 2154:0 @!@!@\n{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}@!@!@STARTMSG 2154:0 @!@!@\n{inner}\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 2154 @!@!@"
+            )
+        );
+    }
+
+    #[test]
+    fn marks_the_coded_error_a_java_failure_reports_under_tool() {
+        let method = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
+        let inner = TlcMessage {
+            text: "Overflow when computing the number of elements in:\nSUBSET (1..31)".into(),
+            code: Some(2178),
+            is_eval_exception: false,
+            inner: None,
+        };
+        let outer = TlcMessage {
+            text: format!(
+                "{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{}",
+                inner.text
+            ),
+            code: Some(JAVA_METHOD_FAILED),
+            is_eval_exception: false,
+            inner: Some(Box::new(inner.clone())),
+        };
+        assert_eq!(
+            nested(&outer),
+            format!(
+                "@!@!@STARTMSG 2154:0 @!@!@\n{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}@!@!@STARTMSG 2178:0 @!@!@\n{}\n@!@!@ENDMSG 2178 @!@!@\n@!@!@ENDMSG 2154 @!@!@",
+                inner.text
             )
         );
     }

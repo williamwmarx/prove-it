@@ -640,6 +640,7 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
                 ),
                 code: Some(JAVA_METHOD_FAILED),
                 is_eval_exception: false,
+                inner: Some(Box::new(message)),
             }),
             ..error
         },
@@ -1066,6 +1067,7 @@ impl<'ir> Evaluator<'ir> {
                     ),
                     code: Some(2280),
                     is_eval_exception: false,
+                    inner: None,
                 },
             ),
             None => fail("a variable past the state's"),
@@ -1236,6 +1238,7 @@ impl<'ir> Evaluator<'ir> {
                         ),
                         code: Some(EXPECTED_EXPRESSION_IN_COMPUTING),
                         is_eval_exception: false,
+                        inner: None,
                     },
                 );
             }
@@ -1250,6 +1253,7 @@ impl<'ir> Evaluator<'ir> {
                         ),
                         code: Some(EXPECTED_EXPRESSION_IN_COMPUTING2),
                         is_eval_exception: false,
+                        inner: None,
                     },
                 );
             }
@@ -1265,6 +1269,7 @@ impl<'ir> Evaluator<'ir> {
                         ),
                         code: Some(EXPECTED_VALUE),
                         is_eval_exception: false,
+                        inner: None,
                     },
                 );
             }
@@ -1574,6 +1579,11 @@ impl<'ir> Evaluator<'ir> {
                     .err()
                     .unwrap_or_default()
             }
+            // An equality with a set TLC keeps lazy enumerates it, the receiver first
+            // (`convertAndCache`, `toSetEnum`), which may fail in a nested set's `member`.
+            (Given::Equated(other), _) => crate::sets::failing_enumeration(received)
+                .or_else(|| crate::sets::failing_enumeration(other))
+                .unwrap_or_default(),
             (_, Value::Unsorted(values)) => {
                 failing_comparisons(|| crate::value::normalize_failure(values).map_or(Ok(()), Err))
                     .err()
@@ -3416,6 +3426,7 @@ impl<'ir> Evaluator<'ir> {
                                     text: "Argument mismatch in operator application.%1".into(),
                                     code: Some(ARGUMENT_MISMATCH),
                                     is_eval_exception: false,
+                                    inner: None,
                                 },
                             );
                         }

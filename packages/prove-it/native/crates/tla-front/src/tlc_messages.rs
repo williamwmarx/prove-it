@@ -177,7 +177,7 @@ fn is_uncoded(text: &str) -> bool {
         .chars()
         .take_while(|char| char.is_ascii_alphanumeric() || *char == '_')
         .count();
-    !(name > 0 && record[name..].starts_with(" : "))
+    !(name > 0 && record[name..].starts_with(": "))
 }
 
 /// getCodedMessage: the code of the first template the message's text matches.

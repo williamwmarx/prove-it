@@ -386,6 +386,7 @@ fn get_state_texts(
 ) -> Result<Vec<String>, String> {
     let store = &violation.store;
     let is_held = config.alias.is_none()
+        && !violation.holds_collapsed
         && violation
             .states
             .iter()

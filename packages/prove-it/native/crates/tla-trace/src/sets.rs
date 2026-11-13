@@ -354,6 +354,18 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Va
         }
         return None;
     }
+    // `SetCapValue.member` and `SetDiffValue.member` ask their first set, then, where it holds
+    // the value, their second.
+    if let Lazy::Cap(first, second) | Lazy::Diff(first, second) = &**lazy {
+        for inner in [first, second] {
+            match is_member(value, inner) {
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(_) => return nested_failure(value, inner),
+            }
+        }
+        return None;
+    }
     // `SetPredValue.member` asks its base set first: a filter `CallStackTool` copied has no
     // source, and the FingerprintException of its base passes through it.
     if let Lazy::Filter(base, _) = &**lazy {
@@ -432,12 +444,49 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Va
 
 // `failing_sets` of a nested set whose test of `value` fails, after the nested set.
 fn nested_failure(value: &Value, nested: &Value) -> Option<(Vec<Value>, Value, Value)> {
-    let (sets, element, set) = failing_sets(value, nested)?;
+    // A nested product or Seq(S) fails in its own test on a value that isn't a tuple.
+    let is_own = matches!(nested, Value::Lazy(lazy) if matches!(**lazy, Lazy::Product(_) | Lazy::Seq(_)))
+        && as_tuple(value).is_none();
+    let (sets, element, set) = if is_own {
+        (Vec::new(), value.clone(), nested.clone())
+    } else {
+        failing_sets(value, nested)?
+    };
     Some((
         std::iter::once(nested.clone()).chain(sets).collect(),
         element,
         set,
     ))
+}
+
+/// The sets whose `member` a failing enumeration of `set` fails in, outermost first: TLC
+/// enumerates S \cap T and S \ T by S's elements, each tested in T (`SetCapValue.elements`,
+/// `SetDiffValue.elements`), whose own method adds no frame, and S \cup T by S's, then T's.
+/// `None` where the enumeration fails otherwise or doesn't fail.
+pub fn failing_enumeration(set: &Value) -> Option<Vec<Value>> {
+    let Value::Lazy(lazy) = set else {
+        return None;
+    };
+    match &**lazy {
+        Lazy::Cap(first, second) | Lazy::Diff(first, second) => {
+            if elements(first).is_err() {
+                return failing_enumeration(first);
+            }
+            for element in elements(first).ok()?.iter() {
+                if is_member(element, second).is_err() {
+                    return nested_failure(element, second).map(|(sets, ..)| sets);
+                }
+            }
+            None
+        }
+        Lazy::Cup(first, second) => {
+            if elements(first).is_err() {
+                return failing_enumeration(first);
+            }
+            failing_enumeration(second)
+        }
+        _ => None,
+    }
 }
 
 /// The values in whose methods TLC's search of a set enumeration for `value` fails
@@ -1041,6 +1090,7 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
                             ),
                             code: Some(OVERFLOW),
                             is_eval_exception: false,
+                            inner: None,
                         }),
                     });
                 }
@@ -1095,6 +1145,7 @@ fn parts_size<'v>(
                     text,
                     code,
                     is_eval_exception: false,
+                    inner: None,
                 }),
             });
         }

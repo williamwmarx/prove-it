@@ -32,6 +32,7 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
                         ),
                         code: Some(OVERFLOW),
                         is_eval_exception: false,
+                        inner: None,
                     };
                     return Ok(Some((vec![value.clone()], message)));
                 }
