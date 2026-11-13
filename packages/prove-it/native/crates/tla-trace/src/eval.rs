@@ -271,6 +271,10 @@ pub struct CallStack {
     /// the failure is fingerprinted: the last frames of the call stack TLC's replay prints with
     /// the FingerprintException.
     pub fingerprinted_sources: Vec<NodeId>,
+    /// Whether the failure may be in a method of an interval with a source: TLC gives one the
+    /// interval DOMAIN builds, where the replay, which holds an interval without an address,
+    /// gives none.
+    pub is_interval_unplaced: bool,
     /// Whether the fingerprinted failure froze the call stack before a function TLC was building
     /// with a source threw it on as a FingerprintException, which then adds no frames to the
     /// stack TLC prints (`CallStack.freeze` of a frozen stack).
@@ -1456,6 +1460,7 @@ impl<'ir> Evaluator<'ir> {
             {
                 let outer = stack.source(&received);
                 let given = element.as_ref().map_or(Given::Nothing, Given::Element);
+                self.mark_interval_unplaced(&received, None);
                 self.mark_failing_member(outer, &set, given, false);
                 return;
             }
@@ -1468,7 +1473,20 @@ impl<'ir> Evaluator<'ir> {
             Some((false, other)) => Given::Equated(other),
             None => Given::Nothing,
         };
+        self.mark_interval_unplaced(&received, receiver);
         self.mark_failing_member(None, &received, given, true);
+    }
+
+    // Marks a failure in a method of an interval that may have a source, which is not one `..`
+    // builds at `node`.
+    fn mark_interval_unplaced(&mut self, value: &Value, node: Option<NodeId>) {
+        let is_range = node.is_some_and(|node| {
+            matches!(self.kind(node), NodeKind::Apply { name, .. }
+                if !name.is_local && self.name(name.text) == "..")
+        });
+        if let (Value::Interval(..), false, Some(stack)) = (value, is_range, &mut self.call_stack) {
+            stack.is_interval_unplaced = true;
+        }
     }
 
     // Marks a failure in a method of a value with a source as TLC's FingerprintException, after
@@ -1530,6 +1548,14 @@ impl<'ir> Evaluator<'ir> {
             }
             _ => Vec::new(),
         };
+        let is_interval = |value: &Value| matches!(value, Value::Interval(..));
+        if compared.iter().any(is_interval)
+            || nested
+                .as_ref()
+                .is_some_and(|(sets, _, _)| sets.iter().any(is_interval))
+        {
+            stack.is_interval_unplaced = true;
+        }
         let compared: Vec<NodeId> = compared
             .iter()
             .filter_map(|value| stack.source(value))
@@ -4304,6 +4330,7 @@ impl<'ir> Evaluator<'ir> {
                 && !stack.is_frozen
             {
                 let outer = stack.source(&left);
+                self.mark_interval_unplaced(&left, None);
                 self.mark_failing_member(outer, &right, Given::Element(element), true);
             }
             if !is_member? {

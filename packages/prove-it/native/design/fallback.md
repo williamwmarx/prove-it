@@ -467,9 +467,10 @@ it from one that printed something else. Each is outside the corpus:
   constant definitions print first (`processConstantDefns`), which the front end, raising the
   error as it reads the configuration, doesn't; it declines it ("what the spec prints as TLC
   computes its constants", as the library's check does), which main answered without the prints.
-- a variable `x = D` assigns in the initial predicate or a step, D a startup definition that
-  failed outside a Java method: TLC reports the failure as a state it fails to fingerprint (see
-  the known wrong output below); the trace evaluator declines it.
+- a startup definition that failed, used in the initial predicate or a step, that fails there in
+  a method of a value with a source or of an interval, which the replay holds without one: TLC
+  reports the failure as a state it fails to fingerprint (see the known wrong output below); the
+  trace evaluator declines it, and a variable `x = D` assigns where it can't word D's failure.
 - a SYMMETRY definition with parameters, whose body TLC evaluates without them
   (`Tool.getSymmetryPerms`), failing at the first parameter it reads or going on with the value.
   The front end reported that it isn't a set of permutations, which TLC never prints for one; it
@@ -537,7 +538,8 @@ computed, printing `{"a"}` for the last. On main alike; found by the startup fuz
 A failure of a value TLC builds in the initial predicate, as in `Init == x = (DOMAIN <<1>> =
 TRUE)`, TLC reports as a state it fails to fingerprint ("TLC was unable to fingerprint", with the
 value's frames and the reason), where the native checker reports the failure with nested frames:
-the value has a source there (`FingerprintException.getNewHead`). On main alike; found by the
+the value has a source there (`FingerprintException.getNewHead`), which the replay, holding an
+interval without an address, doesn't give it. On main alike; found by the
 startup fuzz of PR 366.
 
 The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION

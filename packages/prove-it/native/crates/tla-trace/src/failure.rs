@@ -948,7 +948,10 @@ impl<'ir> Rebuilder<'ir> {
         // TLC evaluates a startup definition that failed as it started again where it is used,
         // with the sources of that use's values, which the evaluator doesn't follow into the
         // definition: a failure TLC reports as a FingerprintException there has frames it lacks.
-        if call_stack.is_fingerprinted && evaluator.failed_startup_uses > 0 {
+        // One in a method of an interval may be such a failure.
+        if (call_stack.is_fingerprinted || call_stack.is_interval_unplaced)
+            && evaluator.failed_startup_uses > 0
+        {
             return Err(Unsupported(
                 "evaluating the failure again: a FingerprintException in a startup definition that failed"
                     .into(),

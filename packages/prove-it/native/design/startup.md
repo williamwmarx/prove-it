@@ -190,11 +190,18 @@ own limits, such as the body of a function TLC keeps lazy), which says nothing o
 `PrintT(DOMAIN [x \in SUBSET {0} |-> {1} \cap 0])` prints `{{}, {0}}` in TLC, which never
 evaluates the body. Any other reporter declines a swallowed failure.
 
-TLC binds a variable that `x = D` assigns in the initial predicate or a step, D a definition it
-failed to compute as it started, and reports a failure of a value it builds there as a state it
-fails to fingerprint, but one in a Java method such as PrintT's as the method's. The trace
-evaluator declines the former ("a variable assigned a startup definition that failed outside a
-Java method").
+TLC evaluates a definition it failed to compute as it started again where it is used, in the
+initial predicate or a step with its `CallStackTool`, which gives a source to the values set
+constructors, DOMAIN and the set operators build. A failure in a method of a value with a source,
+as `DOMAIN <<1>> = TRUE` fails in the equality of the set DOMAIN built, it reports as a state it
+fails to fingerprint (`FingerprintException.getNewHead`); one in the Tool, as a CHOOSE with no
+element, one in a method of a value without a source, as `<<1>> \in 0`, an EvalException, as
+Assert's, and a Java method's own failure (2154) as themselves. The trace evaluator follows the
+sources in its replay of the failure and declines a FingerprintException in such a definition,
+whose frames it lacks ("a FingerprintException in a startup definition that failed"). It holds an
+interval without an address, so it declines a failure in a method of an interval there too,
+unless `..` built it in place, and a variable `x = D` assigns where it can't word D's failure ("a
+variable assigned a startup definition that failed in a way the evaluator can't word").
 
 At a use, the trace evaluator holds the definition to failing again as TLC does
 (`evaluate_failed_startup`). Several cases decline instead:

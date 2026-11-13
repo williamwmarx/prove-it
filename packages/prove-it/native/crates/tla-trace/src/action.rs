@@ -11,9 +11,7 @@ use tla_values::random::JavaRandom;
 
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
-use crate::eval::{
-    Context, Demand, Evaluator, JAVA_METHOD_FAILED, PRIMED_UNASSIGNED, StackFrame, bound_expression,
-};
+use crate::eval::{Context, Demand, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
 use crate::print::format_value;
 use crate::sets::is_member;
 use crate::value::{
@@ -706,18 +704,16 @@ impl<'ir> Evaluator<'ir> {
                     return match operator {
                         "=" => {
                             // A startup definition that failed as TLC started fails again here,
-                            // where TLC words a failure of a value it built here, but in a Java
-                            // method such as PrintT's, which reports it as its own, as it does a
-                            // state it fails to fingerprint.
+                            // where TLC reports a failure in a method of a value with a source
+                            // as a state it fails to fingerprint (`FingerprintException`), which
+                            // the evaluator follows only where it words the failure as TLC does.
                             let value = match self.evaluate(args[1], context) {
                                 Err(error)
-                                    if self.is_failed_startup_named(args[1])
-                                        && error.message.as_ref().is_none_or(|message| {
-                                            message.code != Some(JAVA_METHOD_FAILED)
-                                        }) =>
+                                    if error.message.is_none()
+                                        && self.is_failed_startup_named(args[1]) =>
                                 {
                                     return fail(
-                                        "a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint",
+                                        "a variable assigned a startup definition that failed in a way the evaluator can't word, which TLC may report as a state it fails to fingerprint",
                                     );
                                 }
                                 value => value?,
