@@ -75,6 +75,17 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
+    // Whether an expression names a startup definition that failed as TLC started.
+    fn is_failed_startup_named(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Identifier(name) if !name.is_local => matches!(name.resolution,
+                Resolution::Definition(index)
+                    if self.failed_startup.contains(&self.ir.definitions[index as usize])),
+            NodeKind::Label { body, .. } => self.is_failed_startup_named(*body),
+            _ => false,
+        }
+    }
+
     // Assigns a variable for the rest of the walk, or tests the value it has.
     fn assign(
         &mut self,
@@ -692,7 +703,21 @@ impl<'ir> Evaluator<'ir> {
                     }
                     return match operator {
                         "=" => {
-                            let value = self.evaluate(args[1], context)?;
+                            // A startup definition that failed as TLC started fails again here,
+                            // where TLC reports a failure in a method of a value with a source
+                            // as a state it fails to fingerprint (`FingerprintException`), which
+                            // the evaluator follows only where it words the failure as TLC does.
+                            let value = match self.evaluate(args[1], context) {
+                                Err(error)
+                                    if error.message.is_none()
+                                        && self.is_failed_startup_named(args[1]) =>
+                                {
+                                    return fail(
+                                        "a variable assigned a startup definition that failed in a way the evaluator can't word, which TLC may report as a state it fails to fingerprint",
+                                    );
+                                }
+                                value => value?,
+                            };
                             self.assign(variable, value, is_init, then)
                         }
                         "\\in" => {

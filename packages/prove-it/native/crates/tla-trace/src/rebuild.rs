@@ -165,6 +165,12 @@ impl<'ir> Rebuilder<'ir> {
         Ok(())
     }
 
+    /// Takes whether the search found each startup definition failing as TLC started, which the
+    /// evaluator's startup must find failing too.
+    pub fn set_searched_failing(&mut self, failed: &[bool]) {
+        self.evaluator.set_searched_failing(failed);
+    }
+
     /// Takes, of the values the search computed at startup, ids of a store, which startup
     /// definitions failed there, which TLC evaluates again at each use.
     pub fn set_failed_startup(&mut self, values: &[Id]) {

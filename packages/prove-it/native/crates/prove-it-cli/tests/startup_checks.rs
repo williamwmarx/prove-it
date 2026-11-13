@@ -1,12 +1,12 @@
 //! What TLC checks of a model as it starts, and how it fails there, against TLC built at d8fb231:
-//! the configuration's errors that show a value, the symmetry's definition, the invariants it
-//! computes and the conjuncts of the specification it drops, and a trace whose successor it fails
-//! to find again. Each directory of `tests/startup_checks` holds a spec with its configuration,
-//! which names it, the files beside it, `args`, options of TLC's command line to add, one a line,
-//! if any, and either `tlc.out`, TLC's exit code and output with `-fp 0 -noGenerateSpecTE` but the
-//! lines that depend on the time or the machine, with the directory's path as `{directory}`, or
-//! `declined`, the reason the binary gives for a spec it leaves to TLC. Each runs on one thread and
-//! on four.
+//! the configuration's errors that show a value, what a constant definition prints as TLC computes
+//! it, the symmetry's definition, the invariants it computes and the conjuncts of the
+//! specification it drops, and a trace whose successor it fails to find again. Each directory of
+//! `tests/startup_checks` holds a spec with its configuration, which names it, the files beside
+//! it, `args`, options of TLC's command line to add, one a line, if any, and either `tlc.out`,
+//! TLC's exit code and output with `-fp 0 -noGenerateSpecTE` but the lines that depend on the time
+//! or the machine, with the directory's path as `{directory}`, or `declined`, the reason the
+//! binary gives for a spec it leaves to TLC. Each runs on one thread and on four.
 
 use std::path::Path;
 use std::process::Command;

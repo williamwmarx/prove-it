@@ -112,8 +112,28 @@ same way:
 - **definitions**: the constant definitions TLC evaluates at startup that have effects (`Print`,
   `RandomElement`, `TLCSet` and the like), in the order TLC evaluates them. A definition without
   effects is the same wherever it is first evaluated, so the engine computes it there. Each is
-  compiled once with an empty footprint. The engine declines one TLC may keep lazy (`may_be_lazy`),
-  as TLC then evaluates it again where it is used.
+  compiled once with an empty footprint. The engine declines one whose value TLC may keep lazy
+  (`may_be_lazy`), as TLC then evaluates it again where it is used. PrintT's value is TRUE, so
+  `Test == PrintT(e)` is computed once whatever e is, and prints e as the engine prints it
+  anywhere. TLC prints a set of tuples, functions or records by sizing its parts in order up to an
+  empty one, then asking each part whether it is empty as it enumerates the set
+  (`SetOfTuplesValue.toString` and its siblings), and fails on a part it can't size, such as Int in
+  `Int \X {}`, or on a value that isn't a set. Where such a set is Print's or PrintT's argument as
+  written, without effects (`is_print_checked`), the print builds it from its reference as TLC holds
+  it and walks its parts so (`Lazy::check_printed`) before it enumerates it: where TLC fails, the
+  print fails with a failure TLC reports ("printed a set with a part TLC can't size"), which a
+  startup definition then retries at each use; where the engine can't tell, a startup
+  definition's print declines and any other prints the set it enumerates. A definition that
+  prints or writes a value's text that may hold such a set anywhere else declines ("a set TLC
+  may fail to print, at startup"; `may_write_unsized`, `may_hold_unsized`). Whether a value may
+  hold it follows one table over the node kinds and builtins (`carried_children`): an expression
+  whose value is a boolean, a number or a string holds none; IF and CASE hold their branches, not
+  their conditions; DOMAIN holds a written constructor's domain, not its range; an application
+  holds the function's range, a written tuple's element at a written position, not the argument;
+  a field of a written record holds that field; a LET holds its body; Print its second argument;
+  any other operand may be held. Parts that are enumerations, intervals,
+  BOOLEAN or sets built of those are sized; a part empty as written (`{}`, `3..1`) stops the
+  walk; a record set's fields are walked in the order of their names' ranks.
 - **symmetry**: the SYMMETRY definition, and each set its body's operator applies to, by the name
   TLC's warning gives it (`getPermutedSets`, `symmetry.ts`) and, for `Permutations(S)` of a
   constant or definition the configuration doesn't replace with `<-`, S. TLC evaluates the body

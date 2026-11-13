@@ -1,0 +1,24 @@
+exit 14
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: The first argument of Assert evaluated to FALSE; the second argument was:
+"boom"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = TRUE
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 17 in M
+1. Line 6, column 14 to line 6, column 17 in M
+2. Line 4, column 9 to line 4, column 29 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

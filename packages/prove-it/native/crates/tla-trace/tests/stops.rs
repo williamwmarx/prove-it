@@ -262,7 +262,7 @@ fn reports_an_assumption_that_fails_to_evaluate_where_it_reports_failures() {
     };
     assert!(matches!(
         outcome(true),
-        SearchOutcome::AssumptionFailed { position: 0 }
+        SearchOutcome::AssumptionFailed { position: 0, .. }
     ));
     assert!(matches!(outcome(false), SearchOutcome::Declined(_)));
 }

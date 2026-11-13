@@ -271,6 +271,10 @@ pub struct CallStack {
     /// the failure is fingerprinted: the last frames of the call stack TLC's replay prints with
     /// the FingerprintException.
     pub fingerprinted_sources: Vec<NodeId>,
+    /// Whether the failure may be in a method of an interval with a source: TLC gives one the
+    /// interval DOMAIN builds, where the replay, which holds an interval without an address,
+    /// gives none.
+    pub is_interval_unplaced: bool,
     /// Whether the fingerprinted failure froze the call stack before a function TLC was building
     /// with a source threw it on as a FingerprintException, which then adds no frames to the
     /// stack TLC prints (`CallStack.freeze` of a frozen stack).
@@ -408,7 +412,9 @@ pub struct Evaluator<'ir> {
     cache: HashMap<(NodeId, bool), Value>,
     /// The startup definitions that failed as TLC started, which it evaluates again where they are
     /// used (`processConstantDefns` swallows what one throws).
-    failed_startup: HashSet<NodeId>,
+    pub(crate) failed_startup: HashSet<NodeId>,
+    /// The startup definitions the search found failing as TLC started.
+    searched_failing: HashSet<NodeId>,
     /// The value the search computed of each constant definition whose body is a CHOOSE over a
     /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
     chosen: HashMap<NodeId, Value>,
@@ -454,6 +460,17 @@ pub struct Evaluator<'ir> {
     pub register_writes: usize,
     /// How many EXCEPTs named a key outside the function's domain, which TLC warns of.
     except_skips: usize,
+    /// How many UNIONs the evaluator held lazy, as TLC's `UnionValue`, and how many set maps it
+    /// evaluated.
+    lazy_unions: usize,
+    /// How many times the evaluator evaluated a startup definition that failed as TLC started.
+    pub(crate) failed_startup_uses: usize,
+    maps: usize,
+    /// The functions the evaluator built that TLC keeps lazy (`FcnLambdaValue`), by address,
+    /// recorded as a failure is evaluated, and how many times DOMAIN read one: TLC's DOMAIN of
+    /// one gives the set it holds as its domain, which may be lazy where the evaluator's isn't.
+    kept_lazy: HashSet<usize>,
+    lazy_domains: usize,
     /// How many times TLCGet read a register.
     pub register_reads: usize,
     /// Whether TLC runs with -tool, under which the message of an error TLC raises with a code
@@ -596,7 +613,7 @@ const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
 const BUILT_FUNCTION: &str = "building a function a definition defines";
 const LAZY_BODY: &str = "the body of a function TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
-const JAVA_METHOD_FAILED: u32 = 2154;
+pub(crate) const JAVA_METHOD_FAILED: u32 = 2154;
 
 const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
@@ -679,8 +696,8 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
                     if is_empty(domain)? {
                         1
                     } else {
-                        let domain = cardinality(domain)? as i64;
-                        let range = cardinality(range)? as i64;
+                        let domain = printed_size(domain)?;
+                        let range = printed_size(range)?;
                         let mut size: i64 = 1;
                         for _ in 0..domain {
                             if size > i64::from(i32::MAX) {
@@ -708,7 +725,17 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
                 _ => return fail("ToString of a lazy set"),
             };
             if size < ENUM_BOUND {
-                elements(value)?.iter().try_for_each(check_unchecked)?;
+                // `elements` asks each part whether it is empty, up to an empty one, before it
+                // enumerates any (`Value.isEmpty`), which fails on a part that isn't a set.
+                let is_empty_set = match &**lazy {
+                    Lazy::RecordSet(fields, _) => parts_empty(fields.iter().map(|(_, set)| set))?,
+                    Lazy::Product(factors) => parts_empty(factors.iter())?,
+                    Lazy::FunctionSet(domain, range) => !is_empty(domain)? && is_empty(range)?,
+                    _ => false,
+                };
+                if !is_empty_set {
+                    elements(value)?.iter().try_for_each(check_unchecked)?;
+                }
             }
             Ok(())
         }
@@ -720,7 +747,7 @@ fn check_unchecked(value: &Value) -> Evaluated<()> {
 fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
     let mut size: i64 = 1;
     for part in parts {
-        let part = cardinality(part)? as i64;
+        let part = printed_size(part)?;
         if part == 0 {
             return Ok(0);
         }
@@ -729,6 +756,36 @@ fn parts_size<'v>(parts: impl Iterator<Item = &'v Value>) -> Evaluated<i64> {
         }
     }
     Ok(size)
+}
+
+// Whether a part is empty, asking each in turn up to an empty one.
+fn parts_empty<'v>(mut parts: impl Iterator<Item = &'v Value>) -> Evaluated<bool> {
+    parts.try_fold(false, |is_empty_set, part| {
+        Ok(is_empty_set || is_empty(part)?)
+    })
+}
+
+// A part's `size` as TLC's `toString` of a set of functions, records or tuples asks it: a
+// function's, tuple's or record's number of keys, one TLC keeps lazy its domain's
+// (`FcnLambdaValue.size`), a set's number of elements, and a failure for any other value
+// (`IntValue.size` and its siblings).
+fn printed_size(part: &Value) -> Evaluated<i64> {
+    let kind = match part {
+        Value::Function(function) => return Ok(function.domain.len() as i64),
+        Value::Lambda(lambda) => return Ok(cardinality(lambda.domain())? as i64),
+        Value::Int(_) => "integer",
+        Value::Bool(_) => "boolean",
+        Value::Str(_) => "string",
+        Value::Model(_) => "model value",
+        _ => return Ok(cardinality(part)? as i64),
+    };
+    fail_runtime(
+        "sized a value that isn't a set",
+        format!(
+            "Attempted to compute the number of elements in the {kind} {}.",
+            format_pretty(part)
+        ),
+    )
 }
 
 /// `EC.TLC_MODULE_COMPUTING_CARDINALITY`.
@@ -758,6 +815,7 @@ impl<'ir> Evaluator<'ir> {
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
             failed_startup: HashSet::new(),
+            searched_failing: HashSet::new(),
             chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
@@ -777,6 +835,11 @@ impl<'ir> Evaluator<'ir> {
             registers: Registers::default(),
             register_writes: 0,
             except_skips: 0,
+            lazy_unions: 0,
+            failed_startup_uses: 0,
+            kept_lazy: HashSet::new(),
+            lazy_domains: 0,
+            maps: 0,
             register_reads: 0,
             is_tool: None,
             trace: None,
@@ -1397,6 +1460,7 @@ impl<'ir> Evaluator<'ir> {
             {
                 let outer = stack.source(&received);
                 let given = element.as_ref().map_or(Given::Nothing, Given::Element);
+                self.mark_interval_unplaced(&received, None);
                 self.mark_failing_member(outer, &set, given, false);
                 return;
             }
@@ -1409,7 +1473,20 @@ impl<'ir> Evaluator<'ir> {
             Some((false, other)) => Given::Equated(other),
             None => Given::Nothing,
         };
+        self.mark_interval_unplaced(&received, receiver);
         self.mark_failing_member(None, &received, given, true);
+    }
+
+    // Marks a failure in a method of an interval that may have a source, which is not one `..`
+    // builds at `node`.
+    fn mark_interval_unplaced(&mut self, value: &Value, node: Option<NodeId>) {
+        let is_range = node.is_some_and(|node| {
+            matches!(self.kind(node), NodeKind::Apply { name, .. }
+                if !name.is_local && self.name(name.text) == "..")
+        });
+        if let (Value::Interval(..), false, Some(stack)) = (value, is_range, &mut self.call_stack) {
+            stack.is_interval_unplaced = true;
+        }
     }
 
     // Marks a failure in a method of a value with a source as TLC's FingerprintException, after
@@ -1471,6 +1548,14 @@ impl<'ir> Evaluator<'ir> {
             }
             _ => Vec::new(),
         };
+        let is_interval = |value: &Value| matches!(value, Value::Interval(..));
+        if compared.iter().any(is_interval)
+            || nested
+                .as_ref()
+                .is_some_and(|(sets, _, _)| sets.iter().any(is_interval))
+        {
+            stack.is_interval_unplaced = true;
+        }
         let compared: Vec<NodeId> = compared
             .iter()
             .filter_map(|value| stack.source(value))
@@ -1928,6 +2013,7 @@ impl<'ir> Evaluator<'ir> {
                 Ok(Value::Set(Rc::new(kept)))
             }
             NodeKind::SetMap { expression, bounds } => {
+                self.maps += 1;
                 let mut values = Vec::new();
                 self.for_each_binding(bounds, context, &mut |evaluator, inner| {
                     values.push(evaluator.evaluate(*expression, inner)?);
@@ -2252,13 +2338,40 @@ impl<'ir> Evaluator<'ir> {
                 )
             };
             let before = effects(self);
-            let value = match self.evaluate(self.definition(node).body, &Context::default()) {
+            let evaluated = self.evaluate(self.definition(node).body, &Context::default());
+            let is_searched_failing = self.searched_failing.contains(&node);
+            let value = match evaluated {
+                // A definition the search found failing that computes here is one the evaluator
+                // and the engine disagree on, which TLC may print or compute as either does.
+                Ok(_) if is_searched_failing => {
+                    return fail("a startup definition the search found failing that computes");
+                }
                 Ok(value) => value,
                 // TLC warns as it goes on, which the evaluator doesn't print.
                 Err(error) if error.reason == EXCEPT_OF_MISSING_KEY => return Err(error),
-                Err(_) => {
+                Err(error) => {
+                    let is_unaffected = effects(self) == before;
+                    // The search found it failing before any effect, which only a failure TLC
+                    // raises itself, with its message, confirms, before any effect: one the
+                    // evaluator can't follow says nothing of what TLC does.
+                    if is_searched_failing {
+                        match (&error.message, is_unaffected) {
+                            (None, _) => {
+                                return fail(format!(
+                                    "a startup definition the search found failing that the evaluator can't follow: {}",
+                                    error.reason
+                                ));
+                            }
+                            (Some(_), false) => {
+                                return fail(
+                                    "a startup definition the search found failing that fails here after an effect",
+                                );
+                            }
+                            (Some(_), true) => {}
+                        }
+                    }
                     if ir.model.startup.definitions.contains(&index)
-                        && effects(self) == before
+                        && is_unaffected
                         && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
                     {
                         self.failed_startup.insert(node);
@@ -2355,6 +2468,17 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    /// Takes whether the search found each startup definition failing as TLC started, in the
+    /// model's order of them.
+    pub fn set_searched_failing(&mut self, failed: &[bool]) {
+        for (&index, &is_failed) in self.ir.model.startup.definitions.iter().zip(failed) {
+            if is_failed {
+                self.searched_failing
+                    .insert(self.ir.definitions[index as usize]);
+            }
+        }
+    }
+
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
     /// over a set (`Violation::chosen`), ids of `store` by position in the IR's definitions, for
     /// those whose evaluation has no effect but its value: neither reading the state or TLC's
@@ -2408,7 +2532,13 @@ impl<'ir> Evaluator<'ir> {
     // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
     // doesn't always, may fail elsewhere, as `fallback.md` lists.
     fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
-        let skips = self.except_skips;
+        self.failed_startup_uses += 1;
+        let (skips, lazy_unions, maps, lazy_domains) = (
+            self.except_skips,
+            self.lazy_unions,
+            self.maps,
+            self.lazy_domains,
+        );
         let body = self.definition(node).body;
         let result = self.evaluate_definition(node, body, &context.global());
         if self.except_skips != skips {
@@ -2420,19 +2550,42 @@ impl<'ir> Evaluator<'ir> {
             }
             Err(error) => error,
         };
-        let is_unsure = self.call_stack.as_ref().is_none_or(|stack| {
-            stack.is_unsorted
-                || stack.values.values().any(may_be_kept_lazy)
-                || stack.frames.iter().any(|frame| match frame {
-                    StackFrame::Node(node) => matches!(
-                        self.kind(*node),
-                        NodeKind::FunctionConstruction { .. }
-                            | NodeKind::SetFilter { .. }
-                            | NodeKind::SetMap { .. }
-                    ),
-                    _ => false,
-                })
-        }) || is_order_dependent(&error.reason);
+        let is_unsure = match &self.call_stack {
+            None => true,
+            Some(stack) => {
+                let lazy: Vec<&Value> = stack
+                    .values
+                    .values()
+                    .filter(|value| may_be_kept_lazy(value))
+                    .collect();
+                let holds = |is_kind: fn(&Lazy) -> bool| {
+                    lazy.iter()
+                        .any(|value| matches!(value, Value::Lazy(inner) if is_kind(inner)))
+                };
+                let reason = error.reason.as_str();
+                stack.is_unsorted
+                    || self.lazy_unions != lazy_unions
+                    || self.lazy_domains != lazy_domains
+                    || holds(|lazy| matches!(lazy, Lazy::Union(_)))
+                    || stack.frames.iter().any(|frame| match frame {
+                        StackFrame::Node(node) => {
+                            matches!(self.kind(*node), NodeKind::FunctionConstruction { .. })
+                        }
+                        _ => false,
+                    })
+                    || is_unsure_failure(reason)
+                    || (reason.ends_with("of a non-sequence") && !lazy.is_empty())
+                    || (reason.contains("compare")
+                        && holds(|lazy| matches!(lazy, Lazy::Product(_) | Lazy::Subset(_))))
+                    || (reason.starts_with("enumerated ")
+                        && holds(|lazy| matches!(lazy, Lazy::Subset(_))))
+                    || ((reason.starts_with("expected ") || reason.ends_with("of a non-sequence"))
+                        && holds(|lazy| {
+                            matches!(lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
+                        }))
+                    || (reason == "values TLC can't compare" && self.maps != maps)
+            }
+        };
         if is_unsure {
             return fail(format!(
                 "a startup definition that failed where TLC may fail otherwise: {}",
@@ -3363,7 +3516,9 @@ impl<'ir> Evaluator<'ir> {
                     let context = context.bind_value(name, Value::Int(key));
                     values.push(self.function_body(body, &context, is_built)?);
                 }
-                return Ok(Value::over_interval(low, values, Class::Lambda));
+                let function = Value::over_interval(low, values, Class::Lambda);
+                self.note_kept_lazy(&function, is_built);
+                return Ok(function);
             }
             let mut keys = Vec::new();
             let mut values = Vec::new();
@@ -3373,6 +3528,7 @@ impl<'ir> Evaluator<'ir> {
                 values.push(self.function_body(body, &context, is_built)?);
             }
             let function = sorted_function(keys, values, Class::Lambda)?;
+            self.note_kept_lazy(&function, is_built);
             // Applied while TLC keeps it lazy, the function asks its bound's set for the
             // argument, which TLC has sorted where a definition that reads no state names it.
             if let Value::Function(inner) = &function
@@ -3414,12 +3570,23 @@ impl<'ir> Evaluator<'ir> {
             },
         )?;
         let function = sorted_function(keys, values, Class::Lambda)?;
+        self.note_kept_lazy(&function, is_built);
         if let ([bound], Value::Function(inner)) = (bounds, &function)
             && self.is_sorted_constant(bound.set)
         {
             inner.search.set(Search::SortedDomain);
         }
         Ok(function)
+    }
+
+    // Records, as a failure is evaluated, a function the evaluator built that TLC keeps lazy.
+    fn note_kept_lazy(&mut self, function: &Value, is_built: bool) {
+        if !is_built
+            && self.call_stack.is_some()
+            && let Value::Function(inner) = function
+        {
+            self.kept_lazy.insert(Rc::as_ptr(inner) as usize);
+        }
     }
 
     // Whether an expression names a definition whose value TLC computed and sorted as it
@@ -4163,6 +4330,7 @@ impl<'ir> Evaluator<'ir> {
                 && !stack.is_frozen
             {
                 let outer = stack.source(&left);
+                self.mark_interval_unplaced(&left, None);
                 self.mark_failing_member(outer, &right, Given::Element(element), true);
             }
             if !is_member? {
@@ -4227,6 +4395,15 @@ impl<'ir> Evaluator<'ir> {
     // difference with a set enumeration or an interval at once too, testing each of its elements
     // in the other operand, which may fail on one the membership doesn't test, so the replay
     // builds those as TLC does.
+    // Whether an operand is an application of the builtin of this name.
+    fn is_builtin(&self, operand: &Operand, builtin: &str) -> bool {
+        matches!(operand, Operand::Node(node, _)
+            if matches!(self.kind(*node), NodeKind::Apply { name, .. }
+                if !name.is_local
+                    && matches!(name.resolution, Resolution::Builtin(index)
+                        if self.name(self.ir.builtins[index as usize].name) == builtin)))
+    }
+
     fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
         if let Operand::Node(node, context) = set
             && let NodeKind::Apply { name, args } = self.kind(*node)
@@ -4670,24 +4847,47 @@ impl<'ir> Evaluator<'ir> {
                 }
                 Value::Lazy(Rc::new(Lazy::Subset(base)))
             }
-            // `UnionValue.union`: the elements of set enumerations, and otherwise a lazy union.
+            // `UnionValue.union`: a set enumeration of set enumerations TLC unions at once, in the
+            // order it holds them, keeping an element only where `equals` finds no earlier one
+            // equal, and holds the result as a set enumeration it hasn't normalized. Any other
+            // UNION it keeps lazy.
             "UNION" => {
                 arity(1)?;
                 let sets = self.operand(&operands[0])?;
                 match &sets {
-                    Value::Set(sets) if sets.iter().all(|set| matches!(set, Value::Set(_))) => {
-                        let mut all = Vec::new();
-                        for set in sets.iter() {
-                            all.extend(elements(set)?.iter().cloned());
+                    Value::Set(inner) if inner.iter().all(|set| matches!(set, Value::Set(_))) => {
+                        let mut kept: Vec<Value> = Vec::new();
+                        for set in held_order(&sets)? {
+                            for element in held_order(&set)? {
+                                let mut is_kept = false;
+                                for earlier in &kept {
+                                    if equals(earlier, &element)? {
+                                        is_kept = true;
+                                        break;
+                                    }
+                                }
+                                if !is_kept {
+                                    kept.push(element);
+                                }
+                            }
                         }
-                        set_of(all)?
+                        self.held_set(kept)?
                     }
-                    _ => Value::Lazy(Rc::new(Lazy::Union(sets))),
+                    _ => {
+                        self.lazy_unions += 1;
+                        Value::Lazy(Rc::new(Lazy::Union(sets)))
+                    }
                 }
             }
             "DOMAIN" => {
                 arity(1)?;
-                match self.operand(&operands[0])? {
+                let function = self.operand(&operands[0])?;
+                if let Value::Function(inner) = &function
+                    && self.kept_lazy.contains(&(Rc::as_ptr(inner) as usize))
+                {
+                    self.lazy_domains += 1;
+                }
+                match function {
                     // `FcnLambdaValue.getDomain`: its domain, whatever the EXCEPTs.
                     Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
@@ -4897,7 +5097,12 @@ impl<'ir> Evaluator<'ir> {
             // method `FiniteSets.Cardinality` (`MethodValue.eval`).
             "Cardinality" => {
                 arity(1)?;
+                let lazy_domains = self.lazy_domains;
                 let set = self.operand(&operands[0])?;
+                // TLC counts the domain it holds lazy by its size, which is the evaluator's.
+                if self.is_builtin(&operands[0], "DOMAIN") {
+                    self.lazy_domains = lazy_domains;
+                }
                 // `SetPredValue.size` enumerates a filter TLC keeps lazy.
                 let set = self.settle(&set)?;
                 // `FiniteSets.Cardinality` counts an `Enumerable` value.
@@ -6469,14 +6674,22 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
     }
 }
 
-// Whether a failure is one of comparing, enumerating or testing membership, where TLC may hold
-// the values unnormalized or lazy, so that evaluating again may fail at other elements.
-fn is_order_dependent(reason: &str) -> bool {
+// The failures the evaluator words otherwise than TLC wherever they arise: a tuple pattern TLC
+// matches as it binds, and a function over a set TLC converts as it enumerates.
+fn is_unsure_failure(reason: &str) -> bool {
     matches!(
         reason,
-        "values TLC can't compare" | "equality of values TLC can't compare"
-    ) || reason.starts_with("enumerated ")
-        || reason.starts_with("a mistyped membership")
+        "a tuple pattern that doesn't match" | "built a function over a set TLC doesn't enumerate"
+    )
+}
+
+// The elements of a set enumeration in the order TLC holds them: as built where it holds the set
+// unnormalized, and otherwise normalized.
+fn held_order(set: &Value) -> Evaluated<Vec<Value>> {
+    match unnormalized(set) {
+        Some(written) => Ok(written),
+        None => Ok(elements(set)?.to_vec()),
+    }
 }
 
 // Whether TLC may hold a value lazy: a function it builds by its constructor, or a set but Nat,
@@ -6532,6 +6745,44 @@ mod tests {
 
     fn lazy(lazy: Lazy) -> Value {
         Value::Lazy(Rc::new(lazy))
+    }
+
+    // `SetOfTuplesValue.toString` and its siblings size each part, which fails on a value that
+    // isn't a set but a function, a tuple or a record, and enumerate the set, which first asks
+    // each part whether it is empty, which fails on any value that isn't a set.
+    #[test]
+    fn fails_to_print_a_set_of_a_non_set_as_tlc_does() {
+        let message = |value: Value| {
+            check_unchecked(&value)
+                .err()
+                .and_then(|error| error.message)
+                .map(|message| message.text)
+        };
+        let set = || Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2)]));
+        let tuple = Value::function(vec![Value::Int(1)], vec![Value::Int(2)], Class::Tuple);
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), Value::Int(0)]))).as_deref(),
+            Some("Attempted to compute the number of elements in the integer 0.")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), Value::Bool(false)]))).as_deref(),
+            Some("Attempted to compute the number of elements in the boolean FALSE.")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![set(), tuple.clone()]))).as_deref(),
+            Some("Shouldn't call isEmpty() on value <<2>>")
+        );
+        assert_eq!(
+            message(lazy(Lazy::FunctionSet(set(), tuple))).as_deref(),
+            Some("Shouldn't call isEmpty() on value <<2>>")
+        );
+        assert_eq!(
+            message(lazy(Lazy::Product(vec![
+                Value::Set(Rc::new(Vec::new())),
+                Value::Int(0)
+            ]))),
+            None
+        );
     }
 
     #[test]

@@ -439,6 +439,38 @@ decline, none differ). What still declines:
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a startup definition the search found failing whose failure the trace evaluator's startup
+  can't place as one TLC raises (no TLC message: "values TLC can't compare" on a pair it doesn't
+  word, "a membership in a union TLC builds of values it may fail to compare"), as `Test ==
+  PrintT([{1} -> {2, 3}] \subseteq ({1, 2} \cap {2, 3}))` with `ASSUME Test`, 108 runs of the
+  guard-overreach set: the startup meets the pair with a function on the left, and only the
+  replay at the use, with an integer on the left, words TLC's error. Only positive evidence
+  confirms a swallowed failure, so it declines ("...that the evaluator can't follow"). To win
+  them: hold an inconclusive confirmation pending, have the replays report which failed startup
+  definitions they worded a failure through, and decline any outcome where one stayed pending.
+- a startup print that may hold a set of tuples, records or functions TLC fails to size, as the
+  compiler reads it from the text (`may_write_unsized`), where TLC prints it: a set nested in
+  another value whose parts the compiler can't prove sized as written (`is_sized`: enumerations,
+  intervals, BOOLEAN, written domains and LET bodies, and sets built of those), as `Id(S) == S`
+  and `Test == PrintT(<<{1} \X Id({2})>>)`; or such a set as the argument of a user operator
+  whose body discards it, as `Ignore(S) == 1` and `Test == PrintT(Ignore(Int \X {}))`, since every
+  argument of an operator counts as carried; or such a set a set map's or a filter's bound
+  ranges over where the mapped or filtered expression's result doesn't hold the name, as
+  `Test == PrintT({1 : x \in {Int \X {}}})`; or any argument of a recursive operator re-entered
+  in its own walk. Main printed each, and the engine can't yet tell it
+  from a print TLC fails to size, such as `<<{1} \X Id(Int)>>` or `Id(Int \X {})`, so the startup
+  definition declines ("a set TLC may fail to print, at startup"). Telling them apart needs each
+  part's size and kind (a non-set part fails in TLC too) where the set is built, and whether its
+  value reaches the print, through every binding of an argument or a LET.
+- a configuration error in what the configuration names for the search (CONSTRAINT,
+  ACTION_CONSTRAINT and the like), where a constant definition prints: TLC prints what the
+  constant definitions print first (`processConstantDefns`), which the front end, raising the
+  error as it reads the configuration, doesn't; it declines it ("what the spec prints as TLC
+  computes its constants", as the library's check does), which main answered without the prints.
+- a startup definition that failed, used in the initial predicate or a step, that fails there in
+  a method of a value with a source or of an interval, which the replay holds without one: TLC
+  reports the failure as a state it fails to fingerprint (see the known wrong output below); the
+  trace evaluator declines it, and a variable `x = D` assigns where it can't word D's failure.
 - a SYMMETRY definition with parameters, whose body TLC evaluates without them
   (`Tool.getSymmetryPerms`), failing at the first parameter it reads or going on with the value.
   The front end reported that it isn't a set of permutations, which TLC never prints for one; it
@@ -493,6 +525,23 @@ substitute a bare name, operator arguments naming an INSTANCE's copy), so it wai
 
 #### Known wrong outputs
 
+A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
+with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
+tests each element of the other operand for membership in it, which fails on a value of the
+wrong kind, where the engine finds the set empty and tests nothing. `Init == x = Cardinality({(Int
+\X {}) \cap {"a"}})`, `Init == x = DOMAIN [a |-> (Int \X {}) \cap {"a"}]` and, printed at startup
+and read by Init, `Test == PrintT(DOMAIN [a |-> <<BOOLEAN \X ((Int \X {}) \cap {"a"})>>])` stop
+TLC with "Attempted to check if non-tuple\n"a"\nis in the set of tuples:\n(Int \X {})" (exit
+75, as a state it fails to fingerprint), where the native checker goes on with the value it
+computed, printing `{"a"}` for the last. On main alike; found by the startup fuzz of PR 366.
+
+A failure of a value TLC builds in the initial predicate, as in `Init == x = (DOMAIN <<1>> =
+TRUE)`, TLC reports as a state it fails to fingerprint ("TLC was unable to fingerprint", with the
+value's frames and the reason), where the native checker reports the failure with nested frames:
+the value has a source there (`FingerprintException.getNewHead`), which the replay, holding an
+interval without an address, doesn't give it. On main alike; found by the
+startup fuzz of PR 366.
+
 The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
 in an order other than the one in which TLC holds the sets' elements unnormalized, so a failure
 there names other elements than TLC's, and AssertError, which compares that message, answers FALSE
@@ -503,7 +552,7 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
 | `AssertError("Attempted to check equality of integer 2 with non-integer:\n\"a\"", 1 \in {2, 1} \cup {"a"})` | TRUE | FALSE (the bare membership is right) |
 | `AssertError("Attempted to check equality of record:\n[a \|-> 1]\nwith non-record\n2", mv \in {[a \|-> 1]} \cup {2})`, `CONSTANT mv = mv` | TRUE | FALSE |
 | `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
-| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to check equality of integer 1 with non-integer:\n"a"` (outside a failure's replay the evaluator holds `{2, 1}` sorted) |
 | `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
 | `1 \in (DOMAIN [a \|-> 0]) \cup {1}`, where TLC holds a record's domain unnormalized (`RecordValue.getDomain`) and a function's normalized, and likewise each union, intersection or difference of a record's domain with a set of integers, alone or held in a union (`unit/union-grid.test.ts` pins 149 such cells of its grid of reduced operations) | `Attempted to check equality of string "a" with non-string:\n1` | `Attempted to compare integer 1 with non-integer:\n"a"` |
 | Membership in a set of values TLC fails to compare, alone or in a union (`unit/union-grid.test.ts` pins 416 such cells, each the same on main): `3 \in SUBSET {1, "a"}`, `3 \in [a : {1, "a"}]`, `3 \in {1, "a"} \X {1}`, `3 \in [{1} -> {1, "a"}]`, `3 \in {1, "a"} \cap {1, "a"}`, `3 \in {1, "a"} \cup {1, 2}` | the comparison normalizing the set fails at, such as `Attempted to compare string "a" with non-string:\n1` | the element's kind check, such as `Attempted to check if non-record\n3\nis in the set of records:…` |
@@ -535,6 +584,21 @@ point: `ASSUME PrintT([s \in SUBSET {1} |-> 1 \div Cardinality(s)][{1}])` prints
 the engine computes the function at every `s`, `{}` among them, and stops with "The second argument
 of \div is 0." `tests/unit/check.test.ts` ("evaluates a function over a domain TLC keeps lazy only
 where it is applied") checks it with the TypeScript check.
+
+A set of tuples, functions or records TLC fails to print, written inside another value, prints as
+the engine enumerated it: TLC prints such a set by sizing its parts in order up to an empty one
+and then asking each whether it is empty (`SetOfTuplesValue.toString` and `elements`, and their
+siblings for functions and records), which fails on a part it can't size, such as Int, or on a
+value that isn't a set. Where the set is Print's or PrintT's argument as written, the engine
+builds it as TLC holds it and walks the same parts first (`Lazy::check_printed`), so `ASSUME
+PrintT(Int \X {})` fails as TLC does. Nested in another value, as in an invariant `PrintT(<<Int \X
+{}, x>>)`, it prints `<<{}, 0>>` where TLC fails (exit 75), on main alike. A constant definition
+TLC computes at startup that may print such a set elsewhere than as an argument so written
+declines ("a set TLC may fail to print, at startup", `may_hold_unsized`), and so does one whose
+argument has a part the walk can't size as TLC does ("printing a set whose part TLC may fail to
+size"), such as `[x \in Nat |-> x]`; a print anywhere else waits on the engine keeping how TLC
+built the set, since declining it by its text alone would also decline prints that match, such as
+`PrintT(SUBSET (Int \X {}))`.
 
 A function from strings whose keys are Unicode letters and digits beyond ASCII prints as a function
 where TLC prints a record: TLC tests each character of a key with Java's
