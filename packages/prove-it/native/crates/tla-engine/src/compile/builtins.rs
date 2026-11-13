@@ -437,15 +437,26 @@ impl Compiler<'_> {
         let left_eval = left.eval.clone();
         let evaluate = if right.member.is_some() || right.infinite.is_some() {
             let test = self.member_test(right);
+            // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
+            // the tests TLC makes as it builds T even where S is empty.
+            let right_parts = Self::parts_of(right);
             eval(move |machine| {
                 let set = evaluate_set(machine, &left_eval, "expected a set")?;
+                machine.run_parts(&right_parts)?;
+                let before = machine.effects();
+                let mut is_subset = TRUE;
                 for index in 0..machine.store.size_of(set) {
                     let element = machine.store.element_at(set, index);
                     if !test(machine, element)? {
-                        return Ok(FALSE);
+                        is_subset = FALSE;
+                        break;
                     }
                 }
-                Ok(TRUE)
+                // A test may evaluate T's parts again, which an effect shows.
+                if machine.effects() != before {
+                    return Err(Bail("a subset test of a set with effects"));
+                }
+                Ok(is_subset)
             })
         } else {
             let right_eval = right.eval.clone();
