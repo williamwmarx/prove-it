@@ -1,0 +1,9 @@
+13 decline -> decline -> decline
+9 decline -> decline -> match
+165 decline -> match -> match
+1 decline -> wrong -> match
+109 match -> wrong -> match
+3 wrong -> decline -> decline
+76 wrong -> match -> match
+19 wrong -> wrong -> match
+regressions (last tag wrong where first not, or first match and last not): 0

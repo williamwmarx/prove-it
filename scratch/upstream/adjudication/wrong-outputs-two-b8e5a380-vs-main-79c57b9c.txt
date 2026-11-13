@@ -1,0 +1,23 @@
+classes base: {'match': 46956, 'decline': 24847, 'wrong': 1021, 'noncompletion': 3}
+classes cand: {'match': 47062, 'decline': 24770, 'wrong': 992, 'noncompletion': 3}
+changed runs: 123
+transitions: {'wrong->wrong': 12, 'decline->match': 78, 'wrong->match': 28, 'decline->decline': 4, 'wrong->decline': 1}
+matches lost: 0
+wrong outputs that changed: 12 without a jar run: 0
+   equals-jar tlc/config/values/int_too_big base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__add base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__cardinality base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__choose base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__equal_integer base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__equal_itself base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__equal_string base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__length base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__membership base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__print base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__set_of base wrong
+   equals-jar tlc/generated/config_values/assignment/too_big/cfg_assignment__too_big__state_value base wrong
+noncompletions: 3 [('tlc/engine262/functions_and_arrays', 'time-limit', 'noncompletion'), ('tlc/engine262/print_sum', 'time-limit', 'noncompletion'), ('tlc/engine262/uncaught_type_error', 'time-limit', 'noncompletion')]
+subset 6,795: cand {'match': 5873, 'decline': 922} base {'match': 5873, 'decline': 922}
+subset 575: cand {'decline': 537, 'match': 28, 'wrong': 10} base {'decline': 537, 'match': 28, 'wrong': 10}
+subset 8,671: cand {'match': 5027, 'decline': 3638, 'wrong': 6} base {'match': 5027, 'decline': 3638, 'wrong': 6}
+reasons of decline->match: 78

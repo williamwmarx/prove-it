@@ -1,0 +1,396 @@
+cell	main 79c57b9c	PR 8f694a01	b8e5a380	spec line
+apply-enum-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ {<<1>>[2]})
+apply-fdom-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap [{<<1>>[2]} -> Int])
+apply-fdom-empty-capeq-r-init	match	wrong	match	Init == x = (({} \cap [{<<1>>[2]} -> Int]) = {})
+apply-fdom-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap [{<<1>>[2]} -> Int]) : TRUE)) \/ TRUE
+apply-fdom-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [{<<1>>[2]} -> Int]) |-> 1] = <<>>)) \/ TRUE
+apply-fdom-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [{<<1>>[2]} -> Int])) \/ TRUE
+apply-fdom-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [{<<1>>[2]} -> Int])) \/ TRUE
+apply-fdom-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq [{<<1>>[2]} -> Int])) \/ TRUE
+apply-fin-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [a : {1}, b : {<<1>>[2]}])
+apply-fin-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : {1}, b : {<<1>>[2]}])
+apply-fin-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : {<<1>>[2]}] \ Nat)
+apply-fran-empty-capeq-r-init	match	wrong	match	Init == x = (({} \cap [Int -> {<<1>>[2]}]) = {})
+apply-fran-empty-diff-r-init	match	wrong	match	Init == x = Cardinality({} \ [Int -> {<<1>>[2]}])
+apply-fran-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap [Int -> {<<1>>[2]}]) : TRUE)) \/ TRUE
+apply-fran-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [Int -> {<<1>>[2]}]) |-> 1] = <<>>)) \/ TRUE
+apply-fran-empty-finite-r-init	match	wrong	match	Init == x = IsFiniteSet({} \ [Int -> {<<1>>[2]}])
+apply-fran-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [Int -> {<<1>>[2]}])})) \/ TRUE
+apply-fran-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [Int -> {<<1>>[2]}])) \/ TRUE
+apply-prod-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap (Int \X {<<1>>[2]}))
+apply-prod-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ (Int \X {<<1>>[2]}))) \/ TRUE
+apply-prod-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ (Int \X {<<1>>[2]})) |-> 1] = <<>>)
+apply-prod-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ (Int \X {<<1>>[2]}))) \/ TRUE
+apply-prod-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq (Int \X {<<1>>[2]}))
+apply-prod-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq (Int \X {<<1>>[2]}))) \/ TRUE
+apply-prodl-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap ({<<1>>[2]} \X Int)) = {})) \/ TRUE
+apply-prodl-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap ({<<1>>[2]} \X Int)) : TRUE)
+apply-prodl-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ ({<<1>>[2]} \X Int)) |-> 1] = <<>>)) \/ TRUE
+apply-prodl-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ ({<<1>>[2]} \X Int))) \/ TRUE
+apply-prodl-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq ({<<1>>[2]} \X Int))) \/ TRUE
+apply-prodl-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet(({<<1>>[2]} \X Int))
+apply-rcd-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap [a : Int, b : {<<1>>[2]}]) = {})) \/ TRUE
+apply-rcd-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ [a : Int, b : {<<1>>[2]}]) |-> 1] = <<>>)
+apply-rcd-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [a : Int, b : {<<1>>[2]}])})
+apply-rcd-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : Int, b : {<<1>>[2]}])
+apply-rcdl-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [a : {<<1>>[2]}, b : Int])) \/ TRUE
+apply-rcdl-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [a : {<<1>>[2]}, b : Int]) : TRUE)
+apply-rcdl-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [a : {<<1>>[2]}, b : Int])})
+apply-rcdl-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [a : {<<1>>[2]}, b : Int])) \/ TRUE
+apply-rcdl-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : {<<1>>[2]}, b : Int])
+apply-rcdl-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {<<1>>[2]}, b : Int] \ Nat)
+apply-rcdl-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : {<<1>>[2]}, b : Int])
+apply-seq-empty-cap-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({} \cap Seq({<<1>>[2]}))) \/ TRUE
+apply-seq-empty-capeq-r-init	wrong	wrong	match	Init == x = (({} \cap Seq({<<1>>[2]})) = {})
+apply-seq-empty-diff-r-init	wrong	wrong	match	Init == x = Cardinality({} \ Seq({<<1>>[2]}))
+apply-seq-empty-exists-r-assume	wrong	wrong	match	ASSUME PrintT((\E t \in ({} \cap Seq({<<1>>[2]})) : TRUE)) \/ TRUE
+apply-seq-empty-finite-r-init	wrong	wrong	match	Init == x = IsFiniteSet({} \ Seq({<<1>>[2]}))
+apply-seq-empty-map-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap Seq({<<1>>[2]}))})) \/ TRUE
+apply-seq-lazyempty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet([a : {}, b : Int] \ Seq({<<1>>[2]}))) \/ TRUE
+apply-seq-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq Seq({<<1>>[2]}))
+apply-seq-nat-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({<<1>>[2]}) \ Nat)
+apply-seq-x-finite1-s-init	decline	decline	match	Init == x = IsFiniteSet(Seq({<<1>>[2]}))
+apply-sub-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq SUBSET {<<1>>[2]})) \/ TRUE
+apply-sub-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ SUBSET {<<1>>[2]})
+assert-fdom-empty-cap-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \cap [{Assert(FALSE, "a")} -> Int])) \/ TRUE
+assert-fdom-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [{Assert(FALSE, "a")} -> Int]) : TRUE)
+assert-fdom-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [{Assert(FALSE, "a")} -> Int]) |-> 1] = <<>>)) \/ TRUE
+assert-fdom-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [{Assert(FALSE, "a")} -> Int])
+assert-fin-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : {1}, b : {Assert(FALSE, "a")}])
+assert-fin-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : {1}, b : {Assert(FALSE, "a")}])
+assert-fran-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap [Int -> {Assert(FALSE, "a")}])
+assert-fran-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap [Int -> {Assert(FALSE, "a")}]) : TRUE)) \/ TRUE
+assert-fran-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [Int -> {Assert(FALSE, "a")}]) |-> 1] = <<>>)) \/ TRUE
+assert-fran-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [Int -> {Assert(FALSE, "a")}])})) \/ TRUE
+assert-fran-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [Int -> {Assert(FALSE, "a")}])
+assert-prod-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap (Int \X {Assert(FALSE, "a")}))
+assert-prod-empty-capeq-r-init	match	wrong	match	Init == x = (({} \cap (Int \X {Assert(FALSE, "a")})) = {})
+assert-prod-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ (Int \X {Assert(FALSE, "a")}))) \/ TRUE
+assert-prod-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap (Int \X {Assert(FALSE, "a")})) : TRUE)
+assert-prod-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ (Int \X {Assert(FALSE, "a")})) |-> 1] = <<>>)
+assert-prod-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap (Int \X {Assert(FALSE, "a")}))})) \/ TRUE
+assert-prod-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq (Int \X {Assert(FALSE, "a")}))
+assert-prod-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ (Int \X {Assert(FALSE, "a")}))
+assert-prod-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet((Int \X {Assert(FALSE, "a")}))
+assert-prodl-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap ({Assert(FALSE, "a")} \X Int))
+assert-prodl-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap ({Assert(FALSE, "a")} \X Int)) = {})) \/ TRUE
+assert-prodl-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ ({Assert(FALSE, "a")} \X Int))) \/ TRUE
+assert-prodl-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap ({Assert(FALSE, "a")} \X Int)) : TRUE)) \/ TRUE
+assert-prodl-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ ({Assert(FALSE, "a")} \X Int)) |-> 1] = <<>>)
+assert-prodl-empty-finite-r-init	match	wrong	match	Init == x = IsFiniteSet({} \ ({Assert(FALSE, "a")} \X Int))
+assert-prodl-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq ({Assert(FALSE, "a")} \X Int))
+assert-prodl-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet(({Assert(FALSE, "a")} \X Int) \ Nat)
+assert-prodl-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet(({Assert(FALSE, "a")} \X Int))
+assert-rcd-empty-cap-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \cap [a : Int, b : {Assert(FALSE, "a")}])) \/ TRUE
+assert-rcd-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap [a : Int, b : {Assert(FALSE, "a")}]) : TRUE)) \/ TRUE
+assert-rcd-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ [a : Int, b : {Assert(FALSE, "a")}]) |-> 1] = <<>>)
+assert-rcd-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [a : Int, b : {Assert(FALSE, "a")}])) \/ TRUE
+assert-rcd-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [a : Int, b : {Assert(FALSE, "a")}])})) \/ TRUE
+assert-rcd-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [a : Int, b : {Assert(FALSE, "a")}])
+assert-rcd-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : Int, b : {Assert(FALSE, "a")}])
+assert-rcdl-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [a : {Assert(FALSE, "a")}, b : Int])) \/ TRUE
+assert-rcdl-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap [a : {Assert(FALSE, "a")}, b : Int]) : TRUE)) \/ TRUE
+assert-rcdl-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [a : {Assert(FALSE, "a")}, b : Int])})
+assert-rcdl-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq [a : {Assert(FALSE, "a")}, b : Int])) \/ TRUE
+assert-rcdl-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {Assert(FALSE, "a")}, b : Int] \ Nat)
+assert-rcdl-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : {Assert(FALSE, "a")}, b : Int])
+assert-seq-empty-capeq-r-assume	wrong	wrong	match	ASSUME PrintT((({} \cap Seq({Assert(FALSE, "a")})) = {})) \/ TRUE
+assert-seq-empty-diff-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({} \ Seq({Assert(FALSE, "a")}))) \/ TRUE
+assert-seq-empty-exists-r-assume	wrong	wrong	match	ASSUME PrintT((\E t \in ({} \cap Seq({Assert(FALSE, "a")})) : TRUE)) \/ TRUE
+assert-seq-empty-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({Assert(FALSE, "a")}) \ {})
+assert-seq-empty-finite-r-assume	wrong	wrong	match	ASSUME PrintT(IsFiniteSet({} \ Seq({Assert(FALSE, "a")}))) \/ TRUE
+assert-seq-empty-map-r-init	wrong	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap Seq({Assert(FALSE, "a")}))})
+assert-seq-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq Seq({Assert(FALSE, "a")}))) \/ TRUE
+assert-seq-str-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({Assert(FALSE, "a")}) \ {"s"})
+assert-sub-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq SUBSET {Assert(FALSE, "a")})) \/ TRUE
+assert-sub-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq SUBSET {Assert(FALSE, "a")})) \/ TRUE
+choose-fdom-empty-cap-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \cap [{CHOOSE c \in {} : TRUE} -> Int])) \/ TRUE
+choose-fdom-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap [{CHOOSE c \in {} : TRUE} -> Int]) = {})) \/ TRUE
+choose-fdom-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [{CHOOSE c \in {} : TRUE} -> Int])) \/ TRUE
+choose-fdom-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [{CHOOSE c \in {} : TRUE} -> Int]) : TRUE)
+choose-fdom-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ [{CHOOSE c \in {} : TRUE} -> Int]) |-> 1] = <<>>)
+choose-fdom-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [{CHOOSE c \in {} : TRUE} -> Int])) \/ TRUE
+choose-fdom-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [{CHOOSE c \in {} : TRUE} -> Int])})) \/ TRUE
+choose-fdom-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet([{CHOOSE c \in {} : TRUE} -> Int])
+choose-fin-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [a : {1}, b : {CHOOSE c \in {} : TRUE}])) \/ TRUE
+choose-fin-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : {1}, b : {CHOOSE c \in {} : TRUE}])
+choose-fran-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [Int -> {CHOOSE c \in {} : TRUE}])) \/ TRUE
+choose-fran-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [Int -> {CHOOSE c \in {} : TRUE}]) : TRUE)
+choose-fran-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [Int -> {CHOOSE c \in {} : TRUE}]) |-> 1] = <<>>)) \/ TRUE
+choose-fran-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [Int -> {CHOOSE c \in {} : TRUE}])
+choose-fran-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq [Int -> {CHOOSE c \in {} : TRUE}])) \/ TRUE
+choose-prod-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap (Int \X {CHOOSE c \in {} : TRUE})) = {})) \/ TRUE
+choose-prod-empty-diff-r-init	match	wrong	match	Init == x = Cardinality({} \ (Int \X {CHOOSE c \in {} : TRUE}))
+choose-prod-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ (Int \X {CHOOSE c \in {} : TRUE})) |-> 1] = <<>>)
+choose-prod-empty-finite-r-init	match	wrong	match	Init == x = IsFiniteSet({} \ (Int \X {CHOOSE c \in {} : TRUE}))
+choose-prod-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap (Int \X {CHOOSE c \in {} : TRUE}))})
+choose-prod-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq (Int \X {CHOOSE c \in {} : TRUE}))) \/ TRUE
+choose-prod-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq (Int \X {CHOOSE c \in {} : TRUE}))) \/ TRUE
+choose-prod-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ (Int \X {CHOOSE c \in {} : TRUE}))
+choose-prodl-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap ({CHOOSE c \in {} : TRUE} \X Int)) = {})) \/ TRUE
+choose-prodl-empty-diff-r-init	match	wrong	match	Init == x = Cardinality({} \ ({CHOOSE c \in {} : TRUE} \X Int))
+choose-prodl-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap ({CHOOSE c \in {} : TRUE} \X Int)) : TRUE)) \/ TRUE
+choose-prodl-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap ({CHOOSE c \in {} : TRUE} \X Int))})
+choose-prodl-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq ({CHOOSE c \in {} : TRUE} \X Int))
+choose-prodl-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq ({CHOOSE c \in {} : TRUE} \X Int))) \/ TRUE
+choose-prodl-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ ({CHOOSE c \in {} : TRUE} \X Int))
+choose-prodl-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet(({CHOOSE c \in {} : TRUE} \X Int))
+choose-rcd-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap [a : Int, b : {CHOOSE c \in {} : TRUE}])
+choose-rcd-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [a : Int, b : {CHOOSE c \in {} : TRUE}])) \/ TRUE
+choose-rcd-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [a : Int, b : {CHOOSE c \in {} : TRUE}]) : TRUE)
+choose-rcd-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ [a : Int, b : {CHOOSE c \in {} : TRUE}]) |-> 1] = <<>>)
+choose-rcd-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [a : Int, b : {CHOOSE c \in {} : TRUE}])
+choose-rcd-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : Int, b : {CHOOSE c \in {} : TRUE}])
+choose-rcdl-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [a : {CHOOSE c \in {} : TRUE}, b : Int])) \/ TRUE
+choose-rcdl-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [a : {CHOOSE c \in {} : TRUE}, b : Int]) : TRUE)
+choose-rcdl-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [a : {CHOOSE c \in {} : TRUE}, b : Int])})
+choose-rcdl-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [a : {CHOOSE c \in {} : TRUE}, b : Int])
+choose-rcdl-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq [a : {CHOOSE c \in {} : TRUE}, b : Int])) \/ TRUE
+choose-seq-empty-cap-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({} \cap Seq({CHOOSE c \in {} : TRUE}))) \/ TRUE
+choose-seq-empty-capeq-r-init	wrong	wrong	match	Init == x = (({} \cap Seq({CHOOSE c \in {} : TRUE})) = {})
+choose-seq-empty-diff-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({} \ Seq({CHOOSE c \in {} : TRUE}))) \/ TRUE
+choose-seq-empty-fcn-r-assume	wrong	wrong	match	ASSUME PrintT(([t \in ({} \ Seq({CHOOSE c \in {} : TRUE})) |-> 1] = <<>>)) \/ TRUE
+choose-seq-empty-finite-r-init	wrong	wrong	match	Init == x = IsFiniteSet({} \ Seq({CHOOSE c \in {} : TRUE}))
+choose-seq-empty-map-r-init	wrong	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap Seq({CHOOSE c \in {} : TRUE}))})
+choose-seq-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq Seq({CHOOSE c \in {} : TRUE}))) \/ TRUE
+choose-seq-lazyempty-finite-r-init	decline	wrong	match	Init == x = IsFiniteSet([a : {}, b : Int] \ Seq({CHOOSE c \in {} : TRUE}))
+choose-seq-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq Seq({CHOOSE c \in {} : TRUE}))
+choose-seq-nat-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({CHOOSE c \in {} : TRUE}) \ Nat)
+choose-seq-one-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({CHOOSE c \in {} : TRUE}) \ {1})
+choose-sub-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq SUBSET {CHOOSE c \in {} : TRUE})
+div-fdom-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap [{1 \div 0} -> Int])
+div-fdom-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap [{1 \div 0} -> Int]) = {})) \/ TRUE
+div-fdom-empty-diff-r-init	match	wrong	match	Init == x = Cardinality({} \ [{1 \div 0} -> Int])
+div-fdom-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [{1 \div 0} -> Int]) : TRUE)
+div-fdom-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ [{1 \div 0} -> Int]) |-> 1] = <<>>)
+div-fdom-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [{1 \div 0} -> Int])) \/ TRUE
+div-fdom-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [{1 \div 0} -> Int])})
+div-fdom-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq [{1 \div 0} -> Int])
+div-fdom-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq [{1 \div 0} -> Int])) \/ TRUE
+div-fdom-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet([{1 \div 0} -> Int])
+div-fin-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [a : {1}, b : {1 \div 0}])) \/ TRUE
+div-fran-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap [Int -> {1 \div 0}]) = {})) \/ TRUE
+div-fran-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [Int -> {1 \div 0}])) \/ TRUE
+div-fran-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [Int -> {1 \div 0}])) \/ TRUE
+div-fran-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [Int -> {1 \div 0}])})) \/ TRUE
+div-fran-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet([Int -> {1 \div 0}] \ Nat)
+div-fran-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet([Int -> {1 \div 0}])
+div-prod-empty-cap-r-init	match	wrong	match	Init == x = Cardinality({} \cap (Int \X {1 \div 0}))
+div-prod-empty-capeq-r-init	match	wrong	match	Init == x = (({} \cap (Int \X {1 \div 0})) = {})
+div-prod-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ (Int \X {1 \div 0}))) \/ TRUE
+div-prod-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap (Int \X {1 \div 0})) : TRUE)
+div-prod-empty-fcn-r-init	match	wrong	match	Init == x = ([t \in ({} \ (Int \X {1 \div 0})) |-> 1] = <<>>)
+div-prod-empty-finite-r-init	match	wrong	match	Init == x = IsFiniteSet({} \ (Int \X {1 \div 0}))
+div-prod-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq (Int \X {1 \div 0}))) \/ TRUE
+div-prod-nat-finite-l-init	decline	match	match	Init == x = IsFiniteSet((Int \X {1 \div 0}) \ Nat)
+div-prod-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet((Int \X {1 \div 0}))
+div-prodl-empty-cap-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \cap ({1 \div 0} \X Int))) \/ TRUE
+div-prodl-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap ({1 \div 0} \X Int)) = {})) \/ TRUE
+div-prodl-empty-exists-r-assume	match	wrong	match	ASSUME PrintT((\E t \in ({} \cap ({1 \div 0} \X Int)) : TRUE)) \/ TRUE
+div-prodl-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ ({1 \div 0} \X Int))) \/ TRUE
+div-prodl-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq ({1 \div 0} \X Int))) \/ TRUE
+div-prodl-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ ({1 \div 0} \X Int))
+div-prodl-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet(({1 \div 0} \X Int))
+div-rcd-empty-capeq-r-init	match	wrong	match	Init == x = (({} \cap [a : Int, b : {1 \div 0}]) = {})
+div-rcd-empty-diff-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({} \ [a : Int, b : {1 \div 0}])) \/ TRUE
+div-rcd-empty-exists-r-init	match	wrong	match	Init == x = (\E t \in ({} \cap [a : Int, b : {1 \div 0}]) : TRUE)
+div-rcd-empty-fcn-r-assume	match	wrong	match	ASSUME PrintT(([t \in ({} \ [a : Int, b : {1 \div 0}]) |-> 1] = <<>>)) \/ TRUE
+div-rcd-empty-map-r-assume	match	wrong	match	ASSUME PrintT(Cardinality({1 : t \in ({} \cap [a : Int, b : {1 \div 0}])})) \/ TRUE
+div-rcd-empty-subeq-r-assume	wrong	match	match	ASSUME PrintT(({} \subseteq [a : Int, b : {1 \div 0}])) \/ TRUE
+div-rcd-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : Int, b : {1 \div 0}])
+div-rcdl-empty-capeq-r-assume	match	wrong	match	ASSUME PrintT((({} \cap [a : {1 \div 0}, b : Int]) = {})) \/ TRUE
+div-rcdl-empty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet({} \ [a : {1 \div 0}, b : Int])) \/ TRUE
+div-rcdl-empty-map-r-init	match	wrong	match	Init == x = Cardinality({1 : t \in ({} \cap [a : {1 \div 0}, b : Int])})
+div-rcdl-lazyempty-subeq-r-init	wrong	match	match	Init == x = ([a : {}, b : Int] \subseteq [a : {1 \div 0}, b : Int])
+div-rcdl-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : {1 \div 0}, b : Int])
+div-seq-empty-cap-r-init	wrong	wrong	match	Init == x = Cardinality({} \cap Seq({1 \div 0}))
+div-seq-empty-diff-r-assume	wrong	wrong	match	ASSUME PrintT(Cardinality({} \ Seq({1 \div 0}))) \/ TRUE
+div-seq-empty-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({1 \div 0}) \ {})
+div-seq-empty-subeq-r-init	wrong	match	match	Init == x = ({} \subseteq Seq({1 \div 0}))
+div-seq-lazyempty-finite-r-assume	match	wrong	match	ASSUME PrintT(IsFiniteSet([a : {}, b : Int] \ Seq({1 \div 0}))) \/ TRUE
+div-seq-lazyempty-subeq-r-assume	wrong	match	match	ASSUME PrintT(([a : {}, b : Int] \subseteq Seq({1 \div 0}))) \/ TRUE
+div-seq-nat-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({1 \div 0}) \ Nat)
+div-seq-tup-finite-l-init	decline	decline	match	Init == x = IsFiniteSet(Seq({1 \div 0}) \ {<<1, 2>>})
+ok-enum-lazyempty-cap-l-init	wrong	match	match	Init == x = Cardinality({1} \cap [a : {}, b : Int])
+ok-enum-lazyempty-cap-r-init	wrong	match	match	Init == x = Cardinality([a : {}, b : Int] \cap {1})
+ok-enum-lazyempty-choose-l-assume	wrong	match	match	ASSUME PrintT(((CHOOSE t \in ({1} \ [a : {}, b : Int]) : TRUE) = 1)) \/ TRUE
+ok-enum-lazyempty-diff-l-init	wrong	match	match	Init == x = Cardinality({1} \ [a : {}, b : Int])
+ok-enum-lazyempty-diffin-r-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {}, b : Int] \ {1}))
+ok-enum-lazyempty-exists-r-assume	wrong	match	match	ASSUME PrintT((\E t \in ([a : {}, b : Int] \cap {1}) : TRUE)) \/ TRUE
+ok-enum-lazyempty-fcn-l-assume	wrong	match	match	ASSUME PrintT(([t \in ({1} \ [a : {}, b : Int]) |-> 1] = <<>>)) \/ TRUE
+ok-enum-lazyempty-finite-l-init	wrong	match	match	Init == x = IsFiniteSet({1} \ [a : {}, b : Int])
+ok-enum-lazyempty-map-r-init	wrong	match	match	Init == x = Cardinality({1 : t \in ([a : {}, b : Int] \cap {1})})
+ok-fdom-empty-cap-l-init	decline	match	match	Init == x = Cardinality([{1} -> Int] \cap {})
+ok-fdom-empty-diff-r-init	decline	match	match	Init == x = Cardinality({} \ [{1} -> Int])
+ok-fdom-empty-exists-r-init	decline	match	match	Init == x = (\E t \in ({} \cap [{1} -> Int]) : TRUE)
+ok-fdom-empty-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([{1} -> Int] \ {}) |-> 1] = <<>>)
+ok-fdom-empty-finite-l-init	decline	match	match	Init == x = IsFiniteSet([{1} -> Int] \ {})
+ok-fdom-lazyempty-capin-r-init	wrong	match	match	Init == x = (1 \in ([a : {}, b : Int] \cap [{1} -> Int]))
+ok-fdom-lazyempty-diffin-r-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {}, b : Int] \ [{1} -> Int]))
+ok-fdom-lazyempty-exists-r-init	decline	match	match	Init == x = (\E t \in ([a : {}, b : Int] \cap [{1} -> Int]) : TRUE)
+ok-fdom-lazyempty-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ([a : {}, b : Int] \cap [{1} -> Int])})
+ok-fdom-nat-capin-l-init	wrong	match	match	Init == x = (1 \in ([{1} -> Int] \cap Nat))
+ok-fdom-one-cap-r-init	decline	match	match	Init == x = Cardinality({1} \cap [{1} -> Int])
+ok-fdom-one-capeq-l-init	decline	match	match	Init == x = (([{1} -> Int] \cap {1}) = {})
+ok-fdom-one-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([{1} -> Int] \ {1}) |-> 1] = <<>>)
+ok-fdom-one-finite-r-init	decline	match	match	Init == x = IsFiniteSet({1} \ [{1} -> Int])
+ok-fdom-rec-diff-r-init	decline	match	match	Init == x = Cardinality({[a |-> 1, b |-> 2]} \ [{1} -> Int])
+ok-fdom-rec-exists-r-init	decline	match	match	Init == x = (\E t \in ({[a |-> 1, b |-> 2]} \cap [{1} -> Int]) : TRUE)
+ok-fdom-rec-fcn-r-init	decline	match	match	Init == x = ([t \in ({[a |-> 1, b |-> 2]} \ [{1} -> Int]) |-> 1] = <<>>)
+ok-fdom-rec-finite-r-init	decline	match	match	Init == x = IsFiniteSet({[a |-> 1, b |-> 2]} \ [{1} -> Int])
+ok-fdom-str-capeq-r-init	decline	match	match	Init == x = (({"s"} \cap [{1} -> Int]) = {})
+ok-fdom-str-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({"s"} \ [{1} -> Int]) : TRUE) = 1)
+ok-fdom-str-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([{1} -> Int] \ {"s"}) |-> 1] = <<>>)
+ok-fdom-str-fcn-r-init	decline	match	match	Init == x = ([t \in ({"s"} \ [{1} -> Int]) |-> 1] = <<>>)
+ok-fdom-str-finite-r-init	decline	match	match	Init == x = IsFiniteSet({"s"} \ [{1} -> Int])
+ok-fdom-str-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({"s"} \cap [{1} -> Int])})
+ok-fdom-tup-cap-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \cap [{1} -> Int])
+ok-fdom-tup-capeq-r-init	decline	match	match	Init == x = (({<<1, 2>>} \cap [{1} -> Int]) = {})
+ok-fdom-tup-diff-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \ [{1} -> Int])
+ok-fdom-tup-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ([{1} -> Int] \cap {<<1, 2>>})})
+ok-fdom-tup-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({<<1, 2>>} \cap [{1} -> Int])})
+ok-fdom-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet([{1} -> Int])
+ok-fin-empty-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {1}, b : {1}] \ {}))
+ok-fin-lazyempty-capin-l-init	wrong	match	match	Init == x = (1 \in ([a : {1}, b : {1}] \cap [a : {}, b : Int]))
+ok-fin-lazyempty-capin-r-init	wrong	match	match	Init == x = (1 \in ([a : {}, b : Int] \cap [a : {1}, b : {1}]))
+ok-fin-nat-capin-l-init	wrong	match	match	Init == x = (1 \in ([a : {1}, b : {1}] \cap Nat))
+ok-fin-nat-finite-r-init	decline	match	match	Init == x = IsFiniteSet(Nat \ [a : {1}, b : {1}])
+ok-fin-rec-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {1}, b : {1}] \ {[a |-> 1, b |-> 2]}))
+ok-fran-empty-cap-r-init	decline	match	match	Init == x = Cardinality({} \cap [Int -> {1}])
+ok-fran-empty-capeq-l-init	decline	match	match	Init == x = (([Int -> {1}] \cap {}) = {})
+ok-fran-empty-diffin-l-init	decline	match	match	Init == x = (<<1, 2>> \in ([Int -> {1}] \ {}))
+ok-fran-empty-exists-r-init	decline	match	match	Init == x = (\E t \in ({} \cap [Int -> {1}]) : TRUE)
+ok-fran-empty-finite-l-init	decline	match	match	Init == x = IsFiniteSet([Int -> {1}] \ {})
+ok-fran-empty-finite-r-init	decline	match	match	Init == x = IsFiniteSet({} \ [Int -> {1}])
+ok-fran-empty-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ([Int -> {1}] \cap {})})
+ok-fran-lazyempty-fcn-l-init	wrong	decline	decline	Init == x = ([t \in ([Int -> {1}] \ [a : {}, b : Int]) |-> 1] = <<>>)
+ok-fran-one-diffin-l-init	decline	match	match	Init == x = (<<1, 2>> \in ([Int -> {1}] \ {1}))
+ok-fran-str-diffin-l-init	decline	match	match	Init == x = (<<1, 2>> \in ([Int -> {1}] \ {"s"}))
+ok-fran-str-fcn-l-init	wrong	decline	decline	Init == x = ([t \in ([Int -> {1}] \ {"s"}) |-> 1] = <<>>)
+ok-fran-tup-capin-l-init	decline	match	match	Init == x = (1 \in ([Int -> {1}] \cap {<<1, 2>>}))
+ok-fran-tup-capin-r-init	decline	match	match	Init == x = (1 \in ({<<1, 2>>} \cap [Int -> {1}]))
+ok-fran-tup-diffin-l-init	decline	match	match	Init == x = (<<1, 2>> \in ([Int -> {1}] \ {<<1, 2>>}))
+ok-fran-tup-diffin-r-init	decline	match	match	Init == x = (<<1, 2>> \in ({<<1, 2>>} \ [Int -> {1}]))
+ok-fran-tup-fcn-l-init	wrong	decline	decline	Init == x = ([t \in ([Int -> {1}] \ {<<1, 2>>}) |-> 1] = <<>>)
+ok-fran-x-in-s-init	decline	match	match	Init == x = (<<1, 2>> \in [Int -> {1}])
+ok-prod-empty-cap-l-init	decline	match	match	Init == x = Cardinality((Int \X {1}) \cap {})
+ok-prod-empty-cap-r-init	decline	match	match	Init == x = Cardinality({} \cap (Int \X {1}))
+ok-prod-empty-capeq-r-init	decline	match	match	Init == x = (({} \cap (Int \X {1})) = {})
+ok-prod-empty-fcn-l-init	decline	decline	decline	Init == x = ([t \in ((Int \X {1}) \ {}) |-> 1] = <<>>)
+ok-prod-empty-fcn-r-init	decline	match	match	Init == x = ([t \in ({} \ (Int \X {1})) |-> 1] = <<>>)
+ok-prod-empty-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ((Int \X {1}) \cap {})})
+ok-prod-empty-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({} \cap (Int \X {1}))})
+ok-prod-lazyempty-capeq-r-init	decline	match	match	Init == x = (([a : {}, b : Int] \cap (Int \X {1})) = {})
+ok-prod-lazyempty-fcn-r-init	decline	match	match	Init == x = ([t \in ([a : {}, b : Int] \ (Int \X {1})) |-> 1] = <<>>)
+ok-prod-lazyempty-finite-l-init	decline	match	match	Init == x = IsFiniteSet((Int \X {1}) \ [a : {}, b : Int])
+ok-prod-lazyempty-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ([a : {}, b : Int] \cap (Int \X {1}))})
+ok-prod-one-capeq-r-init	decline	match	match	Init == x = (({1} \cap (Int \X {1})) = {})
+ok-prod-one-diff-r-init	decline	match	match	Init == x = Cardinality({1} \ (Int \X {1}))
+ok-prod-one-exists-r-init	decline	match	match	Init == x = (\E t \in ({1} \cap (Int \X {1})) : TRUE)
+ok-prod-one-fcn-l-init	decline	decline	decline	Init == x = ([t \in ((Int \X {1}) \ {1}) |-> 1] = <<>>)
+ok-prod-one-fcn-r-init	decline	match	match	Init == x = ([t \in ({1} \ (Int \X {1})) |-> 1] = <<>>)
+ok-prod-one-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({1} \cap (Int \X {1}))})
+ok-prod-rec-diff-r-init	decline	match	match	Init == x = Cardinality({[a |-> 1, b |-> 2]} \ (Int \X {1}))
+ok-prod-rec-exists-l-init	decline	match	match	Init == x = (\E t \in ((Int \X {1}) \cap {[a |-> 1, b |-> 2]}) : TRUE)
+ok-prod-rec-finite-l-init	decline	match	match	Init == x = IsFiniteSet((Int \X {1}) \ {[a |-> 1, b |-> 2]})
+ok-prod-rec-finite-r-init	decline	match	match	Init == x = IsFiniteSet({[a |-> 1, b |-> 2]} \ (Int \X {1}))
+ok-prod-str-capeq-l-init	decline	match	match	Init == x = (((Int \X {1}) \cap {"s"}) = {})
+ok-prod-str-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({"s"} \ (Int \X {1})) : TRUE) = 1)
+ok-prod-str-exists-r-init	decline	match	match	Init == x = (\E t \in ({"s"} \cap (Int \X {1})) : TRUE)
+ok-prod-str-fcn-l-init	decline	decline	decline	Init == x = ([t \in ((Int \X {1}) \ {"s"}) |-> 1] = <<>>)
+ok-prod-str-finite-r-init	decline	match	match	Init == x = IsFiniteSet({"s"} \ (Int \X {1}))
+ok-prod-str-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ((Int \X {1}) \cap {"s"})})
+ok-prod-str-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({"s"} \cap (Int \X {1}))})
+ok-prod-tup-cap-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \cap (Int \X {1}))
+ok-prod-tup-diff-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \ (Int \X {1}))
+ok-prod-tup-exists-l-init	decline	match	match	Init == x = (\E t \in ((Int \X {1}) \cap {<<1, 2>>}) : TRUE)
+ok-prod-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet((Int \X {1}))
+ok-prodl-empty-capeq-l-init	decline	match	match	Init == x = ((({1} \X Int) \cap {}) = {})
+ok-prodl-empty-capeq-r-init	decline	match	match	Init == x = (({} \cap ({1} \X Int)) = {})
+ok-prodl-empty-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in (({1} \X Int) \cap {})})
+ok-prodl-lazyempty-capeq-r-init	decline	match	match	Init == x = (([a : {}, b : Int] \cap ({1} \X Int)) = {})
+ok-prodl-lazyempty-capin-r-init	wrong	match	match	Init == x = (1 \in ([a : {}, b : Int] \cap ({1} \X Int)))
+ok-prodl-lazyempty-diffin-r-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {}, b : Int] \ ({1} \X Int)))
+ok-prodl-lazyempty-exists-r-init	decline	match	match	Init == x = (\E t \in ([a : {}, b : Int] \cap ({1} \X Int)) : TRUE)
+ok-prodl-lazyempty-fcn-r-init	decline	match	match	Init == x = ([t \in ([a : {}, b : Int] \ ({1} \X Int)) |-> 1] = <<>>)
+ok-prodl-lazyempty-finite-r-init	decline	match	match	Init == x = IsFiniteSet([a : {}, b : Int] \ ({1} \X Int))
+ok-prodl-nat-capin-r-init	wrong	match	match	Init == x = (1 \in (Nat \cap ({1} \X Int)))
+ok-prodl-one-capeq-l-init	decline	match	match	Init == x = ((({1} \X Int) \cap {1}) = {})
+ok-prodl-one-diff-r-init	decline	match	match	Init == x = Cardinality({1} \ ({1} \X Int))
+ok-prodl-one-exists-r-init	decline	match	match	Init == x = (\E t \in ({1} \cap ({1} \X Int)) : TRUE)
+ok-prodl-one-fcn-l-init	decline	decline	decline	Init == x = ([t \in (({1} \X Int) \ {1}) |-> 1] = <<>>)
+ok-prodl-one-fcn-r-init	decline	match	match	Init == x = ([t \in ({1} \ ({1} \X Int)) |-> 1] = <<>>)
+ok-prodl-one-finite-l-init	decline	match	match	Init == x = IsFiniteSet(({1} \X Int) \ {1})
+ok-prodl-one-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in (({1} \X Int) \cap {1})})
+ok-prodl-rec-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({[a |-> 1, b |-> 2]} \ ({1} \X Int)) : TRUE) = 1)
+ok-prodl-rec-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in (({1} \X Int) \ {[a |-> 1, b |-> 2]}))
+ok-prodl-rec-fcn-l-init	decline	decline	decline	Init == x = ([t \in (({1} \X Int) \ {[a |-> 1, b |-> 2]}) |-> 1] = <<>>)
+ok-prodl-rec-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in (({1} \X Int) \cap {[a |-> 1, b |-> 2]})})
+ok-prodl-rec-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({[a |-> 1, b |-> 2]} \cap ({1} \X Int))})
+ok-prodl-str-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in (({1} \X Int) \ {"s"}))
+ok-prodl-str-exists-l-init	decline	match	match	Init == x = (\E t \in (({1} \X Int) \cap {"s"}) : TRUE)
+ok-prodl-str-fcn-l-init	decline	decline	decline	Init == x = ([t \in (({1} \X Int) \ {"s"}) |-> 1] = <<>>)
+ok-prodl-str-fcn-r-init	decline	match	match	Init == x = ([t \in ({"s"} \ ({1} \X Int)) |-> 1] = <<>>)
+ok-prodl-str-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in (({1} \X Int) \cap {"s"})})
+ok-prodl-tup-cap-l-init	decline	match	match	Init == x = Cardinality(({1} \X Int) \cap {<<1, 2>>})
+ok-prodl-tup-cap-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \cap ({1} \X Int))
+ok-prodl-tup-capeq-l-init	decline	match	match	Init == x = ((({1} \X Int) \cap {<<1, 2>>}) = {})
+ok-prodl-tup-exists-l-init	decline	match	match	Init == x = (\E t \in (({1} \X Int) \cap {<<1, 2>>}) : TRUE)
+ok-prodl-tup-exists-r-init	decline	match	match	Init == x = (\E t \in ({<<1, 2>>} \cap ({1} \X Int)) : TRUE)
+ok-prodl-tup-finite-l-init	decline	match	match	Init == x = IsFiniteSet(({1} \X Int) \ {<<1, 2>>})
+ok-prodl-tup-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({<<1, 2>>} \cap ({1} \X Int))})
+ok-rcd-empty-cap-l-init	decline	match	match	Init == x = Cardinality([a : Int, b : {1}] \cap {})
+ok-rcd-empty-cap-r-init	decline	match	match	Init == x = Cardinality({} \cap [a : Int, b : {1}])
+ok-rcd-empty-capeq-l-init	decline	match	match	Init == x = (([a : Int, b : {1}] \cap {}) = {})
+ok-rcd-empty-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({} \ [a : Int, b : {1}]) : TRUE) = 1)
+ok-rcd-empty-diff-r-init	decline	match	match	Init == x = Cardinality({} \ [a : Int, b : {1}])
+ok-rcd-empty-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : Int, b : {1}] \ {}))
+ok-rcd-lazyempty-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : Int, b : {1}] \ [a : {}, b : Int]))
+ok-rcd-lazyempty-exists-r-init	decline	match	match	Init == x = (\E t \in ([a : {}, b : Int] \cap [a : Int, b : {1}]) : TRUE)
+ok-rcd-lazyempty-fcn-r-init	decline	match	match	Init == x = ([t \in ([a : {}, b : Int] \ [a : Int, b : {1}]) |-> 1] = <<>>)
+ok-rcd-lazyempty-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : Int, b : {1}] \ [a : {}, b : Int])
+ok-rcd-one-finite-r-init	decline	match	match	Init == x = IsFiniteSet({1} \ [a : Int, b : {1}])
+ok-rcd-rec-choose-r-init	decline	decline	decline	Init == x = ((CHOOSE t \in ({[a |-> 1, b |-> 2]} \ [a : Int, b : {1}]) : TRUE) = 1)
+ok-rcd-rec-exists-r-init	decline	match	match	Init == x = (\E t \in ({[a |-> 1, b |-> 2]} \cap [a : Int, b : {1}]) : TRUE)
+ok-rcd-rec-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([a : Int, b : {1}] \ {[a |-> 1, b |-> 2]}) |-> 1] = <<>>)
+ok-rcd-str-cap-l-init	decline	match	match	Init == x = Cardinality([a : Int, b : {1}] \cap {"s"})
+ok-rcd-str-capeq-l-init	decline	match	match	Init == x = (([a : Int, b : {1}] \cap {"s"}) = {})
+ok-rcd-str-capeq-r-init	decline	match	match	Init == x = (({"s"} \cap [a : Int, b : {1}]) = {})
+ok-rcd-str-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({"s"} \ [a : Int, b : {1}]) : TRUE) = 1)
+ok-rcd-str-fcn-r-init	decline	match	match	Init == x = ([t \in ({"s"} \ [a : Int, b : {1}]) |-> 1] = <<>>)
+ok-rcd-str-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : Int, b : {1}] \ {"s"})
+ok-rcd-tup-cap-r-init	decline	match	match	Init == x = Cardinality({<<1, 2>>} \cap [a : Int, b : {1}])
+ok-rcd-tup-capeq-r-init	decline	match	match	Init == x = (({<<1, 2>>} \cap [a : Int, b : {1}]) = {})
+ok-rcd-tup-fcn-r-init	decline	match	match	Init == x = ([t \in ({<<1, 2>>} \ [a : Int, b : {1}]) |-> 1] = <<>>)
+ok-rcd-tup-finite-r-init	decline	match	match	Init == x = IsFiniteSet({<<1, 2>>} \ [a : Int, b : {1}])
+ok-rcdl-empty-cap-l-init	decline	match	match	Init == x = Cardinality([a : {1}, b : Int] \cap {})
+ok-rcdl-empty-fcn-r-init	decline	match	match	Init == x = ([t \in ({} \ [a : {1}, b : Int]) |-> 1] = <<>>)
+ok-rcdl-empty-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : Int] \ {})
+ok-rcdl-lazyempty-capin-l-init	wrong	match	match	Init == x = (1 \in ([a : {1}, b : Int] \cap [a : {}, b : Int]))
+ok-rcdl-lazyempty-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([a : {1}, b : Int] \ [a : {}, b : Int]) |-> 1] = <<>>)
+ok-rcdl-lazyempty-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ([a : {}, b : Int] \cap [a : {1}, b : Int])})
+ok-rcdl-nat-capin-l-init	wrong	match	match	Init == x = (1 \in ([a : {1}, b : Int] \cap Nat))
+ok-rcdl-nat-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {1}, b : Int] \ Nat))
+ok-rcdl-one-cap-r-init	decline	match	match	Init == x = Cardinality({1} \cap [a : {1}, b : Int])
+ok-rcdl-one-exists-r-init	decline	match	match	Init == x = (\E t \in ({1} \cap [a : {1}, b : Int]) : TRUE)
+ok-rcdl-one-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : Int] \ {1})
+ok-rcdl-rec-capeq-r-init	decline	match	match	Init == x = (({[a |-> 1, b |-> 2]} \cap [a : {1}, b : Int]) = {})
+ok-rcdl-rec-diff-r-init	decline	match	match	Init == x = Cardinality({[a |-> 1, b |-> 2]} \ [a : {1}, b : Int])
+ok-rcdl-rec-exists-l-init	decline	match	match	Init == x = (\E t \in ([a : {1}, b : Int] \cap {[a |-> 1, b |-> 2]}) : TRUE)
+ok-rcdl-rec-exists-r-init	decline	match	match	Init == x = (\E t \in ({[a |-> 1, b |-> 2]} \cap [a : {1}, b : Int]) : TRUE)
+ok-rcdl-rec-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({[a |-> 1, b |-> 2]} \cap [a : {1}, b : Int])})
+ok-rcdl-str-choose-r-init	decline	match	match	Init == x = ((CHOOSE t \in ({"s"} \ [a : {1}, b : Int]) : TRUE) = 1)
+ok-rcdl-str-diff-r-init	decline	match	match	Init == x = Cardinality({"s"} \ [a : {1}, b : Int])
+ok-rcdl-str-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {1}, b : Int] \ {"s"}))
+ok-rcdl-str-exists-r-init	decline	match	match	Init == x = (\E t \in ({"s"} \cap [a : {1}, b : Int]) : TRUE)
+ok-rcdl-str-fcn-r-init	decline	match	match	Init == x = ([t \in ({"s"} \ [a : {1}, b : Int]) |-> 1] = <<>>)
+ok-rcdl-str-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : Int] \ {"s"})
+ok-rcdl-str-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ([a : {1}, b : Int] \cap {"s"})})
+ok-rcdl-str-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({"s"} \cap [a : {1}, b : Int])})
+ok-rcdl-tup-diffin-l-init	wrong	match	match	Init == x = (<<1, 2>> \in ([a : {1}, b : Int] \ {<<1, 2>>}))
+ok-rcdl-tup-exists-r-init	decline	match	match	Init == x = (\E t \in ({<<1, 2>>} \cap [a : {1}, b : Int]) : TRUE)
+ok-rcdl-tup-fcn-l-init	decline	decline	decline	Init == x = ([t \in ([a : {1}, b : Int] \ {<<1, 2>>}) |-> 1] = <<>>)
+ok-rcdl-tup-finite-l-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : Int] \ {<<1, 2>>})
+ok-rcdl-tup-map-l-init	decline	match	match	Init == x = Cardinality({1 : t \in ([a : {1}, b : Int] \cap {<<1, 2>>})})
+ok-rcdl-tup-map-r-init	decline	match	match	Init == x = Cardinality({1 : t \in ({<<1, 2>>} \cap [a : {1}, b : Int])})
+ok-rcdl-x-finite1-s-init	decline	match	match	Init == x = IsFiniteSet([a : {1}, b : Int])

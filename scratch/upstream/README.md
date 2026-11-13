@@ -138,3 +138,22 @@ Against main: decline -> match 78, wrong -> match 28, wrong -> decline 1, declin
 Adversarial specs (`fuzz/gen_lazy.py`, seeds 1-4, 400 each, each run with the pinned jar; `fuzz/lazy-unsized/`): the 129 runs that main matched and ff75f1a6 declined are listed in `the-129.tsv` with their consumer, the decline reason and the result now: all 129 match. On all 1,600 against main: match -> decline 0, decline -> match 158, wrong -> match 66, wrong -> decline 11, wrong -> wrong 5 (byte-identical to main; listed in the patch's fallback.md as known wrong outputs). `two-way-*.txt` give every run's class on main and on each binary.
 
 None of the 129 matched by chance. TLC compares, fingerprints, sizes and enumerates such a set (`SetOfRcdsValue.equals`, `convertAndCache`, `size`, `elements`) through emptiness first, so it answers as the set enumeration main held; `isFinite` is true for every such set that enumerates; a trace's states and a failure's message are printed by the trace evaluator, which keeps the set as TLC does (a state holding `{[a : STRING, b : {}]}` prints so on main and in TLC). Only what the engine writes itself, PrintT and its siblings, `-dump`, a simulation's trace, prints the enumeration where TLC prints the parts (or fails sizing them); those now decline, and only after the run enumerated such a set.
+
+## wrong-outputs-two b8e5a380 (one patch on PR 368 head 8f694a01): operands evaluated before an empty reduction
+
+`patches/wrong-outputs-two-8f694a01/0001-*`. Binary sha256 e742fd199ee4a54ff31f2156c2bf94104340ef623ce5a23bf75afec7f056e644. Review of PR 368 found `Cardinality({} \cap [a : Int, b : {1 \div 0}])` succeeding where TLC and main fail: a reduced `\cap`/`\` evaluated the operand it tests in only through member tests, and IsFiniteSet read `Seq(S)` without evaluating S.
+
+Fuzz (`fuzz/gen_effects.py`, exhaustive, 13,740 cells: a part that fails or prints (`1 \div 0`, `CHOOSE c \in {} : TRUE`, `Assert(FALSE, "a")`, `<<1>>[2]`, `PrintT(5)`, or none) x 10 set shapes holding it x 7 other operands (empty, singletons, Nat, an empty lazy set) x 16 two-operand consumers (`\cap`, `\`, `\cup`, `\subseteq`, `=`, memberships, quantifier, function, IsFiniteSet, UNION, set map, CHOOSE) x left/right, plus 5 one-operand consumers, each under Init, Next or a printed ASSUME). Every cell run on main 79c57b9c, the PR and the fix; the pinned jar on every cell where any two differ (395; `fuzz/effects/three-way.tsv`, `summary-b8e5a380.txt`):
+
+| main -> PR -> fix | cells |
+|---|---:|
+| match -> wrong -> match | 109 |
+| decline -> wrong -> match | 1 |
+| decline -> match -> match | 165 |
+| decline -> decline -> match | 9 |
+| wrong -> match -> match | 76 |
+| wrong -> wrong -> match | 19 |
+| wrong -> decline -> decline | 3 |
+| decline -> decline -> decline | 13 |
+
+Fix: 0 wrong, 0 main match lost. The 1,600 lazy-set specs: unchanged from the PR (0 match -> decline). Suite: no run changed against the PR (`results/wrong-outputs-two-b8e5a380.*`); against main 0 matches lost. Parity: conformance --check 769 match, 1 unsupported; native differential at 1 and 4 workers 1,460/1,466, 6 known, 0 unlisted. Gates: bun 14,631 pass; cargo fmt, clippy -D warnings, cargo test --locked 1,452 pass.
