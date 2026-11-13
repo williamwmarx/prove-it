@@ -1,0 +1,6 @@
+native: 1460 of 1466 runs print what TLC prints.
+      6  known
+
+0 native differences known-differences.json doesn't list, 0 native runs aborted, 0 damaged trace files read back, and 0 -tool dumps of an ALIAS read back otherwise.
+Wrote /home/user/work/li-diff.json
+PARITY-DONE

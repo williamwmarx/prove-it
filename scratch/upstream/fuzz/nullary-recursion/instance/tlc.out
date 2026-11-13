@@ -1,0 +1,9 @@
+exit 255
+Semantic processing of module Inner
+Semantic processing of module M
+Linting of module Inner
+Linting of module M
+Error: This was a Java StackOverflowError. It was probably the result
+of an incorrect recursive function definition that caused TLC to enter
+an infinite loop when trying to compute the function or its application
+to an element in its putative domain.

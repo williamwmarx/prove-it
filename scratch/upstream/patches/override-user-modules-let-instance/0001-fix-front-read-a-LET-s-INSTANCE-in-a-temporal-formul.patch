@@ -1,0 +1,1123 @@
+From 44613bba59d4ee05f5d9b4471f0b76d2710c5121 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 07:51:37 +0000
+Subject: [PATCH] fix(front): read a LET's INSTANCE in a temporal formula, and
+ end the subscript reading's every recursion
+
+The definitions an INSTANCE in a LET makes are the LET's own, which the
+copies' bodies name by keys no global definition has. Reading the
+specification, the front end followed such a name only where it was
+written as local, so `Spec == LET I == INSTANCE Inner WITH a <- x IN
+I!ISpec` read as a specification without an initial predicate. It now
+looks a name no global definition has up in the LET, which reads the
+specification as TLC does. The decline of every LET with an INSTANCE
+in a temporal formula is gone, so a property such as EWD687a's
+TreeWithRoot runs as on main again; only a SPECIFICATION reaching a
+parameterized INSTANCE in a LET still declines, as the front end
+evaluates its definitions as of constant level.
+
+The subscript collector bounded its own reading of [][Next]_v, but not
+the test of whether a definition TLC computes as it starts holds a
+value, which followed `RECURSIVE F`, `F == F` without end and
+overflowed the process's stack, nor the trial reading it makes of such
+a definition, which took a reading that doesn't end for one it can't
+follow. Both now share the reading's bound and decline as it does,
+whatever -nowarning says, as TLC's collector overflows its stack there.
+---
+ .../Inner.tla                                 | 10 +++
+ .../M.cfg                                     |  2 +
+ .../M.tla                                     |  6 ++
+ .../tlc.out                                   | 23 ++++++
+ .../property-let-instance-leads-to/Inner.tla  |  9 +++
+ .../property-let-instance-leads-to/M.cfg      |  2 +
+ .../property-let-instance-leads-to/M.tla      |  8 ++
+ .../property-let-instance-leads-to/tlc.out    | 15 ++++
+ .../property-let-instance/Inner.tla           |  9 +++
+ .../property-let-instance/M.cfg               |  2 +
+ .../property-let-instance/M.tla               |  8 ++
+ .../property-let-instance/tlc.out             | 14 ++++
+ .../Inner.tla                                 | 10 +++
+ .../property-let-parameterized-instance/M.cfg |  2 +
+ .../property-let-parameterized-instance/M.tla |  6 ++
+ .../tlc.out                                   | 14 ++++
+ .../Inner.tla                                 |  9 +++
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  8 ++
+ .../tlc.out                                   | 14 ++++
+ .../Inner.tla                                 |  9 +++
+ .../specification-let-instance-direct/M.cfg   |  1 +
+ .../specification-let-instance-direct/M.tla   |  7 ++
+ .../specification-let-instance-direct/tlc.out | 14 ++++
+ .../Inner.tla                                 |  9 +++
+ .../specification-let-instance-fairness/M.cfg |  2 +
+ .../specification-let-instance-fairness/M.tla |  8 ++
+ .../tlc.out                                   | 15 ++++
+ .../Inner.tla                                 |  9 +++
+ .../specification-let-instance-nested/M.cfg   |  1 +
+ .../specification-let-instance-nested/M.tla   |  7 ++
+ .../specification-let-instance-nested/tlc.out | 14 ++++
+ .../specification-let-instance/declined       |  1 -
+ .../specification-let-instance/tlc.out        | 17 +++++
+ .../Inner.tla                                 | 10 +++
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  5 ++
+ .../declined                                  |  1 +
+ .../specification-let-two-instances/Inner.tla | 10 +++
+ .../specification-let-two-instances/M.cfg     |  1 +
+ .../specification-let-two-instances/M.tla     |  7 ++
+ .../specification-let-two-instances/tlc.out   | 14 ++++
+ .../Inner.tla                                 |  4 +
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  5 ++
+ .../declined                                  |  1 +
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  6 ++
+ .../args                                      |  1 +
+ .../declined                                  |  1 +
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  6 ++
+ .../declined                                  |  1 +
+ .../M.cfg                                     |  1 +
+ .../M.tla                                     |  6 ++
+ .../declined                                  |  1 +
+ .../M.cfg                                     |  2 +
+ .../M.tla                                     |  7 ++
+ .../declined                                  |  1 +
+ .../subscript-unused-nullary-recursion/M.cfg  |  1 +
+ .../subscript-unused-nullary-recursion/M.tla  |  6 ++
+ .../tlc.out                                   | 11 +++
+ .../native/crates/tla-front/src/live.rs       | 11 +--
+ .../native/crates/tla-front/src/spec.rs       | 74 ++++++++++++-------
+ packages/prove-it/native/design/fallback.md   | 14 +++-
+ 65 files changed, 457 insertions(+), 41 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/tlc.out
+ delete mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/Inner.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/Inner.tla
+new file mode 100644
+index 00000000..989d9d60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/Inner.tla
+@@ -0,0 +1,10 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++vars == <<a>>
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_vars /\ WF_vars(INext)
++ISpec2 == IInit /\ [][INext]_<<a, vars>>
++Inv == a < 2
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.cfg
+new file mode 100644
+index 00000000..e457ef1d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++INVARIANT Inv
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.tla
+new file mode 100644
+index 00000000..85b4c20f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++Spec == x = 0 /\ y = 0 /\ [][x' = (x + 1) % 3 /\ UNCHANGED y]_<<x, y>>
++Inv == LET Q(v) == INSTANCE Inner WITH a <- v IN Q(x)!Inv
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/tlc.out
+new file mode 100644
+index 00000000..69cede29
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/invariant-let-parameterized-instance/tlc.out
+@@ -0,0 +1,23 @@
++exit 12
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Error: Invariant Inv is violated.
++Error: The behavior up to this point is:
++State 1: <Initial predicate>
++/\ x = 0
++/\ y = 0
++
++State 2: <Action line 4, col 30 to line 4, col 60 of module M>
++/\ x = 1
++/\ y = 0
++
++State 3: <Action line 4, col 30 to line 4, col 60 of module M>
++/\ x = 2
++/\ y = 0
++
++3 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.cfg
+new file mode 100644
+index 00000000..43c32491
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++PROPERTY P
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.tla
+new file mode 100644
+index 00000000..3aeafb83
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++Spec == Init /\ [][Next]_x /\ WF_x(Next)
++P == LET I == INSTANCE Inner WITH a <- x IN (x = 0) ~> (x = 2)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/tlc.out
+new file mode 100644
+index 00000000..59b94e64
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance-leads-to/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Implied-temporal checking--satisfiability problem has 1 branches.
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.cfg
+new file mode 100644
+index 00000000..43c32491
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++PROPERTY P
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.tla
+new file mode 100644
+index 00000000..6efb2e60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++Spec == Init /\ [][Next]_x
++P == LET I == INSTANCE Inner WITH a <- x IN [](I!Inv)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-instance/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/Inner.tla
+new file mode 100644
+index 00000000..989d9d60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/Inner.tla
+@@ -0,0 +1,10 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++vars == <<a>>
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_vars /\ WF_vars(INext)
++ISpec2 == IInit /\ [][INext]_<<a, vars>>
++Inv == a < 2
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.cfg
+new file mode 100644
+index 00000000..43c32491
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++PROPERTY P
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.tla
+new file mode 100644
+index 00000000..78fb5d85
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++Spec == x = 0 /\ y = 0 /\ [][x' = (x + 1) % 3 /\ UNCHANGED y]_<<x, y>>
++P == LET Q(v) == INSTANCE Inner WITH a <- v IN [](Q(x)!Inv \/ TRUE)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/property-let-parameterized-instance/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.tla
+new file mode 100644
+index 00000000..7c501050
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++S == LET I == INSTANCE Inner WITH a <- x IN I!ISpec
++Spec == S
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-definition/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.tla
+new file mode 100644
+index 00000000..dd6400b9
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++Spec == LET I == INSTANCE Inner WITH a <- x IN I!ISpec
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-direct/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.cfg
+new file mode 100644
+index 00000000..43c32491
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++PROPERTY P
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.tla
+new file mode 100644
+index 00000000..fa5b95a8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++Spec == Init /\ [][Next]_x /\ (LET I == INSTANCE Inner WITH a <- x IN WF_x(I!Act))
++P == <>(x = 2)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/tlc.out
+new file mode 100644
+index 00000000..59b94e64
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-fairness/tlc.out
+@@ -0,0 +1,15 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Implied-temporal checking--satisfiability problem has 1 branches.
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/Inner.tla
+new file mode 100644
+index 00000000..4e33fa06
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/Inner.tla
+@@ -0,0 +1,9 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_a
++Inv == a < 3
++Act == INext
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.tla
+new file mode 100644
+index 00000000..58f69853
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLE x
++Init == x = 0
++Next == x' = (x + 1) % 3
++Spec == LET K == 1 IN LET I == INSTANCE Inner WITH a <- x IN I!ISpec
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance-nested/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
+deleted file mode 100644
+index 0140c474..00000000
+--- a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/declined
++++ /dev/null
+@@ -1 +0,0 @@
+-an INSTANCE in a LET of a temporal formula
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/tlc.out
+new file mode 100644
+index 00000000..1e6adab5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-instance/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Warning: The subscript of the next-state relation specified by the specification
++does not seem to contain the state variable y
++(Use the -nowarning option to disable this warning.)
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/Inner.tla
+new file mode 100644
+index 00000000..989d9d60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/Inner.tla
+@@ -0,0 +1,10 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++vars == <<a>>
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_vars /\ WF_vars(INext)
++ISpec2 == IInit /\ [][INext]_<<a, vars>>
++Inv == a < 2
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.tla
+new file mode 100644
+index 00000000..f0797439
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++Spec == LET P(v) == INSTANCE Inner WITH a <- v IN P(x)!IInit /\ y = 0 /\ [][P(x)!INext /\ UNCHANGED y]_<<x, y>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/declined
+new file mode 100644
+index 00000000..7cbc5ef3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-parameterized-instance/declined
+@@ -0,0 +1 @@
++a parameterized INSTANCE in a LET of the specification
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/Inner.tla
+new file mode 100644
+index 00000000..989d9d60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/Inner.tla
+@@ -0,0 +1,10 @@
++---- MODULE Inner ----
++EXTENDS Naturals
++VARIABLE a
++vars == <<a>>
++IInit == a = 0
++INext == a' = (a + 1) % 3
++ISpec == IInit /\ [][INext]_vars /\ WF_vars(INext)
++ISpec2 == IInit /\ [][INext]_<<a, vars>>
++Inv == a < 2
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.tla
+new file mode 100644
+index 00000000..4efe7b7b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Naturals
++VARIABLES x, y
++Spec == LET I == INSTANCE Inner WITH a <- x
++            J == INSTANCE Inner WITH a <- y
++        IN I!IInit /\ J!IInit /\ [][I!INext /\ J!INext]_<<x, y>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/tlc.out
+new file mode 100644
+index 00000000..eee53acf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/specification-let-two-instances/tlc.out
+@@ -0,0 +1,14 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Inner
++Semantic processing of module M
++Linting of module Inner
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 1.6E-19
++4 states generated, 3 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 3.
++The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/Inner.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/Inner.tla
+new file mode 100644
+index 00000000..10778785
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/Inner.tla
+@@ -0,0 +1,4 @@
++---- MODULE Inner ----
++RECURSIVE R
++R == R
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.tla
+new file mode 100644
+index 00000000..da7f7697
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++VARIABLE x
++I == INSTANCE Inner
++Spec == x = 0 /\ [][x' = x]_<<x, I!R>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-instance/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.tla
+new file mode 100644
+index 00000000..583db53c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++VARIABLE x
++RECURSIVE F
++F == LET H == F IN H
++Spec == x = 0 /\ [][x' = x]_<<x, F>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/args
+new file mode 100644
+index 00000000..6d8e45ab
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/args
+@@ -0,0 +1 @@
++-nowarning
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let-nowarning/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.tla
+new file mode 100644
+index 00000000..583db53c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++VARIABLE x
++RECURSIVE F
++F == LET H == F IN H
++Spec == x = 0 /\ [][x' = x]_<<x, F>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursion-through-let/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.tla
+new file mode 100644
+index 00000000..383348d9
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++VARIABLE x
++RECURSIVE F
++F == F
++Spec == x = 0 /\ [][x' = x]_<<x, F>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-definition/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.cfg
+new file mode 100644
+index 00000000..3d3c7a42
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.cfg
+@@ -0,0 +1,2 @@
++SPECIFICATION Spec
++CONSTANT C <- D
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.tla
+new file mode 100644
+index 00000000..7d2ee048
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++VARIABLE x
++CONSTANT C
++RECURSIVE D
++D == D
++Spec == x = 0 /\ [][x' = x]_<<x, C>>
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/declined
+new file mode 100644
+index 00000000..5a789903
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-nullary-recursive-substitute/declined
+@@ -0,0 +1 @@
++a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.cfg
+new file mode 100644
+index 00000000..4d07be4b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.cfg
+@@ -0,0 +1 @@
++SPECIFICATION Spec
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.tla
+new file mode 100644
+index 00000000..7f206be4
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++VARIABLE x
++RECURSIVE F
++F == F
++Spec == x = 0 /\ [][x' = x]_x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/tlc.out
+new file mode 100644
+index 00000000..067d047c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subscript-unused-nullary-recursion/tlc.out
+@@ -0,0 +1,11 @@
++exit 0
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/live.rs b/packages/prove-it/native/crates/tla-front/src/live.rs
+index d51ff8ea..012060ac 100644
+--- a/packages/prove-it/native/crates/tla-front/src/live.rs
++++ b/packages/prove-it/native/crates/tla-front/src/live.rs
+@@ -331,17 +331,8 @@ impl Converter<'_> {
+         match &expression.kind {
+             ExpressionKind::Label { body, .. } => self.convert(body, scope),
+             ExpressionKind::Let {
+-                definitions,
+-                instances,
+-                body,
+-                ..
++                definitions, body, ..
+             } => {
+-                if instances
+-                    .as_ref()
+-                    .is_some_and(|instances| !instances.is_empty())
+-                {
+-                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+-                }
+                 let bound = bind_definitions(definitions, scope)?;
+                 self.convert(body, bound.as_ref())
+             }
+diff --git a/packages/prove-it/native/crates/tla-front/src/spec.rs b/packages/prove-it/native/crates/tla-front/src/spec.rs
+index 00f72146..2ce72dd6 100644
+--- a/packages/prove-it/native/crates/tla-front/src/spec.rs
++++ b/packages/prove-it/native/crates/tla-front/src/spec.rs
+@@ -290,18 +290,28 @@ impl Expansion<'_> {
+                 body,
+                 ..
+             } => {
+-                if instances
+-                    .as_ref()
+-                    .is_some_and(|instances| !instances.is_empty())
++                // The front end evaluates what a parameterized INSTANCE in a LET makes as of
++                // constant level, so an argument naming a variable fails where TLC reads it.
++                if self.is_specification
++                    && instances
++                        .iter()
++                        .flatten()
++                        .any(|instance| !instance.params.is_empty())
+                 {
+-                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
++                    return Err(not_yet(
++                        "a parameterized INSTANCE in a LET of the specification",
++                    ));
+                 }
+                 let bound = bind_definitions(definitions, scope)?;
+                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
+             }
+             ExpressionKind::Identifier { name: written, .. } => {
+                 let reference = expression.reference().unwrap_or_default();
+-                let binding = if expression.is_locally_resolved() {
++                // The definitions an INSTANCE in a LET makes are the LET's, which the copies'
++                // bodies name by keys no global definition has.
++                let binding = if expression.is_locally_resolved()
++                    || get_definition(&reference, self.environment).is_none()
++                {
+                     lookup_scope(scope, &reference)
+                 } else {
+                     None
+@@ -961,17 +971,8 @@ fn find_next(
+     };
+     match &expression.kind {
+         ExpressionKind::Let {
+-            definitions,
+-            instances,
+-            body,
+-            ..
++            definitions, body, ..
+         } => {
+-            if instances
+-                .as_ref()
+-                .is_some_and(|instances| !instances.is_empty())
+-            {
+-                return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+-            }
+             let bound = bind_definitions(definitions, scope)?;
+             return recurse(body, bound.as_ref(), substitution, found);
+         }
+@@ -1210,6 +1211,7 @@ pub fn read_specification(
+                             startup: &startup,
+                             evaluator,
+                             depth: std::cell::Cell::default(),
++                            is_overflowed: std::cell::Cell::default(),
+                         };
+                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
+                         next_actions.push((action.clone(), item.scope.clone()));
+@@ -1343,6 +1345,8 @@ struct SubscriptCollector<'a, 'b> {
+     evaluator: Option<&'a Evaluator<'b>>,
+     /// How deep the reading is.
+     depth: std::cell::Cell<usize>,
++    /// Whether a reading went deeper than any that ends.
++    is_overflowed: std::cell::Cell<bool>,
+ }
+ 
+ impl SubscriptCollector<'_, '_> {
+@@ -1369,6 +1373,28 @@ impl SubscriptCollector<'_, '_> {
+     /// value as it starts: literals, tuples, set enumerations and records of such, what Print and
+     /// PrintT print of such, and definitions of such.
+     fn is_total(&self, expression: &Expr) -> bool {
++        // A definition that names itself, which TLC computes until its stack overflows, as its
++        // collector reads one.
++        if self.depth.get() >= MAXIMUM_SUBSCRIPT_DEPTH {
++            self.is_overflowed.set(true);
++            return false;
++        }
++        self.depth.set(self.depth.get() + 1);
++        let is_total = self.is_total_once(expression);
++        self.depth.set(self.depth.get() - 1);
++        is_total
++    }
++
++    /// `is_total`, where a definition that names itself is a reading that doesn't end.
++    fn total(&self, expression: &Expr) -> std::result::Result<bool, Unfollowed> {
++        let is_total = self.is_total(expression);
++        if self.is_overflowed.get() {
++            return Err(Unfollowed(RECURSIVE_SUBSCRIPT));
++        }
++        Ok(is_total)
++    }
++
++    fn is_total_once(&self, expression: &Expr) -> bool {
+         match &expression.kind {
+             ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
+             ExpressionKind::Tuple(items) | ExpressionKind::SetEnumeration(items) => {
+@@ -1448,19 +1474,8 @@ impl SubscriptCollector<'_, '_> {
+                 return Ok(true);
+             }
+             ExpressionKind::Let {
+-                definitions,
+-                instances,
+-                body,
+-                ..
++                definitions, body, ..
+             } => {
+-                if instances
+-                    .as_ref()
+-                    .is_some_and(|instances| !instances.is_empty())
+-                {
+-                    return Err(Unfollowed(
+-                        "an INSTANCE in a LET in the subscript of [][Next]_v",
+-                    ));
+-                }
+                 let bound = bind_definitions(definitions, scope)
+                     .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
+                 return self.enter(body, bound.as_ref(), found);
+@@ -1577,10 +1592,13 @@ impl SubscriptCollector<'_, '_> {
+                         return match computed {
+                             Some(true) => Ok(true),
+                             Some(false) => self.enter(&body, closure_scope.as_ref(), found),
+-                            None if self.is_total(&body) => Ok(true),
++                            None if self.total(&body)? => Ok(true),
+                             None => {
+                                 match self.enter(&body, closure_scope.as_ref(), &mut Vec::new()) {
+                                     Ok(true) => Ok(true),
++                                    Err(Unfollowed(RECURSIVE_SUBSCRIPT)) => {
++                                        Err(Unfollowed(RECURSIVE_SUBSCRIPT))
++                                    }
+                                     _ => Err(Unfollowed(
+                                         "a definition in the subscript of [][Next]_v that TLC may compute as it starts",
+                                     )),
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index c6ed758a..5d375616 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -528,8 +528,9 @@ it from one that printed something else. Each is outside the corpus:
+   constraint failures were native. To win them back, build a constant definition's function as
+   TLC computed it at startup.
+ - a subscript of `[][Next]_v` that an operator leads back to itself, such as `RECURSIVE F(_)`,
+-  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, directly, mutually, or through a LET, an operator
+-  argument or an INSTANCE. TLC's SubscriptCollector enters the operator's body again and again
++  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, or a definition without parameters that names itself,
++  `F == F`, directly, mutually, or through a LET, an operator argument, an INSTANCE or a constant
++  the configuration substitutes. TLC's SubscriptCollector enters the operator's body again and again
+   until its stack overflows, and prints the StackOverflowError (exit 255), whatever -nowarning
+   says; the front end read it without end and aborted the process, or on main took no subscript
+   warning from it and checked the model. It declines where its reading nests deeper than 256,
+@@ -560,6 +561,15 @@ warning for unknown, which -nowarning lets pass, and checks the model. On main a
+ no such operator at all. To fix it, read the rest of the subscript for a reading that doesn't end
+ before taking the warning for unknown.
+ 
++An initial predicate or a next-state relation that applies a parameterized INSTANCE in a LET to a
++variable, `Init == LET Q(v) == INSTANCE Inner WITH a <- v IN Q(x)!IInit`, with INIT and NEXT: the
++front end reads the definitions the INSTANCE makes as of constant level, so it evaluates `x` as it
++starts and fails ("In evaluation, the identifier x is either undefined or not an operator.",
++exit 75), where TLC checks the model. On main alike. A SPECIFICATION that reaches one declines (`a
++parameterized INSTANCE in a LET of the specification`); a property or an invariant reads it as
++TLC does. To fix it, level the definitions a parameterized INSTANCE in a LET makes by their
++arguments.
++
+ A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
+ with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
+ tests each element of the other operand for membership in it, which fails on a value of the
+-- 
+2.43.0
+
