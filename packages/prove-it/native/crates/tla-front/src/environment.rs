@@ -2164,14 +2164,61 @@ fn reject_class_overrides(
     }
 }
 
-/// The first of the keys that an expression of the spec, but the definition's own body, or the
-/// configuration names, by the definition the name resolves to.
+/// The first of the keys that TLC may evaluate a name of, by the definition the name resolves to:
+/// one named in what TLC evaluates, from every definition without parameters (which TLC may
+/// compute as it starts), every assumption, every INSTANCE's substitutions and every name the
+/// configuration gives, through the bodies of the definitions those name. A definition with
+/// parameters that nothing reached applies is never evaluated, nor is a replaced definition's
+/// own body, which is the class's method in TLC.
 fn get_named_definition(
     environment: &Environment,
     config: &ModelConfig,
     keys: &FastSet<Name>,
 ) -> Option<Name> {
-    fn find(expression: &Expr, keys: &FastSet<Name>) -> Option<Name> {
+    // The text of every name an expression writes, which a LET definition is named by.
+    fn written(expression: &Expr, texts: &mut FastSet<Name>) {
+        match &expression.kind {
+            ExpressionKind::Identifier { name, .. } => {
+                texts.insert(name.clone());
+            }
+            ExpressionKind::Apply { operator, .. }
+            | ExpressionKind::OperatorReference { operator, .. } => {
+                texts.insert(operator.clone());
+            }
+            _ => {}
+        }
+        for child in &expression.children() {
+            written(child, texts);
+        }
+    }
+    fn names(expression: &Expr, found: &mut Vec<Name>) {
+        // TLC evaluates a LET definition only where what it evaluates names it.
+        if let ExpressionKind::Let {
+            definitions,
+            instances: None,
+            body,
+            ..
+        } = &expression.kind
+        {
+            let mut texts = FastSet::default();
+            names(body, found);
+            written(body, &mut texts);
+            let mut included = vec![false; definitions.len()];
+            loop {
+                let mut is_grown = false;
+                for (index, definition) in definitions.iter().enumerate() {
+                    if !included[index] && texts.contains(&definition.name) {
+                        included[index] = true;
+                        is_grown = true;
+                        names(&definition.body, found);
+                        written(&definition.body, &mut texts);
+                    }
+                }
+                if !is_grown {
+                    return;
+                }
+            }
+        }
         if !expression.is_locally_resolved()
             && matches!(
                 expression.kind,
@@ -2180,47 +2227,46 @@ fn get_named_definition(
                     | ExpressionKind::OperatorReference { .. }
             )
             && let Some(key) = expression.reference()
-            && keys.contains(&key)
         {
-            return Some(key);
+            found.push(key);
         }
-        expression
-            .children()
-            .iter()
-            .find_map(|child| find(child, keys))
+        for child in &expression.children() {
+            names(child, found);
+        }
     }
+    let is_parameterless = |definition: &Definition| match &definition.kind {
+        DefinitionKind::Operator { params, .. } => params.is_empty(),
+        DefinitionKind::Function { .. } => true,
+    };
+    let is_replaced = |definition: &Definition| {
+        keys.iter().any(|key| {
+            environment
+                .definitions
+                .get(key)
+                .is_some_and(|replaced| std::ptr::eq(&**replaced, definition))
+        })
+    };
+    let mut pending: Vec<Expr> = Vec::new();
     for module in &environment.modules {
-        for definition in &module.definitions {
-            // A recursive definition's own body is the class's method in TLC.
-            let inner: FastSet<Name> = keys
+        pending.extend(
+            module
+                .definitions
                 .iter()
-                .filter(|key| {
-                    environment
-                        .definitions
-                        .get(*key)
-                        .is_none_or(|replaced| !Rc::ptr_eq(replaced, definition))
-                })
-                .cloned()
-                .collect();
-            if let Some(key) = find(&definition.body, &inner) {
-                return Some(key);
-            }
-        }
-        let others = module
-            .assumptions
-            .iter()
-            .map(|assumption| &assumption.expression)
-            .chain(module.instances.iter().flat_map(|instance| {
-                instance
-                    .substitutions
-                    .iter()
-                    .map(|substitution| &substitution.expression)
-            }));
-        for expression in others {
-            if let Some(key) = find(expression, keys) {
-                return Some(key);
-            }
-        }
+                .filter(|definition| is_parameterless(definition) && !is_replaced(definition))
+                .map(|definition| definition.body.clone()),
+        );
+        pending.extend(
+            module
+                .assumptions
+                .iter()
+                .map(|assumption| assumption.expression.clone()),
+        );
+        pending.extend(module.instances.iter().flat_map(|instance| {
+            instance
+                .substitutions
+                .iter()
+                .map(|substitution| substitution.expression.clone())
+        }));
     }
     let root_key = |name: &str| -> Name {
         environment
@@ -2228,7 +2274,7 @@ fn get_named_definition(
             .get(name)
             .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
     };
-    let named = [
+    let configured: Vec<Name> = [
         &config.init,
         &config.next,
         &config.specification,
@@ -2257,10 +2303,38 @@ fn get_named_definition(
             .substitutions
             .iter()
             .map(|substitution| &substitution.target),
-    );
-    named
-        .map(|name| root_key(name))
-        .find(|key| keys.contains(key))
+    )
+    .map(|name| root_key(name))
+    .collect();
+    let mut visited: FastSet<Name> = FastSet::default();
+    let mut reached = |key: Name, pending: &mut Vec<Expr>| -> Option<Name> {
+        if keys.contains(&key) {
+            return Some(key);
+        }
+        if visited.insert(key.clone())
+            && let Some(definition) = environment.definitions.get(&key)
+        {
+            pending.push(definition.body.clone());
+        }
+        None
+    };
+    // What the configuration names is evaluated whatever the spec's own expressions name.
+    for key in configured {
+        if let Some(found) = reached(key, &mut pending) {
+            return Some(found);
+        }
+    }
+    let mut found = Vec::new();
+    while let Some(expression) = pending.pop() {
+        found.clear();
+        names(&expression, &mut found);
+        for key in found.drain(..) {
+            if let Some(key) = reached(key, &mut pending) {
+                return Some(key);
+            }
+        }
+    }
+    None
 }
 
 /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes

@@ -462,8 +462,13 @@ it from one that printed something else. Each is outside the corpus:
   The front end gives an imported module named like a standard module the builtins of the same
   names and arities, and read any other such operator by its body, which printed the body's value
   where TLC computes the method's (264 wrong runs in the upstream conformance suite, whose
-  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that names one now
-  declines (`an operator of a module of the user's that TLC's Java class replaces`). Five runs
+  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that may evaluate
+  one now declines (`an operator of a module of the user's that TLC's Java class replaces`): one
+  that what TLC evaluates reaches, from every definition without parameters, assumption,
+  INSTANCE substitution and name of the configuration, through the definitions and LET
+  definitions those name; a wrapper with parameters that nothing reached applies doesn't count.
+  An unused `<-` substitute and an unused definition without parameters count, since TLC may
+  compute them. Five runs
   matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
   (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
   ANY and RandomSubsetSet as builtins.
