@@ -1,0 +1,21 @@
+classes base: {'match': 35107, 'decline': 36380, 'wrong': 1337, 'noncompletion': 3}
+classes cand: {'match': 46904, 'decline': 24573, 'wrong': 1347, 'noncompletion': 3}
+changed runs: 27422
+transitions: {'decline->match': 11797, 'decline->decline': 15615, 'decline->wrong': 10}
+matches lost: 0
+wrong outputs that changed: 10 without a jar run: 0
+   equals-jar tlc/generated/operators/cross_left/cross_left_subset#assume base decline
+   equals-jar tlc/generated/operators/domain/domain_cross#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_cross#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_interval#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_interval_empty#assume base decline
+   equals-jar tlc/generated/random/001/random_00581#assume base decline
+   equals-jar tlc/generated/random/004/random_02485#assume base decline
+   equals-jar tlc/generated/random/005/random_02721#assume base decline
+   equals-jar tlc/generated/random/016/random_08153#assume base decline
+   equals-jar tlc/generated/random/019/random_09611#assume base decline
+noncompletions: 3 [('tlc/engine262/functions_and_arrays', 'time-limit', 'noncompletion'), ('tlc/engine262/print_sum', 'time-limit', 'noncompletion'), ('tlc/engine262/uncaught_type_error', 'time-limit', 'noncompletion')]
+subset 6,795: cand {'match': 5873, 'decline': 922} base {'decline': 6795}
+subset 575: cand {'decline': 537, 'match': 28, 'wrong': 10} base {'decline': 569, 'wrong': 6}
+subset 8,671: cand {'match': 5027, 'decline': 3638, 'wrong': 6} base {'decline': 8671}
+reasons of decline->match: 11797
