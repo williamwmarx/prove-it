@@ -1,0 +1,1185 @@
+From b5182e4dd8e3983d822bc26a1ec2fcb040df9af0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 01:33:04 +0000
+Subject: [PATCH 4/4] fix(engine): keep a set of tuples, records or functions
+ with a part TLC can't size from collapsing
+
+TLC keeps S \X T, [a : S, b : T] and [S -> T] lazy (SetOfTuplesValue,
+SetOfRcdsValue, SetOfFcnsValue), and with them a \cup, \cap or \ it
+doesn't reduce. Where a part is a set TLC can't size, such as Int, the
+engine held the set as the set enumeration it enumerates to, so
+Int \X {} was {}: (Int \X {}) \cap {"a"} was {}, where TLC reduces the
+intersection by testing "a" in Int \X {} and fails on a non-tuple, and
+PrintT(Int \X {}) printed {}, where TLC's text sizes Int and fails.
+
+The engine now builds such a set nowhere. It enumerates it where TLC
+does: a quantifier's bound, a set map, either side of = and the left of
+\subseteq. It reduces an intersection or a difference with it to the
+other operand's elements it holds, tested in it. An unreduced \cap or \
+of lazy sets is irreducible, as TLC's SetCapValue and SetDiffValue are.
+Where the set would be held as a value, as an element, a state's value
+or ToString's operand, the engine declines, and it declines an equality
+whose left value isn't a set, where TLC prints the lazy set.
+
+On the upstream conformance suite, 4 runs that declined now match and
+no run changes otherwise. Of 1,200 adversarial specs against TLC, 129
+that matched by the collapse now decline; native/design/fallback.md
+lists them under the declines to win back.
+---
+ .../M.cfg                                     |  2 +
+ .../M.tla                                     |  8 ++
+ .../tlc.out                                   | 40 ++++++++++
+ .../lazy-diff-function-set-member-frame/M.cfg |  2 +
+ .../lazy-diff-function-set-member-frame/M.tla |  8 ++
+ .../tlc.out                                   | 32 ++++++++
+ .../lazy-diff-subset-cap-frame/M.cfg          |  2 +
+ .../lazy-diff-subset-cap-frame/M.tla          |  8 ++
+ .../lazy-diff-subset-cap-frame/tlc.out        | 33 ++++++++
+ .../lazy-empty-product-cap-assume/M.cfg       |  2 +
+ .../lazy-empty-product-cap-assume/M.tla       |  7 ++
+ .../lazy-empty-product-cap-assume/tlc.out     | 13 ++++
+ .../lazy-empty-product-cap-card/M.cfg         |  2 +
+ .../lazy-empty-product-cap-card/M.tla         |  6 ++
+ .../lazy-empty-product-cap-card/tlc.out       | 31 ++++++++
+ .../lazy-empty-product-cap-record/M.cfg       |  2 +
+ .../lazy-empty-product-cap-record/M.tla       |  6 ++
+ .../lazy-empty-product-cap-record/tlc.out     | 31 ++++++++
+ .../lazy-empty-product-cap-reversed/M.cfg     |  2 +
+ .../lazy-empty-product-cap-reversed/M.tla     |  7 ++
+ .../lazy-empty-product-cap-reversed/tlc.out   | 13 ++++
+ .../lazy-empty-product-cap-tuple/M.cfg        |  2 +
+ .../lazy-empty-product-cap-tuple/M.tla        |  6 ++
+ .../lazy-empty-product-cap-tuple/tlc.out      | 16 ++++
+ .../lazy-empty-product-cap/M.cfg              |  2 +
+ .../lazy-empty-product-cap/M.tla              |  6 ++
+ .../lazy-empty-product-cap/tlc.out            | 29 +++++++
+ .../lazy-empty-product-cardinality/M.cfg      |  2 +
+ .../lazy-empty-product-cardinality/M.tla      |  6 ++
+ .../lazy-empty-product-cardinality/tlc.out    | 16 ++++
+ .../lazy-empty-product-element-print/M.cfg    |  2 +
+ .../lazy-empty-product-element-print/M.tla    |  7 ++
+ .../lazy-empty-product-element-print/tlc.out  | 13 ++++
+ .../lazy-empty-product-equal/M.cfg            |  2 +
+ .../lazy-empty-product-equal/M.tla            |  6 ++
+ .../lazy-empty-product-equal/tlc.out          | 16 ++++
+ .../lazy-empty-product-exists/M.cfg           |  2 +
+ .../lazy-empty-product-exists/M.tla           |  6 ++
+ .../lazy-empty-product-exists/tlc.out         | 16 ++++
+ .../lazy-empty-product-print-assume/M.cfg     |  2 +
+ .../lazy-empty-product-print-assume/M.tla     |  7 ++
+ .../lazy-empty-product-print-assume/tlc.out   | 13 ++++
+ .../lazy-empty-product-print/M.cfg            |  2 +
+ .../lazy-empty-product-print/M.tla            |  6 ++
+ .../lazy-empty-product-print/declined         |  1 +
+ .../lazy-empty-product-subseteq/M.cfg         |  2 +
+ .../lazy-empty-product-subseteq/M.tla         |  6 ++
+ .../lazy-empty-product-subseteq/tlc.out       | 16 ++++
+ .../lazy-empty-record-set-element/M.cfg       |  2 +
+ .../lazy-empty-record-set-element/M.tla       |  6 ++
+ .../lazy-empty-record-set-element/declined    |  1 +
+ .../crates/tla-engine/src/compile/builtins.rs | 78 ++++++++++++++++---
+ .../crates/tla-engine/src/compile/nodes.rs    | 19 ++++-
+ .../crates/tla-engine/src/compile/sets.rs     | 35 ++++++++-
+ packages/prove-it/native/design/fallback.md   | 16 ++++
+ 55 files changed, 610 insertions(+), 14 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/declined
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.tla
+new file mode 100644
+index 00000000..a349fb35
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = 0
++Next == x' = x /\ y' = ((([a : {}, b : STRING] \ (Seq({1}) \X [{} -> Seq({1})])) \cup {"a"}) = ((SUBSET Nat \X (1..0)) \ (Int \X [(1..0) -> Int])))
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/tlc.out
+new file mode 100644
+index 00000000..5ba0162b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-equality-enumeration-frame/tlc.out
+@@ -0,0 +1,40 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.RuntimeException
++: Attempted to check if non-tuple
++{}
++is in the set of tuples:
++(Int \X {<<>>})
++Error: The behavior up to this point is:
++State 1: <Initial predicate>
++/\ x = 0
++/\ y = 0
++
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 7, column 9 to line 7, column 147 in M
++1. Line 7, column 9 to line 7, column 14 in M
++2. Line 7, column 19 to line 7, column 147 in M
++3. Line 7, column 25 to line 7, column 146 in M
++4. Line 7, column 26 to line 7, column 91 in M
++5. Line 7, column 123 to line 7, column 144 in M
++
++
++Reason:
++Attempted to check if non-tuple
++{}
++is in the set of tuples:
++(Int \X {<<>>})
++1 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.tla
+new file mode 100644
+index 00000000..5fa7140b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = (({1} \ ([{} -> Seq({1})] \ [(1..0) -> SUBSET Nat])))
++Next == x' = x /\ y' = y
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/tlc.out
+new file mode 100644
+index 00000000..a13857cf
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-function-set-member-frame/tlc.out
+@@ -0,0 +1,32 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if 
++1
++which is not a TLC function value, is in the set of functions:
++{<<>>}
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 6, column 9 to line 6, column 74 in M
++1. Line 6, column 9 to line 6, column 13 in M
++2. Line 6, column 18 to line 6, column 74 in M
++3. Line 6, column 24 to line 6, column 72 in M
++4. Line 6, column 24 to line 6, column 26 in M
++5. Line 6, column 31 to line 6, column 71 in M
++6. Line 6, column 31 to line 6, column 46 in M
++
++
++Reason:
++Attempted to check if 
++1
++which is not a TLC function value, is in the set of functions:
++{<<>>}
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.tla
+new file mode 100644
+index 00000000..8f46b2e6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = (SUBSET (BOOLEAN \cap ((STRING \X {} \X STRING) \ [{x} \ {x} -> Seq({1})])) = {{}})
++Next == x' = x /\ y' = y
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/tlc.out
+new file mode 100644
+index 00000000..6db9d6d0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-subset-cap-frame/tlc.out
+@@ -0,0 +1,33 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-tuple
++FALSE
++is in the set of tuples:
++(STRING \X {} \X STRING)
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 6, column 9 to line 6, column 104 in M
++1. Line 6, column 9 to line 6, column 13 in M
++2. Line 6, column 18 to line 6, column 104 in M
++3. Line 6, column 23 to line 6, column 103 in M
++4. Line 6, column 23 to line 6, column 96 in M
++5. Line 6, column 31 to line 6, column 95 in M
++6. Line 6, column 45 to line 6, column 94 in M
++7. Line 6, column 46 to line 6, column 67 in M
++
++
++Reason:
++Attempted to check if non-tuple
++FALSE
++is in the set of tuples:
++(STRING \X {} \X STRING)
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.tla
+new file mode 100644
+index 00000000..a1a29a7d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++ASSUME PrintT((Int \X {}) \cap {"a"})
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/tlc.out
+new file mode 100644
+index 00000000..94dde6fb
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-assume/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 4, col 8 to line 4, col 37 of module M failed.
++Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.tla
+new file mode 100644
+index 00000000..2fca7a8a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = Cardinality({(Int \X {}) \cap {"a"}})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/tlc.out
+new file mode 100644
+index 00000000..9559669b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-card/tlc.out
+@@ -0,0 +1,31 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 49 in M
++1. Line 4, column 13 to line 4, column 49 in M
++2. Line 4, column 25 to line 4, column 48 in M
++3. Line 4, column 26 to line 4, column 47 in M
++4. Line 4, column 43 to line 4, column 47 in M
++5. Line 4, column 27 to line 4, column 35 in M
++
++
++Reason:
++Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.tla
+new file mode 100644
+index 00000000..6be3b875
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = DOMAIN [a |-> (Int \X {}) \cap {"a"}]
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/tlc.out
+new file mode 100644
+index 00000000..ff351ed3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-record/tlc.out
+@@ -0,0 +1,31 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 49 in M
++1. Line 4, column 13 to line 4, column 49 in M
++2. Line 4, column 20 to line 4, column 49 in M
++3. Line 4, column 27 to line 4, column 48 in M
++4. Line 4, column 44 to line 4, column 48 in M
++5. Line 4, column 28 to line 4, column 36 in M
++
++
++Reason:
++Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.tla
+new file mode 100644
+index 00000000..bbdded82
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++ASSUME PrintT({"a"} \cap (Int \X {}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/tlc.out
+new file mode 100644
+index 00000000..94dde6fb
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-reversed/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 4, col 8 to line 4, col 37 of module M failed.
++Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.tla
+new file mode 100644
+index 00000000..db36cb5c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = Cardinality((Int \X {}) \cap {<<1, 2>>})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap-tuple/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.tla
+new file mode 100644
+index 00000000..a02f3e18
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = ((Int \X {}) \cap {"a"})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/tlc.out
+new file mode 100644
+index 00000000..93e08f47
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cap/tlc.out
+@@ -0,0 +1,29 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 36 in M
++1. Line 4, column 14 to line 4, column 35 in M
++2. Line 4, column 31 to line 4, column 35 in M
++3. Line 4, column 15 to line 4, column 23 in M
++
++
++Reason:
++Attempted to check if non-tuple
++"a"
++is in the set of tuples:
++(Int \X {})
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.tla
+new file mode 100644
+index 00000000..49be2dae
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = Cardinality(Int \X {})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-cardinality/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.tla
+new file mode 100644
+index 00000000..918bfe91
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++ASSUME PrintT({Int \X {}})
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/tlc.out
+new file mode 100644
+index 00000000..866f54dd
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-element-print/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 4, col 8 to line 4, col 26 of module M failed.
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
++but it produced the following error:
++Attempted to compute the number of elements in the overridden value Int.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.tla
+new file mode 100644
+index 00000000..22a05164
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = ((Int \X {}) = {})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-equal/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.tla
+new file mode 100644
+index 00000000..e10c824c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = (\E t \in (Int \X {}) : TRUE)
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-exists/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.tla
+new file mode 100644
+index 00000000..a7732823
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++ASSUME PrintT(Int \X {})
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/tlc.out
+new file mode 100644
+index 00000000..1b385140
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print-assume/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 4, col 8 to line 4, col 24 of module M failed.
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
++but it produced the following error:
++Attempted to compute the number of elements in the overridden value Int.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.tla
+new file mode 100644
+index 00000000..df7eae99
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = PrintT(Int \X {})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/declined
+new file mode 100644
+index 00000000..4eb1553f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-print/declined
+@@ -0,0 +1 @@
++the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.tla
+new file mode 100644
+index 00000000..e2aba975
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = ((Int \X {}) \subseteq {})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-product-subseteq/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.tla
+new file mode 100644
+index 00000000..cab06533
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets, TLC
++VARIABLE x
++Init == x = Cardinality({[a : {}, b : Int]})
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/declined
+new file mode 100644
+index 00000000..4eb1553f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-empty-record-set-element/declined
+@@ -0,0 +1 @@
++the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs b/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
+index 2d8e4b9a..2413a398 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
+@@ -424,6 +424,32 @@ impl Compiler<'_> {
+         ))
+     }
+ 
++    // The operands of `=` or `#`: TLC compares a set it keeps lazy, such as Int \X {}, by its
++    // enumeration (`SetOfTuplesValue.equals`), and where the left value isn't a set, fails in
++    // its own `equals`, which prints the lazy set as built, as the engine's enumeration doesn't.
++    fn compared(left: Compiled, right: Compiled) -> (Compiled, Compiled) {
++        let (listed_left, listed_right) = (Self::listed(&left), Self::listed(&right));
++        if Arc::ptr_eq(&listed_right.eval, &right.eval) {
++            return (listed_left, right);
++        }
++        let evaluate = listed_left.eval.clone();
++        let left = Compiled {
++            eval: eval(move |machine| {
++                let value = evaluate(machine)?;
++                if machine.store.kind_of(value) != KIND_SET {
++                    return Err(Bail(
++                        "an equality of a value with a set TLC keeps lazy, which it prints",
++                    ));
++                }
++                Ok(value)
++            }),
++            shape: Shape::Other,
++            predicate: None,
++            ..listed_left
++        };
++        (left, listed_right)
++    }
++
+     // `S \subseteq T`, as TLC's isSubsetEq: for two power sets, SUBSET A \subseteq SUBSET B is
+     // A \subseteq B, unless TLC can't enumerate A (SubsetValue.isSubsetEq); otherwise each element
+     // of S, enumerated, is a member of T.
+@@ -434,7 +460,8 @@ impl Compiler<'_> {
+             return self.compile_subseteq(left_base, right_base);
+         }
+         let footprint = left.footprint.merge(&right.footprint);
+-        let left_eval = left.eval.clone();
++        // TLC enumerates S (`Value.isSubsetEq`).
++        let left_eval = Self::listed(left).eval;
+         let evaluate = if right.member.is_some() || right.infinite.is_some() {
+             let test = self.member_test(right);
+             // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
+@@ -1554,6 +1581,7 @@ impl Compiler<'_> {
+                 }
+                 let left = self.operand(&operands[0])?;
+                 let right = self.operand(&operands[1])?;
++                let (left, right) = Self::compared(left, right);
+                 predicate_node(
+                     Predicate::Equal {
+                         left: Leaf::of(&left),
+@@ -2249,9 +2277,13 @@ impl Compiler<'_> {
+             "\\cap" => is_reducible(left) == Some(true) || is_reducible(right) == Some(true),
+             _ => is_reducible(left) == Some(true),
+         };
+-        // TLC keeps the union of a set it can't reduce with any set as a SetCupValue.
+-        let is_irreducible = name == "\\cup"
+-            && (is_reducible(left) == Some(false) || is_reducible(right) == Some(false));
++        // TLC keeps the union of a set it can't reduce with any set as a SetCupValue, and an
++        // intersection or a difference it doesn't reduce as a SetCapValue or a SetDiffValue.
++        let is_irreducible = match name {
++            "\\cup" => is_reducible(left) == Some(false) || is_reducible(right) == Some(false),
++            "\\cap" => is_reducible(left) == Some(false) && is_reducible(right) == Some(false),
++            _ => is_reducible(left) == Some(false),
++        };
+         // TLC evaluates both operands, left first, before it tests either for an element
+         // (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), so a test that one operand decides runs the
+         // other's parts too.
+@@ -2348,14 +2380,31 @@ impl Compiler<'_> {
+         // TLC enumerates the left set of an intersection or a difference where it can, testing
+         // each element for membership in the right one (SetCapValue.elements and
+         // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
+-        if name != "\\cup"
++        // A set TLC keeps lazy with a part it can't enumerate, such as Int \X {}, which the
++        // engine doesn't build: TLC reduces an intersection with it to the other operand's
++        // elements it holds (`Reducible.cap`).
++        let is_unbuilt = |set: &Compiled| set.infinite.is_some() || set.has_infinite_part;
++        let tested_from = if name != "\\cup" && !is_unbuilt(left) && is_unbuilt(right) {
++            Some((left, right))
++        } else if name == "\\cap"
++            && is_unbuilt(left)
+             && left.infinite.is_none()
+-            && right.infinite.is_some()
+-            && left.is_normalized
++            && !is_unbuilt(right)
++            && is_reducible(right) == Some(true)
+         {
+-            let right_member = self.member_test(right);
+-            let left_eval = left.eval.clone();
++            Some((right, left))
++        } else {
++            None
++        };
++        if let Some((enumerated, tested)) = tested_from.filter(|(set, _)| set.is_normalized) {
++            let right_member = self.member_test(tested);
++            let left_eval = enumerated.eval.clone();
+             let is_kept_in_right = name == "\\cap";
++            // TLC evaluates both operands, left first, before it tests one's elements in the
++            // other, so an effect of either may show in another order than the engine's.
++            let is_ordered = !has_effect || (left.infinite.is_none() && right.infinite.is_some());
++            // Where TLC tests the right operand's elements, it has evaluated the left one first.
++            let first = (!std::ptr::eq(enumerated, left)).then(|| Self::parts_of(left));
+             return Ok(Some(Compiled {
+                 is_costly: true,
+                 is_reducible: is_reduced,
+@@ -2363,6 +2412,14 @@ impl Compiler<'_> {
+                 parts: lazy_parts,
+                 ..leaf(
+                     eval(move |machine| {
++                        if !is_ordered {
++                            return Err(Bail(
++                                "a set operation TLC reduces on an operand with effects",
++                            ));
++                        }
++                        if let Some(first) = &first {
++                            machine.run_parts(first)?;
++                        }
+                         let left = left_eval(machine)?;
+                         let set = expect_set(machine, left, "expected a set")?;
+                         let mut kept = Vec::new();
+@@ -2467,6 +2524,9 @@ impl Compiler<'_> {
+                 && [left, right]
+                     .iter()
+                     .all(|set| set.is_in_order || set.is_reference_exact),
++            // TLC keeps an operation it doesn't reduce lazy (SetCupValue, SetCapValue,
++            // SetDiffValue), and with it the operands' parts.
++            has_infinite_part: !is_reduced && (left.may_be_infinite() || right.may_be_infinite()),
+             member: lazy_member,
+             parts: lazy_parts,
+             reference,
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/nodes.rs b/packages/prove-it/native/crates/tla-engine/src/compile/nodes.rs
+index cd98871e..b4162ceb 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/nodes.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/nodes.rs
+@@ -634,7 +634,11 @@ impl Compiler<'_> {
+         is_forall: bool,
+         context: &Context,
+     ) -> Compiling<Compiled> {
+-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
++        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
++        // TLC enumerates each bound's set (`Tool.contexts`).
++        for level in &mut levels {
++            level.set = Self::listed(&level.set);
++        }
+         let body = self.compile(body, &inner)?;
+         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
+             .merge(&body.footprint.without_slots(&bound));
+@@ -881,7 +885,12 @@ impl Compiler<'_> {
+         bounds: &[Bound],
+         context: &Context,
+     ) -> Compiling<Compiled> {
+-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
++        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
++        // TLC enumerates each bound's set into the set it builds (`Tool.evalImpl`'s
++        // OPCODE_soa).
++        for level in &mut levels {
++            level.set = Self::listed(&level.set);
++        }
+         let body = self.compile(expression, &inner)?;
+         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
+             .merge(&body.footprint.without_slots(&bound));
+@@ -916,7 +925,11 @@ impl Compiler<'_> {
+         body: NodeId,
+         context: &Context,
+     ) -> Compiling<Compiled> {
+-        let (levels, bound, inner) = self.compile_levels(bounds, context)?;
++        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
++        // TLC enumerates each bound's set (`Tool.contexts`).
++        for level in &mut levels {
++            level.set = Self::listed(&level.set);
++        }
+         let body = self.compile(body, &inner)?;
+         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
+             .merge(&body.footprint.without_slots(&bound));
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+index f11e34ae..d51c1bf6 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+@@ -12,7 +12,7 @@ use super::builtins::expect_int;
+ use super::lazy::Lazy;
+ use super::nodes::expect_set;
+ use super::{
+-    Compiled, Compiler, Compiling, Context, combine_references, eval, leaf, member, parts,
++    Compiled, Compiler, Compiling, Context, Shape, combine_references, eval, leaf, member, parts,
+ };
+ use crate::footprint::Footprint;
+ use crate::machine::{Eval, Machine, Member, Parts};
+@@ -229,13 +229,44 @@ impl Compiler<'_> {
+         };
+         Compiled {
+             eval: eval(move |machine| {
+-                let elements = reference(machine)?.enumerate(machine)?;
++                let set = reference(machine)?;
++                let elements = set.enumerate(machine)?;
++                // TLC holds the set lazily, where testing a value of another kind for membership
++                // in it fails and printing it may, as the set enumeration the engine would hold
++                // doesn't.
++                if set.is_infinite() {
++                    return Err(Bail(
++                        "a set of functions, records or tuples TLC keeps lazy with a part it can't size",
++                    ));
++                }
+                 machine.store.set_of(&elements)
+             }),
+             ..set
+         }
+     }
+ 
++    /// The set as an operation that only enumerates it takes it, such as a quantifier over it:
++    /// TLC's enumeration of a set it keeps lazy, which may be empty where the set's own value is
++    /// one the engine doesn't hold.
++    pub(crate) fn listed(set: &Compiled) -> Compiled {
++        let Some(reference) = set
++            .reference
++            .clone()
++            .filter(|_| set.has_infinite_part && set.infinite.is_none())
++        else {
++            return set.clone();
++        };
++        Compiled {
++            eval: eval(move |machine| {
++                let elements = reference(machine)?.enumerate(machine)?;
++                machine.store.set_of(&elements)
++            }),
++            shape: Shape::Other,
++            predicate: None,
++            ..set.clone()
++        }
++    }
++
+     fn compile_function_set(
+         &mut self,
+         domain: NodeId,
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index f26daabd..356c06fa 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -493,6 +493,22 @@ it from one that printed something else. Each is outside the corpus:
+   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
+   where the jar was. The report declines it, as the binary did; winning it back takes knowing
+   whether TLC's class path holds the CommunityModules.
++- a set of functions, records or tuples with a part TLC can't size, such as `Int \X {}`,
++  `[a : {}, b : Nat]` or `[{} -> Seq({1})]`, where the run holds it as a value. TLC keeps it lazy
++  (`SetOfTuplesValue`, `SetOfRcdsValue`, `SetOfFcnsValue`), and with it a `\cup`, `\cap` or `\`
++  it doesn't reduce: its `member` fails on a value of another kind and its `toString` sizes the
++  parts in order, failing or printing it as written. The engine held it as the set enumeration
++  it enumerates to, `{}` or `{<<>>}`, which matched only where nothing after showed the
++  difference. It now enumerates it only where TLC does (a quantifier's bound, `=`, the left of
++  `\subseteq`, a set map), reduces a `\cap` with it to the other operand's elements it holds, and
++  declines where the set would be held as a value (`a set of functions, records or tuples TLC
++  keeps lazy with a part it can't size`): an element of a set, a tuple or a record, a state's
++  value, the bound of UNION, CHOOSE or DOMAIN, ToString, and a function over it. No run of the
++  upstream conformance suite matched so. Of 1,200 adversarial specs (three seeds of
++  `scratch/upstream/gen_lazy.py` on the `upstream-results` branch), 129 matched and now decline:
++  111 for that reason, 6 that compare a function over such a set, 6 that ask `IsFiniteSet` of an
++  operation on one, 4 that equate another value with one, which TLC prints, and 2 at a startup
++  definition. To win them back, keep the lazy set as a value the store holds.
+ 
+ A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
+ through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
+-- 
+2.43.0
+

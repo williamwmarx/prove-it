@@ -1,0 +1,128 @@
+From 108b74aaf488177cea882b87bb0ef3dabf97f8b5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 00:54:15 +0000
+Subject: [PATCH 3/4] fix(engine): evaluate T of S \subseteq T before testing
+ S's elements in it
+
+Tool's OPCODE_subseteq evaluates both operands, then tests each element
+of S in T. Where T is a set the engine tests without building, it ran
+T's member test only per element of S, so with S empty it never made
+the tests TLC makes as it builds T, such as the reduction of
+BOOLEAN \ [SUBSET Nat -> ...], which fails, and answered TRUE. It now
+runs T's parts first, and declines where a test runs them again with
+effects. One run of the upstream conformance suite that printed FALSE
+where TLC fails now declines.
+---
+ .../subseteq-evaluates-superset/M.cfg         |  2 +
+ .../subseteq-evaluates-superset/M.tla         |  8 ++++
+ .../subseteq-evaluates-superset/tlc.out       | 40 +++++++++++++++++++
+ .../crates/tla-engine/src/compile/builtins.rs | 15 ++++++-
+ 4 files changed, 63 insertions(+), 2 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.tla
+new file mode 100644
+index 00000000..16ba8ead
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = 0
++Next == x' = x /\ y' = ([STRING -> (1..0)] \subseteq (BOOLEAN \ [SUBSET Nat -> [SUBSET Nat -> (1..0)]]))
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/tlc.out
+new file mode 100644
+index 00000000..7b3cc431
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/subseteq-evaluates-superset/tlc.out
+@@ -0,0 +1,40 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.RuntimeException
++: Attempted to check if 
++FALSE
++which is not a TLC function value, is in the set of functions:
++[SUBSET Nat -> [SUBSET Nat -> {}]]
++Error: The behavior up to this point is:
++State 1: <Initial predicate>
++/\ x = 0
++/\ y = 0
++
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 7, column 9 to line 7, column 104 in M
++1. Line 7, column 9 to line 7, column 14 in M
++2. Line 7, column 19 to line 7, column 104 in M
++3. Line 7, column 25 to line 7, column 103 in M
++4. Line 7, column 55 to line 7, column 102 in M
++5. Line 7, column 65 to line 7, column 102 in M
++
++
++Reason:
++Attempted to check if 
++FALSE
++which is not a TLC function value, is in the set of functions:
++[SUBSET Nat -> [SUBSET Nat -> {}]]
++1 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs b/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
+index 0cb0ca2e..2d8e4b9a 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/builtins.rs
+@@ -437,15 +437,26 @@ impl Compiler<'_> {
+         let left_eval = left.eval.clone();
+         let evaluate = if right.member.is_some() || right.infinite.is_some() {
+             let test = self.member_test(right);
++            // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
++            // the tests TLC makes as it builds T even where S is empty.
++            let right_parts = Self::parts_of(right);
+             eval(move |machine| {
+                 let set = evaluate_set(machine, &left_eval, "expected a set")?;
++                machine.run_parts(&right_parts)?;
++                let before = machine.effects();
++                let mut is_subset = TRUE;
+                 for index in 0..machine.store.size_of(set) {
+                     let element = machine.store.element_at(set, index);
+                     if !test(machine, element)? {
+-                        return Ok(FALSE);
++                        is_subset = FALSE;
++                        break;
+                     }
+                 }
+-                Ok(TRUE)
++                // A test may evaluate T's parts again, which an effect shows.
++                if machine.effects() != before {
++                    return Err(Bail("a subset test of a set with effects"));
++                }
++                Ok(is_subset)
+             })
+         } else {
+             let right_eval = right.eval.clone();
+-- 
+2.43.0
+

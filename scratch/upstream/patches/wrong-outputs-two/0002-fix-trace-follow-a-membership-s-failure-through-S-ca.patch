@@ -1,0 +1,265 @@
+From 645052a836b5e2290216cf33eb29a817b41ee87e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 00:45:48 +0000
+Subject: [PATCH 2/4] fix(trace): follow a membership's failure through S \cap
+ T and S \ T to the set that fails
+
+SetCapValue.member and SetDiffValue.member ask their first set, then,
+where it holds the value, their second, and each lazy set the failure
+passes through adds its source to the fingerprint stack. The evaluator
+of failures followed a failure through a union and a filter but not
+through an intersection or a difference, nor into a nested product
+that fails on a value that isn't a tuple, so it left out the frames of
+the sets inside. An equality with a lazy intersection or difference
+enumerates it (`toSetEnum`), testing its first set's elements in its
+second, whose failure now adds that set's frames too. 4 runs of the
+upstream conformance suite that printed too few frames now match.
+---
+ .../lazy-cap-product-member-frame/M.cfg       |  2 +
+ .../lazy-cap-product-member-frame/M.tla       |  8 +++
+ .../lazy-cap-product-member-frame/tlc.out     | 40 +++++++++++++++
+ .../lazy-diff-product-member-frame/M.cfg      |  2 +
+ .../lazy-diff-product-member-frame/M.tla      |  8 +++
+ .../lazy-diff-product-member-frame/tlc.out    | 41 +++++++++++++++
+ .../native/crates/tla-trace/src/eval.rs       |  5 ++
+ .../native/crates/tla-trace/src/sets.rs       | 51 ++++++++++++++++++-
+ 8 files changed, 156 insertions(+), 1 deletion(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.tla
+new file mode 100644
+index 00000000..4c6c400d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = 0
++Next == x' = x /\ y' = ({} \notin ([a : SUBSET Nat, b : (1..0)] \cap (Nat \X [{} -> Nat])))
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/tlc.out
+new file mode 100644
+index 00000000..a9d76ea3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-cap-product-member-frame/tlc.out
+@@ -0,0 +1,40 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.RuntimeException
++: Attempted to check if non-record
++{}
++is in the set of records:
++[a: SUBSET Nat, b: {}]
++Error: The behavior up to this point is:
++State 1: <Initial predicate>
++/\ x = 0
++/\ y = 0
++
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 7, column 9 to line 7, column 91 in M
++1. Line 7, column 9 to line 7, column 14 in M
++2. Line 7, column 19 to line 7, column 91 in M
++3. Line 7, column 25 to line 7, column 90 in M
++4. Line 7, column 36 to line 7, column 89 in M
++5. Line 7, column 36 to line 7, column 63 in M
++
++
++Reason:
++Attempted to check if non-record
++{}
++is in the set of records:
++[a: SUBSET Nat, b: {}]
++1 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.tla
+new file mode 100644
+index 00000000..d954ac9e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLES x, y
++
++
++Init == x = 0 /\ y = 0
++Next == x' = x /\ y' = (LET L == (Nat \X {x} \ {x} \X Nat) IN 1 \in L)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/tlc.out
+new file mode 100644
+index 00000000..91cf27c8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/lazy-diff-product-member-frame/tlc.out
+@@ -0,0 +1,41 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.RuntimeException
++: Attempted to check if non-tuple
++1
++is in the set of tuples:
++(Nat \X {0})
++Error: The behavior up to this point is:
++State 1: <Initial predicate>
++/\ x = 0
++/\ y = 0
++
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 7, column 9 to line 7, column 70 in M
++1. Line 7, column 9 to line 7, column 14 in M
++2. Line 7, column 19 to line 7, column 70 in M
++3. Line 7, column 25 to line 7, column 69 in M
++4. Line 7, column 63 to line 7, column 69 in M
++5. Line 7, column 35 to line 7, column 57 in M
++6. Line 7, column 35 to line 7, column 44 in M
++
++
++Reason:
++Attempted to check if non-tuple
++1
++is in the set of tuples:
++(Nat \X {0})
++1 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
+diff --git a/packages/prove-it/native/crates/tla-trace/src/eval.rs b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+index b08298e8..570d2087 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+@@ -1497,6 +1497,11 @@ impl<'ir> Evaluator<'ir> {
+                     .err()
+                     .unwrap_or_default()
+             }
++            // An equality with a set TLC keeps lazy enumerates it, the receiver first
++            // (`convertAndCache`, `toSetEnum`), which may fail in a nested set's `member`.
++            (Given::Equated(other), _) => crate::sets::failing_enumeration(received)
++                .or_else(|| crate::sets::failing_enumeration(other))
++                .unwrap_or_default(),
+             (_, Value::Unsorted(values)) => {
+                 failing_comparisons(|| crate::value::normalize_failure(values).map_or(Ok(()), Err))
+                     .err()
+diff --git a/packages/prove-it/native/crates/tla-trace/src/sets.rs b/packages/prove-it/native/crates/tla-trace/src/sets.rs
+index 3dccf60d..153d087d 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/sets.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/sets.rs
+@@ -354,6 +354,18 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Va
+         }
+         return None;
+     }
++    // `SetCapValue.member` and `SetDiffValue.member` ask their first set, then, where it holds
++    // the value, their second.
++    if let Lazy::Cap(first, second) | Lazy::Diff(first, second) = &**lazy {
++        for inner in [first, second] {
++            match is_member(value, inner) {
++                Ok(true) => {}
++                Ok(false) => return None,
++                Err(_) => return nested_failure(value, inner),
++            }
++        }
++        return None;
++    }
+     // `SetPredValue.member` asks its base set first: a filter `CallStackTool` copied has no
+     // source, and the FingerprintException of its base passes through it.
+     if let Lazy::Filter(base, _) = &**lazy {
+@@ -432,7 +444,14 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Va
+ 
+ // `failing_sets` of a nested set whose test of `value` fails, after the nested set.
+ fn nested_failure(value: &Value, nested: &Value) -> Option<(Vec<Value>, Value, Value)> {
+-    let (sets, element, set) = failing_sets(value, nested)?;
++    // A nested product or Seq(S) fails in its own test on a value that isn't a tuple.
++    let is_own = matches!(nested, Value::Lazy(lazy) if matches!(**lazy, Lazy::Product(_) | Lazy::Seq(_)))
++        && as_tuple(value).is_none();
++    let (sets, element, set) = if is_own {
++        (Vec::new(), value.clone(), nested.clone())
++    } else {
++        failing_sets(value, nested)?
++    };
+     Some((
+         std::iter::once(nested.clone()).chain(sets).collect(),
+         element,
+@@ -440,6 +459,36 @@ fn nested_failure(value: &Value, nested: &Value) -> Option<(Vec<Value>, Value, V
+     ))
+ }
+ 
++/// The sets whose `member` a failing enumeration of `set` fails in, outermost first: TLC
++/// enumerates S \cap T and S \ T by S's elements, each tested in T (`SetCapValue.elements`,
++/// `SetDiffValue.elements`), whose own method adds no frame, and S \cup T by S's, then T's.
++/// `None` where the enumeration fails otherwise or doesn't fail.
++pub fn failing_enumeration(set: &Value) -> Option<Vec<Value>> {
++    let Value::Lazy(lazy) = set else {
++        return None;
++    };
++    match &**lazy {
++        Lazy::Cap(first, second) | Lazy::Diff(first, second) => {
++            if elements(first).is_err() {
++                return failing_enumeration(first);
++            }
++            for element in elements(first).ok()?.iter() {
++                if is_member(element, second).is_err() {
++                    return nested_failure(element, second).map(|(sets, ..)| sets);
++                }
++            }
++            None
++        }
++        Lazy::Cup(first, second) => {
++            if elements(first).is_err() {
++                return failing_enumeration(first);
++            }
++            failing_enumeration(second)
++        }
++        _ => None,
++    }
++}
++
+ /// The values in whose methods TLC's search of a set enumeration for `value` fails
+ /// (`ValueVec.search`), outermost first, or none where the search doesn't fail so: a sorted set's
+ /// binary search fails in `value`'s `compareTo`, and one TLC holds unnormalized in its elements'
+-- 
+2.43.0
+
