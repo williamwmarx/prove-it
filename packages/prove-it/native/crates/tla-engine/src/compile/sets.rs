@@ -4,7 +4,7 @@
 use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
-    is_tested_set_kind,
+    is_function_kind, is_tested_set_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -353,14 +353,22 @@ impl Compiler<'_> {
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
-                if machine.store.kind_of(element) != KIND_FUNCTION {
+                // `toRcd` makes a record of a function whose keys are strings, as the empty
+                // tuple's are, and of no other value.
+                let size = machine.store.size_of(element);
+                let is_record = is_function_kind(machine.store.kind_of(element))
+                    && (0..size).all(|index| {
+                        let key = machine.store.get_key(element, index);
+                        machine.store.kind_of(key) == KIND_STRING
+                    });
+                if !is_record {
                     return not_in(
                         machine,
                         element,
                         "a mistyped membership in a set of records",
                     );
                 }
-                if machine.store.size_of(element) as usize != member_keys.len() {
+                if size as usize != member_keys.len() {
                     return Ok(false);
                 }
                 for (index, (&key, test)) in member_keys.iter().zip(&members).enumerate() {
