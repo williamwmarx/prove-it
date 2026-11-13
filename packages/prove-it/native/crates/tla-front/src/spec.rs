@@ -1458,10 +1458,21 @@ impl SubscriptCollector<'_, '_> {
             if environment.constants.contains_key(&name) {
                 return Ok(true);
             }
-            if environment.substitutions.contains_key(&name) {
-                return Err(Unfollowed(
-                    "a subscript of [][Next]_v that names what the configuration substitutes",
-                ));
+            if let Some(target) = environment.substitutions.get(&name) {
+                // TLC gives a declared constant the configuration substitutes the OpDefNode of
+                // what substitutes it (`processConstants`), which the collector enters as an
+                // operator, whatever TLC computed of it as it started.
+                let substitute = environment.definitions.get(target).filter(|definition| {
+                    !environment.definitions.contains_key(&name)
+                        && !environment.builtins.contains_key(target)
+                        && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                });
+                return match substitute {
+                    Some(definition) => self.enter(&definition.body, None, found),
+                    None => Err(Unfollowed(
+                        "a subscript of [][Next]_v that names what the configuration substitutes",
+                    )),
+                };
             }
         }
         let Some((params, body, closure_scope)) =

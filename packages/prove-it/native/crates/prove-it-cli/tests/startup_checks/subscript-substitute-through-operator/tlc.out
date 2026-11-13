@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Error: The configuration file substitutes constant G with non-constant D1 - specifically: In evaluation, the identifier y is either undefined or not an operator.
+line 5, col 7 to line 5, col 7 of module M
