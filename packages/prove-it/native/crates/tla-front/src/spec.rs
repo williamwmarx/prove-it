@@ -1324,13 +1324,13 @@ impl SubscriptCheck {
 /// Why the front end can't follow a subscript as TLC reads it.
 struct Unfollowed(&'static str);
 
-/// Why the collector stops where an operator leads back to itself: TLC's collector reads it again
-/// and again, overflowing its stack, a StackOverflowError it doesn't catch, whatever -nowarning
-/// says.
 /// How deep the collector reads before it takes the reading for one that doesn't end, far deeper
 /// than a subscript's operators nest, and short of the front end's stack.
 const MAXIMUM_SUBSCRIPT_DEPTH: usize = 256;
 
+/// Why the collector stops where an operator leads back to itself: TLC's collector reads it again
+/// and again, overflowing its stack, a StackOverflowError it doesn't catch, whatever -nowarning
+/// says.
 const RECURSIVE_SUBSCRIPT: &str = "a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows";
 
 /// `processConfigSpec`'s `SubscriptCollector`: the state variables in the subscript of

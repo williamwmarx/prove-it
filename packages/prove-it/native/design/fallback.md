@@ -552,6 +552,14 @@ substitute a bare name, operator arguments naming an INSTANCE's copy), so it wai
 
 #### Known wrong outputs
 
+A subscript of `[][Next]_v` in which something the front end can't follow, such as a subexpression
+name, comes before an operator that leads back to itself, run with -nowarning: TLC's
+SubscriptCollector reads on into the operator until its stack overflows and prints the
+StackOverflowError (exit 255), where the front end stops at the part it can't follow, takes the
+warning for unknown, which -nowarning lets pass, and checks the model. On main alike, which reads
+no such operator at all. To fix it, read the rest of the subscript for a reading that doesn't end
+before taking the warning for unknown.
+
 A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
 with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
 tests each element of the other operand for membership in it, which fails on a value of the
