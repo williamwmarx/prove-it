@@ -285,8 +285,17 @@ impl Expansion<'_> {
                 return self.expand(body, scope, expanding, is_substituted, name);
             }
             ExpressionKind::Let {
-                definitions, body, ..
+                definitions,
+                instances,
+                body,
+                ..
             } => {
+                if instances
+                    .as_ref()
+                    .is_some_and(|instances| !instances.is_empty())
+                {
+                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+                }
                 let bound = bind_definitions(definitions, scope)?;
                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
             }
@@ -952,8 +961,17 @@ fn find_next(
     };
     match &expression.kind {
         ExpressionKind::Let {
-            definitions, body, ..
+            definitions,
+            instances,
+            body,
+            ..
         } => {
+            if instances
+                .as_ref()
+                .is_some_and(|instances| !instances.is_empty())
+            {
+                return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+            }
             let bound = bind_definitions(definitions, scope)?;
             return recurse(body, bound.as_ref(), substitution, found);
         }
@@ -1400,8 +1418,19 @@ impl SubscriptCollector<'_, '_> {
                 return Ok(true);
             }
             ExpressionKind::Let {
-                definitions, body, ..
+                definitions,
+                instances,
+                body,
+                ..
             } => {
+                if instances
+                    .as_ref()
+                    .is_some_and(|instances| !instances.is_empty())
+                {
+                    return Err(Unfollowed(
+                        "an INSTANCE in a LET in the subscript of [][Next]_v",
+                    ));
+                }
                 let bound = bind_definitions(definitions, scope)
                     .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
                 return self.enter(body, bound.as_ref(), found);

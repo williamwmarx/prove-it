@@ -331,8 +331,17 @@ impl Converter<'_> {
         match &expression.kind {
             ExpressionKind::Label { body, .. } => self.convert(body, scope),
             ExpressionKind::Let {
-                definitions, body, ..
+                definitions,
+                instances,
+                body,
+                ..
             } => {
+                if instances
+                    .as_ref()
+                    .is_some_and(|instances| !instances.is_empty())
+                {
+                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+                }
                 let bound = bind_definitions(definitions, scope)?;
                 self.convert(body, bound.as_ref())
             }
