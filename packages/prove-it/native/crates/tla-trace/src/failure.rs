@@ -316,6 +316,18 @@ impl<'ir> Rebuilder<'ir> {
         Ok(std::mem::take(&mut evaluator.printed))
     }
 
+    /// Evaluates the startup's definitions as TLC does, to confirm each the search found failing
+    /// fails here too before any effect (`set_searched_failing`): the search swallows such a
+    /// failure, as TLC does, whether or not anything reads the definition, and may fail where TLC
+    /// doesn't. `Err` where the evaluator computes one, or fails only after an effect.
+    pub fn confirm_startup(&mut self) -> Result<(), Unsupported> {
+        let evaluator = self.evaluator();
+        evaluator.level = 0;
+        let confirmed = run(evaluator.compute_startup_drawing());
+        evaluator.random = None;
+        confirmed
+    }
+
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
     /// (`checkAssumptions`), with what the assumptions before it printed and what it printed
@@ -933,6 +945,18 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: it didn't fail".into(),
             ));
         };
+        // TLC evaluates a startup definition that failed as it started again where it is used,
+        // with the sources of that use's values, which the evaluator doesn't follow into the
+        // definition: a failure TLC reports as a FingerprintException there has frames it lacks.
+        // One in a method of an interval may be such a failure.
+        if (call_stack.is_fingerprinted || call_stack.is_interval_unplaced)
+            && evaluator.failed_startup_uses > 0
+        {
+            return Err(Unsupported(
+                "evaluating the failure again: a FingerprintException in a startup definition that failed"
+                    .into(),
+            ));
+        }
         // TLC fails to fingerprint an initial state that holds a set it can't normalize, then to
         // print the state as it reports that, which escapes as an exception it didn't expect. A
         // next-state relation that fails in a method of a value with a source fails before TLC

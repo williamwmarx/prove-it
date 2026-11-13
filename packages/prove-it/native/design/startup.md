@@ -158,27 +158,79 @@ AssertEq, RandomElement, RandomSubset and TLCSet, whose effects the search sees 
 definition fails at each use exactly as it failed at startup, before the same lack of effects, as
 in `PrintT(<<expression that fails>>)`. Its `once` keeps no value, so each use evaluates the body.
 
+A definition such as `Test == PrintT(Int \X {})`, whose print TLC fails as it sizes the set's
+parts (cli.md, "definitions"), fails before any effect too, and the engine's print fails there
+as TLC's does, so it is retried the same way: its argument, a set of functions, records or tuples
+written there, doesn't count as a value TLC keeps lazy (`is_print_settled`). The trace evaluator
+words the failure at each use as PrintT's Java method's, sizing each part as TLC does
+(`check_unchecked`).
+
 The startup values hand on `NO_VALUE` for it. The trace evaluator takes that as a definition to
 evaluate again where it is used, and so does a failure's evaluation, which takes those markers
 even where it takes no other startup value. The trace evaluator does the same for one its own
 startup finds failing before it printed, drew or set a register.
 
-The engine retries only a failure TLC surely has where the engine has it. It does not retry the
-ones its assumptions already leave to the trace evaluator (`UNSURE_FAILURES`), where TLC may
-never test the set the engine finds failing.
+The search records which startup definitions it found failing, and hands that record to the
+trace evaluator's startup (`set_searched_failing`). The search may fail where TLC doesn't, as on a
+set operation's operand that TLC never tests for an element. A definition the search found failing
+that the evaluator computes is such a disagreement, and declines: TLC printed or computed it as
+the evaluator does, which the search didn't.
+
+No startup failure is swallowed unconfirmed. The search's startup gives what it found only once
+the reporter confirms each failure it swallowed (`run_startup` returns an `Unconfirmed`, which only
+`confirm` turns into the startup's results), so every outcome passes the confirmation before the
+engine reports anything: the startup's prints, a configuration error, an exception, an assumption,
+the search. The native checker's reporter runs the trace evaluator's startup
+(`Rebuilder::confirm_startup`) whether or not anything reads the definitions, as in
+`Test == PrintT({} \cap 0)` that nothing names, which TLC prints as `{}` where the search fails on
+`0`. Only positive evidence confirms: a failure TLC raises itself, which the evaluator models with
+TLC's message, before any effect. The run declines where the evaluator computes such a
+definition, fails on it only after an effect, or fails in a way it doesn't model as TLC's (its
+own limits, such as the body of a function TLC keeps lazy), which says nothing of what TLC does:
+`PrintT(DOMAIN [x \in SUBSET {0} |-> {1} \cap 0])` prints `{{}, {0}}` in TLC, which never
+evaluates the body. Any other reporter declines a swallowed failure.
+
+TLC evaluates a definition it failed to compute as it started again where it is used, in the
+initial predicate or a step with its `CallStackTool`, which gives a source to the values set
+constructors, DOMAIN and the set operators build. A failure in a method of a value with a source,
+as `DOMAIN <<1>> = TRUE` fails in the equality of the set DOMAIN built, it reports as a state it
+fails to fingerprint (`FingerprintException.getNewHead`); one in the Tool, as a CHOOSE with no
+element, one in a method of a value without a source, as `<<1>> \in 0`, an EvalException, as
+Assert's, and a Java method's own failure (2154) as themselves. The trace evaluator follows the
+sources in its replay of the failure and declines a FingerprintException in such a definition,
+whose frames it lacks ("a FingerprintException in a startup definition that failed"). It holds an
+interval without an address, so it declines a failure in a method of an interval there too,
+unless `..` built it in place, and a variable `x = D` assigns where it can't word D's failure ("a
+variable assigned a startup definition that failed in a way the evaluator can't word").
 
 At a use, the trace evaluator holds the definition to failing again as TLC does
 (`evaluate_failed_startup`). Several cases decline instead:
 - an evaluation that succeeds;
 - an EXCEPT of a key outside the domain, which TLC warns of with 2144;
-- an evaluation that built a set TLC can't normalize, or a value TLC may keep lazy;
-- a failure in a function constructor, a filter or a map;
-- a failure comparing, enumerating or testing membership.
+- an evaluation that built a set TLC can't normalize, or a UNION TLC keeps lazy (`UnionValue`, of
+  anything but a set enumeration of set enumerations), whose membership TLC tests set by set;
+- a failure in a function constructor, which TLC keeps lazy;
+- an evaluation that read DOMAIN of a function TLC keeps lazy (its domain isn't a set enumeration
+  or an interval) and that the evaluator built, but as the argument of Cardinality: TLC's DOMAIN
+  gives the set it holds as the domain, as `SUBSET S` a `SubsetValue`, where TLC may fail
+  elsewhere (`{DOMAIN [b \in SUBSET {1} |-> 1] \ (3 .. 3), CHOOSE y \in {} : TRUE}` fails at the
+  CHOOSE in TLC, in the difference in the evaluator);
+- a tuple pattern that doesn't match, or a function over a set TLC doesn't enumerate, which the
+  evaluator words otherwise;
+- a sequence operator's failure on a value TLC may keep lazy, which TLC converts first;
+- a comparison with a product or SUBSET TLC holds lazy, or an enumeration with a SUBSET;
+- a failure that prints `S \cup T`, `S \cap T` or `S \ T` as TLC holds it lazy;
+- a comparison after a set map.
 
-TLC holds values unnormalized or lazy where the evaluator doesn't always, so in those cases it may
-fail elsewhere: building its message, or at another element (fallback.md, "Known wrong outputs").
-A set applied as a function declines before its argument is evaluated, as TLC fails there first,
-naming the class it built the set as.
+In these TLC holds values unnormalized or lazy where the evaluator doesn't, and may fail elsewhere,
+in building its message or at another element (fallback.md, "Known wrong outputs"). A set applied
+as a function declines before its argument is evaluated, as TLC fails there first, naming the class
+it built the set as.
+
+A UNION of a set enumeration of set enumerations TLC computes at once (`UnionValue.union`): it
+keeps each element in the order it holds the sets, where `equals` finds no earlier one equal, and
+holds the result as an unnormalized set enumeration. The evaluator does the same, so a failure past
+it, or in its `equals`, is TLC's.
 
 The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
 argument of most operators. So an effect TLC runs before the failure is one the engine runs

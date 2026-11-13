@@ -357,6 +357,8 @@ pub(crate) struct Relay<'ir> {
     /// What the assumptions printed as the store words it, or as the trace evaluator printed an
     /// assumption the engine left to it, from `startup_done` on.
     assumed_worded: Vec<Option<String>>,
+    /// Whether the search found each startup definition failing as TLC started.
+    failed_startup: Vec<bool>,
     /// What the run printed of the assumptions, from `startup_done` on.
     pub(crate) assumed_printed: Vec<String>,
     /// Why the trace evaluator mustn't check an assumption the engine leaves to it, as where it
@@ -399,6 +401,7 @@ impl<'ir> Relay<'ir> {
             startup_messages,
             startup_worded: Some(Vec::new()),
             assumed_worded: Vec::new(),
+            failed_startup: Vec::new(),
             assumed_printed: Vec::new(),
             assumed_texts: None,
             startup_texts: None,
@@ -422,6 +425,7 @@ impl<'ir> Relay<'ir> {
         let ir = self.ir;
         let (workers, is_tool) = (self.workers, self.is_tool);
         let worded_prints = &self.assumed_worded;
+        let failed_startup = &self.failed_startup;
         let texts = self.assumed_texts.get_or_insert_with(|| {
             // Each assumption's prints in turn, up to one the evaluator doesn't follow, as TLC
             // stops at an assumption that doesn't hold.
@@ -429,6 +433,7 @@ impl<'ir> Relay<'ir> {
             for position in 0..ir.model.startup.assumptions.len() as u32 {
                 let checked = Rebuilder::new(ir).and_then(|mut rebuilder| {
                     rebuilder.set_workers(workers);
+                    rebuilder.set_searched_failing(failed_startup);
                     rebuilder.check_assumption(position, is_tool)
                 });
                 let Ok(checked) = checked else {
@@ -687,6 +692,22 @@ impl Reporter for Relay<'_> {
         }
     }
 
+    // The search swallowed each startup definition it found failing, as TLC does, which the trace
+    // evaluator confirms TLC fails on too, whether or not anything reads the definition.
+    fn confirm_startup(&mut self, failed: &[bool]) -> Result<(), String> {
+        self.failed_startup = failed.to_vec();
+        if !failed.contains(&true) {
+            return Ok(());
+        }
+        Rebuilder::new(self.ir)
+            .and_then(|mut rebuilder| {
+                rebuilder.set_workers(self.workers);
+                rebuilder.set_searched_failing(failed);
+                rebuilder.confirm_startup()
+            })
+            .map_err(|Unsupported(reason)| format!("a startup definition that fails: {reason}"))
+    }
+
     fn startup_done(&mut self) {
         let count = self.startup_worded.take().map(|worded| worded.len());
         if let Some(Some(texts)) = &self.startup_texts
@@ -708,6 +729,7 @@ impl Reporter for Relay<'_> {
         let checked = Rebuilder::new(self.ir)
             .and_then(|mut rebuilder| {
                 rebuilder.set_workers(self.workers);
+                rebuilder.set_searched_failing(&self.failed_startup);
                 rebuilder.check_assumption(position, self.is_tool)
             })
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
@@ -1706,11 +1728,15 @@ fn check_spec(
         SearchOutcome::Declined(reason) => {
             return report_not_native(printer, &format!("the engine declined: {reason}"));
         }
-        SearchOutcome::AssumptionFailed { position } => {
+        SearchOutcome::AssumptionFailed {
+            position,
+            failed_startup,
+        } => {
             return print_assumption_failure(
                 printer,
                 &ir,
                 position,
+                &failed_startup,
                 &assumed_printed,
                 workers,
                 start,

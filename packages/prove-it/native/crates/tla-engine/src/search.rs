@@ -271,6 +271,19 @@ pub trait Reporter {
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
+    /// Confirms that TLC fails as it starts on each startup definition the engine found failing
+    /// before any effect, which it swallows as TLC does and evaluates again at each use, whether or
+    /// not anything reads it: the engine may fail where TLC doesn't. The engine asks before it
+    /// reports anything of the startup, whatever follows; `Err` declines the model. A reporter that
+    /// can't confirm a failure declines it.
+    fn confirm_startup(&mut self, failed: &[bool]) -> Result<(), String> {
+        if failed.contains(&true) {
+            return Err(
+                "a startup definition that fails, which nothing confirms TLC fails on".into(),
+            );
+        }
+        Ok(())
+    }
     /// Checks the assumption at this position of the IR's assumptions, which the engine can't
     /// evaluate (AssertError, which compares TLC's message for a failure), after those before it
     /// held, and reports what it prints. `Err` declines the model.
@@ -425,7 +438,12 @@ pub enum SearchOutcome {
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
-    AssumptionFailed { position: u32 },
+    AssumptionFailed {
+        position: u32,
+        /// Whether each startup definition failed as TLC started, where the engine evaluates it
+        /// again at each use.
+        failed_startup: Vec<bool>,
+    },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -656,6 +674,7 @@ const TLC_FAILURES: &[&str] = &[
     "a function over a non-set",
     "a function set of non-sets",
     crate::compile::lazy::INFINITE_DOMAIN,
+    crate::compile::lazy::UNSIZED_PRINT,
     "a function set over a non-set domain",
     "a guard that isn't a boolean",
     "a membership in SUBSET of a non-set",
@@ -2889,7 +2908,30 @@ struct Started {
     /// The assumption the engine left to its caller, by its position.
     // The assumption left to the caller, and why the engine didn't evaluate it.
     delegated: Option<(u32, Bail)>,
+    /// Whether each startup definition failed, which the engine evaluates again at each use.
+    failed_startup: Vec<bool>,
 }
+
+// The startup as the engine ran it, which gives what it found only once the reporter has confirmed
+// each failure it swallowed (`Reporter::confirm_startup`), so no outcome of the startup is reported
+// before that.
+mod unconfirmed {
+    use super::{Reporter, Started};
+
+    pub(super) struct Unconfirmed(Started);
+
+    impl Unconfirmed {
+        pub(super) fn new(started: Started) -> Unconfirmed {
+            Unconfirmed(started)
+        }
+
+        pub(super) fn confirm(self, reporter: &mut dyn Reporter) -> Result<Started, String> {
+            reporter.confirm_startup(&self.0.failed_startup)?;
+            Ok(self.0)
+        }
+    }
+}
+use unconfirmed::Unconfirmed;
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
 // until one is false. What they print is kept until all of it is evaluated, so a model the engine
@@ -2902,7 +2944,7 @@ fn run_startup(
     machine: &mut Machine<'_>,
     startup: &Startup,
     settings: &Settings,
-) -> Outcome<Started> {
+) -> Outcome<Unconfirmed> {
     let is_native = settings.is_violation_reported;
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
@@ -2925,12 +2967,16 @@ fn run_startup(
     // an operator, which evaluates it again, with its effects, at every use. The engine keeps no
     // value of one that fails before any effect, and evaluates it again at each use, where it
     // reads no state, so fails again there before any effect.
+    let mut failed_startup = Vec::with_capacity(startup.definitions.len());
     for (evaluate, is_retried) in &startup.definitions {
         let is_retried = *is_retried && settings.is_failed_startup_retried;
-        if evaluate_retried(machine, evaluate, is_retried).is_err() {
-            return Err(Bail(
-                "unsupported: a definition TLC computes at startup that fails there",
-            ));
+        match evaluate_retried(machine, evaluate, is_retried) {
+            Ok(value) => failed_startup.push(value == NO_VALUE),
+            Err(_) => {
+                return Err(Bail(
+                    "unsupported: a definition TLC computes at startup that fails there",
+                ));
+            }
         }
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
@@ -2981,7 +3027,7 @@ fn run_startup(
                 format!("The value of {name} is equal to {}", format(machine)?)
             }
         };
-        return Ok(Started {
+        return Ok(Unconfirmed::new(Started {
             printed: take(machine),
             small_sets: Vec::new(),
             holding,
@@ -2992,13 +3038,14 @@ fn run_startup(
             config_error: Some(message),
             exception: None,
             delegated: None,
-        });
+            failed_startup,
+        }));
     }
     if let Some(symmetry) = &startup.symmetry
         && let Some(failure) = symmetry.failure
     {
         (symmetry.definition)(machine)?;
-        return Ok(Started {
+        return Ok(Unconfirmed::new(Started {
             printed: take(machine),
             small_sets: Vec::new(),
             holding,
@@ -3009,7 +3056,8 @@ fn run_startup(
             config_error: None,
             exception: Some(failure),
             delegated: None,
-        });
+            failed_startup,
+        }));
     }
     let (group, small_sets) = match &startup.symmetry {
         Some(symmetry) => symmetry_group(machine, symmetry)?,
@@ -3017,7 +3065,7 @@ fn run_startup(
     };
     let printed = take(machine);
     let assumed = check_assumptions(machine, startup, 0, is_native)?;
-    Ok(Started {
+    Ok(Unconfirmed::new(Started {
         printed,
         small_sets,
         holding,
@@ -3028,7 +3076,8 @@ fn run_startup(
         config_error: None,
         exception: None,
         delegated: assumed.delegated,
-    })
+        failed_startup,
+    }))
 }
 
 struct Assumed {
@@ -3144,10 +3193,7 @@ fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool
     let before = machine.effects();
     match evaluate(machine) {
         Err(Bail(reason))
-            if is_retried
-                && !is_engine_limit(reason)
-                && !UNSURE_FAILURES.contains(&reason)
-                && machine.effects() == before =>
+            if is_retried && !is_engine_limit(reason) && machine.effects() == before =>
         {
             Ok(NO_VALUE)
         }
@@ -3192,8 +3238,13 @@ pub(crate) fn start(
         machine.set_slot(LEVEL_SLOT, zero);
         run_startup(machine, &context.startup, settings)
     });
+    // Nothing of the startup is reported before the reporter confirms each failure it swallowed.
+    let startup = match startup {
+        Err(Bail(reason)) => Err(reason.to_owned()),
+        Ok(unconfirmed) => unconfirmed.confirm(reporter),
+    };
     let group = match startup {
-        Err(Bail(reason)) => return Err(Box::new(SearchOutcome::Declined(reason.into()))),
+        Err(reason) => return Err(Box::new(SearchOutcome::Declined(reason))),
         Ok(Started {
             failed: Some((_, Bail(reason))),
             ..
@@ -3251,7 +3302,12 @@ pub(crate) fn start(
                         let name = context.startup.assumptions[position as usize].1.clone();
                         return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
                     }
-                    None => return Err(Box::new(SearchOutcome::AssumptionFailed { position })),
+                    None => {
+                        return Err(Box::new(SearchOutcome::AssumptionFailed {
+                            position,
+                            failed_startup: started.failed_startup,
+                        }));
+                    }
                 }
                 machine.random = JavaRandom::from_state(delegated.random);
                 assumed = match check_assumptions(
@@ -3280,7 +3336,10 @@ pub(crate) fn start(
                 return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
             }
             if let Some((position, _)) = assumed.failed {
-                return Err(Box::new(SearchOutcome::AssumptionFailed { position }));
+                return Err(Box::new(SearchOutcome::AssumptionFailed {
+                    position,
+                    failed_startup: started.failed_startup,
+                }));
             }
             if context.is_diameter_searched || context.is_view_search_read {
                 return Err(Box::new(SearchOutcome::Stopped {
