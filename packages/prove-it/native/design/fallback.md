@@ -527,6 +527,15 @@ it from one that printed something else. Each is outside the corpus:
   the binary declines it (`applied a function outside its domain`), as it did before action
   constraint failures were native. To win them back, build a constant definition's function as
   TLC computed it at startup.
+- a subscript of `[][Next]_v` that an operator leads back to itself, such as `RECURSIVE F(_)`,
+  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, directly, mutually, or through a LET, an operator
+  argument or an INSTANCE. TLC's SubscriptCollector enters the operator's body again and again
+  until its stack overflows, and prints the StackOverflowError (exit 255), whatever -nowarning
+  says; the front end read it without end and aborted the process, or on main took no subscript
+  warning from it and checked the model. It declines where its reading nests deeper than 256,
+  far deeper than a subscript's operators nest (`a subscript of [][Next]_v that an operator leads
+  back to itself`). To win them back, prove the reading doesn't end, as for a cycle of operators
+  that names no parameter, and print TLC's StackOverflowError.
 - SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
   that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by

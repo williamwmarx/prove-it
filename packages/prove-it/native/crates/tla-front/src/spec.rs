@@ -1209,6 +1209,7 @@ pub fn read_specification(
                             environment,
                             startup: &startup,
                             evaluator,
+                            depth: std::cell::Cell::default(),
                         };
                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
                         next_actions.push((action.clone(), item.scope.clone()));
@@ -1323,6 +1324,15 @@ impl SubscriptCheck {
 /// Why the front end can't follow a subscript as TLC reads it.
 struct Unfollowed(&'static str);
 
+/// Why the collector stops where an operator leads back to itself: TLC's collector reads it again
+/// and again, overflowing its stack, a StackOverflowError it doesn't catch, whatever -nowarning
+/// says.
+/// How deep the collector reads before it takes the reading for one that doesn't end, far deeper
+/// than a subscript's operators nest, and short of the front end's stack.
+const MAXIMUM_SUBSCRIPT_DEPTH: usize = 256;
+
+const RECURSIVE_SUBSCRIPT: &str = "a subscript of [][Next]_v that an operator leads back to itself, which TLC reads until its stack overflows";
+
 /// `processConfigSpec`'s `SubscriptCollector`: the state variables in the subscript of
 /// `[][Next]_v`, through tuples, the operators it applies and the definitions it names, where TLC
 /// holds them as operators. Any other builtin it ignores, and anything but an operator's
@@ -1331,6 +1341,8 @@ struct SubscriptCollector<'a, 'b> {
     environment: &'a Environment,
     startup: &'a crate::startup::StartupModel,
     evaluator: Option<&'a Evaluator<'b>>,
+    /// How deep the reading is.
+    depth: std::cell::Cell<usize>,
 }
 
 impl SubscriptCollector<'_, '_> {
@@ -1340,6 +1352,7 @@ impl SubscriptCollector<'_, '_> {
         match self.enter(subscript, scope, &mut found) {
             Ok(true) => {}
             Ok(false) => return Ok(SubscriptCheck::Undetermined),
+            Err(Unfollowed(RECURSIVE_SUBSCRIPT)) => return Err(not_yet(RECURSIVE_SUBSCRIPT)),
             Err(Unfollowed(reason)) => return Ok(SubscriptCheck::Unknown(reason)),
         }
         Ok(SubscriptCheck::Missing(
@@ -1398,6 +1411,23 @@ impl SubscriptCollector<'_, '_> {
 
     // `enter`: false where TLC gives up on the subscript.
     fn enter(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        found: &mut Vec<Name>,
+    ) -> std::result::Result<bool, Unfollowed> {
+        // The collector reads every expression a finite spec gives it but where an operator leads
+        // back to itself, so a reading this deep is one that doesn't end.
+        if self.depth.get() >= MAXIMUM_SUBSCRIPT_DEPTH {
+            return Err(Unfollowed(RECURSIVE_SUBSCRIPT));
+        }
+        self.depth.set(self.depth.get() + 1);
+        let entered = self.enter_once(expression, scope, found);
+        self.depth.set(self.depth.get() - 1);
+        entered
+    }
+
+    fn enter_once(
         &self,
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
