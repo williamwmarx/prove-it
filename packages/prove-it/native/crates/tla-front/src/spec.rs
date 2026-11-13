@@ -290,18 +290,28 @@ impl Expansion<'_> {
                 body,
                 ..
             } => {
-                if instances
-                    .as_ref()
-                    .is_some_and(|instances| !instances.is_empty())
+                // The front end evaluates what a parameterized INSTANCE in a LET makes as of
+                // constant level, so an argument naming a variable fails where TLC reads it.
+                if self.is_specification
+                    && instances
+                        .iter()
+                        .flatten()
+                        .any(|instance| !instance.params.is_empty())
                 {
-                    return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
+                    return Err(not_yet(
+                        "a parameterized INSTANCE in a LET of the specification",
+                    ));
                 }
                 let bound = bind_definitions(definitions, scope)?;
                 return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
             }
             ExpressionKind::Identifier { name: written, .. } => {
                 let reference = expression.reference().unwrap_or_default();
-                let binding = if expression.is_locally_resolved() {
+                // The definitions an INSTANCE in a LET makes are the LET's, which the copies'
+                // bodies name by keys no global definition has.
+                let binding = if expression.is_locally_resolved()
+                    || get_definition(&reference, self.environment).is_none()
+                {
                     lookup_scope(scope, &reference)
                 } else {
                     None
@@ -961,17 +971,8 @@ fn find_next(
     };
     match &expression.kind {
         ExpressionKind::Let {
-            definitions,
-            instances,
-            body,
-            ..
+            definitions, body, ..
         } => {
-            if instances
-                .as_ref()
-                .is_some_and(|instances| !instances.is_empty())
-            {
-                return Err(not_yet("an INSTANCE in a LET of a temporal formula"));
-            }
             let bound = bind_definitions(definitions, scope)?;
             return recurse(body, bound.as_ref(), substitution, found);
         }
@@ -1210,6 +1211,7 @@ pub fn read_specification(
                             startup: &startup,
                             evaluator,
                             depth: std::cell::Cell::default(),
+                            is_overflowed: std::cell::Cell::default(),
                         };
                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
                         next_actions.push((action.clone(), item.scope.clone()));
@@ -1343,6 +1345,8 @@ struct SubscriptCollector<'a, 'b> {
     evaluator: Option<&'a Evaluator<'b>>,
     /// How deep the reading is.
     depth: std::cell::Cell<usize>,
+    /// Whether a reading went deeper than any that ends.
+    is_overflowed: std::cell::Cell<bool>,
 }
 
 impl SubscriptCollector<'_, '_> {
@@ -1369,6 +1373,28 @@ impl SubscriptCollector<'_, '_> {
     /// value as it starts: literals, tuples, set enumerations and records of such, what Print and
     /// PrintT print of such, and definitions of such.
     fn is_total(&self, expression: &Expr) -> bool {
+        // A definition that names itself, which TLC computes until its stack overflows, as its
+        // collector reads one.
+        if self.depth.get() >= MAXIMUM_SUBSCRIPT_DEPTH {
+            self.is_overflowed.set(true);
+            return false;
+        }
+        self.depth.set(self.depth.get() + 1);
+        let is_total = self.is_total_once(expression);
+        self.depth.set(self.depth.get() - 1);
+        is_total
+    }
+
+    /// `is_total`, where a definition that names itself is a reading that doesn't end.
+    fn total(&self, expression: &Expr) -> std::result::Result<bool, Unfollowed> {
+        let is_total = self.is_total(expression);
+        if self.is_overflowed.get() {
+            return Err(Unfollowed(RECURSIVE_SUBSCRIPT));
+        }
+        Ok(is_total)
+    }
+
+    fn is_total_once(&self, expression: &Expr) -> bool {
         match &expression.kind {
             ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
             ExpressionKind::Tuple(items) | ExpressionKind::SetEnumeration(items) => {
@@ -1448,19 +1474,8 @@ impl SubscriptCollector<'_, '_> {
                 return Ok(true);
             }
             ExpressionKind::Let {
-                definitions,
-                instances,
-                body,
-                ..
+                definitions, body, ..
             } => {
-                if instances
-                    .as_ref()
-                    .is_some_and(|instances| !instances.is_empty())
-                {
-                    return Err(Unfollowed(
-                        "an INSTANCE in a LET in the subscript of [][Next]_v",
-                    ));
-                }
                 let bound = bind_definitions(definitions, scope)
                     .map_err(|_| Unfollowed("a LET the front end doesn't bind"))?;
                 return self.enter(body, bound.as_ref(), found);
@@ -1577,10 +1592,13 @@ impl SubscriptCollector<'_, '_> {
                         return match computed {
                             Some(true) => Ok(true),
                             Some(false) => self.enter(&body, closure_scope.as_ref(), found),
-                            None if self.is_total(&body) => Ok(true),
+                            None if self.total(&body)? => Ok(true),
                             None => {
                                 match self.enter(&body, closure_scope.as_ref(), &mut Vec::new()) {
                                     Ok(true) => Ok(true),
+                                    Err(Unfollowed(RECURSIVE_SUBSCRIPT)) => {
+                                        Err(Unfollowed(RECURSIVE_SUBSCRIPT))
+                                    }
                                     _ => Err(Unfollowed(
                                         "a definition in the subscript of [][Next]_v that TLC may compute as it starts",
                                     )),

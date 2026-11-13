@@ -528,8 +528,9 @@ it from one that printed something else. Each is outside the corpus:
   constraint failures were native. To win them back, build a constant definition's function as
   TLC computed it at startup.
 - a subscript of `[][Next]_v` that an operator leads back to itself, such as `RECURSIVE F(_)`,
-  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, directly, mutually, or through a LET, an operator
-  argument or an INSTANCE. TLC's SubscriptCollector enters the operator's body again and again
+  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, or a definition without parameters that names itself,
+  `F == F`, directly, mutually, or through a LET, an operator argument, an INSTANCE or a constant
+  the configuration substitutes. TLC's SubscriptCollector enters the operator's body again and again
   until its stack overflows, and prints the StackOverflowError (exit 255), whatever -nowarning
   says; the front end read it without end and aborted the process, or on main took no subscript
   warning from it and checked the model. It declines where its reading nests deeper than 256,
@@ -559,6 +560,15 @@ StackOverflowError (exit 255), where the front end stops at the part it can't fo
 warning for unknown, which -nowarning lets pass, and checks the model. On main alike, which reads
 no such operator at all. To fix it, read the rest of the subscript for a reading that doesn't end
 before taking the warning for unknown.
+
+An initial predicate or a next-state relation that applies a parameterized INSTANCE in a LET to a
+variable, `Init == LET Q(v) == INSTANCE Inner WITH a <- v IN Q(x)!IInit`, with INIT and NEXT: the
+front end reads the definitions the INSTANCE makes as of constant level, so it evaluates `x` as it
+starts and fails ("In evaluation, the identifier x is either undefined or not an operator.",
+exit 75), where TLC checks the model. On main alike. A SPECIFICATION that reaches one declines (`a
+parameterized INSTANCE in a LET of the specification`); a property or an invariant reads it as
+TLC does. To fix it, level the definitions a parameterized INSTANCE in a LET makes by their
+arguments.
 
 A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
 with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
