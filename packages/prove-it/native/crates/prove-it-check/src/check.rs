@@ -1014,7 +1014,11 @@ fn check_spec(
             let Some(coded) = FrontError::Config(message.clone()).get_coded(printer.is_tool) else {
                 return report_not_native(printer, "a configuration file the front end rejects");
             };
-            printer.set_thrown(Some(Thrown::Config(message)));
+            // An exception TLC didn't expect, such as the NumberFormatException of a number past
+            // its integers, is no TlaConfigError, so the library has no error of TLC's to throw.
+            if !message.starts_with(tla_front::errors::UNEXPECTED_HEAD) {
+                printer.set_thrown(Some(Thrown::Config(message)));
+            }
             return print_coded_failure(printer, &coded, start);
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),

@@ -1,0 +1,14 @@
+exit 255
+@!@!@STARTMSG 2262:0 @!@!@
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 1000:1 @!@!@
+TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.NumberFormatException
+: For input string: "99999999999999999999"
+@!@!@ENDMSG 1000 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+@!@!@ENDMSG 2186 @!@!@

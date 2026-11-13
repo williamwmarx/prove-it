@@ -1865,21 +1865,6 @@ fn get_substitution_body(
 
 const BUILTIN_LAZY: u32 = 4;
 
-/// `toValue` fails with an unexpected exception on a configuration number too big for TLC.
-fn check_value(value: &ConfigValue) -> Result<()> {
-    match value {
-        ConfigValue::Number(number) if !is_tlc_integer(*number) => {
-            let mut text = String::new();
-            crate::json::write_js_number(&mut text, *number);
-            Err(FrontError::Evaluation(format!(
-                "Integer overflow: {text} is outside TLC's 32-bit range"
-            )))
-        }
-        ConfigValue::Set(elements) => elements.iter().try_for_each(check_value),
-        _ => Ok(()),
-    }
-}
-
 /// `formatSanyWarnings`.
 pub fn format_sany_warnings(warnings: &[SanyError]) -> String {
     format!(
@@ -2469,7 +2454,6 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
         .iter()
         .filter(|assignment| assignment.args.is_none())
     {
-        check_value(&assignment.value)?;
         for key in get_scoped_keys(&assignment.name, assignment.module.as_deref()) {
             let arity = get_key_arity(&definitions, &key);
             if arity == 0 {
@@ -2509,9 +2493,6 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
                 "The arity of the operator {} is inconsistent in the configuration file.",
                 assignment.name
             )));
-        }
-        for value in args.iter().chain([&assignment.value]) {
-            check_value(value)?;
         }
         if !tables.contains_key(&table_key) {
             tables.insert(

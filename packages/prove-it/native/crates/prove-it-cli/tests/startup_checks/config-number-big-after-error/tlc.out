@@ -1,0 +1,3 @@
+exit 151
+Error: TLC found an error in the configuration file at line 2
+It was expecting = or <-, but did not find it.

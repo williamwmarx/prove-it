@@ -1,0 +1,4 @@
+---- MODULE M ----
+CONSTANT N
+ASSUME TRUE
+====

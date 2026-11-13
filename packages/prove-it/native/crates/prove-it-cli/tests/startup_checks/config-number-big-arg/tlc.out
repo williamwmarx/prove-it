@@ -1,0 +1,6 @@
+exit 255
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.NumberFormatException
+: For input string: "2147483648"

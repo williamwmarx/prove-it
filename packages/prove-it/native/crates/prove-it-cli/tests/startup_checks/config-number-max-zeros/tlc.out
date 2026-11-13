@@ -1,0 +1,13 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 4, col 8 to line 4, col 13 of module M
+
+Unknown operator: `PrintT'.
+
+
+Error: Parsing or semantic analysis failed.
