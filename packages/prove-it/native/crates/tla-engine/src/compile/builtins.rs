@@ -2407,8 +2407,11 @@ impl Compiler<'_> {
             // TLC evaluates both operands, left first, before it tests one's elements in the
             // other, so an effect of either may show in another order than the engine's.
             let is_ordered = !has_effect || (left.infinite.is_none() && right.infinite.is_some());
-            // Where TLC tests the right operand's elements, it has evaluated the left one first.
-            let first = (!std::ptr::eq(enumerated, left)).then(|| Self::parts_of(left));
+            // TLC evaluates both operands, left first, whether or not there are elements to test:
+            // the one whose elements it tests is evaluated as is, and the other as its parts.
+            let is_left_enumerated = std::ptr::eq(enumerated, left);
+            let first = (!is_left_enumerated).then(|| Self::parts_of(left));
+            let second = is_left_enumerated.then(|| Self::parts_of(right));
             return Ok(Some(Compiled {
                 is_costly: true,
                 is_reducible: is_reduced,
@@ -2425,6 +2428,9 @@ impl Compiler<'_> {
                             machine.run_parts(first)?;
                         }
                         let left = left_eval(machine)?;
+                        if let Some(second) = &second {
+                            machine.run_parts(second)?;
+                        }
                         let set = expect_set(machine, left, "expected a set")?;
                         let mut kept = Vec::new();
                         for index in 0..machine.store.size_of(set) {

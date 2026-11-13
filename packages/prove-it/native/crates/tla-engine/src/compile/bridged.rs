@@ -66,8 +66,14 @@ impl Compiler<'_> {
                 // (`SetOfFcnsValue.isFinite` and the like), where the engine would enumerate it.
                 if name == "IsFiniteSet" && value.may_be_infinite() {
                     let reference = value.reference.clone();
+                    // TLC evaluates the set before it asks it, which a reference, as Seq(S)'s,
+                    // may not: its parts run first.
+                    let parts = value.parts.clone();
                     return Ok(Some(leaf(
                         eval(move |machine| {
+                            if let Some(parts) = &parts {
+                                machine.run_parts(parts)?;
+                            }
                             let lazy = match &reference {
                                 Some(reference) => reference(machine)?,
                                 None => return Err(LAZY_FINITE),
