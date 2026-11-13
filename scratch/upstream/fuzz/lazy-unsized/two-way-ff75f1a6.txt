@@ -1,0 +1,1200 @@
+fz8/z-1-0 base=DECLINE, new=MATCH, | 
+fz8/z-1-1 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-10 base=MATCH, new=MATCH, | 
+fz8/z-1-100 base=MATCH, new=MATCH, | 
+fz8/z-1-101 base=MATCH, new=MATCH, | 
+fz8/z-1-102 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-103 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-104 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-105 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Int
+fz8/z-1-106 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Int
+fz8/z-1-107 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-108 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-109 base=MATCH, new=MATCH, | 
+fz8/z-1-11 base=MATCH, new=MATCH, | 
+fz8/z-1-110 base=MATCH, new=MATCH, | 
+fz8/z-1-111 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-112 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-113 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-114 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-115 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-116 base=MATCH, new=MATCH, | 
+fz8/z-1-117 base=MATCH, new=MATCH, | 
+fz8/z-1-118 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-119 base=DECLINE, new=MATCH, | 
+fz8/z-1-12 base=MATCH, new=MATCH, | 
+fz8/z-1-120 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-121 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Seq(S)
+fz8/z-1-122 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-123 base=DECLINE, new=MATCH, | 
+fz8/z-1-124 base=MATCH, new=MATCH, | 
+fz8/z-1-125 base=MATCH, new=MATCH, | 
+fz8/z-1-126 base=MATCH, new=MATCH, | 
+fz8/z-1-127 base=MATCH, new=MATCH, | 
+fz8/z-1-128 base=DECLINE, new=MATCH, | 
+fz8/z-1-129 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-13 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-130 base=DECLINE, new=DECLINE, | the engine declined: a startup definition that fails: rebuilding a trace: a startup definition the search found failing that the evaluator can't follow: values TLC can't compare
+fz8/z-1-131 base=DIFF, new=MATCH, | 
+fz8/z-1-132 base=MATCH, new=MATCH, | 
+fz8/z-1-133 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-134 base=MATCH, new=MATCH, | 
+fz8/z-1-135 base=MATCH, new=MATCH, | 
+fz8/z-1-136 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-137 base=MATCH, new=MATCH, | 
+fz8/z-1-138 base=MATCH, new=MATCH, | 
+fz8/z-1-139 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-14 base=DECLINE, new=MATCH, | 
+fz8/z-1-140 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-141 base=MATCH, new=MATCH, | 
+fz8/z-1-142 base=MATCH, new=MATCH, | 
+fz8/z-1-143 base=DECLINE, new=MATCH, | 
+fz8/z-1-144 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-145 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-146 base=DIFF, new=MATCH, | 
+fz8/z-1-147 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-148 base=MATCH, new=MATCH, | 
+fz8/z-1-149 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-15 base=MATCH, new=MATCH, | 
+fz8/z-1-150 base=DECLINE, new=MATCH, | 
+fz8/z-1-151 base=MATCH, new=MATCH, | 
+fz8/z-1-152 base=MATCH, new=MATCH, | 
+fz8/z-1-153 base=MATCH, new=MATCH, | 
+fz8/z-1-154 base=MATCH, new=MATCH, | 
+fz8/z-1-155 base=MATCH, new=MATCH, | 
+fz8/z-1-156 base=DECLINE, new=MATCH, | 
+fz8/z-1-157 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-158 base=MATCH, new=MATCH, | 
+fz8/z-1-159 base=MATCH, new=MATCH, | 
+fz8/z-1-16 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-160 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-161 base=MATCH, new=MATCH, | 
+fz8/z-1-162 base=MATCH, new=MATCH, | 
+fz8/z-1-163 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-164 base=MATCH, new=MATCH, | 
+fz8/z-1-165 base=MATCH, new=MATCH, | 
+fz8/z-1-166 base=DECLINE, new=MATCH, | 
+fz8/z-1-167 base=MATCH, new=MATCH, | 
+fz8/z-1-168 base=DECLINE, new=MATCH, | 
+fz8/z-1-169 base=MATCH, new=MATCH, | 
+fz8/z-1-17 base=MATCH, new=MATCH, | 
+fz8/z-1-170 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-171 base=MATCH, new=MATCH, | 
+fz8/z-1-172 base=MATCH, new=MATCH, | 
+fz8/z-1-173 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-174 base=MATCH, new=MATCH, | 
+fz8/z-1-175 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-176 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-177 base=MATCH, new=MATCH, | 
+fz8/z-1-178 base=MATCH, new=MATCH, | 
+fz8/z-1-179 base=MATCH, new=MATCH, | 
+fz8/z-1-18 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-180 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8/z-1-181 base=MATCH, new=MATCH, | 
+fz8/z-1-182 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Nat
+fz8/z-1-183 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-184 base=MATCH, new=MATCH, | 
+fz8/z-1-185 base=MATCH, new=MATCH, | 
+fz8/z-1-186 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-187 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-188 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-189 base=MATCH, new=MATCH, | 
+fz8/z-1-19 base=MATCH, new=MATCH, | 
+fz8/z-1-190 base=MATCH, new=MATCH, | 
+fz8/z-1-191 base=MATCH, new=MATCH, | 
+fz8/z-1-192 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-193 base=DECLINE, new=MATCH, | 
+fz8/z-1-194 base=MATCH, new=MATCH, | 
+fz8/z-1-195 base=MATCH, new=MATCH, | 
+fz8/z-1-196 base=MATCH, new=MATCH, | 
+fz8/z-1-197 base=MATCH, new=MATCH, | 
+fz8/z-1-198 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-199 base=MATCH, new=MATCH, | 
+fz8/z-1-2 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-20 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-200 base=MATCH, new=MATCH, | 
+fz8/z-1-201 base=MATCH, new=MATCH, | 
+fz8/z-1-202 base=MATCH, new=MATCH, | 
+fz8/z-1-203 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-204 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-205 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-206 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-207 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-208 base=MATCH, new=MATCH, | 
+fz8/z-1-209 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-21 base=MATCH, new=MATCH, | 
+fz8/z-1-210 base=MATCH, new=MATCH, | 
+fz8/z-1-211 base=MATCH, new=MATCH, | 
+fz8/z-1-212 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-213 base=DECLINE, new=MATCH, | 
+fz8/z-1-214 base=MATCH, new=MATCH, | 
+fz8/z-1-215 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-216 base=MATCH, new=MATCH, | 
+fz8/z-1-217 base=MATCH, new=MATCH, | 
+fz8/z-1-218 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-219 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-22 base=DECLINE, new=MATCH, | 
+fz8/z-1-220 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-221 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-222 base=MATCH, new=MATCH, | 
+fz8/z-1-223 base=MATCH, new=MATCH, | 
+fz8/z-1-224 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-225 base=MATCH, new=MATCH, | 
+fz8/z-1-226 base=MATCH, new=MATCH, | 
+fz8/z-1-227 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-228 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-229 base=MATCH, new=MATCH, | 
+fz8/z-1-23 base=MATCH, new=MATCH, | 
+fz8/z-1-230 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-231 base=MATCH, new=MATCH, | 
+fz8/z-1-232 base=MATCH, new=MATCH, | 
+fz8/z-1-233 base=MATCH, new=MATCH, | 
+fz8/z-1-234 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-235 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-236 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-237 base=DIFF, new=MATCH, | 
+fz8/z-1-238 base=MATCH, new=MATCH, | 
+fz8/z-1-239 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-24 base=MATCH, new=MATCH, | 
+fz8/z-1-240 base=MATCH, new=MATCH, | 
+fz8/z-1-241 base=MATCH, new=MATCH, | 
+fz8/z-1-242 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-243 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-244 base=MATCH, new=MATCH, | 
+fz8/z-1-245 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-246 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-247 base=MATCH, new=MATCH, | 
+fz8/z-1-248 base=MATCH, new=MATCH, | 
+fz8/z-1-249 base=MATCH, new=MATCH, | 
+fz8/z-1-25 base=MATCH, new=MATCH, | 
+fz8/z-1-250 base=DECLINE, new=DECLINE, | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-251 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-252 base=MATCH, new=MATCH, | 
+fz8/z-1-253 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-254 base=MATCH, new=MATCH, | 
+fz8/z-1-255 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8/z-1-256 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-257 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-258 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-259 base=MATCH, new=MATCH, | 
+fz8/z-1-26 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-260 base=MATCH, new=MATCH, | 
+fz8/z-1-261 base=MATCH, new=MATCH, | 
+fz8/z-1-262 base=MATCH, new=MATCH, | 
+fz8/z-1-263 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-264 base=DIFF, new=MATCH, | 
+fz8/z-1-265 base=MATCH, new=MATCH, | 
+fz8/z-1-266 base=MATCH, new=MATCH, | 
+fz8/z-1-267 base=MATCH, new=MATCH, | 
+fz8/z-1-268 base=MATCH, new=MATCH, | 
+fz8/z-1-269 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-27 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-270 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-271 base=DECLINE, new=MATCH, | 
+fz8/z-1-272 base=MATCH, new=MATCH, | 
+fz8/z-1-273 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-274 base=MATCH, new=MATCH, | 
+fz8/z-1-275 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8/z-1-276 base=MATCH, new=MATCH, | 
+fz8/z-1-277 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-278 base=MATCH, new=MATCH, | 
+fz8/z-1-279 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-28 base=MATCH, new=MATCH, | 
+fz8/z-1-280 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-281 base=DECLINE, new=DECLINE, | the engine stopped: record compared with a function
+fz8/z-1-282 base=MATCH, new=MATCH, | 
+fz8/z-1-283 base=MATCH, new=MATCH, | 
+fz8/z-1-284 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-285 base=MATCH, new=MATCH, | 
+fz8/z-1-286 base=MATCH, new=MATCH, | 
+fz8/z-1-287 base=MATCH, new=MATCH, | 
+fz8/z-1-288 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-289 base=MATCH, new=MATCH, | 
+fz8/z-1-29 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-290 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8/z-1-291 base=DECLINE, new=MATCH, | 
+fz8/z-1-292 base=MATCH, new=MATCH, | 
+fz8/z-1-293 base=MATCH, new=MATCH, | 
+fz8/z-1-294 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-295 base=DECLINE, new=MATCH, | 
+fz8/z-1-296 base=DIFF, new=MATCH, | 
+fz8/z-1-297 base=DECLINE, new=MATCH, | 
+fz8/z-1-298 base=MATCH, new=MATCH, | 
+fz8/z-1-299 base=MATCH, new=MATCH, | 
+fz8/z-1-3 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-30 base=MATCH, new=MATCH, | 
+fz8/z-1-300 base=MATCH, new=MATCH, | 
+fz8/z-1-301 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-302 base=DECLINE, new=MATCH, | 
+fz8/z-1-303 base=MATCH, new=MATCH, | 
+fz8/z-1-304 base=MATCH, new=MATCH, | 
+fz8/z-1-305 base=MATCH, new=MATCH, | 
+fz8/z-1-306 base=MATCH, new=MATCH, | 
+fz8/z-1-307 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-308 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-309 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-31 base=MATCH, new=MATCH, | 
+fz8/z-1-310 base=MATCH, new=MATCH, | 
+fz8/z-1-311 base=MATCH, new=MATCH, | 
+fz8/z-1-312 base=MATCH, new=MATCH, | 
+fz8/z-1-313 base=MATCH, new=MATCH, | 
+fz8/z-1-314 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-315 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-316 base=DIFF, new=DECLINE, | the engine stopped: enumerated STRING
+fz8/z-1-317 base=MATCH, new=MATCH, | 
+fz8/z-1-318 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-319 base=MATCH, new=MATCH, | 
+fz8/z-1-32 base=MATCH, new=MATCH, | 
+fz8/z-1-320 base=MATCH, new=MATCH, | 
+fz8/z-1-321 base=MATCH, new=MATCH, | 
+fz8/z-1-322 base=MATCH, new=MATCH, | 
+fz8/z-1-323 base=MATCH, new=MATCH, | 
+fz8/z-1-324 base=MATCH, new=MATCH, | 
+fz8/z-1-325 base=DIFF, new=MATCH, | 
+fz8/z-1-326 base=MATCH, new=MATCH, | 
+fz8/z-1-327 base=MATCH, new=MATCH, | 
+fz8/z-1-328 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8/z-1-329 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-33 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-330 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-331 base=MATCH, new=MATCH, | 
+fz8/z-1-332 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-333 base=MATCH, new=MATCH, | 
+fz8/z-1-334 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-335 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-336 base=MATCH, new=MATCH, | 
+fz8/z-1-337 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-338 base=MATCH, new=MATCH, | 
+fz8/z-1-339 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-34 base=MATCH, new=MATCH, | 
+fz8/z-1-340 base=DECLINE, new=DECLINE, | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-341 base=MATCH, new=MATCH, | 
+fz8/z-1-342 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-343 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-344 base=MATCH, new=MATCH, | 
+fz8/z-1-345 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-346 base=MATCH, new=MATCH, | 
+fz8/z-1-347 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8/z-1-348 base=MATCH, new=MATCH, | 
+fz8/z-1-349 base=MATCH, new=MATCH, | 
+fz8/z-1-35 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Nat
+fz8/z-1-350 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-351 base=MATCH, new=MATCH, | 
+fz8/z-1-352 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-353 base=MATCH, new=MATCH, | 
+fz8/z-1-354 base=MATCH, new=MATCH, | 
+fz8/z-1-355 base=MATCH, new=MATCH, | 
+fz8/z-1-356 base=MATCH, new=MATCH, | 
+fz8/z-1-357 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-358 base=MATCH, new=MATCH, | 
+fz8/z-1-359 base=DIFF, new=DECLINE, | the engine stopped: enumerated an infinite set
+fz8/z-1-36 base=MATCH, new=MATCH, | 
+fz8/z-1-360 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-361 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-362 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-363 base=MATCH, new=MATCH, | 
+fz8/z-1-364 base=MATCH, new=MATCH, | 
+fz8/z-1-365 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-366 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-367 base=MATCH, new=MATCH, | 
+fz8/z-1-368 base=MATCH, new=MATCH, | 
+fz8/z-1-369 base=MATCH, new=MATCH, | 
+fz8/z-1-37 base=MATCH, new=MATCH, | 
+fz8/z-1-370 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-371 base=MATCH, new=MATCH, | 
+fz8/z-1-372 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-373 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-374 base=DECLINE, new=MATCH, | 
+fz8/z-1-375 base=MATCH, new=MATCH, | 
+fz8/z-1-376 base=MATCH, new=MATCH, | 
+fz8/z-1-377 base=MATCH, new=MATCH, | 
+fz8/z-1-378 base=DIFF, new=MATCH, | 
+fz8/z-1-379 base=MATCH, new=MATCH, | 
+fz8/z-1-38 base=DECLINE, new=MATCH, | 
+fz8/z-1-380 base=MATCH, new=MATCH, | 
+fz8/z-1-381 base=MATCH, new=MATCH, | 
+fz8/z-1-382 base=MATCH, new=MATCH, | 
+fz8/z-1-383 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-384 base=MATCH, new=MATCH, | 
+fz8/z-1-385 base=MATCH, new=MATCH, | 
+fz8/z-1-386 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-387 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-388 base=MATCH, new=MATCH, | 
+fz8/z-1-389 base=MATCH, new=MATCH, | 
+fz8/z-1-39 base=MATCH, new=MATCH, | 
+fz8/z-1-390 base=DECLINE, new=MATCH, | 
+fz8/z-1-391 base=MATCH, new=MATCH, | 
+fz8/z-1-392 base=MATCH, new=MATCH, | 
+fz8/z-1-393 base=MATCH, new=MATCH, | 
+fz8/z-1-394 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-395 base=MATCH, new=MATCH, | 
+fz8/z-1-396 base=MATCH, new=MATCH, | 
+fz8/z-1-397 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-398 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-399 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-4 base=MATCH, new=MATCH, | 
+fz8/z-1-40 base=MATCH, new=MATCH, | 
+fz8/z-1-41 base=MATCH, new=MATCH, | 
+fz8/z-1-42 base=MATCH, new=MATCH, | 
+fz8/z-1-43 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-44 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-45 base=MATCH, new=MATCH, | 
+fz8/z-1-46 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-47 base=MATCH, new=MATCH, | 
+fz8/z-1-48 base=MATCH, new=MATCH, | 
+fz8/z-1-49 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8/z-1-5 base=MATCH, new=MATCH, | 
+fz8/z-1-50 base=MATCH, new=MATCH, | 
+fz8/z-1-51 base=MATCH, new=MATCH, | 
+fz8/z-1-52 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-53 base=MATCH, new=MATCH, | 
+fz8/z-1-54 base=DIFF, new=MATCH, | 
+fz8/z-1-55 base=MATCH, new=MATCH, | 
+fz8/z-1-56 base=MATCH, new=MATCH, | 
+fz8/z-1-57 base=MATCH, new=MATCH, | 
+fz8/z-1-58 base=DECLINE, new=DECLINE, | the engine stopped: enumerated STRING
+fz8/z-1-59 base=DECLINE, new=MATCH, | 
+fz8/z-1-6 base=DECLINE, new=DECLINE, | the engine declined: a startup definition that fails: rebuilding a trace: a startup definition the search found failing that the evaluator can't follow: values TLC can't compare
+fz8/z-1-60 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8/z-1-61 base=MATCH, new=MATCH, | 
+fz8/z-1-62 base=DIFF, new=MATCH, | 
+fz8/z-1-63 base=MATCH, new=MATCH, | 
+fz8/z-1-64 base=MATCH, new=MATCH, | 
+fz8/z-1-65 base=MATCH, new=MATCH, | 
+fz8/z-1-66 base=MATCH, new=MATCH, | 
+fz8/z-1-67 base=DIFF, new=MATCH, | 
+fz8/z-1-68 base=MATCH, new=MATCH, | 
+fz8/z-1-69 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-7 base=MATCH, new=MATCH, | 
+fz8/z-1-70 base=MATCH, new=MATCH, | 
+fz8/z-1-71 base=MATCH, new=MATCH, | 
+fz8/z-1-72 base=MATCH, new=MATCH, | 
+fz8/z-1-73 base=DECLINE, new=MATCH, | 
+fz8/z-1-74 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-75 base=MATCH, new=MATCH, | 
+fz8/z-1-76 base=DIFF, new=MATCH, | 
+fz8/z-1-77 base=MATCH, new=MATCH, | 
+fz8/z-1-78 base=MATCH, new=MATCH, | 
+fz8/z-1-79 base=MATCH, new=MATCH, | 
+fz8/z-1-8 base=MATCH, new=MATCH, | 
+fz8/z-1-80 base=MATCH, new=MATCH, | 
+fz8/z-1-81 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8/z-1-82 base=DIFF, new=MATCH, | 
+fz8/z-1-83 base=MATCH, new=MATCH, | 
+fz8/z-1-84 base=MATCH, new=MATCH, | 
+fz8/z-1-85 base=MATCH, new=MATCH, | 
+fz8/z-1-86 base=MATCH, new=MATCH, | 
+fz8/z-1-87 base=MATCH, new=MATCH, | 
+fz8/z-1-88 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8/z-1-89 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8/z-1-9 base=MATCH, new=MATCH, | 
+fz8/z-1-90 base=MATCH, new=MATCH, | 
+fz8/z-1-91 base=MATCH, new=MATCH, | 
+fz8/z-1-92 base=MATCH, new=MATCH, | 
+fz8/z-1-93 base=MATCH, new=MATCH, | 
+fz8/z-1-94 base=MATCH, new=MATCH, | 
+fz8/z-1-95 base=MATCH, new=MATCH, | 
+fz8/z-1-96 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8/z-1-97 base=DIFF, new=MATCH, | 
+fz8/z-1-98 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8/z-1-99 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-0 base=MATCH, new=MATCH, | 
+fz8b/z-2-1 base=MATCH, new=MATCH, | 
+fz8b/z-2-10 base=DECLINE, new=MATCH, | 
+fz8b/z-2-100 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-101 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-102 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-103 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Nat
+fz8b/z-2-104 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-105 base=MATCH, new=MATCH, | 
+fz8b/z-2-106 base=MATCH, new=MATCH, | 
+fz8b/z-2-107 base=MATCH, new=MATCH, | 
+fz8b/z-2-108 base=MATCH, new=MATCH, | 
+fz8b/z-2-109 base=MATCH, new=MATCH, | 
+fz8b/z-2-11 base=MATCH, new=MATCH, | 
+fz8b/z-2-110 base=MATCH, new=MATCH, | 
+fz8b/z-2-111 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8b/z-2-112 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-113 base=MATCH, new=MATCH, | 
+fz8b/z-2-114 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Seq(S)
+fz8b/z-2-115 base=MATCH, new=MATCH, | 
+fz8b/z-2-116 base=MATCH, new=MATCH, | 
+fz8b/z-2-117 base=MATCH, new=MATCH, | 
+fz8b/z-2-118 base=MATCH, new=MATCH, | 
+fz8b/z-2-119 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-12 base=DECLINE, new=MATCH, | 
+fz8b/z-2-120 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-121 base=MATCH, new=MATCH, | 
+fz8b/z-2-122 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-123 base=MATCH, new=MATCH, | 
+fz8b/z-2-124 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-125 base=DECLINE, new=MATCH, | 
+fz8b/z-2-126 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-127 base=MATCH, new=MATCH, | 
+fz8b/z-2-128 base=MATCH, new=MATCH, | 
+fz8b/z-2-129 base=DIFF, new=MATCH, | 
+fz8b/z-2-13 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-130 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-131 base=DIFF, new=MATCH, | 
+fz8b/z-2-132 base=DECLINE, new=DECLINE, | the engine declined: a startup definition that fails: rebuilding a trace: a startup definition the search found failing that the evaluator can't follow: values TLC can't compare
+fz8b/z-2-133 base=DIFF, new=DECLINE, | the engine stopped: enumerated Nat
+fz8b/z-2-134 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-135 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-136 base=MATCH, new=MATCH, | 
+fz8b/z-2-137 base=MATCH, new=MATCH, | 
+fz8b/z-2-138 base=MATCH, new=MATCH, | 
+fz8b/z-2-139 base=MATCH, new=MATCH, | 
+fz8b/z-2-14 base=DIFF, new=MATCH, | 
+fz8b/z-2-140 base=DECLINE, new=MATCH, | 
+fz8b/z-2-141 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-142 base=MATCH, new=MATCH, | 
+fz8b/z-2-143 base=MATCH, new=MATCH, | 
+fz8b/z-2-144 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-145 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-146 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-147 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-148 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-149 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-15 base=MATCH, new=MATCH, | 
+fz8b/z-2-150 base=MATCH, new=MATCH, | 
+fz8b/z-2-151 base=MATCH, new=MATCH, | 
+fz8b/z-2-152 base=DECLINE, new=DECLINE, | the engine stopped: a membership in a union TLC may build or order either way
+fz8b/z-2-153 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Seq(S)
+fz8b/z-2-154 base=MATCH, new=MATCH, | 
+fz8b/z-2-155 base=MATCH, new=MATCH, | 
+fz8b/z-2-156 base=MATCH, new=MATCH, | 
+fz8b/z-2-157 base=MATCH, new=MATCH, | 
+fz8b/z-2-158 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-159 base=MATCH, new=MATCH, | 
+fz8b/z-2-16 base=MATCH, new=MATCH, | 
+fz8b/z-2-160 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-161 base=MATCH, new=MATCH, | 
+fz8b/z-2-162 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-163 base=MATCH, new=MATCH, | 
+fz8b/z-2-164 base=MATCH, new=MATCH, | 
+fz8b/z-2-165 base=MATCH, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-166 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-167 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-168 base=MATCH, new=MATCH, | 
+fz8b/z-2-169 base=MATCH, new=MATCH, | 
+fz8b/z-2-17 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-170 base=MATCH, new=MATCH, | 
+fz8b/z-2-171 base=MATCH, new=MATCH, | 
+fz8b/z-2-172 base=MATCH, new=MATCH, | 
+fz8b/z-2-173 base=DECLINE, new=MATCH, | 
+fz8b/z-2-174 base=MATCH, new=MATCH, | 
+fz8b/z-2-175 base=MATCH, new=MATCH, | 
+fz8b/z-2-176 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-177 base=MATCH, new=MATCH, | 
+fz8b/z-2-178 base=MATCH, new=MATCH, | 
+fz8b/z-2-179 base=DECLINE, new=MATCH, | 
+fz8b/z-2-18 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-180 base=MATCH, new=MATCH, | 
+fz8b/z-2-181 base=MATCH, new=MATCH, | 
+fz8b/z-2-182 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8b/z-2-183 base=MATCH, new=MATCH, | 
+fz8b/z-2-184 base=MATCH, new=MATCH, | 
+fz8b/z-2-185 base=MATCH, new=MATCH, | 
+fz8b/z-2-186 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-187 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-188 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-189 base=MATCH, new=MATCH, | 
+fz8b/z-2-19 base=MATCH, new=MATCH, | 
+fz8b/z-2-190 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8b/z-2-191 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-192 base=MATCH, new=MATCH, | 
+fz8b/z-2-193 base=MATCH, new=MATCH, | 
+fz8b/z-2-194 base=MATCH, new=MATCH, | 
+fz8b/z-2-195 base=MATCH, new=MATCH, | 
+fz8b/z-2-196 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-197 base=MATCH, new=MATCH, | 
+fz8b/z-2-198 base=MATCH, new=MATCH, | 
+fz8b/z-2-199 base=DECLINE, new=MATCH, | 
+fz8b/z-2-2 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-20 base=MATCH, new=MATCH, | 
+fz8b/z-2-200 base=MATCH, new=MATCH, | 
+fz8b/z-2-201 base=MATCH, new=MATCH, | 
+fz8b/z-2-202 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-203 base=MATCH, new=MATCH, | 
+fz8b/z-2-204 base=MATCH, new=MATCH, | 
+fz8b/z-2-205 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-206 base=DECLINE, new=MATCH, | 
+fz8b/z-2-207 base=MATCH, new=MATCH, | 
+fz8b/z-2-208 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-209 base=DIFF, new=MATCH, | 
+fz8b/z-2-21 base=MATCH, new=MATCH, | 
+fz8b/z-2-210 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-211 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-212 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-213 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-214 base=MATCH, new=MATCH, | 
+fz8b/z-2-215 base=MATCH, new=MATCH, | 
+fz8b/z-2-216 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-217 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-218 base=DECLINE, new=MATCH, | 
+fz8b/z-2-219 base=DIFF, new=MATCH, | 
+fz8b/z-2-22 base=MATCH, new=MATCH, | 
+fz8b/z-2-220 base=MATCH, new=MATCH, | 
+fz8b/z-2-221 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-222 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-223 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8b/z-2-224 base=MATCH, new=MATCH, | 
+fz8b/z-2-225 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-226 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: equality of values TLC can't compare
+fz8b/z-2-227 base=MATCH, new=MATCH, | 
+fz8b/z-2-228 base=DECLINE, new=MATCH, | 
+fz8b/z-2-229 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-23 base=MATCH, new=MATCH, | 
+fz8b/z-2-230 base=MATCH, new=MATCH, | 
+fz8b/z-2-231 base=MATCH, new=MATCH, | 
+fz8b/z-2-232 base=MATCH, new=MATCH, | 
+fz8b/z-2-233 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-234 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-235 base=MATCH, new=MATCH, | 
+fz8b/z-2-236 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-237 base=MATCH, new=MATCH, | 
+fz8b/z-2-238 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-239 base=MATCH, new=MATCH, | 
+fz8b/z-2-24 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-240 base=MATCH, new=MATCH, | 
+fz8b/z-2-241 base=DIFF, new=MATCH, | 
+fz8b/z-2-242 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-243 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-244 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-245 base=MATCH, new=MATCH, | 
+fz8b/z-2-246 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-247 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-248 base=MATCH, new=MATCH, | 
+fz8b/z-2-249 base=MATCH, new=MATCH, | 
+fz8b/z-2-25 base=MATCH, new=MATCH, | 
+fz8b/z-2-250 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-251 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8b/z-2-252 base=MATCH, new=MATCH, | 
+fz8b/z-2-253 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-254 base=DECLINE, new=MATCH, | 
+fz8b/z-2-255 base=MATCH, new=MATCH, | 
+fz8b/z-2-256 base=DECLINE, new=MATCH, | 
+fz8b/z-2-257 base=MATCH, new=MATCH, | 
+fz8b/z-2-258 base=MATCH, new=MATCH, | 
+fz8b/z-2-259 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-26 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Int
+fz8b/z-2-260 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-261 base=MATCH, new=MATCH, | 
+fz8b/z-2-262 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-263 base=MATCH, new=MATCH, | 
+fz8b/z-2-264 base=MATCH, new=MATCH, | 
+fz8b/z-2-265 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-266 base=MATCH, new=MATCH, | 
+fz8b/z-2-267 base=DECLINE, new=MATCH, | 
+fz8b/z-2-268 base=MATCH, new=MATCH, | 
+fz8b/z-2-269 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-27 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-270 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: equality of values TLC can't compare
+fz8b/z-2-271 base=MATCH, new=MATCH, | 
+fz8b/z-2-272 base=MATCH, new=MATCH, | 
+fz8b/z-2-273 base=MATCH, new=MATCH, | 
+fz8b/z-2-274 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-275 base=MATCH, new=MATCH, | 
+fz8b/z-2-276 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-277 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-278 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-279 base=MATCH, new=MATCH, | 
+fz8b/z-2-28 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-280 base=MATCH, new=MATCH, | 
+fz8b/z-2-281 base=MATCH, new=MATCH, | 
+fz8b/z-2-282 base=MATCH, new=MATCH, | 
+fz8b/z-2-283 base=DECLINE, new=DECLINE, | the engine stopped: enumerated STRING
+fz8b/z-2-284 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-285 base=DECLINE, new=MATCH, | 
+fz8b/z-2-286 base=MATCH, new=MATCH, | 
+fz8b/z-2-287 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-288 base=MATCH, new=MATCH, | 
+fz8b/z-2-289 base=MATCH, new=MATCH, | 
+fz8b/z-2-29 base=MATCH, new=MATCH, | 
+fz8b/z-2-290 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-291 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-292 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-293 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-294 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-295 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-296 base=MATCH, new=MATCH, | 
+fz8b/z-2-297 base=MATCH, new=MATCH, | 
+fz8b/z-2-298 base=MATCH, new=MATCH, | 
+fz8b/z-2-299 base=DECLINE, new=MATCH, | 
+fz8b/z-2-3 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-30 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-300 base=MATCH, new=MATCH, | 
+fz8b/z-2-301 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-302 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-303 base=DECLINE, new=MATCH, | 
+fz8b/z-2-304 base=DIFF, new=MATCH, | 
+fz8b/z-2-305 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-306 base=DECLINE, new=MATCH, | 
+fz8b/z-2-307 base=MATCH, new=MATCH, | 
+fz8b/z-2-308 base=DECLINE, new=MATCH, | 
+fz8b/z-2-309 base=MATCH, new=MATCH, | 
+fz8b/z-2-31 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-310 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-311 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-312 base=MATCH, new=MATCH, | 
+fz8b/z-2-313 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-314 base=MATCH, new=MATCH, | 
+fz8b/z-2-315 base=DIFF, new=MATCH, | 
+fz8b/z-2-316 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-317 base=MATCH, new=MATCH, | 
+fz8b/z-2-318 base=MATCH, new=MATCH, | 
+fz8b/z-2-319 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-32 base=MATCH, new=MATCH, | 
+fz8b/z-2-320 base=MATCH, new=MATCH, | 
+fz8b/z-2-321 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-322 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-323 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-324 base=MATCH, new=MATCH, | 
+fz8b/z-2-325 base=MATCH, new=MATCH, | 
+fz8b/z-2-326 base=DECLINE, new=MATCH, | 
+fz8b/z-2-327 base=DECLINE, new=MATCH, | 
+fz8b/z-2-328 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-329 base=DECLINE, new=MATCH, | 
+fz8b/z-2-33 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-330 base=MATCH, new=MATCH, | 
+fz8b/z-2-331 base=MATCH, new=MATCH, | 
+fz8b/z-2-332 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-333 base=DIFF, new=MATCH, | 
+fz8b/z-2-334 base=MATCH, new=MATCH, | 
+fz8b/z-2-335 base=MATCH, new=MATCH, | 
+fz8b/z-2-336 base=DIFF, new=MATCH, | 
+fz8b/z-2-337 base=MATCH, new=MATCH, | 
+fz8b/z-2-338 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-339 base=MATCH, new=MATCH, | 
+fz8b/z-2-34 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-340 base=DIFF, new=MATCH, | 
+fz8b/z-2-341 base=MATCH, new=MATCH, | 
+fz8b/z-2-342 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-343 base=MATCH, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-344 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-345 base=MATCH, new=MATCH, | 
+fz8b/z-2-346 base=MATCH, new=MATCH, | 
+fz8b/z-2-347 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-348 base=MATCH, new=MATCH, | 
+fz8b/z-2-349 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-35 base=MATCH, new=MATCH, | 
+fz8b/z-2-350 base=MATCH, new=MATCH, | 
+fz8b/z-2-351 base=MATCH, new=MATCH, | 
+fz8b/z-2-352 base=DECLINE, new=MATCH, | 
+fz8b/z-2-353 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-354 base=MATCH, new=MATCH, | 
+fz8b/z-2-355 base=DECLINE, new=MATCH, | 
+fz8b/z-2-356 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-357 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-358 base=MATCH, new=MATCH, | 
+fz8b/z-2-359 base=MATCH, new=MATCH, | 
+fz8b/z-2-36 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-360 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-361 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-362 base=MATCH, new=MATCH, | 
+fz8b/z-2-363 base=MATCH, new=MATCH, | 
+fz8b/z-2-364 base=MATCH, new=MATCH, | 
+fz8b/z-2-365 base=MATCH, new=MATCH, | 
+fz8b/z-2-366 base=MATCH, new=MATCH, | 
+fz8b/z-2-367 base=MATCH, new=MATCH, | 
+fz8b/z-2-368 base=MATCH, new=MATCH, | 
+fz8b/z-2-369 base=MATCH, new=MATCH, | 
+fz8b/z-2-37 base=MATCH, new=MATCH, | 
+fz8b/z-2-370 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-371 base=MATCH, new=MATCH, | 
+fz8b/z-2-372 base=MATCH, new=MATCH, | 
+fz8b/z-2-373 base=MATCH, new=MATCH, | 
+fz8b/z-2-374 base=DECLINE, new=DECLINE, | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-375 base=MATCH, new=MATCH, | 
+fz8b/z-2-376 base=DIFF, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8b/z-2-377 base=MATCH, new=MATCH, | 
+fz8b/z-2-378 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8b/z-2-379 base=MATCH, new=MATCH, | 
+fz8b/z-2-38 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-380 base=MATCH, new=MATCH, | 
+fz8b/z-2-381 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-382 base=MATCH, new=MATCH, | 
+fz8b/z-2-383 base=MATCH, new=MATCH, | 
+fz8b/z-2-384 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-385 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-386 base=DECLINE, new=MATCH, | 
+fz8b/z-2-387 base=MATCH, new=MATCH, | 
+fz8b/z-2-388 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-389 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-39 base=DECLINE, new=MATCH, | 
+fz8b/z-2-390 base=MATCH, new=MATCH, | 
+fz8b/z-2-391 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8b/z-2-392 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-393 base=DIFF, new=MATCH, | 
+fz8b/z-2-394 base=MATCH, new=MATCH, | 
+fz8b/z-2-395 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-396 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-397 base=DECLINE, new=DECLINE, | the engine stopped: enumerated STRING
+fz8b/z-2-398 base=MATCH, new=MATCH, | 
+fz8b/z-2-399 base=MATCH, new=MATCH, | 
+fz8b/z-2-4 base=MATCH, new=MATCH, | 
+fz8b/z-2-40 base=MATCH, new=MATCH, | 
+fz8b/z-2-41 base=MATCH, new=MATCH, | 
+fz8b/z-2-42 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-43 base=MATCH, new=MATCH, | 
+fz8b/z-2-44 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-45 base=MATCH, new=MATCH, | 
+fz8b/z-2-46 base=MATCH, new=MATCH, | 
+fz8b/z-2-47 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-48 base=MATCH, new=MATCH, | 
+fz8b/z-2-49 base=MATCH, new=MATCH, | 
+fz8b/z-2-5 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8b/z-2-50 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-51 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-52 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-53 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-54 base=MATCH, new=MATCH, | 
+fz8b/z-2-55 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-56 base=MATCH, new=MATCH, | 
+fz8b/z-2-57 base=MATCH, new=MATCH, | 
+fz8b/z-2-58 base=MATCH, new=MATCH, | 
+fz8b/z-2-59 base=DIFF, new=MATCH, | 
+fz8b/z-2-6 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Nat
+fz8b/z-2-60 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-61 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-62 base=MATCH, new=MATCH, | 
+fz8b/z-2-63 base=MATCH, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-64 base=MATCH, new=MATCH, | 
+fz8b/z-2-65 base=MATCH, new=MATCH, | 
+fz8b/z-2-66 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-67 base=MATCH, new=MATCH, | 
+fz8b/z-2-68 base=MATCH, new=MATCH, | 
+fz8b/z-2-69 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-7 base=MATCH, new=MATCH, | 
+fz8b/z-2-70 base=MATCH, new=MATCH, | 
+fz8b/z-2-71 base=MATCH, new=MATCH, | 
+fz8b/z-2-72 base=MATCH, new=MATCH, | 
+fz8b/z-2-73 base=DIFF, new=MATCH, | 
+fz8b/z-2-74 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-75 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-76 base=DECLINE, new=MATCH, | 
+fz8b/z-2-77 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-78 base=MATCH, new=MATCH, | 
+fz8b/z-2-79 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-8 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-80 base=MATCH, new=MATCH, | 
+fz8b/z-2-81 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-82 base=MATCH, new=MATCH, | 
+fz8b/z-2-83 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-84 base=MATCH, new=MATCH, | 
+fz8b/z-2-85 base=MATCH, new=MATCH, | 
+fz8b/z-2-86 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-87 base=MATCH, new=MATCH, | 
+fz8b/z-2-88 base=DECLINE, new=MATCH, | 
+fz8b/z-2-89 base=MATCH, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8b/z-2-9 base=MATCH, new=MATCH, | 
+fz8b/z-2-90 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8b/z-2-91 base=MATCH, new=MATCH, | 
+fz8b/z-2-92 base=MATCH, new=MATCH, | 
+fz8b/z-2-93 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8b/z-2-94 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8b/z-2-95 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8b/z-2-96 base=DECLINE, new=DECLINE, | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8b/z-2-97 base=DIFF, new=MATCH, | 
+fz8b/z-2-98 base=MATCH, new=MATCH, | 
+fz8b/z-2-99 base=MATCH, new=MATCH, | 
+fz8c/z-3-0 base=MATCH, new=MATCH, | 
+fz8c/z-3-1 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-10 base=DIFF, new=MATCH, | 
+fz8c/z-3-100 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-101 base=MATCH, new=MATCH, | 
+fz8c/z-3-102 base=DECLINE, new=MATCH, | 
+fz8c/z-3-103 base=MATCH, new=MATCH, | 
+fz8c/z-3-104 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-105 base=MATCH, new=MATCH, | 
+fz8c/z-3-106 base=MATCH, new=MATCH, | 
+fz8c/z-3-107 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-108 base=DECLINE, new=MATCH, | 
+fz8c/z-3-109 base=MATCH, new=MATCH, | 
+fz8c/z-3-11 base=MATCH, new=MATCH, | 
+fz8c/z-3-110 base=MATCH, new=MATCH, | 
+fz8c/z-3-111 base=MATCH, new=MATCH, | 
+fz8c/z-3-112 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-113 base=MATCH, new=MATCH, | 
+fz8c/z-3-114 base=MATCH, new=MATCH, | 
+fz8c/z-3-115 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-116 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-117 base=DECLINE, new=MATCH, | 
+fz8c/z-3-118 base=MATCH, new=MATCH, | 
+fz8c/z-3-119 base=DECLINE, new=MATCH, | 
+fz8c/z-3-12 base=MATCH, new=MATCH, | 
+fz8c/z-3-120 base=MATCH, new=MATCH, | 
+fz8c/z-3-121 base=DIFF, new=MATCH, | 
+fz8c/z-3-122 base=MATCH, new=MATCH, | 
+fz8c/z-3-123 base=MATCH, new=MATCH, | 
+fz8c/z-3-124 base=DIFF, new=MATCH, | 
+fz8c/z-3-125 base=DIFF, new=MATCH, | 
+fz8c/z-3-126 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-127 base=DECLINE, new=MATCH, | 
+fz8c/z-3-128 base=MATCH, new=MATCH, | 
+fz8c/z-3-129 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-13 base=MATCH, new=MATCH, | 
+fz8c/z-3-130 base=MATCH, new=MATCH, | 
+fz8c/z-3-131 base=DIFF, new=MATCH, | 
+fz8c/z-3-132 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-133 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-134 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-135 base=DECLINE, new=DECLINE, | the engine stopped: enumerated STRING
+fz8c/z-3-136 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-137 base=MATCH, new=MATCH, | 
+fz8c/z-3-138 base=MATCH, new=MATCH, | 
+fz8c/z-3-139 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-14 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-140 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-141 base=MATCH, new=MATCH, | 
+fz8c/z-3-142 base=MATCH, new=MATCH, | 
+fz8c/z-3-143 base=MATCH, new=MATCH, | 
+fz8c/z-3-144 base=MATCH, new=MATCH, | 
+fz8c/z-3-145 base=MATCH, new=MATCH, | 
+fz8c/z-3-146 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-147 base=DECLINE, new=MATCH, | 
+fz8c/z-3-148 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-149 base=DECLINE, new=MATCH, | 
+fz8c/z-3-15 base=MATCH, new=MATCH, | 
+fz8c/z-3-150 base=MATCH, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-151 base=MATCH, new=MATCH, | 
+fz8c/z-3-152 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-153 base=MATCH, new=MATCH, | 
+fz8c/z-3-154 base=MATCH, new=MATCH, | 
+fz8c/z-3-155 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-156 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8c/z-3-157 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-158 base=MATCH, new=MATCH, | 
+fz8c/z-3-159 base=MATCH, new=MATCH, | 
+fz8c/z-3-16 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-160 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-161 base=MATCH, new=MATCH, | 
+fz8c/z-3-162 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-163 base=MATCH, new=MATCH, | 
+fz8c/z-3-164 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-165 base=MATCH, new=MATCH, | 
+fz8c/z-3-166 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-167 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-168 base=MATCH, new=MATCH, | 
+fz8c/z-3-169 base=MATCH, new=MATCH, | 
+fz8c/z-3-17 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-170 base=DECLINE, new=MATCH, | 
+fz8c/z-3-171 base=MATCH, new=MATCH, | 
+fz8c/z-3-172 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-173 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-174 base=DECLINE, new=MATCH, | 
+fz8c/z-3-175 base=MATCH, new=MATCH, | 
+fz8c/z-3-176 base=MATCH, new=MATCH, | 
+fz8c/z-3-177 base=MATCH, new=MATCH, | 
+fz8c/z-3-178 base=MATCH, new=MATCH, | 
+fz8c/z-3-179 base=MATCH, new=MATCH, | 
+fz8c/z-3-18 base=DECLINE, new=MATCH, | 
+fz8c/z-3-180 base=MATCH, new=MATCH, | 
+fz8c/z-3-181 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-182 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: enumerated an infinite set
+fz8c/z-3-183 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-184 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-185 base=MATCH, new=MATCH, | 
+fz8c/z-3-186 base=MATCH, new=MATCH, | 
+fz8c/z-3-187 base=DECLINE, new=MATCH, | 
+fz8c/z-3-188 base=DIFF, new=MATCH, | 
+fz8c/z-3-189 base=MATCH, new=MATCH, | 
+fz8c/z-3-19 base=DECLINE, new=DECLINE, | the engine stopped: equality of values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8c/z-3-190 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-191 base=MATCH, new=MATCH, | 
+fz8c/z-3-192 base=MATCH, new=MATCH, | 
+fz8c/z-3-193 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-194 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-195 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-196 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-197 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-198 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-199 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-2 base=MATCH, new=MATCH, | 
+fz8c/z-3-20 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-200 base=DECLINE, new=MATCH, | 
+fz8c/z-3-201 base=MATCH, new=MATCH, | 
+fz8c/z-3-202 base=MATCH, new=MATCH, | 
+fz8c/z-3-203 base=MATCH, new=MATCH, | 
+fz8c/z-3-204 base=MATCH, new=MATCH, | 
+fz8c/z-3-205 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Seq(S)
+fz8c/z-3-206 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-207 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-208 base=DECLINE, new=MATCH, | 
+fz8c/z-3-209 base=DECLINE, new=MATCH, | 
+fz8c/z-3-21 base=DIFF, new=MATCH, | 
+fz8c/z-3-210 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-211 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-212 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-213 base=MATCH, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8c/z-3-214 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-215 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-216 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-217 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-218 base=MATCH, new=MATCH, | 
+fz8c/z-3-219 base=MATCH, new=MATCH, | 
+fz8c/z-3-22 base=MATCH, new=MATCH, | 
+fz8c/z-3-220 base=MATCH, new=MATCH, | 
+fz8c/z-3-221 base=MATCH, new=MATCH, | 
+fz8c/z-3-222 base=MATCH, new=MATCH, | 
+fz8c/z-3-223 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-224 base=DIFF, new=MATCH, | 
+fz8c/z-3-225 base=DIFF, new=MATCH, | 
+fz8c/z-3-226 base=MATCH, new=MATCH, | 
+fz8c/z-3-227 base=DECLINE, new=MATCH, | 
+fz8c/z-3-228 base=MATCH, new=MATCH, | 
+fz8c/z-3-229 base=MATCH, new=MATCH, | 
+fz8c/z-3-23 base=MATCH, new=MATCH, | 
+fz8c/z-3-230 base=MATCH, new=MATCH, | 
+fz8c/z-3-231 base=MATCH, new=MATCH, | 
+fz8c/z-3-232 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-233 base=MATCH, new=MATCH, | 
+fz8c/z-3-234 base=DIFF, new=MATCH, | 
+fz8c/z-3-235 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-236 base=MATCH, new=MATCH, | 
+fz8c/z-3-237 base=MATCH, new=MATCH, | 
+fz8c/z-3-238 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-239 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Int
+fz8c/z-3-24 base=DIFF, new=MATCH, | 
+fz8c/z-3-240 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-241 base=MATCH, new=MATCH, | 
+fz8c/z-3-242 base=MATCH, new=MATCH, | 
+fz8c/z-3-243 base=MATCH, new=MATCH, | 
+fz8c/z-3-244 base=MATCH, new=MATCH, | 
+fz8c/z-3-245 base=DECLINE, new=MATCH, | 
+fz8c/z-3-246 base=MATCH, new=MATCH, | 
+fz8c/z-3-247 base=MATCH, new=MATCH, | 
+fz8c/z-3-248 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8c/z-3-249 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-25 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-250 base=MATCH, new=MATCH, | 
+fz8c/z-3-251 base=MATCH, new=MATCH, | 
+fz8c/z-3-252 base=DECLINE, new=MATCH, | 
+fz8c/z-3-253 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-254 base=DECLINE, new=MATCH, | 
+fz8c/z-3-255 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-256 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8c/z-3-257 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-258 base=MATCH, new=MATCH, | 
+fz8c/z-3-259 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-26 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-260 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-261 base=MATCH, new=MATCH, | 
+fz8c/z-3-262 base=MATCH, new=MATCH, | 
+fz8c/z-3-263 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8c/z-3-264 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-265 base=MATCH, new=MATCH, | 
+fz8c/z-3-266 base=MATCH, new=MATCH, | 
+fz8c/z-3-267 base=DECLINE, new=MATCH, | 
+fz8c/z-3-268 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-269 base=MATCH, new=MATCH, | 
+fz8c/z-3-27 base=MATCH, new=MATCH, | 
+fz8c/z-3-270 base=MATCH, new=MATCH, | 
+fz8c/z-3-271 base=MATCH, new=MATCH, | 
+fz8c/z-3-272 base=MATCH, new=MATCH, | 
+fz8c/z-3-273 base=MATCH, new=MATCH, | 
+fz8c/z-3-274 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-275 base=MATCH, new=MATCH, | 
+fz8c/z-3-276 base=MATCH, new=MATCH, | 
+fz8c/z-3-277 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-278 base=DIFF, new=MATCH, | 
+fz8c/z-3-279 base=MATCH, new=MATCH, | 
+fz8c/z-3-28 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-280 base=MATCH, new=MATCH, | 
+fz8c/z-3-281 base=MATCH, new=MATCH, | 
+fz8c/z-3-282 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-283 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-284 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8c/z-3-285 base=MATCH, new=MATCH, | 
+fz8c/z-3-286 base=MATCH, new=MATCH, | 
+fz8c/z-3-287 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-288 base=DIFF, new=MATCH, | 
+fz8c/z-3-289 base=MATCH, new=MATCH, | 
+fz8c/z-3-29 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-290 base=MATCH, new=MATCH, | 
+fz8c/z-3-291 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-292 base=MATCH, new=MATCH, | 
+fz8c/z-3-293 base=MATCH, new=MATCH, | 
+fz8c/z-3-294 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-295 base=MATCH, new=MATCH, | 
+fz8c/z-3-296 base=MATCH, new=MATCH, | 
+fz8c/z-3-297 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-298 base=MATCH, new=MATCH, | 
+fz8c/z-3-299 base=DIFF, new=MATCH, | 
+fz8c/z-3-3 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-30 base=MATCH, new=MATCH, | 
+fz8c/z-3-300 base=MATCH, new=MATCH, | 
+fz8c/z-3-301 base=MATCH, new=MATCH, | 
+fz8c/z-3-302 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-303 base=DECLINE, new=MATCH, | 
+fz8c/z-3-304 base=MATCH, new=MATCH, | 
+fz8c/z-3-305 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-306 base=MATCH, new=MATCH, | 
+fz8c/z-3-307 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-308 base=MATCH, new=MATCH, | 
+fz8c/z-3-309 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8c/z-3-31 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8c/z-3-310 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-311 base=MATCH, new=MATCH, | 
+fz8c/z-3-312 base=MATCH, new=MATCH, | 
+fz8c/z-3-313 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-314 base=MATCH, new=MATCH, | 
+fz8c/z-3-315 base=DIFF, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-316 base=MATCH, new=MATCH, | 
+fz8c/z-3-317 base=MATCH, new=MATCH, | 
+fz8c/z-3-318 base=MATCH, new=MATCH, | 
+fz8c/z-3-319 base=MATCH, new=MATCH, | 
+fz8c/z-3-32 base=MATCH, new=MATCH, | 
+fz8c/z-3-320 base=MATCH, new=MATCH, | 
+fz8c/z-3-321 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-322 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-323 base=MATCH, new=MATCH, | 
+fz8c/z-3-324 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-325 base=MATCH, new=MATCH, | 
+fz8c/z-3-326 base=DECLINE, new=MATCH, | 
+fz8c/z-3-327 base=MATCH, new=MATCH, | 
+fz8c/z-3-328 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: equality of values TLC can't compare
+fz8c/z-3-329 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-33 base=MATCH, new=MATCH, | 
+fz8c/z-3-330 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-331 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-332 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-333 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-334 base=MATCH, new=MATCH, | 
+fz8c/z-3-335 base=DECLINE, new=DECLINE, | the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException
+fz8c/z-3-336 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-337 base=MATCH, new=MATCH, | 
+fz8c/z-3-338 base=MATCH, new=MATCH, | 
+fz8c/z-3-339 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-34 base=MATCH, new=MATCH, | 
+fz8c/z-3-340 base=MATCH, new=MATCH, | 
+fz8c/z-3-341 base=MATCH, new=MATCH, | 
+fz8c/z-3-342 base=MATCH, new=MATCH, | 
+fz8c/z-3-343 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-344 base=MATCH, new=MATCH, | 
+fz8c/z-3-345 base=MATCH, new=MATCH, | 
+fz8c/z-3-346 base=MATCH, new=MATCH, | 
+fz8c/z-3-347 base=MATCH, new=MATCH, | 
+fz8c/z-3-348 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8c/z-3-349 base=MATCH, new=MATCH, | 
+fz8c/z-3-35 base=MATCH, new=MATCH, | 
+fz8c/z-3-350 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-351 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-352 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-353 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-354 base=MATCH, new=MATCH, | 
+fz8c/z-3-355 base=DIFF, new=MATCH, | 
+fz8c/z-3-356 base=DECLINE, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-357 base=MATCH, new=MATCH, | 
+fz8c/z-3-358 base=MATCH, new=MATCH, | 
+fz8c/z-3-359 base=MATCH, new=MATCH, | 
+fz8c/z-3-36 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-360 base=MATCH, new=MATCH, | 
+fz8c/z-3-361 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-362 base=MATCH, new=MATCH, | 
+fz8c/z-3-363 base=MATCH, new=MATCH, | 
+fz8c/z-3-364 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-365 base=MATCH, new=MATCH, | 
+fz8c/z-3-366 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-367 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-368 base=MATCH, new=MATCH, | 
+fz8c/z-3-369 base=MATCH, new=MATCH, | 
+fz8c/z-3-37 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-370 base=MATCH, new=MATCH, | 
+fz8c/z-3-371 base=MATCH, new=MATCH, | 
+fz8c/z-3-372 base=MATCH, new=MATCH, | 
+fz8c/z-3-373 base=MATCH, new=MATCH, | 
+fz8c/z-3-374 base=MATCH, new=MATCH, | 
+fz8c/z-3-375 base=MATCH, new=MATCH, | 
+fz8c/z-3-376 base=MATCH, new=MATCH, | 
+fz8c/z-3-377 base=DIFF, new=MATCH, | 
+fz8c/z-3-378 base=MATCH, new=MATCH, | 
+fz8c/z-3-379 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-38 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-380 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-381 base=MATCH, new=MATCH, | 
+fz8c/z-3-382 base=DECLINE, new=MATCH, | 
+fz8c/z-3-383 base=DECLINE, new=MATCH, | 
+fz8c/z-3-384 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-385 base=DECLINE, new=MATCH, | 
+fz8c/z-3-386 base=DECLINE, new=MATCH, | 
+fz8c/z-3-387 base=MATCH, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-388 base=DECLINE, new=MATCH, | 
+fz8c/z-3-389 base=MATCH, new=MATCH, | 
+fz8c/z-3-39 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-390 base=MATCH, new=MATCH, | 
+fz8c/z-3-391 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-392 base=DECLINE, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-393 base=MATCH, new=MATCH, | 
+fz8c/z-3-394 base=MATCH, new=MATCH, | 
+fz8c/z-3-395 base=MATCH, new=MATCH, | 
+fz8c/z-3-396 base=MATCH, new=MATCH, | 
+fz8c/z-3-397 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-398 base=MATCH, new=MATCH, | 
+fz8c/z-3-399 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-4 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-40 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a set TLC may fail to print, at startup
+fz8c/z-3-41 base=MATCH, new=MATCH, | 
+fz8c/z-3-42 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-43 base=MATCH, new=MATCH, | 
+fz8c/z-3-44 base=DECLINE, new=DECLINE, | the engine stopped: an equality of a value with a set TLC keeps lazy, which it prints
+fz8c/z-3-45 base=DIFF, new=MATCH, | 
+fz8c/z-3-46 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-47 base=MATCH, new=MATCH, | 
+fz8c/z-3-48 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-49 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-5 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-50 base=MATCH, new=MATCH, | 
+fz8c/z-3-51 base=DIFF, new=DECLINE, | the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+fz8c/z-3-52 base=DECLINE, new=MATCH, | 
+fz8c/z-3-53 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-54 base=MATCH, new=MATCH, | 
+fz8c/z-3-55 base=DECLINE, new=MATCH, | 
+fz8c/z-3-56 base=MATCH, new=MATCH, | 
+fz8c/z-3-57 base=MATCH, new=MATCH, | 
+fz8c/z-3-58 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-59 base=MATCH, new=MATCH, | 
+fz8c/z-3-6 base=MATCH, new=MATCH, | 
+fz8c/z-3-60 base=MATCH, new=MATCH, | 
+fz8c/z-3-61 base=DECLINE, new=DECLINE, | the engine stopped: enumerated Nat
+fz8c/z-3-62 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-63 base=MATCH, new=MATCH, | 
+fz8c/z-3-64 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-65 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: values TLC can't compare
+fz8c/z-3-66 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-67 base=MATCH, new=MATCH, | 
+fz8c/z-3-68 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-69 base=DECLINE, new=DECLINE, | an assumption that fails to evaluate: evaluating the assumption again: equality of values TLC can't compare
+fz8c/z-3-7 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-70 base=MATCH, new=MATCH, | 
+fz8c/z-3-71 base=MATCH, new=MATCH, | 
+fz8c/z-3-72 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-73 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-74 base=MATCH, new=MATCH, | 
+fz8c/z-3-75 base=MATCH, new=MATCH, | 
+fz8c/z-3-76 base=MATCH, new=MATCH, | 
+fz8c/z-3-77 base=MATCH, new=MATCH, | 
+fz8c/z-3-78 base=MATCH, new=MATCH, | 
+fz8c/z-3-79 base=MATCH, new=MATCH, | 
+fz8c/z-3-8 base=MATCH, new=MATCH, | 
+fz8c/z-3-80 base=MATCH, new=MATCH, | 
+fz8c/z-3-81 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-82 base=DECLINE, new=MATCH, | 
+fz8c/z-3-83 base=DECLINE, new=DECLINE, | printing a value whose text depends on how TLC built it
+fz8c/z-3-84 base=MATCH, new=MATCH, | 
+fz8c/z-3-85 base=MATCH, new=DECLINE, | the engine stopped: unsupported: comparing a function TLC keeps lazy
+fz8c/z-3-86 base=MATCH, new=MATCH, | 
+fz8c/z-3-87 base=MATCH, new=MATCH, | 
+fz8c/z-3-88 base=MATCH, new=MATCH, | 
+fz8c/z-3-89 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-9 base=MATCH, new=MATCH, | 
+fz8c/z-3-90 base=MATCH, new=MATCH, | 
+fz8c/z-3-91 base=MATCH, new=MATCH, | 
+fz8c/z-3-92 base=MATCH, new=MATCH, | 
+fz8c/z-3-93 base=MATCH, new=DECLINE, | the engine stopped: a set of functions, records or tuples TLC keeps lazy with a part it can't size
+fz8c/z-3-94 base=MATCH, new=MATCH, | 
+fz8c/z-3-95 base=MATCH, new=MATCH, | 
+fz8c/z-3-96 base=DECLINE, new=DECLINE, | the engine stopped: enumerated a product of an infinite set
+fz8c/z-3-97 base=MATCH, new=MATCH, | 
+fz8c/z-3-98 base=DECLINE, new=DECLINE, | the engine declined: unsupported: a definition TLC computes at startup that fails there
+fz8c/z-3-99 base=DECLINE, new=MATCH, | 

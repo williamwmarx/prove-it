@@ -1,0 +1,333 @@
+From 47fcd13684ece686870c9f6635661b82c7e822af Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 17:23:38 +0000
+Subject: [PATCH 4/7] fix(engine): fail a membership in a set of functions over
+ a set TLC overrides as TLC does
+
+TLC tests f \in [D -> R] by comparing f's domain with D
+(SetOfFcnsValue.member). Where D is a set it overrides, Nat, Int,
+STRING or Seq(S), that comparison fails (UserValue.equals): "Attempted
+to check equality of the set {1} with the value:\nNat", or "Attempted
+to compare overridden value STRING with non-overridden value". The
+engine enumerated D to compare it and stopped at its own limit, so the
+run declined. It now fails as TLC does, which the trace evaluator words
+as TLC words it.
+
+Runs that declined so now match TLC (startup fixtures
+function-set-member-*). The next commit makes a union's membership test
+reach this test where TLC's does, which without this declines a run
+that matched before.
+---
+ .../function-set-member-nat-domain/M.cfg      |  2 ++
+ .../function-set-member-nat-domain/M.tla      |  6 +++++
+ .../function-set-member-nat-domain/tlc.out    | 24 ++++++++++++++++++
+ .../function-set-member-quantified/M.cfg      |  2 ++
+ .../function-set-member-quantified/M.tla      |  6 +++++
+ .../function-set-member-quantified/tlc.out    | 25 +++++++++++++++++++
+ .../function-set-member-seq-domain/M.cfg      |  2 ++
+ .../function-set-member-seq-domain/M.tla      |  6 +++++
+ .../function-set-member-seq-domain/tlc.out    | 24 ++++++++++++++++++
+ .../function-set-member-string-domain/M.cfg   |  2 ++
+ .../function-set-member-string-domain/M.tla   |  6 +++++
+ .../function-set-member-string-domain/tlc.out | 24 ++++++++++++++++++
+ .../function-set-member-union/M.cfg           |  2 ++
+ .../function-set-member-union/M.tla           |  6 +++++
+ .../function-set-member-union/tlc.out         | 25 +++++++++++++++++++
+ .../crates/tla-engine/src/compile/sets.rs     |  7 ++++++
+ 16 files changed, 169 insertions(+)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.tla
+new file mode 100644
+index 00000000..d351a09d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLE x
++Init == x = (<<1>> \in [Nat -> {1}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/tlc.out
+new file mode 100644
+index 00000000..7f559f27
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-nat-domain/tlc.out
+@@ -0,0 +1,24 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check equality of the set {1} with the value:
++Nat
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 36 in M
++1. Line 4, column 14 to line 4, column 35 in M
++2. Line 4, column 24 to line 4, column 35 in M
++
++
++Reason:
++Attempted to check equality of the set {1} with the value:
++Nat
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.tla
+new file mode 100644
+index 00000000..896219d6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLE x
++Init == x = \E f \in {<<1>>, <<2, 3>>} : f \in [Nat -> Nat]
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/tlc.out
+new file mode 100644
+index 00000000..b22510b6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-quantified/tlc.out
+@@ -0,0 +1,25 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check equality of the set {1} with the value:
++Nat
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 59 in M
++1. Line 4, column 13 to line 4, column 59 in M
++2. Line 4, column 42 to line 4, column 59 in M
++3. Line 4, column 48 to line 4, column 59 in M
++
++
++Reason:
++Attempted to check equality of the set {1} with the value:
++Nat
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.tla
+new file mode 100644
+index 00000000..dfd180dc
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLE x
++Init == x = (<<>> \in [Seq({1}) -> {}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/tlc.out
+new file mode 100644
+index 00000000..ea5c247b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-seq-domain/tlc.out
+@@ -0,0 +1,24 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check equality of the set {} with the value:
++Seq({1})
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 39 in M
++1. Line 4, column 14 to line 4, column 38 in M
++2. Line 4, column 23 to line 4, column 38 in M
++
++
++Reason:
++Attempted to check equality of the set {} with the value:
++Seq({1})
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.tla
+new file mode 100644
+index 00000000..1345a8d0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLE x
++Init == x = ([a |-> 1] \in [STRING -> Nat])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/tlc.out
+new file mode 100644
+index 00000000..624a19d1
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-string-domain/tlc.out
+@@ -0,0 +1,24 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to compare overridden value STRING with non-overridden value:
++{"a"}
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 43 in M
++1. Line 4, column 14 to line 4, column 42 in M
++2. Line 4, column 28 to line 4, column 42 in M
++
++
++Reason:
++Attempted to compare overridden value STRING with non-overridden value:
++{"a"}
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.tla
+new file mode 100644
+index 00000000..a4b791e0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, TLC
++VARIABLE x
++Init == x = (<<1, 2>> \in ([Seq({1}) -> 1..0] \cup (Int \X {})))
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/tlc.out
+new file mode 100644
+index 00000000..8788b20b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/function-set-member-union/tlc.out
+@@ -0,0 +1,25 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check equality of the set {1, 2} with the value:
++Seq({1})
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 64 in M
++1. Line 4, column 14 to line 4, column 63 in M
++2. Line 4, column 28 to line 4, column 62 in M
++3. Line 4, column 28 to line 4, column 45 in M
++
++
++Reason:
++Attempted to check equality of the set {1, 2} with the value:
++Seq({1})
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+index f11e34ae..0fdd5d05 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+@@ -250,6 +250,10 @@ impl Compiler<'_> {
+         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
+         let member_domain = domain.eval.clone();
+         let member_parts = set_parts.clone();
++        // TLC compares a function's domain with the set of functions' domain, which fails where
++        // that is a set it overrides, such as Nat or Seq(S) (`SetOfFcnsValue.member`,
++        // `UserValue.equals`).
++        let is_domain_overridden = matches!(domain.infinite, Some(name) if name != "Combined");
+         // A part TLC keeps lazy, as SUBSET S, isn't built to find the one function of an empty
+         // domain.
+         let is_part_lazy = !domain.is_normalized || !range.is_normalized;
+@@ -276,6 +280,9 @@ impl Compiler<'_> {
+                         "a mistyped membership in a set of functions",
+                     );
+                 }
++                if is_domain_overridden {
++                    return Err(Bail("equality of values TLC can't compare"));
++                }
+                 let domain_set = member_domain(machine)?;
+                 if !equals_domain(machine, element, domain_set)? {
+                     return Ok(false);
+-- 
+2.43.0
+

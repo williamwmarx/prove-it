@@ -1,0 +1,11 @@
+classes base: {'match': 46995, 'decline': 24837, 'wrong': 992, 'noncompletion': 3}
+classes cand: {'match': 47062, 'decline': 24770, 'wrong': 992, 'noncompletion': 3}
+changed runs: 67
+transitions: {'decline->match': 67}
+matches lost: 0
+wrong outputs that changed: 0 without a jar run: 0
+noncompletions: 3 [('tlc/engine262/functions_and_arrays', 'time-limit', 'noncompletion'), ('tlc/engine262/print_sum', 'time-limit', 'noncompletion'), ('tlc/engine262/uncaught_type_error', 'time-limit', 'noncompletion')]
+subset 6,795: cand {'match': 5873, 'decline': 922} base {'match': 5873, 'decline': 922}
+subset 575: cand {'decline': 537, 'match': 28, 'wrong': 10} base {'decline': 537, 'match': 28, 'wrong': 10}
+subset 8,671: cand {'match': 5027, 'decline': 3638, 'wrong': 6} base {'match': 5027, 'decline': 3638, 'wrong': 6}
+reasons of decline->match: 67

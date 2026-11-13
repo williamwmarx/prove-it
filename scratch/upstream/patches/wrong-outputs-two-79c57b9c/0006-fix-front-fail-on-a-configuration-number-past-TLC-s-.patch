@@ -1,0 +1,488 @@
+From 48bd050baef44802b1f052cbb46006d6325acbf8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 01:44:55 +0000
+Subject: [PATCH 6/7] fix(front): fail on a configuration number past TLC's
+ integers as TLC's parseInt does
+
+ModelConfig.parseValue reads a number with Integer.parseInt as it
+parses the configuration, before the spec, and the
+NumberFormatException it throws on one past 2147483647 escapes as an
+exception TLC didn't expect: it prints message 1000 with the
+exception and exits 255. The front end checked the number once it had
+the spec and reported an overflow of its own with exit 75. It now
+fails as it parses the configuration, with TLC's words. The 12 runs
+of the upstream conformance suite with such a number print what the
+pinned TLC prints; the suite's expected output for them is its own
+correction, not TLC's.
+
+The library still declines such a check, since TLC's unexpected
+exception is no TlaConfigError: its reason now gives the exit 255 the
+check exits with. A test that logs a declined check with what it
+reads declined at this number, which the check now rejects before it
+reads a module, so it declines at a constant definition TLC computes
+as it starts instead.
+---
+ .../native/crates/prove-it-check/src/check.rs |  6 +++++-
+ .../config-number-big-after-error/M.cfg       |  1 +
+ .../config-number-big-after-error/M.tla       |  5 +++++
+ .../config-number-big-after-error/tlc.out     |  3 +++
+ .../config-number-big-arg/M.cfg               |  2 ++
+ .../config-number-big-arg/M.tla               |  5 +++++
+ .../config-number-big-arg/tlc.out             |  6 ++++++
+ .../config-number-big-op-value/M.cfg          |  2 ++
+ .../config-number-big-op-value/M.tla          |  5 +++++
+ .../config-number-big-op-value/tlc.out        |  6 ++++++
+ .../config-number-big-set/M.cfg               |  2 ++
+ .../config-number-big-set/M.tla               |  5 +++++
+ .../config-number-big-set/tlc.out             |  6 ++++++
+ .../config-number-big-tool/M.cfg              |  2 ++
+ .../config-number-big-tool/M.tla              |  5 +++++
+ .../config-number-big-tool/args               |  1 +
+ .../config-number-big-tool/tlc.out            | 14 ++++++++++++++
+ .../startup_checks/config-number-big/M.cfg    |  1 +
+ .../startup_checks/config-number-big/M.tla    |  4 ++++
+ .../startup_checks/config-number-big/tlc.out  |  6 ++++++
+ .../config-number-max-zeros/M.cfg             |  2 ++
+ .../config-number-max-zeros/M.tla             |  5 +++++
+ .../config-number-max-zeros/tlc.out           | 13 +++++++++++++
+ .../native/crates/tla-front/src/config.rs     | 11 +++++++++++
+ .../crates/tla-front/src/environment.rs       | 19 -------------------
+ .../stopped-before-search/checks.json         | 16 ++++++++--------
+ .../prove-it/tests/unit/check-result.test.ts  |  6 +++---
+ 27 files changed, 128 insertions(+), 31 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-check/src/check.rs b/packages/prove-it/native/crates/prove-it-check/src/check.rs
+index 345b2432..990cef83 100644
+--- a/packages/prove-it/native/crates/prove-it-check/src/check.rs
++++ b/packages/prove-it/native/crates/prove-it-check/src/check.rs
+@@ -1014,7 +1014,11 @@ fn check_spec(
+             let Some(coded) = FrontError::Config(message.clone()).get_coded(printer.is_tool) else {
+                 return report_not_native(printer, "a configuration file the front end rejects");
+             };
+-            printer.set_thrown(Some(Thrown::Config(message)));
++            // An exception TLC didn't expect, such as the NumberFormatException of a number past
++            // its integers, is no TlaConfigError, so the library has no error of TLC's to throw.
++            if !message.starts_with(tla_front::errors::UNEXPECTED_HEAD) {
++                printer.set_thrown(Some(Thrown::Config(message)));
++            }
+             return print_coded_failure(printer, &coded, start);
+         }
+         None => return report_not_native(printer, "a configuration file the front end rejects"),
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.cfg
+new file mode 100644
+index 00000000..9a60c215
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.cfg
+@@ -0,0 +1 @@
++CONSTANT N = = 2147483648
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/tlc.out
+new file mode 100644
+index 00000000..4cf82e71
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-after-error/tlc.out
+@@ -0,0 +1,3 @@
++exit 151
++Error: TLC found an error in the configuration file at line 2
++It was expecting = or <-, but did not find it.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.cfg
+new file mode 100644
+index 00000000..a0dd97ca
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.cfg
+@@ -0,0 +1,2 @@
++CONSTANT N = 1
++CONSTANT F(2147483648) = 2
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/tlc.out
+new file mode 100644
+index 00000000..469f11a2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-arg/tlc.out
+@@ -0,0 +1,6 @@
++exit 255
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.NumberFormatException
++: For input string: "2147483648"
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.cfg
+new file mode 100644
+index 00000000..c5f10100
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.cfg
+@@ -0,0 +1,2 @@
++CONSTANT N = 1
++CONSTANT F(1) = 4294967296
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/tlc.out
+new file mode 100644
+index 00000000..d1b0b64f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-op-value/tlc.out
+@@ -0,0 +1,6 @@
++exit 255
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.NumberFormatException
++: For input string: "4294967296"
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.cfg
+new file mode 100644
+index 00000000..f3a1f857
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.cfg
+@@ -0,0 +1,2 @@
++CONSTANT N = {1, 2147483648}
++CONSTANT F(1) = 2
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/tlc.out
+new file mode 100644
+index 00000000..469f11a2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-set/tlc.out
+@@ -0,0 +1,6 @@
++exit 255
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.NumberFormatException
++: For input string: "2147483648"
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.cfg
+new file mode 100644
+index 00000000..e21f6b8a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.cfg
+@@ -0,0 +1,2 @@
++CONSTANT N = 99999999999999999999
++CONSTANT F(1) = 2
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/tlc.out
+new file mode 100644
+index 00000000..9d331b43
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big-tool/tlc.out
+@@ -0,0 +1,14 @@
++exit 255
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 1000:1 @!@!@
++TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.NumberFormatException
++: For input string: "99999999999999999999"
++@!@!@ENDMSG 1000 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.cfg
+new file mode 100644
+index 00000000..41b1d9e1
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.cfg
+@@ -0,0 +1 @@
++CONSTANT N = 2147483648
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.tla
+new file mode 100644
+index 00000000..add63a12
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/M.tla
+@@ -0,0 +1,4 @@
++---- MODULE M ----
++CONSTANT N
++ASSUME TRUE
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/tlc.out
+new file mode 100644
+index 00000000..469f11a2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-big/tlc.out
+@@ -0,0 +1,6 @@
++exit 255
++Error: TLC threw an unexpected exception.
++This was probably caused by an error in the spec or model.
++See the User Output or TLC Console for clues to what happened.
++The exception was a java.lang.NumberFormatException
++: For input string: "2147483648"
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.cfg
+new file mode 100644
+index 00000000..9d998a4a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.cfg
+@@ -0,0 +1,2 @@
++CONSTANT N = 0002147483647
++CONSTANT F(1) = 2
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.tla
+new file mode 100644
+index 00000000..027cf00a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/M.tla
+@@ -0,0 +1,5 @@
++---- MODULE M ----
++EXTENDS Naturals
++CONSTANT N, F(_)
++ASSUME PrintT(N)
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/tlc.out
+new file mode 100644
+index 00000000..a48e1f17
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/config-number-max-zeros/tlc.out
+@@ -0,0 +1,13 @@
++exit 150
++Semantic processing of module Naturals
++Semantic processing of module M
++Semantic errors:
++
++*** Errors: 1
++
++line 4, col 8 to line 4, col 13 of module M
++
++Unknown operator: `PrintT'.
++
++
++Error: Parsing or semantic analysis failed.
+diff --git a/packages/prove-it/native/crates/tla-front/src/config.rs b/packages/prove-it/native/crates/tla-front/src/config.rs
+index 5fd2ed3d..ed847fff 100644
+--- a/packages/prove-it/native/crates/tla-front/src/config.rs
++++ b/packages/prove-it/native/crates/tla-front/src/config.rs
+@@ -400,6 +400,17 @@ impl Parser {
+     fn parse_value(&mut self, token: (Kind, String, u32)) -> Parsed<ConfigValue> {
+         let (kind, text, line) = token;
+         if kind == Kind::Number {
++            // `Integer.parseInt` throws on a number past TLC's integers, which TLC reports as
++            // an exception it didn't expect.
++            if text.parse::<i32>().is_err() {
++                return Err(ConfigError {
++                    message: format!(
++                        "{}java.lang.NumberFormatException\n: For input string: \"{text}\"",
++                        crate::errors::UNEXPECTED_HEAD
++                    ),
++                    unworded: None,
++                });
++            }
+             return Ok(ConfigValue::Number(text.parse().unwrap_or(f64::NAN)));
+         }
+         // TLC reads a string's contents as written, and rejects a backslash in them.
+diff --git a/packages/prove-it/native/crates/tla-front/src/environment.rs b/packages/prove-it/native/crates/tla-front/src/environment.rs
+index a7939f15..83dadf7c 100644
+--- a/packages/prove-it/native/crates/tla-front/src/environment.rs
++++ b/packages/prove-it/native/crates/tla-front/src/environment.rs
+@@ -1865,21 +1865,6 @@ fn get_substitution_body(
+ 
+ const BUILTIN_LAZY: u32 = 4;
+ 
+-/// `toValue` fails with an unexpected exception on a configuration number too big for TLC.
+-fn check_value(value: &ConfigValue) -> Result<()> {
+-    match value {
+-        ConfigValue::Number(number) if !is_tlc_integer(*number) => {
+-            let mut text = String::new();
+-            crate::json::write_js_number(&mut text, *number);
+-            Err(FrontError::Evaluation(format!(
+-                "Integer overflow: {text} is outside TLC's 32-bit range"
+-            )))
+-        }
+-        ConfigValue::Set(elements) => elements.iter().try_for_each(check_value),
+-        _ => Ok(()),
+-    }
+-}
+-
+ /// `formatSanyWarnings`.
+ pub fn format_sany_warnings(warnings: &[SanyError]) -> String {
+     format!(
+@@ -2469,7 +2454,6 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
+         .iter()
+         .filter(|assignment| assignment.args.is_none())
+     {
+-        check_value(&assignment.value)?;
+         for key in get_scoped_keys(&assignment.name, assignment.module.as_deref()) {
+             let arity = get_key_arity(&definitions, &key);
+             if arity == 0 {
+@@ -2510,9 +2494,6 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
+                 assignment.name
+             )));
+         }
+-        for value in args.iter().chain([&assignment.value]) {
+-            check_value(value)?;
+-        }
+         if !tables.contains_key(&table_key) {
+             tables.insert(
+                 table_key.clone(),
+diff --git a/packages/prove-it/tests/fixtures/stopped-before-search/checks.json b/packages/prove-it/tests/fixtures/stopped-before-search/checks.json
+index e8946a24..117e003b 100644
+--- a/packages/prove-it/tests/fixtures/stopped-before-search/checks.json
++++ b/packages/prove-it/tests/fixtures/stopped-before-search/checks.json
+@@ -5236,7 +5236,7 @@
+       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\n"
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = {1, 3000000000} |  :: ",
+@@ -5244,7 +5244,7 @@
+       "source": "---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets, Sequences\nCONSTANT K\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = {1, 3000000000}\n"
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = 1 | SYMMETRY S |  :: S(a) == a",
+@@ -5418,7 +5418,7 @@
+       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(1) = 3000000000\n"
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = 1 | F(3000000000) = 1 |  :: ",
+@@ -5426,7 +5426,7 @@
+       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 1\nF(3000000000) = 1\n"
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = -3000000000 | F(1) = 2 |  :: ",
+@@ -5447,7 +5447,7 @@
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
+       "isTool": true
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
+@@ -5456,7 +5456,7 @@
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
+       "isWarningEnabled": false
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = 3000000000 | F(1) = 2 |  :: ",
+@@ -5465,7 +5465,7 @@
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nF(1) = 2\n",
+       "isContinued": true
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "CONSTANT K = 2147483648 | F(1) = 2 |  :: ",
+@@ -5473,7 +5473,7 @@
+       "source": "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K, F(_)\n\nVARIABLE x\nInit == x = 0\nNext == x' = x\n\n====\n",
+       "config": "INIT Init\nNEXT Next\nCONSTANT K = 2147483648\nF(1) = 2\n"
+     },
+-    "declined": "the engine stopped before it searched (exit 75)"
++    "declined": "the engine stopped before it searched (exit 255)"
+   },
+   {
+     "test": "\"INIT Init\\nNEXT Nope\\n\"{}",
+diff --git a/packages/prove-it/tests/unit/check-result.test.ts b/packages/prove-it/tests/unit/check-result.test.ts
+index 04916ee7..364b0ad5 100644
+--- a/packages/prove-it/tests/unit/check-result.test.ts
++++ b/packages/prove-it/tests/unit/check-result.test.ts
+@@ -264,10 +264,10 @@ describe("check's result", () => {
+     const directory = mkdtempSync(join(tmpdir(), "prove-it-check-log-"));
+     const logPath = join(directory, "checks.jsonl");
+     process.env.PROVE_IT_CHECK_LOG = logPath;
++    // TLC computes Bad as it starts, printing before it fails, which the native check declines.
+     const source =
+-      "---- MODULE M ----\nEXTENDS Naturals, Helper\nCONSTANT K\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
+-    // TLC reports this number as a NumberFormatException, which the native check declines.
+-    const config = "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nCHECK_DEADLOCK FALSE";
++      "---- MODULE M ----\nEXTENDS Naturals, Helper, TLC\nCONSTANT K\nVARIABLE x\nBad == PrintT(K) /= 7\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
++    const config = "INIT Init\nNEXT Next\nCONSTANT K = 3\nCHECK_DEADLOCK FALSE";
+     try {
+       await expect(
+         check({
+-- 
+2.43.0
+

@@ -1,0 +1,372 @@
+From ac85fe79975c9d14aeedbb62a3d97f5dbf1c139c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 00:35:35 +0000
+Subject: [PATCH 1/7] fix(engine): test membership in a set of records as TLC's
+ toRcd reads the value
+
+SetOfRcdsValue.member takes the record `toRcd` makes of the value and
+fails on a value it makes none of. `toRcd` makes the empty record of
+the empty tuple, and of a function only where every key is a string.
+The compiled set of records failed on the empty tuple, where TLC finds
+it isn't a member, and took a function with other keys for a record
+that isn't a member, where TLC fails; the lazy set and the trace
+evaluator already read it as TLC does. 7 runs of the upstream
+conformance suite that declined now match, and one that printed
+FALSE where TLC fails now declines.
+---
+ .../record-set-empty-tuple-bound/M.cfg        |  2 ++
+ .../record-set-empty-tuple-bound/M.tla        |  6 ++++
+ .../record-set-empty-tuple-bound/tlc.out      | 16 +++++++++++
+ .../record-set-empty-tuple-nat/M.cfg          |  2 ++
+ .../record-set-empty-tuple-nat/M.tla          |  6 ++++
+ .../record-set-empty-tuple-nat/tlc.out        | 16 +++++++++++
+ .../record-set-empty-tuple-notin/M.cfg        |  2 ++
+ .../record-set-empty-tuple-notin/M.tla        |  6 ++++
+ .../record-set-empty-tuple-notin/tlc.out      | 16 +++++++++++
+ .../record-set-empty-tuple/M.cfg              |  2 ++
+ .../record-set-empty-tuple/M.tla              |  6 ++++
+ .../record-set-empty-tuple/tlc.out            | 16 +++++++++++
+ .../record-set-integer-keys/M.cfg             |  2 ++
+ .../record-set-integer-keys/M.tla             |  6 ++++
+ .../record-set-integer-keys/tlc.out           | 28 +++++++++++++++++++
+ .../startup_checks/record-set-tuple/M.cfg     |  2 ++
+ .../startup_checks/record-set-tuple/M.tla     |  6 ++++
+ .../startup_checks/record-set-tuple/tlc.out   | 28 +++++++++++++++++++
+ .../crates/tla-engine/src/compile/sets.rs     | 14 ++++++++--
+ 19 files changed, 179 insertions(+), 3 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.tla
+new file mode 100644
+index 00000000..e8b28002
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = (LET S == [a : {1}] IN \E t \in {<<>>} : t \in S)
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-bound/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.tla
+new file mode 100644
+index 00000000..5e9e2c3c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = (<<>> \in [a : Nat])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-nat/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.tla
+new file mode 100644
+index 00000000..e79a8d7b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = (<<>> \notin [a : {1}, b : {2}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple-notin/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.tla
+new file mode 100644
+index 00000000..0ff7d2fd
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = (<<>> \in [a : {1}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/tlc.out
+new file mode 100644
+index 00000000..e494c2b5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-empty-tuple/tlc.out
+@@ -0,0 +1,16 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.tla
+new file mode 100644
+index 00000000..710eb242
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = ([i \in {1} |-> 1] \in [a : {1}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/tlc.out
+new file mode 100644
+index 00000000..47ddabd5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-integer-keys/tlc.out
+@@ -0,0 +1,28 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-record
++<<1>>
++is in the set of records:
++{[a |-> 1]}
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 45 in M
++1. Line 4, column 14 to line 4, column 44 in M
++2. Line 4, column 36 to line 4, column 44 in M
++
++
++Reason:
++Attempted to check if non-record
++<<1>>
++is in the set of records:
++{[a |-> 1]}
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.tla
+new file mode 100644
+index 00000000..84eda4ee
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++Init == x = (<<1>> \in [a : {1}])
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/tlc.out
+new file mode 100644
+index 00000000..da4f3fbe
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/record-set-tuple/tlc.out
+@@ -0,0 +1,28 @@
++exit 75
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Computing initial states...
++Error: Attempted to check if non-record
++<<1>>
++is in the set of records:
++{[a |-> 1]}
++Error: TLC was unable to fingerprint.
++
++Fingerprint Stack Trace:
++0. Line 4, column 9 to line 4, column 33 in M
++1. Line 4, column 14 to line 4, column 32 in M
++2. Line 4, column 24 to line 4, column 32 in M
++
++
++Reason:
++Attempted to check if non-record
++<<1>>
++is in the set of records:
++{[a |-> 1]}
++0 states generated, 0 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 0.
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+index c5b0e1c7..f11e34ae 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/sets.rs
+@@ -4,7 +4,7 @@
+ use tla_ir::{NodeId, NodeKind};
+ use tla_values::store::{
+     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
+-    is_tested_set_kind,
++    is_function_kind, is_tested_set_kind,
+ };
+ use tla_values::{Bail, Id};
+ 
+@@ -353,14 +353,22 @@ impl Compiler<'_> {
+             parts: Some(set_parts),
+             member: Some(member(move |machine, element| {
+                 machine.run_parts(&member_parts)?;
+-                if machine.store.kind_of(element) != KIND_FUNCTION {
++                // `toRcd` makes a record of a function whose keys are strings, as the empty
++                // tuple's are, and of no other value.
++                let size = machine.store.size_of(element);
++                let is_record = is_function_kind(machine.store.kind_of(element))
++                    && (0..size).all(|index| {
++                        let key = machine.store.get_key(element, index);
++                        machine.store.kind_of(key) == KIND_STRING
++                    });
++                if !is_record {
+                     return not_in(
+                         machine,
+                         element,
+                         "a mistyped membership in a set of records",
+                     );
+                 }
+-                if machine.store.size_of(element) as usize != member_keys.len() {
++                if size as usize != member_keys.len() {
+                     return Ok(false);
+                 }
+                 for (index, (&key, test)) in member_keys.iter().zip(&members).enumerate() {
+-- 
+2.43.0
+

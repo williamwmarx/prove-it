@@ -1,0 +1,709 @@
+From 3d4050e796f8238759a736c564ff618a6c8f8888 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 01:45:03 +0000
+Subject: [PATCH 7/7] fix(trace): keep the code of the error a Java method's
+ failure reports
+
+SubsetValue.size and SetOfRcdsValue.size raise their overflow with
+EC.TLC_MODULE_OVERFLOW (2178), which -tool output marks inside the
+message of the Java method that produced it, as Cardinality's failure
+(2154) does. The evaluator of failures kept the reported error's text
+in the method's message but dropped its code, so it marked the
+reported error only where it was another method's failure. A message
+now holds the message it reports, which -tool output marks by its own
+code. The front end also told the coded overflow of a set of records
+from the plain ones of SetOfFcnsValue and SetOfTuplesValue by a field
+written `a : `, where TLC prints `a: `. 23 runs of the upstream
+conformance suite that left the reported error unmarked now match: 12
+overflows, and 11 failures of TLCEval and TLCGet.
+---
+ .../overflow-function-set-assume-tool/M.cfg   |  2 +
+ .../overflow-function-set-assume-tool/M.tla   |  7 +++
+ .../overflow-function-set-assume-tool/args    |  1 +
+ .../overflow-function-set-assume-tool/tlc.out | 31 +++++++++++
+ .../overflow-product-assume-tool/M.cfg        |  2 +
+ .../overflow-product-assume-tool/M.tla        |  7 +++
+ .../overflow-product-assume-tool/args         |  1 +
+ .../overflow-product-assume-tool/tlc.out      | 30 +++++++++++
+ .../overflow-record-set-assume-plain/M.cfg    |  2 +
+ .../overflow-record-set-assume-plain/M.tla    |  7 +++
+ .../overflow-record-set-assume-plain/tlc.out  | 13 +++++
+ .../overflow-record-set-assume-tool/M.cfg     |  2 +
+ .../overflow-record-set-assume-tool/M.tla     |  7 +++
+ .../overflow-record-set-assume-tool/args      |  1 +
+ .../overflow-record-set-assume-tool/tlc.out   | 33 ++++++++++++
+ .../overflow-subset-assume-tool/M.cfg         |  2 +
+ .../overflow-subset-assume-tool/M.tla         |  7 +++
+ .../overflow-subset-assume-tool/args          |  1 +
+ .../overflow-subset-assume-tool/tlc.out       | 33 ++++++++++++
+ .../overflow-subset-init-tool/M.cfg           |  2 +
+ .../overflow-subset-init-tool/M.tla           |  6 +++
+ .../overflow-subset-init-tool/args            |  1 +
+ .../overflow-subset-init-tool/tlc.out         | 51 +++++++++++++++++++
+ .../crates/tla-front/src/tlc_messages.rs      |  2 +-
+ .../native/crates/tla-trace/src/action.rs     |  1 +
+ .../native/crates/tla-trace/src/alias.rs      |  1 +
+ .../native/crates/tla-trace/src/eval.rs       |  6 +++
+ .../native/crates/tla-trace/src/failure.rs    | 48 ++++++++++++++---
+ .../crates/tla-trace/src/fingerprint.rs       |  1 +
+ .../native/crates/tla-trace/src/sets.rs       |  2 +
+ .../native/crates/tla-trace/src/value.rs      |  5 ++
+ 31 files changed, 308 insertions(+), 7 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.tla
+new file mode 100644
+index 00000000..3184f371
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++ASSUME Cardinality([1..31 -> 1..2]) = 0
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/tlc.out
+new file mode 100644
+index 00000000..65b6f3fc
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-function-set-assume-tool/tlc.out
+@@ -0,0 +1,31 @@
++exit 10
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 2220:0 @!@!@
++Starting SANY...
++@!@!@ENDMSG 2220 @!@!@
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++@!@!@STARTMSG 2219:0 @!@!@
++SANY finished.
++@!@!@ENDMSG 2219 @!@!@
++@!@!@STARTMSG 2185:0 @!@!@
++@!@!@ENDMSG 2185 @!@!@
++@!@!@STARTMSG 2105:1 @!@!@
++Evaluating assumption line 4, col 8 to line 4, col 39 of module M failed.
++@!@!@STARTMSG 2154:0 @!@!@
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++Overflow when computing the number of elements in:
++[1..31 -> 1..2]
++@!@!@ENDMSG 2154 @!@!@
++@!@!@ENDMSG 2105 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.tla
+new file mode 100644
+index 00000000..8255f7c8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++ASSUME Cardinality((1..65536) \X (1..65536)) = 0
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/tlc.out
+new file mode 100644
+index 00000000..ecb5dcec
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-product-assume-tool/tlc.out
+@@ -0,0 +1,30 @@
++exit 10
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 2220:0 @!@!@
++Starting SANY...
++@!@!@ENDMSG 2220 @!@!@
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++@!@!@STARTMSG 2219:0 @!@!@
++SANY finished.
++@!@!@ENDMSG 2219 @!@!@
++@!@!@STARTMSG 2185:0 @!@!@
++@!@!@ENDMSG 2185 @!@!@
++@!@!@STARTMSG 2105:1 @!@!@
++Evaluating assumption line 4, col 8 to line 4, col 48 of module M failed.
++@!@!@STARTMSG 2154:0 @!@!@
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++Overflow when computing the number of elements in (1..65536 \X 1..65536)
++@!@!@ENDMSG 2154 @!@!@
++@!@!@ENDMSG 2105 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.tla
+new file mode 100644
+index 00000000..c6e075a7
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++ASSUME Cardinality([a : 1..65536, b : 1..65536]) = 0
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/tlc.out
+new file mode 100644
+index 00000000..1350dcb4
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-plain/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 4, col 8 to line 4, col 52 of module M failed.
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++Overflow when computing the number of elements in:
++[a: 1..65536, b: 1..65536]
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.tla
+new file mode 100644
+index 00000000..c6e075a7
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++ASSUME Cardinality([a : 1..65536, b : 1..65536]) = 0
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/tlc.out
+new file mode 100644
+index 00000000..6ebdf511
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-record-set-assume-tool/tlc.out
+@@ -0,0 +1,33 @@
++exit 10
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 2220:0 @!@!@
++Starting SANY...
++@!@!@ENDMSG 2220 @!@!@
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++@!@!@STARTMSG 2219:0 @!@!@
++SANY finished.
++@!@!@ENDMSG 2219 @!@!@
++@!@!@STARTMSG 2185:0 @!@!@
++@!@!@ENDMSG 2185 @!@!@
++@!@!@STARTMSG 2105:1 @!@!@
++Evaluating assumption line 4, col 8 to line 4, col 52 of module M failed.
++@!@!@STARTMSG 2154:0 @!@!@
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++@!@!@STARTMSG 2178:0 @!@!@
++Overflow when computing the number of elements in:
++[a: 1..65536, b: 1..65536]
++@!@!@ENDMSG 2178 @!@!@
++@!@!@ENDMSG 2154 @!@!@
++@!@!@ENDMSG 2105 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.tla
+new file mode 100644
+index 00000000..662730a3
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++ASSUME Cardinality(SUBSET (1..31)) = 0
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/tlc.out
+new file mode 100644
+index 00000000..629df1f5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-assume-tool/tlc.out
+@@ -0,0 +1,33 @@
++exit 10
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 2220:0 @!@!@
++Starting SANY...
++@!@!@ENDMSG 2220 @!@!@
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++@!@!@STARTMSG 2219:0 @!@!@
++SANY finished.
++@!@!@ENDMSG 2219 @!@!@
++@!@!@STARTMSG 2185:0 @!@!@
++@!@!@ENDMSG 2185 @!@!@
++@!@!@STARTMSG 2105:1 @!@!@
++Evaluating assumption line 4, col 8 to line 4, col 38 of module M failed.
++@!@!@STARTMSG 2154:0 @!@!@
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++@!@!@STARTMSG 2178:0 @!@!@
++Overflow when computing the number of elements in:
++SUBSET (1..31)
++@!@!@ENDMSG 2178 @!@!@
++@!@!@ENDMSG 2154 @!@!@
++@!@!@ENDMSG 2105 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.tla
+new file mode 100644
+index 00000000..f17706a4
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/M.tla
+@@ -0,0 +1,6 @@
++---- MODULE M ----
++EXTENDS Integers, FiniteSets
++VARIABLE x
++Init == x = Cardinality(SUBSET (1..31))
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/args
+new file mode 100644
+index 00000000..c1b94c0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/args
+@@ -0,0 +1 @@
++-tool
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/tlc.out
+new file mode 100644
+index 00000000..2edff60d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/overflow-subset-init-tool/tlc.out
+@@ -0,0 +1,51 @@
++exit 75
++@!@!@STARTMSG 2262:0 @!@!@
++@!@!@ENDMSG 2262 @!@!@
++@!@!@STARTMSG 2187:0 @!@!@
++@!@!@ENDMSG 2187 @!@!@
++@!@!@STARTMSG 2220:0 @!@!@
++Starting SANY...
++@!@!@ENDMSG 2220 @!@!@
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module M
++Linting of module M
++@!@!@STARTMSG 2219:0 @!@!@
++SANY finished.
++@!@!@ENDMSG 2219 @!@!@
++@!@!@STARTMSG 2185:0 @!@!@
++@!@!@ENDMSG 2185 @!@!@
++@!@!@STARTMSG 2189:0 @!@!@
++Computing initial states...
++@!@!@ENDMSG 2189 @!@!@
++@!@!@STARTMSG 1000:1 @!@!@
++@!@!@STARTMSG 2154:0 @!@!@
++Attempted to apply the operator overridden by the Java method
++public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
++but it produced the following error:
++@!@!@STARTMSG 2178:0 @!@!@
++Overflow when computing the number of elements in:
++SUBSET (1..31)
++@!@!@ENDMSG 2178 @!@!@
++@!@!@ENDMSG 2154 @!@!@
++@!@!@ENDMSG 1000 @!@!@
++@!@!@STARTMSG 2103:1 @!@!@
++The error occurred when TLC was evaluating the nested
++expressions at the following positions:
++0. Line 4, column 9 to line 4, column 39 in M
++1. Line 4, column 13 to line 4, column 39 in M
++
++
++@!@!@ENDMSG 2103 @!@!@
++@!@!@STARTMSG 2200:0 @!@!@
++@!@!@ENDMSG 2200 @!@!@
++@!@!@STARTMSG 2199:0 @!@!@
++0 states generated, 0 distinct states found, 0 states left on queue.
++@!@!@ENDMSG 2199 @!@!@
++@!@!@STARTMSG 2194:0 @!@!@
++The depth of the complete state graph search is 0.
++@!@!@ENDMSG 2194 @!@!@
++@!@!@STARTMSG 2186:0 @!@!@
++@!@!@ENDMSG 2186 @!@!@
+diff --git a/packages/prove-it/native/crates/tla-front/src/tlc_messages.rs b/packages/prove-it/native/crates/tla-front/src/tlc_messages.rs
+index fb5e0121..92bc16a3 100644
+--- a/packages/prove-it/native/crates/tla-front/src/tlc_messages.rs
++++ b/packages/prove-it/native/crates/tla-front/src/tlc_messages.rs
+@@ -177,7 +177,7 @@ fn is_uncoded(text: &str) -> bool {
+         .chars()
+         .take_while(|char| char.is_ascii_alphanumeric() || *char == '_')
+         .count();
+-    !(name > 0 && record[name..].starts_with(" : "))
++    !(name > 0 && record[name..].starts_with(": "))
+ }
+ 
+ /// getCodedMessage: the code of the first template the message's text matches.
+diff --git a/packages/prove-it/native/crates/tla-trace/src/action.rs b/packages/prove-it/native/crates/tla-trace/src/action.rs
+index ebb20468..b908bffc 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/action.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/action.rs
+@@ -595,6 +595,7 @@ impl<'ir> Evaluator<'ir> {
+                                         ),
+                                             code: Some(2148),
+                                             is_eval_exception: false,
++                                            inner: None,
+                                         },
+                                     )
+                                 }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/alias.rs b/packages/prove-it/native/crates/tla-trace/src/alias.rs
+index e8daef8b..88e8252b 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/alias.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/alias.rs
+@@ -57,6 +57,7 @@ impl Rebuilder<'_> {
+             text,
+             code: Some(code),
+             is_eval_exception: false,
++            inner: None,
+         };
+         // TLC finds the alias by its name as it evaluates it, and fails on a name it has no
+         // definition of, on a definition that takes arguments and on one it computed as it
+diff --git a/packages/prove-it/native/crates/tla-trace/src/eval.rs b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+index c6430fda..166a21e8 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+@@ -640,6 +640,7 @@ fn as_java_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+                 ),
+                 code: Some(JAVA_METHOD_FAILED),
+                 is_eval_exception: false,
++                inner: Some(Box::new(message)),
+             }),
+             ..error
+         },
+@@ -1066,6 +1067,7 @@ impl<'ir> Evaluator<'ir> {
+                     ),
+                     code: Some(2280),
+                     is_eval_exception: false,
++                    inner: None,
+                 },
+             ),
+             None => fail("a variable past the state's"),
+@@ -1236,6 +1238,7 @@ impl<'ir> Evaluator<'ir> {
+                         ),
+                         code: Some(EXPECTED_EXPRESSION_IN_COMPUTING),
+                         is_eval_exception: false,
++                        inner: None,
+                     },
+                 );
+             }
+@@ -1250,6 +1253,7 @@ impl<'ir> Evaluator<'ir> {
+                         ),
+                         code: Some(EXPECTED_EXPRESSION_IN_COMPUTING2),
+                         is_eval_exception: false,
++                        inner: None,
+                     },
+                 );
+             }
+@@ -1265,6 +1269,7 @@ impl<'ir> Evaluator<'ir> {
+                         ),
+                         code: Some(EXPECTED_VALUE),
+                         is_eval_exception: false,
++                        inner: None,
+                     },
+                 );
+             }
+@@ -3421,6 +3426,7 @@ impl<'ir> Evaluator<'ir> {
+                                     text: "Argument mismatch in operator application.%1".into(),
+                                     code: Some(ARGUMENT_MISMATCH),
+                                     is_eval_exception: false,
++                                    inner: None,
+                                 },
+                             );
+                         }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/failure.rs b/packages/prove-it/native/crates/tla-trace/src/failure.rs
+index 533b15b8..b760fd85 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/failure.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/failure.rs
+@@ -140,13 +140,18 @@ const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was
+ /// A coded message in -tool output, which TLC marks inside the message that holds it, as it marks
+ /// the failure of a Java method that one reports (`formatNestedMessage`).
+ pub(crate) fn nested(message: &TlcMessage) -> String {
+-    match message.code {
+-        Some(code) => format!(
+-            "@!@!@STARTMSG {code}:0 @!@!@\n{}\n@!@!@ENDMSG {code} @!@!@",
+-            nested_java_failure(&message.text)
++    let Some(code) = message.code else {
++        return message.text.clone();
++    };
++    let text = match &message.inner {
++        Some(inner) if message.text.ends_with(&inner.text) => format!(
++            "{}{}",
++            &message.text[..message.text.len() - inner.text.len()],
++            nested(inner)
+         ),
+-        None => message.text.clone(),
+-    }
++        _ => nested_java_failure(&message.text),
++    };
++    format!("@!@!@STARTMSG {code}:0 @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@")
+ }
+ 
+ const JAVA_METHOD_FAILED: u32 = 2154;
+@@ -169,6 +174,7 @@ fn nested_java_failure(text: &str) -> String {
+                 text: text[at..].to_owned(),
+                 code: Some(JAVA_METHOD_FAILED),
+                 is_eval_exception: false,
++                inner: None,
+             })
+         ),
+         _ => text.to_owned(),
+@@ -389,6 +395,7 @@ impl<'ir> Rebuilder<'ir> {
+                 ),
+                 code: Some(EXPECTED_VALUE),
+                 is_eval_exception: false,
++                inner: None,
+             },
+             Ok(_) => {
+                 return Err(Unsupported(
+@@ -2136,6 +2143,7 @@ fn constraint_value_holds(
+                 ),
+                 code: Some(EXPECTED_VALUE),
+                 is_eval_exception: false,
++                inner: None,
+             },
+         ),
+         _ => fail("a constraint that isn't a boolean, without a range"),
+@@ -2155,6 +2163,7 @@ mod tests {
+             text: format!("{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{inner}"),
+             code: Some(JAVA_METHOD_FAILED),
+             is_eval_exception: false,
++            inner: None,
+         };
+         assert_eq!(
+             nested(&outer),
+@@ -2163,4 +2172,31 @@ mod tests {
+             )
+         );
+     }
++
++    #[test]
++    fn marks_the_coded_error_a_java_failure_reports_under_tool() {
++        let method = "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)";
++        let inner = TlcMessage {
++            text: "Overflow when computing the number of elements in:\nSUBSET (1..31)".into(),
++            code: Some(2178),
++            is_eval_exception: false,
++            inner: None,
++        };
++        let outer = TlcMessage {
++            text: format!(
++                "{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}{}",
++                inner.text
++            ),
++            code: Some(JAVA_METHOD_FAILED),
++            is_eval_exception: false,
++            inner: Some(Box::new(inner.clone())),
++        };
++        assert_eq!(
++            nested(&outer),
++            format!(
++                "@!@!@STARTMSG 2154:0 @!@!@\n{JAVA_FAILURE}{method},\n{JAVA_FAILURE_INNER}@!@!@STARTMSG 2178:0 @!@!@\n{}\n@!@!@ENDMSG 2178 @!@!@\n@!@!@ENDMSG 2154 @!@!@",
++                inner.text
++            )
++        );
++    }
+ }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/fingerprint.rs b/packages/prove-it/native/crates/tla-trace/src/fingerprint.rs
+index ebe3421d..9b02c898 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/fingerprint.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/fingerprint.rs
+@@ -32,6 +32,7 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
+                         ),
+                         code: Some(OVERFLOW),
+                         is_eval_exception: false,
++                        inner: None,
+                     };
+                     return Ok(Some((vec![value.clone()], message)));
+                 }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/sets.rs b/packages/prove-it/native/crates/tla-trace/src/sets.rs
+index 153d087d..eae6d736 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/sets.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/sets.rs
+@@ -1090,6 +1090,7 @@ pub fn cardinality(set: &Value) -> Evaluated<usize> {
+                             ),
+                             code: Some(OVERFLOW),
+                             is_eval_exception: false,
++                            inner: None,
+                         }),
+                     });
+                 }
+@@ -1144,6 +1145,7 @@ fn parts_size<'v>(
+                     text,
+                     code,
+                     is_eval_exception: false,
++                    inner: None,
+                 }),
+             });
+         }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/value.rs b/packages/prove-it/native/crates/tla-trace/src/value.rs
+index c9756fb2..c8e1330e 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/value.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/value.rs
+@@ -34,6 +34,9 @@ pub struct TlcMessage {
+     pub text: String,
+     pub code: Option<u32>,
+     pub is_eval_exception: bool,
++    /// The message of the error this one reports, which its text ends with, as a Java method's
++    /// failure reports the error the method produced (`MP.getMessage`'s nested message).
++    pub inner: Option<Box<TlcMessage>>,
+ }
+ 
+ pub type Evaluated<T> = Result<T, EvalError>;
+@@ -53,6 +56,7 @@ pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T>
+             text,
+             code: None,
+             is_eval_exception: false,
++            inner: None,
+         }),
+     })
+ }
+@@ -73,6 +77,7 @@ pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Eval
+             text,
+             code: Some(code),
+             is_eval_exception: true,
++            inner: None,
+         }),
+     })
+ }
+-- 
+2.43.0
+

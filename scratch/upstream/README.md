@@ -121,3 +121,20 @@ Build check (2026-11-13): my worktrees shared one cargo target directory, whose 
 ## override-user-modules 4e6d8a4c (PR 367: causes 1, 3, 4, 5, reachability, main 32bebcac merged) vs main 32bebcac
 
 Binary sha256 60942fb358f79480a41d30ff8433e63414083469c6a122b8d0bfc95f0187a837, clean target directory, run alone. Main's baseline is the startup-effects ea6ac3e7 run (`git diff ea6ac3e7 32bebcac` is empty). Report `adjudication/override-user-modules-4e6d8a4c-vs-main-32bebcac.txt`. Classes: match 46,952, decline 24,848, wrong vs the recording 1,024, noncompletion 3 (the same three). Transitions: wrong -> match 53, wrong -> decline 270, decline -> decline 10 (reason), match -> decline 5 (reverse_order_chain, the listed by-chance stub comparison), wrong -> wrong 1 (temporal/next_subscript/instance_substituted_expression: wrong on main, now with TLC's 2140 warning but main's error frames, as since cause 4). No new wrong output.
+
+## wrong-outputs-two 3d4050e7 (batch two rebased on main 79c57b9c, narrowed) vs main 79c57b9c
+
+`patches/wrong-outputs-two-79c57b9c/0001-0007`: the six patches of batch two (f6e02eec base) applied cleanly on main 79c57b9c (`results/wrong-outputs-two-ff75f1a6.*`, as rebased), then changed: the lazy-unsizable-sets patch (now 0005) is narrowed, and a membership fix it needs is added before it (0004). Binary sha256 6ec526ef2458d3f6f52f58f74b1b1231c67d07893ac23bcdd51cf3947ba6fec7 (main 79c57b9c: e6984627b21e14c65d3ee9f6c1d7fd9e37a26af986b56982c468fc8561fc7372), clean target directories, run alone. Reports `adjudication/wrong-outputs-two-3d4050e7-vs-main-79c57b9c.txt` and `-vs-ff75f1a6.txt`.
+
+| class | main 79c57b9c | ff75f1a6 (as rebased) | 3d4050e7 |
+|---|---:|---:|---:|
+| match | 46,956 | 46,995 | 47,062 |
+| decline | 24,847 | 24,837 | 24,770 |
+| wrong vs the recording | 1,021 | 992 | 992 |
+| noncompletion | 3 | 3 | 3 (the same three engine262 time limits) |
+
+Against main: decline -> match 78, wrong -> match 28, wrong -> decline 1, decline -> decline 4 (reason), wrong -> wrong 12 (the cfg integer runs, each byte-identical to the pinned jar), no match lost. Every one of the 106 new matches is byte-identical to the pinned jar (30 from earlier jar runs, 76 in `adjudication/pinned-tlc-wrong-outputs-two-3d4050e7.jsonl.gz`). Against ff75f1a6: 67 decline -> match, nothing else. Parity: conformance --check 769 match, 1 unsupported; native differential at 1 and 4 workers 1,460 of 1,466 print what TLC prints, 6 known, 0 unlisted.
+
+Adversarial specs (`fuzz/gen_lazy.py`, seeds 1-4, 400 each, each run with the pinned jar; `fuzz/lazy-unsized/`): the 129 runs that main matched and ff75f1a6 declined are listed in `the-129.tsv` with their consumer, the decline reason and the result now: all 129 match. On all 1,600 against main: match -> decline 0, decline -> match 158, wrong -> match 66, wrong -> decline 11, wrong -> wrong 5 (byte-identical to main; listed in the patch's fallback.md as known wrong outputs). `two-way-*.txt` give every run's class on main and on each binary.
+
+None of the 129 matched by chance. TLC compares, fingerprints, sizes and enumerates such a set (`SetOfRcdsValue.equals`, `convertAndCache`, `size`, `elements`) through emptiness first, so it answers as the set enumeration main held; `isFinite` is true for every such set that enumerates; a trace's states and a failure's message are printed by the trace evaluator, which keeps the set as TLC does (a state holding `{[a : STRING, b : {}]}` prints so on main and in TLC). Only what the engine writes itself, PrintT and its siblings, `-dump`, a simulation's trace, prints the enumeration where TLC prints the parts (or fails sizing them); those now decline, and only after the run enumerated such a set.
