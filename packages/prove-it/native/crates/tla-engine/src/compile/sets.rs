@@ -250,6 +250,10 @@ impl Compiler<'_> {
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
         let member_parts = set_parts.clone();
+        // TLC compares a function's domain with the set of functions' domain, which fails where
+        // that is a set it overrides, such as Nat or Seq(S) (`SetOfFcnsValue.member`,
+        // `UserValue.equals`).
+        let is_domain_overridden = matches!(domain.infinite, Some(name) if name != "Combined");
         // A part TLC keeps lazy, as SUBSET S, isn't built to find the one function of an empty
         // domain.
         let is_part_lazy = !domain.is_normalized || !range.is_normalized;
@@ -275,6 +279,9 @@ impl Compiler<'_> {
                         element,
                         "a mistyped membership in a set of functions",
                     );
+                }
+                if is_domain_overridden {
+                    return Err(Bail("equality of values TLC can't compare"));
                 }
                 let domain_set = member_domain(machine)?;
                 if !equals_domain(machine, element, domain_set)? {
