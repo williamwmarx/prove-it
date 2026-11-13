@@ -537,6 +537,15 @@ pub(crate) fn bind_operator_arguments(
                             value: value.clone(),
                             expression: expression.clone(),
                         },
+                        // A LET definition whose body is a literal TLC holds as the literal's
+                        // value (`processConstants`), which the argument's LazyValue reads.
+                        Some((
+                            _,
+                            Binding::Thunk {
+                                expression,
+                                scope: ScopeOf::Own,
+                            },
+                        )) if let Some(value) = get_literal(expression) => Binding::Value(value),
                         Some((node, Binding::Thunk { expression, scope })) => Binding::Thunk {
                             expression: expression.clone(),
                             scope: ScopeOf::Other(scope.resolve(node)),
@@ -554,6 +563,17 @@ pub(crate) fn bind_operator_arguments(
         }));
     }
     Ok(bound)
+}
+
+/// The value of a literal TLC holds as a value: a string, or a number within its integers.
+fn get_literal(expression: &Expr) -> Option<ConfigValue> {
+    match &expression.kind {
+        ExpressionKind::String { value } => Some(ConfigValue::String(value.to_string())),
+        ExpressionKind::Number { value, .. } if is_tlc_integer(*value) => {
+            Some(ConfigValue::Number(*value))
+        }
+        _ => None,
+    }
 }
 
 /// `evaluateOperatorArgument`: a LAMBDA, or the operator an argument names, as a closure.
@@ -1459,6 +1479,12 @@ impl SubscriptCollector<'_, '_> {
                 "a name in the subscript of [][Next]_v that the front end doesn't follow",
             ));
         };
+        // `lookup` gives an operator without a value of its own its body's, which TLC gives
+        // every literal (`processConstants`), so the collector ignores an operator whose body is
+        // one, a LAMBDA's included.
+        if get_literal(&body).is_some() {
+            return Ok(true);
+        }
         if params.is_empty() {
             if !expression.is_locally_resolved()
                 && let Some(definition) = get_definition(&name, environment)
