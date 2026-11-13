@@ -469,7 +469,8 @@ it from one that printed something else. Each is outside the corpus:
   definitions those name; a wrapper with parameters that nothing reached applies doesn't count.
   An unused `<-` substitute and an unused definition without parameters count, since TLC may
   compute them, and so does one in a branch TLC never takes, as the ELSE of
-  `IF TRUE THEN 0 ELSE Warshall({})`, since the walk doesn't decide conditions. Five runs
+  `IF TRUE THEN 0 ELSE Warshall({})`, since the walk doesn't decide conditions, and one in an
+  unused definition of a LET nested in a LET's body, which the walk reads whole. Five runs
   matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
   (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
   ANY and RandomSubsetSet as builtins.
