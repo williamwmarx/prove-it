@@ -1,0 +1,1013 @@
+From d78880bcc49295b56ac4eea4031f1ab226a0cdc9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 03:28:35 +0000
+Subject: [PATCH] fix(front): decline a replaced operator only where what TLC
+ evaluates reaches it
+
+TLC evaluates a definition with parameters only where something it
+evaluates applies it, so a wrapper of TransitiveClosure's Warshall
+that nothing applies never runs the Java method TLC replaces it with.
+The front end declined any spec whose text named the replaced
+operator, even in such a wrapper. It now follows the names from what
+TLC may evaluate: every definition without parameters, every
+assumption, every INSTANCE's substitutions and every name the
+configuration gives, through the definitions and the LET definitions
+those name, and declines only where that reaches the replaced
+operator. An unused `<-` substitute and an unused definition without
+parameters still count, since TLC may compute them. No run of the
+upstream conformance suite changes; 39 of 90 generated specs around
+such wrappers that declined now match TLC.
+---
+ .../java-class-user-invariant-wrapper/M.cfg   |   3 +
+ .../java-class-user-invariant-wrapper/M.tla   |  10 ++
+ .../TransitiveClosure.tla                     |   4 +
+ .../declined                                  |   1 +
+ .../java-class-user-let-wrapper/M.cfg         |   2 +
+ .../java-class-user-let-wrapper/M.tla         |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../java-class-user-let-wrapper/declined      |   1 +
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../declined                                  |   1 +
+ .../java-class-user-unused-let-wrapper/M.cfg  |   2 +
+ .../java-class-user-unused-let-wrapper/M.tla  |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |  10 ++
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../Helper.tla                                |   6 +
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   8 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  20 +++
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |  11 ++
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../Helper.tla                                |   6 +
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   8 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  20 +++
+ .../M.cfg                                     |   2 +
+ .../M.tla                                     |   9 +
+ .../TransitiveClosure.tla                     |   4 +
+ .../tlc.out                                   |  18 ++
+ .../java-class-user-unused-wrapper/M.cfg      |   2 +
+ .../java-class-user-unused-wrapper/M.tla      |   8 +
+ .../TransitiveClosure.tla                     |   3 +
+ .../java-class-user-unused-wrapper/tlc.out    |  18 ++
+ .../crates/tla-front/src/environment.rs       | 162 +++++++++++++-----
+ packages/prove-it/native/design/fallback.md   |   9 +-
+ 52 files changed, 487 insertions(+), 46 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/Helper.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/Helper.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/TransitiveClosure.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.cfg
+new file mode 100644
+index 00000000..fd959cf2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.cfg
+@@ -0,0 +1,3 @@
++INIT Init
++NEXT Next
++INVARIANT Inv
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.tla
+new file mode 100644
+index 00000000..370a0238
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/M.tla
+@@ -0,0 +1,10 @@
++---- MODULE M ----
++EXTENDS TLC, Naturals
++LOCAL INSTANCE TransitiveClosure
++VARIABLE x
++U1(r) == Warshall(r)
++Inv == U1({<<1, 2>>, <<2, 3>>}) = U1({<<1, 2>>, <<2, 3>>})
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-invariant-wrapper/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.tla
+new file mode 100644
+index 00000000..fa60e4f0
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++U1(r) == Warshall(r)
++Z(k) == LET L(r) == U1(r) IN L(k)
++ASSUME PrintT(Z({<<1, 2>>, <<2, 3>>}) = Z({<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-let-wrapper/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.tla
+new file mode 100644
+index 00000000..f7b28529
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++U1(r) == Warshall(r)
++Ap(F(_), r) == F(r)
++ASSUME PrintT(Ap(U1, {<<1, 2>>, <<2, 3>>}) = Ap(U1, {<<1, 2>>, <<2, 3>>}))
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/declined
+new file mode 100644
+index 00000000..a172930f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-operator-argument-wrapper/declined
+@@ -0,0 +1 @@
++an operator of a module of the user's that TLC's Java class replaces: TransitiveClosure!Warshall
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.tla
+new file mode 100644
+index 00000000..d4ba5cfa
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++U1(r) == Warshall(r)
++Z(k) == LET L(r) == U1(r) IN k
++ASSUME PrintT(Z(1) = 1)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/tlc.out
+new file mode 100644
+index 00000000..c2686e1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-let-wrapper/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.tla
+new file mode 100644
+index 00000000..3b7c774f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/M.tla
+@@ -0,0 +1,10 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++U1(r) == Warshall(r)
++U2(r) == U1(r)
++V(r) == r
++ASSUME PrintT(V({<<1, 2>>, <<2, 3>>}) = {<<1, 2>>, <<2, 3>>})
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/tlc.out
+new file mode 100644
+index 00000000..c2686e1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-beside-used/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.tla
+new file mode 100644
+index 00000000..2dfc08bc
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++U1(r) == Warshall(r)
++U2(r) == U1(r)
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/tlc.out
+new file mode 100644
+index 00000000..c2686e1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-chain/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/Helper.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/Helper.tla
+new file mode 100644
+index 00000000..d33c582a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/Helper.tla
+@@ -0,0 +1,6 @@
++---- MODULE Helper ----
++EXTENDS TransitiveClosure
++H(r) == Warshall(r)
++H2(r) == H(r)
++Hz == 1
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.tla
+new file mode 100644
+index 00000000..fc90e6c5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TLC, Naturals
++VARIABLE x
++J == INSTANCE Helper
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/tlc.out
+new file mode 100644
+index 00000000..27e1515a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance-copy/tlc.out
+@@ -0,0 +1,20 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module Helper
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module Helper
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.tla
+new file mode 100644
+index 00000000..2ebfe3bd
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TLC, Naturals
++I == INSTANCE TransitiveClosure
++VARIABLE x
++U1(r) == I!Warshall(r)
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/tlc.out
+new file mode 100644
+index 00000000..30554c55
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-instance/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.tla
+new file mode 100644
+index 00000000..723dc1ba
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/M.tla
+@@ -0,0 +1,11 @@
++---- MODULE M ----
++EXTENDS TLC, Naturals
++LOCAL INSTANCE TransitiveClosure
++VARIABLE x
++U1(r) == Warshall(r)
++Ap(F(_), r) == F(r)
++Use == 1
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/tlc.out
+new file mode 100644
+index 00000000..30554c55
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-operator-argument/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/Helper.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/Helper.tla
+new file mode 100644
+index 00000000..d33c582a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/Helper.tla
+@@ -0,0 +1,6 @@
++---- MODULE Helper ----
++EXTENDS TransitiveClosure
++H(r) == Warshall(r)
++H2(r) == H(r)
++Hz == 1
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.tla
+new file mode 100644
+index 00000000..f6c500db
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TLC, Naturals
++VARIABLE x
++J(c) == INSTANCE Helper
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/tlc.out
+new file mode 100644
+index 00000000..27e1515a
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-parameterized-instance-copy/tlc.out
+@@ -0,0 +1,20 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module TransitiveClosure
++Semantic processing of module Helper
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module Helper
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.tla
+new file mode 100644
+index 00000000..f4d8f6c5
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/M.tla
+@@ -0,0 +1,9 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC, Naturals
++VARIABLE x
++RECURSIVE U1(_)
++U1(r) == IF r = {} THEN Warshall(r) ELSE U1({})
++ASSUME PrintT(TRUE)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/TransitiveClosure.tla
+new file mode 100644
+index 00000000..8be52626
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/TransitiveClosure.tla
+@@ -0,0 +1,4 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "stub"
++Other == 3
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/tlc.out
+new file mode 100644
+index 00000000..c2686e1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper-recursive/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++TRUE
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.tla
+new file mode 100644
+index 00000000..adacab4c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS TransitiveClosure, TLC
++VARIABLE x
++Unused(r) == Warshall(r)
++ASSUME PrintT(1)
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/TransitiveClosure.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/TransitiveClosure.tla
+new file mode 100644
+index 00000000..f6a5e3e2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/TransitiveClosure.tla
+@@ -0,0 +1,3 @@
++---- MODULE TransitiveClosure ----
++Warshall(R) == "replaced by tlc2.module.TransitiveClosure"
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/tlc.out
+new file mode 100644
+index 00000000..57fc7a6f
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/java-class-user-unused-wrapper/tlc.out
+@@ -0,0 +1,18 @@
++exit 0
++Semantic processing of module TransitiveClosure
++Semantic processing of module Naturals
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module TransitiveClosure
++Linting of module M
++1
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/tla-front/src/environment.rs b/packages/prove-it/native/crates/tla-front/src/environment.rs
+index 50554ab3..a7939f15 100644
+--- a/packages/prove-it/native/crates/tla-front/src/environment.rs
++++ b/packages/prove-it/native/crates/tla-front/src/environment.rs
+@@ -2164,14 +2164,61 @@ fn reject_class_overrides(
+     }
+ }
+ 
+-/// The first of the keys that an expression of the spec, but the definition's own body, or the
+-/// configuration names, by the definition the name resolves to.
++/// The first of the keys that TLC may evaluate a name of, by the definition the name resolves to:
++/// one named in what TLC evaluates, from every definition without parameters (which TLC may
++/// compute as it starts), every assumption, every INSTANCE's substitutions and every name the
++/// configuration gives, through the bodies of the definitions those name. A definition with
++/// parameters that nothing reached applies is never evaluated, nor is a replaced definition's
++/// own body, which is the class's method in TLC.
+ fn get_named_definition(
+     environment: &Environment,
+     config: &ModelConfig,
+     keys: &FastSet<Name>,
+ ) -> Option<Name> {
+-    fn find(expression: &Expr, keys: &FastSet<Name>) -> Option<Name> {
++    // The text of every name an expression writes, which a LET definition is named by.
++    fn written(expression: &Expr, texts: &mut FastSet<Name>) {
++        match &expression.kind {
++            ExpressionKind::Identifier { name, .. } => {
++                texts.insert(name.clone());
++            }
++            ExpressionKind::Apply { operator, .. }
++            | ExpressionKind::OperatorReference { operator, .. } => {
++                texts.insert(operator.clone());
++            }
++            _ => {}
++        }
++        for child in &expression.children() {
++            written(child, texts);
++        }
++    }
++    fn names(expression: &Expr, found: &mut Vec<Name>) {
++        // TLC evaluates a LET definition only where what it evaluates names it.
++        if let ExpressionKind::Let {
++            definitions,
++            instances: None,
++            body,
++            ..
++        } = &expression.kind
++        {
++            let mut texts = FastSet::default();
++            names(body, found);
++            written(body, &mut texts);
++            let mut included = vec![false; definitions.len()];
++            loop {
++                let mut is_grown = false;
++                for (index, definition) in definitions.iter().enumerate() {
++                    if !included[index] && texts.contains(&definition.name) {
++                        included[index] = true;
++                        is_grown = true;
++                        names(&definition.body, found);
++                        written(&definition.body, &mut texts);
++                    }
++                }
++                if !is_grown {
++                    return;
++                }
++            }
++        }
+         if !expression.is_locally_resolved()
+             && matches!(
+                 expression.kind,
+@@ -2180,47 +2227,46 @@ fn get_named_definition(
+                     | ExpressionKind::OperatorReference { .. }
+             )
+             && let Some(key) = expression.reference()
+-            && keys.contains(&key)
+         {
+-            return Some(key);
++            found.push(key);
++        }
++        for child in &expression.children() {
++            names(child, found);
+         }
+-        expression
+-            .children()
+-            .iter()
+-            .find_map(|child| find(child, keys))
+     }
++    let is_parameterless = |definition: &Definition| match &definition.kind {
++        DefinitionKind::Operator { params, .. } => params.is_empty(),
++        DefinitionKind::Function { .. } => true,
++    };
++    let is_replaced = |definition: &Definition| {
++        keys.iter().any(|key| {
++            environment
++                .definitions
++                .get(key)
++                .is_some_and(|replaced| std::ptr::eq(&**replaced, definition))
++        })
++    };
++    let mut pending: Vec<Expr> = Vec::new();
+     for module in &environment.modules {
+-        for definition in &module.definitions {
+-            // A recursive definition's own body is the class's method in TLC.
+-            let inner: FastSet<Name> = keys
++        pending.extend(
++            module
++                .definitions
+                 .iter()
+-                .filter(|key| {
+-                    environment
+-                        .definitions
+-                        .get(*key)
+-                        .is_none_or(|replaced| !Rc::ptr_eq(replaced, definition))
+-                })
+-                .cloned()
+-                .collect();
+-            if let Some(key) = find(&definition.body, &inner) {
+-                return Some(key);
+-            }
+-        }
+-        let others = module
+-            .assumptions
+-            .iter()
+-            .map(|assumption| &assumption.expression)
+-            .chain(module.instances.iter().flat_map(|instance| {
+-                instance
+-                    .substitutions
+-                    .iter()
+-                    .map(|substitution| &substitution.expression)
+-            }));
+-        for expression in others {
+-            if let Some(key) = find(expression, keys) {
+-                return Some(key);
+-            }
+-        }
++                .filter(|definition| is_parameterless(definition) && !is_replaced(definition))
++                .map(|definition| definition.body.clone()),
++        );
++        pending.extend(
++            module
++                .assumptions
++                .iter()
++                .map(|assumption| assumption.expression.clone()),
++        );
++        pending.extend(module.instances.iter().flat_map(|instance| {
++            instance
++                .substitutions
++                .iter()
++                .map(|substitution| substitution.expression.clone())
++        }));
+     }
+     let root_key = |name: &str| -> Name {
+         environment
+@@ -2228,7 +2274,7 @@ fn get_named_definition(
+             .get(name)
+             .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
+     };
+-    let named = [
++    let configured: Vec<Name> = [
+         &config.init,
+         &config.next,
+         &config.specification,
+@@ -2257,10 +2303,38 @@ fn get_named_definition(
+             .substitutions
+             .iter()
+             .map(|substitution| &substitution.target),
+-    );
+-    named
+-        .map(|name| root_key(name))
+-        .find(|key| keys.contains(key))
++    )
++    .map(|name| root_key(name))
++    .collect();
++    let mut visited: FastSet<Name> = FastSet::default();
++    let mut reached = |key: Name, pending: &mut Vec<Expr>| -> Option<Name> {
++        if keys.contains(&key) {
++            return Some(key);
++        }
++        if visited.insert(key.clone())
++            && let Some(definition) = environment.definitions.get(&key)
++        {
++            pending.push(definition.body.clone());
++        }
++        None
++    };
++    // What the configuration names is evaluated whatever the spec's own expressions name.
++    for key in configured {
++        if let Some(found) = reached(key, &mut pending) {
++            return Some(found);
++        }
++    }
++    let mut found = Vec::new();
++    while let Some(expression) = pending.pop() {
++        found.clear();
++        names(&expression, &mut found);
++        for key in found.drain(..) {
++            if let Some(key) = reached(key, &mut pending) {
++                return Some(key);
++            }
++        }
++    }
++    None
+ }
+ 
+ /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index f26daabd..b7a34332 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -462,8 +462,13 @@ it from one that printed something else. Each is outside the corpus:
+   The front end gives an imported module named like a standard module the builtins of the same
+   names and arities, and read any other such operator by its body, which printed the body's value
+   where TLC computes the method's (264 wrong runs in the upstream conformance suite, whose
+-  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that names one now
+-  declines (`an operator of a module of the user's that TLC's Java class replaces`). Five runs
++  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that may evaluate
++  one now declines (`an operator of a module of the user's that TLC's Java class replaces`): one
++  that what TLC evaluates reaches, from every definition without parameters, assumption,
++  INSTANCE substitution and name of the configuration, through the definitions and LET
++  definitions those name; a wrapper with parameters that nothing reached applies doesn't count.
++  An unused `<-` substitute and an unused definition without parameters count, since TLC may
++  compute them. Five runs
+   matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
+   (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
+   ANY and RandomSubsetSet as builtins.
+-- 
+2.43.0
+
