@@ -1,0 +1,41 @@
+classes base: {'match': 35103, 'decline': 36384, 'wrong': 1337, 'noncompletion': 3}
+classes cand: {'match': 46888, 'decline': 24589, 'wrong': 1347, 'noncompletion': 3}
+changed runs: 27446
+transitions: {'decline->match': 11801, 'decline->decline': 15619, 'decline->wrong': 10, 'match->decline': 16}
+matches lost: 16
+  LOST tlc/standard/tlc/assert_false_in_next#next decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_int#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_multiline#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_record#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_set#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_string#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_false_tuple#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_first_arg_error#init decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_first_arg_error#next decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_message_prints_long#init decline the engine stopped: an assertion failed: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_second_arg_error_on_true#init decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/assert_second_arg_error_on_true#next decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/print_first_arg_error#init decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/print_first_arg_error#next decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/print_second_arg_error#init decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+  LOST tlc/standard/tlc/print_second_arg_error#next decline the engine stopped: division by zero: evaluating the failure again: a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint
+wrong outputs that changed: 10 without a jar run: 0
+   equals-jar tlc/generated/operators/cross_left/cross_left_subset#assume base decline
+   equals-jar tlc/generated/operators/domain/domain_cross#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_cross#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_interval#assume base decline
+   equals-jar tlc/generated/operators/subset_of/subset_of_interval_empty#assume base decline
+   equals-jar tlc/generated/random/001/random_00581#assume base decline
+   equals-jar tlc/generated/random/004/random_02485#assume base decline
+   equals-jar tlc/generated/random/005/random_02721#assume base decline
+   equals-jar tlc/generated/random/016/random_08153#assume base decline
+   equals-jar tlc/generated/random/019/random_09611#assume base decline
+noncompletions: 3 [('tlc/engine262/print_sum', 'time-limit', 'noncompletion'), ('tlc/engine262/functions_and_arrays', 'time-limit', 'noncompletion'), ('tlc/engine262/uncaught_type_error', 'time-limit', 'noncompletion')]
+subset 6,795: cand {'match': 5873, 'decline': 922} base {'decline': 6795}
+subset 575: cand {'decline': 537, 'match': 28, 'wrong': 10} base {'decline': 569, 'wrong': 6}
+subset 8,671: cand {'match': 5027, 'decline': 3638, 'wrong': 6} base {'decline': 8671}
+reasons of decline->match: 11801
+  cap_short_circuits_right tlc/expressions/sets/binary/cap_short_circuits_right#init decline -> match
+  cap_short_circuits_right tlc/expressions/sets/binary/cap_short_circuits_right#invariant decline -> match
+  cap_short_circuits_right tlc/expressions/sets/binary/cap_short_circuits_right#next decline -> match
+  cap_short_circuits_right tlc/expressions/sets/binary/cap_short_circuits_right#property decline -> match

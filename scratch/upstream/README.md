@@ -98,3 +98,16 @@ b929e751 (the coordinator's branch: causes 1, 3 and 4 over main 2af9b885) measur
 ## PR 367 review findings: override-user-modules 0004, 0005 (over b929e751)
 
 `patches/override-user-modules/0004-*`, `0005-*`; cause 5 is withdrawn (its patch stays under `patches/override-user-modules-cause5/`, not for the PR). Full suite of c99d69de against b929e751: no run changed. Differential (`fuzz/`): `gen_fuzz.py` seeds 7 (160 subscripts) and 8 (200 subscripts) plus 84 override shapes, each run with the pinned jar, main 346f96ed and the branch: branch wrong 0; main matches the jar and the branch declines 0; subscripts wrong on main and matching on the branch 236; override shapes wrong on main and declined on the branch 12.
+
+## startup-effects c2cf44ef (PR 366 final head) vs main 346f96ed
+
+Binary sha256 1b446cc2a5fcb7ab6f2b300b0b54f9c945c74616003d0707486fabf9239dfd4f (main 346f96ed: d4f51420bf2db697e1b0fdc9701ab0991569d2b7319267391622a6cff0fc7d31), each run alone; `results/startup-effects-c2cf44ef.*`, `results/main-346f96ed.*`, report `adjudication/startup-effects-c2cf44ef-vs-main-346f96ed.txt` (and `-vs-main-1446840a.txt`, which differs only by PR 365's four cap_short_circuits_right decline -> match), by `measure.py`.
+
+| class | main 346f96ed | c2cf44ef |
+|---|---|---|
+| match | 35,107 | 46,888 |
+| decline | 36,380 | 24,589 |
+| wrong vs the recording | 1,337 | 1,347 |
+| noncompletion | 3 | 3 (the same three engine262 time limits) |
+
+Transitions: decline -> match 11,797; decline -> decline 15,615 (reason); decline -> wrong 10, each byte-identical to the pinned jar (`adjudication/pinned-tlc-startup-effects-c2cf44ef.jsonl.gz` for the 6 not run before); match -> decline 16, all `tlc/standard/tlc/{assert_*,print_*_arg_error}` with `a variable assigned a startup definition that failed outside a Java method, which TLC may report as a state it fails to fingerprint`. Subsets: the 6,795: 5,873 match, 922 decline; the 575: 28 match, 537 decline, 10 wrong vs the recording (6 on main too); the 8,671 (`adjudication/startup-effects-8671.txt`): 5,027 match, 3,638 decline, 6 wrong vs the recording.
