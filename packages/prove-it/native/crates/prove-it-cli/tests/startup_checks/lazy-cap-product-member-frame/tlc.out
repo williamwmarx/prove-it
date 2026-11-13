@@ -1,0 +1,40 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check if non-record
+{}
+is in the set of records:
+[a: SUBSET Nat, b: {}]
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 7, column 9 to line 7, column 91 in M
+1. Line 7, column 9 to line 7, column 14 in M
+2. Line 7, column 19 to line 7, column 91 in M
+3. Line 7, column 25 to line 7, column 90 in M
+4. Line 7, column 36 to line 7, column 89 in M
+5. Line 7, column 36 to line 7, column 63 in M
+
+
+Reason:
+Attempted to check if non-record
+{}
+is in the set of records:
+[a: SUBSET Nat, b: {}]
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

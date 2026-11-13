@@ -1574,6 +1574,11 @@ impl<'ir> Evaluator<'ir> {
                     .err()
                     .unwrap_or_default()
             }
+            // An equality with a set TLC keeps lazy enumerates it, the receiver first
+            // (`convertAndCache`, `toSetEnum`), which may fail in a nested set's `member`.
+            (Given::Equated(other), _) => crate::sets::failing_enumeration(received)
+                .or_else(|| crate::sets::failing_enumeration(other))
+                .unwrap_or_default(),
             (_, Value::Unsorted(values)) => {
                 failing_comparisons(|| crate::value::normalize_failure(values).map_or(Ok(()), Err))
                     .err()
