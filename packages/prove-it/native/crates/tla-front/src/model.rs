@@ -16,8 +16,8 @@ use crate::hash::{FastMap, FastSet};
 use crate::lower::{Lowering, RankedTexts, is_startup_definition, reaches_effect};
 use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
-    Properties, Specification, check_invariants, check_search_config, create_identifier,
-    get_properties, get_specification,
+    Properties, Specification, SubscriptCheck, check_invariants, check_search_config,
+    create_identifier, get_properties, read_specification,
 };
 use crate::values::ValueOrder;
 
@@ -311,18 +311,73 @@ fn lower_ranked(
             options.is_warning_enabled,
         )?;
         // TLC reads the specification after it warns about the invariants.
-        let specification =
-            get_specification(&config, &environment, &facts, version, Some(&evaluator)).map_err(
-                |error| match (error, &constant_invariants) {
-                    (error @ FrontError::Config(_), Some(names))
-                        if options.is_warning_enabled && !names.is_empty() =>
-                    {
-                        FrontError::Warned(get_constant_invariant_warnings(names), Box::new(error))
-                    }
-                    (error, _) => error,
-                },
-            )?;
-        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
+        let mut read_subscripts = Vec::new();
+        let specification = read_specification(
+            &config,
+            &environment,
+            &facts,
+            version,
+            Some(&evaluator),
+            &mut read_subscripts,
+        )
+        .map_err(|error| {
+            let invariants: Vec<(Rc<str>, Option<usize>)> = constant_invariants
+                .iter()
+                .flatten()
+                .map(|name| (name.clone(), None))
+                .collect();
+            let is_unknown = read_subscripts
+                .iter()
+                .any(|check| matches!(check, SubscriptCheck::Unknown(_)));
+            match error {
+                FrontError::Config(_) | FrontError::Evaluation(_)
+                    if options.is_warning_enabled && is_unknown =>
+                {
+                    FrontError::NotYet(
+                        "an error in the specification after a subscript TLC warns of".to_owned(),
+                    )
+                }
+                error @ FrontError::Config(_)
+                    if options.is_warning_enabled
+                        && !(invariants.is_empty()
+                            && read_subscripts.iter().all(|check| !check.is_warned())) =>
+                {
+                    FrontError::Warned(
+                        get_search_warnings(
+                            &invariants,
+                            &get_subscript_warnings(&read_subscripts, &variable_order),
+                            &[],
+                        ),
+                        Box::new(error),
+                    )
+                }
+                error => error,
+            }
+        })?;
+        // TLC warns of the subscript of [][Next]_v as it reads the specification, before it
+        // reads the properties.
+        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))
+            .map_err(|error| match error {
+            FrontError::Config(_) | FrontError::Evaluation(_)
+                if options.is_warning_enabled
+                    && specification
+                        .subscripts
+                        .iter()
+                        .any(SubscriptCheck::is_warned) =>
+            {
+                FrontError::NotYet(
+                    "a property TLC rejects after it warns of the subscript of [][Next]_v"
+                        .to_owned(),
+                )
+            }
+            error => error,
+        })?;
+        // TLC warns of each variable the subscript lacks in its order of the variables.
+        let subscript_warnings = if options.is_warning_enabled {
+            get_subscript_warnings(&specification.subscripts, &variable_order)
+        } else {
+            Vec::new()
+        };
         // `getTlcOrder`: the variables in TLC's order of declarations.
         let position = |index: &i32| {
             let variable = &environment.variables[*index as usize];
@@ -410,10 +465,12 @@ fn lower_ranked(
             match error {
                 error @ FrontError::Config(_)
                     if options.is_warning_enabled
-                        && !(invariants.is_empty() && properties.is_empty()) =>
+                        && !(invariants.is_empty()
+                            && subscript_warnings.is_empty()
+                            && properties.is_empty()) =>
                 {
                     FrontError::Warned(
-                        get_search_warnings(&invariants, &properties),
+                        get_search_warnings(&invariants, &subscript_warnings, &properties),
                         Box::new(error),
                     )
                 }
@@ -429,6 +486,7 @@ fn lower_ranked(
                 next: no_behavior,
                 scope: None,
                 temporals: Vec::new(),
+                subscripts: Vec::new(),
             };
             lowering.write_model(
                 &config,
@@ -459,6 +517,7 @@ fn lower_ranked(
                                     .flatten()
                                     .map(|name| (name.clone(), None))
                                     .collect::<Vec<_>>(),
+                                &subscript_warnings,
                                 &properties.state_level,
                             )
                             .into_iter()
@@ -506,14 +565,26 @@ fn lower_ranked(
         } else {
             (Vec::new(), &[][..])
         };
+        let unknown_subscript = specification
+            .subscripts
+            .iter()
+            .find_map(|check| match check {
+                SubscriptCheck::Unknown(reason) if options.is_warning_enabled => Some(reason),
+                _ => None,
+            });
         let startup_messages = get_startup_messages(
             &config,
             &constant_invariants,
+            &subscript_warnings,
             state_level,
             branches,
             version,
             options.is_warning_enabled,
-        );
+        )
+        .and_then(|messages| match unknown_subscript {
+            Some(reason) => Err(format!("TLC's warnings about {reason}")),
+            None => Ok(messages),
+        });
         let override_messages = get_override_messages(&environment, sources.load_class)
             .map(|messages| {
                 // -nowarning drops a method that matches no operator.
@@ -653,6 +724,7 @@ fn get_override_messages(
 fn get_startup_messages(
     config: &crate::config::ModelConfig,
     constant_invariants: &[(Rc<str>, Option<usize>)],
+    subscript_warnings: &[StartupMessage],
     state_level_properties: &[Rc<str>],
     branches: Option<usize>,
     version: TlcVersion,
@@ -661,7 +733,11 @@ fn get_startup_messages(
     if version == TlcVersion::V1_7_4 {
         return Err("what TLC 1.7.4 prints as it starts".to_owned());
     }
-    let mut messages = get_search_warnings(constant_invariants, state_level_properties);
+    let mut messages = get_search_warnings(
+        constant_invariants,
+        subscript_warnings,
+        state_level_properties,
+    );
     // TLC warns about a symmetry set too small as it computes the symmetry, which the engine does
     // between the constant definitions and these warnings' place in TLC's order: unchecked yet.
     if config.symmetry.is_some() && !messages.is_empty() {
@@ -712,14 +788,46 @@ fn get_constant_invariants(
 }
 
 /// TLC's warnings about invariants that are TRUE constants, by name.
+// `processConfigSpec`'s warnings about the subscript of each `[][Next]_v`.
+fn get_subscript_warnings(
+    subscripts: &[SubscriptCheck],
+    variable_order: &[Rc<str>],
+) -> Vec<StartupMessage> {
+    let warning = |code: u32, text: String| StartupMessage {
+        code,
+        is_warning: true,
+        text,
+        predicate: None,
+    };
+    subscripts
+        .iter()
+        .flat_map(|check| match check {
+            SubscriptCheck::Undetermined => vec![warning(
+                2139,
+                "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.".to_owned(),
+            )],
+            SubscriptCheck::Unknown(_) => Vec::new(),
+            SubscriptCheck::Missing(missing) => variable_order
+                .iter()
+                .filter(|variable| missing.contains(*variable))
+                .map(|variable| warning(
+                    2140,
+                    format!("The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable {variable}"),
+                ))
+                .collect(),
+        })
+        .collect()
+}
+
 pub(crate) fn get_constant_invariant_warnings(names: &[Rc<str>]) -> Vec<StartupMessage> {
     let names: Vec<_> = names.iter().map(|name| (name.clone(), None)).collect();
-    get_search_warnings(&names, &[])
+    get_search_warnings(&names, &[], &[])
 }
 
 // `createSearch`'s warnings about the invariants and the properties.
 fn get_search_warnings(
     constant_invariants: &[(Rc<str>, Option<usize>)],
+    subscript_warnings: &[StartupMessage],
     state_level_properties: &[Rc<str>],
 ) -> Vec<StartupMessage> {
     let warning = |code: u32, text: String| StartupMessage {
@@ -731,6 +839,7 @@ fn get_search_warnings(
     constant_invariants
         .iter()
         .map(|(name, predicate)| StartupMessage { predicate: *predicate, ..warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")) })
+        .chain(subscript_warnings.iter().cloned())
         .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
         .collect()
 }

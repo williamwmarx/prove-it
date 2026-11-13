@@ -16,7 +16,7 @@ use crate::spec::get_definition;
 const TLC_OVERRIDES: &str = include_str!("tlc_overrides.tsv");
 
 // TLC's overrides as (module, operator, level).
-fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
+pub(crate) fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
     TLC_OVERRIDES
         .lines()
         .filter(|line| !line.starts_with('#'))

@@ -5396,6 +5396,548 @@ expressions at the following positions:
 
 0 states generated, 0 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 0.
+### Init == x \in 0..1 /\ y \in {0}: Inv == 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x \in 0..1 /\ y \in {0}
+Next == x' = x /\ y' = y
+Inv == 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 31 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 23 to line 4, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 31 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 23 to line 4, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0 /\ y \in {0, 1}: Inv == 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x = 0 /\ y \in {0, 1}
+Next == x' = x /\ y' = y
+Inv == 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 29 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 29 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 29 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 29 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == y \in {0} /\ x \in 0..1: Inv == 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == y \in {0} /\ x \in 0..1
+Next == x' = x /\ y' = y
+Inv == 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 31 in M
+1. Line 4, column 9 to line 4, column 17 in M
+2. Line 4, column 22 to line 4, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC expected a boolean value, but did not find one. 1
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 31 in M
+1. Line 4, column 9 to line 4, column 17 in M
+2. Line 4, column 22 to line 4, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0 /\ y \in {0}: Con == 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x = 0 /\ y \in {0}
+Next == x' = x /\ y' = y
+Con == 1
+====
+--- config
+INIT Init
+NEXT Next
+CONSTRAINT Con
+--- workers 1 exit 75
+Error: class tla2sany.semantic.OpDefNode cannot be cast to class tlc2.value.impl.Value (tla2sany.semantic.OpDefNode and tlc2.value.impl.Value are in unnamed module of loader 'app')
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+    The error call stack is empty.
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: class tla2sany.semantic.OpDefNode cannot be cast to class tlc2.value.impl.Value (tla2sany.semantic.OpDefNode and tlc2.value.impl.Value are in unnamed module of loader 'app')
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+    The error call stack is empty.
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = {f \in [Nat -> {0}] : TRUE} = {}
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == {f \in [Nat -> {0}] : TRUE} = {}
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 40 in M
+3. Line 4, column 16 to line 4, column 27 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 40 in M
+3. Line 4, column 16 to line 4, column 27 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = \E f \in [Nat -> {0}] : TRUE
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == \E f \in [Nat -> {0}] : TRUE
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 36 in M
+3. Line 4, column 18 to line 4, column 29 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 36 in M
+3. Line 4, column 18 to line 4, column 29 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = \A f \in [Nat -> {0}] : TRUE
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == \A f \in [Nat -> {0}] : TRUE
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 36 in M
+3. Line 4, column 18 to line 4, column 29 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 36 in M
+3. Line 4, column 18 to line 4, column 29 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = \A f \in {g \in [Nat -> {0}] : TRUE} : TRUE
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == \A f \in {g \in [Nat -> {0}] : TRUE} : TRUE
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 51 in M
+3. Line 4, column 25 to line 4, column 36 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 51 in M
+3. Line 4, column 25 to line 4, column 36 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = CHOOSE f \in [Nat -> {0}] : TRUE
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == CHOOSE f \in [Nat -> {0}] : TRUE
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 40 in M
+3. Line 4, column 22 to line 4, column 33 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 40 in M
+3. Line 4, column 22 to line 4, column 33 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = {f : f \in [Nat -> {0}]} = {}
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == {f : f \in [Nat -> {0}]} = {}
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 37 in M
+3. Line 4, column 9 to line 4, column 32 in M
+4. Line 4, column 20 to line 4, column 31 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 37 in M
+3. Line 4, column 9 to line 4, column 32 in M
+4. Line 4, column 20 to line 4, column 31 in M
+
+
+Reason:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = Cardinality({f \in [Nat -> {0}] : TRUE}) = 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == Cardinality({f \in [Nat -> {0}] : TRUE}) = 1
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 52 in M
+3. Line 4, column 9 to line 4, column 48 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to enumerate a set of the form [D -> R],but the domain D:
+Nat
+cannot be enumerated.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 16 in M
+1. Line 5, column 13 to line 5, column 16 in M
+2. Line 4, column 9 to line 4, column 52 in M
+3. Line 4, column 9 to line 4, column 48 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = Cardinality([Nat -> {0}]) = 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers, FiniteSets
+VARIABLE x
+Test == Cardinality([Nat -> {0}]) = 1
+Init == x = Test
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 0
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+--- workers 4 exit 0
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
 ### ({<<1>>} \cup {2}) = {}
 --- spec
 ---- MODULE M ----

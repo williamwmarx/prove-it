@@ -4,9 +4,10 @@
 //! replay, initial states that hold values TLC fails to fingerprint, temporal properties whose atoms
 //! fail on the initial state, function definitions that fail as TLC builds them, memberships whose
 //! comparison fails in a set nested in the one tested, constant definitions TLC can't normalize at
-//! startup, and ALIASes TLC holds as values. Each cell must print what TLC printed, byte for byte,
-//! with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that `DECLINED`
-//! lists.
+//! startup, ALIASes TLC holds as values, state checks that fail after the initial predicate's last
+//! enumeration, and sets of functions over Nat TLC fails to enumerate. Each cell must print what
+//! TLC printed, byte for byte, with TLC's exit code, at -workers 1 and 4, or be one the binary
+//! declines and that `DECLINED` lists.
 //!
 //! TLC's output is recorded by `scripts/record-fingerprint-exceptions.ts` from TLC at the commit
 //! the recordings pin; to check it, run that script with TLA2TOOLS_JAR set and diff the file.
@@ -18,6 +19,9 @@ const RECORDED: &str = include_str!("fingerprint-exceptions.txt");
 
 // The cells the binary declines, by name.
 const DECLINED: &[&str] = &[
+    // A constraint that is a literal, which TLC computes as it starts and then fails to cast to a
+    // value ("OpDefNode cannot be cast"), a failure the binary leaves to TLC.
+    "Init == x = 0 /\\ y \\in {0}: Con == 1",
     // TLC compares a record with a function with the record's compareTo, but the engine's store,
     // which can't tell a record from a function over strings, stops there at a limit of its own.
     "S == {[i \\in 0..1 |-> 5]}: [a |-> x] \\notin S",
@@ -116,7 +120,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 202, "the recorded cells");
+    assert_eq!(cells.len(), 214, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {

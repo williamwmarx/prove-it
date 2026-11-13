@@ -726,7 +726,9 @@ impl Evaluator<'_> {
                 let name = expression.reference().unwrap_or_default();
                 if expression.is_locally_resolved() {
                     return match lookup_scope(scope, &name) {
-                        Some((_, Binding::Value(value))) => Ok(value.clone()),
+                        Some((_, Binding::Value(value) | Binding::Literal { value, .. })) => {
+                            Ok(value.clone())
+                        }
                         Some((node, Binding::Thunk { expression, scope })) => {
                             let key = Rc::as_ptr(node) as usize;
                             if let Some((_, value)) = self.thunks.borrow().get(&key) {

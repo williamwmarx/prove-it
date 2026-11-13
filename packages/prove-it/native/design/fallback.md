@@ -488,6 +488,24 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
+- an operator of a module of the user's named after a class TLC counts as its own
+  (`BuiltInModuleHelper`: TransitiveClosure, Randomization, AnySet, Bags, Json, TLCExt, ...),
+  which TLC replaces by the class's method whatever the module's text (`processModuleOverrides`).
+  The front end gives an imported module named like a standard module the builtins of the same
+  names and arities, and read any other such operator by its body, which printed the body's value
+  where TLC computes the method's (264 wrong runs in the upstream conformance suite, whose
+  TransitiveClosure.tla, Randomization.tla and AnySet.tla are stubs). A spec that may evaluate
+  one now declines (`an operator of a module of the user's that TLC's Java class replaces`): one
+  that what TLC evaluates reaches, from every definition without parameters, assumption,
+  INSTANCE substitution and name of the configuration, through the definitions and LET
+  definitions those name; a wrapper with parameters that nothing reached applies doesn't count.
+  An unused `<-` substitute and an unused definition without parameters count, since TLC may
+  compute them, and so does one in a branch TLC never takes, as the ELSE of
+  `IF TRUE THEN 0 ELSE Warshall({})`, since the walk doesn't decide conditions, and one in an
+  unused definition of a LET nested in a LET's body, which the walk reads whole. Five runs
+  matched only because they compare two stub values, `Warshall(A) = Warshall(B)`
+  (`tlc/standard/transitive_closure/reverse_order_chain`). To win them back, implement Warshall,
+  ANY and RandomSubsetSet as builtins.
 - a configuration substitute `C <- D`, and an operator a TLCOverrides index replaces, where TLC
   computes the definition or the Java method again at each read: TLC holds C as D's definition, so
   it prints, draws and sets registers again wherever it reads C, and calls a `final` method without
@@ -509,6 +527,32 @@ it from one that printed something else. Each is outside the corpus:
   the binary declines it (`applied a function outside its domain`), as it did before action
   constraint failures were native. To win them back, build a constant definition's function as
   TLC computed it at startup.
+- a subscript of `[][Next]_v` that an operator leads back to itself, such as `RECURSIVE F(_)`,
+  `F(n) == F(n)`, `[][x' = x]_<<x, F(0)>>`, or a definition without parameters that names itself,
+  `F == F`, directly, mutually, or through a LET, an operator argument, an INSTANCE or a constant
+  the configuration substitutes. TLC's SubscriptCollector enters the operator's body again and again
+  until its stack overflows, and prints the StackOverflowError (exit 255), whatever -nowarning
+  says; the front end read it without end and aborted the process, or on main took no subscript
+  warning from it and checked the model. It declines where its reading nests deeper than 256,
+  far deeper than a subscript's operators nest (`a subscript of [][Next]_v that an operator leads
+  back to itself`). To win them back, prove the reading doesn't end, as for a cycle of operators
+  that names no parameter, and print TLC's StackOverflowError.
+- a subscript of `[][Next]_v` the subscript collector can't follow, which declines where TLC may
+  print its warnings, unless -nowarning, and is read as TLC reads it otherwise. Main printed no
+  warning for any subscript, so each matched where TLC prints none. What the collector still
+  doesn't follow (`spec.rs`, `Unfollowed`):
+  - a builtin passed as an operator argument, `Ap2(F(_, _)) == F(<<x>>, <<y>>)` with
+    `[][...]_(Ap2(\o))`: TLC reads one its Java method replaces, `\o`, as a value it ignores
+    and warns that the subscript holds neither variable, and one it doesn't, `\cup`, as a node
+    without a body, failing to read it (could not determine); main printed neither warning.
+  - a substitute applied with other than its own arguments, which TLC's configuration rejects
+    before (`CONSTANT C <- G` with `G(a)`: "substitutes for C with G of different number of
+    arguments"), so no run reaches it.
+  - a subexpression name, a name the front end doesn't follow, and a definition TLC may compute
+    as it starts that the front end neither computes nor reads to the end: none of 470 probes of
+    the subscript (`scratch/upstream/fuzz/subscript-position` on `upstream-results`) reaches
+    them, the front end resolving subexpression names and INSTANCE copies before.
+  To win them back, tell a builtin TLC replaces by a Java method from one it doesn't.
 - SANY's report of a spec that extends a module of the CommunityModules (`EXTENDS SequencesExt`)
   that no file beside the spec holds. The TypeScript report printed that SANY can't find it,
   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
@@ -524,6 +568,29 @@ read past an INSTANCE. Eight adversarial rounds kept finding edges in it (nested
 substitute a bare name, operator arguments naming an INSTANCE's copy), so it waits there.
 
 #### Known wrong outputs
+
+A subscript of `[][Next]_v` in which something the front end can't follow, such as a subexpression
+name, comes before an operator that leads back to itself, run with -nowarning: TLC's
+SubscriptCollector reads on into the operator until its stack overflows and prints the
+StackOverflowError (exit 255), where the front end stops at the part it can't follow, takes the
+warning for unknown, which -nowarning lets pass, and checks the model. On main alike, which reads
+no such operator at all. To fix it, read the rest of the subscript for a reading that doesn't end
+before taking the warning for unknown.
+
+An initial predicate or a next-state relation that applies a parameterized INSTANCE in a LET to a
+variable, `Init == LET Q(v) == INSTANCE Inner WITH a <- v IN Q(x)!IInit`, with INIT and NEXT: the
+front end reads the definitions the INSTANCE makes as of constant level, so it evaluates `x` as it
+starts and fails ("In evaluation, the identifier x is either undefined or not an operator.",
+exit 75), where TLC checks the model. On main alike. A SPECIFICATION that reaches one declines (`a
+parameterized INSTANCE in a LET of the specification`); a property or an invariant reads it as
+TLC does. To fix it, level the definitions a parameterized INSTANCE in a LET makes by their
+arguments.
+
+A subscript of `[][Next]_v` that names a subexpression, `V!lab` with `V == lab :: <<x, y>>`, or
+`V!1`: TLC's SubscriptCollector ignores it and warns that the subscript holds no variable, where
+the front end, which resolves a subexpression name to the expression it names before it reads
+the specification, reads the expression and finds the variables. On main alike. To fix it, keep
+a subexpression name's identity through its resolution to the subscript collector.
 
 A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
 with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC

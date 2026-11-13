@@ -1,0 +1,8 @@
+exit 151
+Semantic processing of module M
+Linting of module M
+Warning: The subscript of the next-state relation specified by the specification
+does not seem to contain the state variable y
+(Use the -nowarning option to disable this warning.)
+Error: The specification contains more than one conjunct of the form [][Next]_v,
+but TLC can handle only specifications with one next-state relation.

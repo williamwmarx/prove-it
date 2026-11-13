@@ -415,7 +415,18 @@ impl<'ir> Evaluator<'ir> {
         }
         let frame = StackFrame::Node(self.resolved(node));
         self.in_frame(frame, &mut |evaluator| {
-            evaluator.walk_node(node, context, is_init, then)
+            evaluator.walk_node(node, context, is_init, &mut |evaluator| {
+                let result = then(evaluator);
+                if result.is_err()
+                    && evaluator
+                        .call_stack
+                        .as_ref()
+                        .is_some_and(|stack| !stack.is_frozen)
+                {
+                    evaluator.is_continued_failure = true;
+                }
+                result
+            })
         })
     }
 

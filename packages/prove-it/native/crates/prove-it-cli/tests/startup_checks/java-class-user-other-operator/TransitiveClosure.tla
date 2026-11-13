@@ -1,0 +1,3 @@
+---- MODULE TransitiveClosure ----
+Reach == "kept"
+====

@@ -218,6 +218,26 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
 }
 
 // The sets TLC overrides with Java classes it can't enumerate: Nat, Int, Real and STRING.
+/// The set of functions TLC fails to enumerate (`SetOfFcnsValue.Enumerator`), its domain, or its
+/// range where its domain isn't empty, infinite, that a set is or that a lazy filter filters.
+pub(crate) fn unenumerable_function_set(set: &Value) -> Option<Value> {
+    let Value::Lazy(lazy) = set else {
+        return None;
+    };
+    match &**lazy {
+        Lazy::Filter(base, _) => unenumerable_function_set(base),
+        Lazy::FunctionSet(domain, range)
+            if !is_empty_by_argument(domain)
+                && (is_infinite(domain)
+                    || is_infinite(range)
+                        && elements(domain).is_ok_and(|domain| !domain.is_empty())) =>
+        {
+            Some(set.clone())
+        }
+        _ => None,
+    }
+}
+
 fn is_infinite(set: &Value) -> bool {
     matches!(set, Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings))
 }

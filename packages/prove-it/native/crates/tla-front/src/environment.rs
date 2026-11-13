@@ -2061,6 +2061,282 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     Ok(environment)
 }
 
+/// The modules whose Java class TLC counts as its own (`BuiltInModuleHelper.isBuiltInModule`).
+const BUILT_IN_CLASSES: [&str; 15] = [
+    "AnySet",
+    "Bags",
+    "FiniteSets",
+    "Integers",
+    "Naturals",
+    "Sequences",
+    "Strings",
+    "TLC",
+    "TransitiveClosure",
+    "Randomization",
+    "Json",
+    "TLCExt",
+    "TLCGetSet",
+    "TLCEval",
+    "_Possible",
+];
+
+/// TLC loads its own Java class named after each module of the spec, wherever the module's text
+/// comes from, and runs each method of it in place of the operator of the module spelled the same,
+/// whatever its arity (`processModuleOverrides`): a module of the user's named TransitiveClosure
+/// computes Warshall in Java, not by its body. The front end gives an imported module named like a
+/// standard module the builtins of that module of the same names and arities
+/// (`get_linked_module`), and reads any other operator by its body, so a spec that names one the
+/// class replaces declines.
+fn reject_class_overrides(
+    environment: &Environment,
+    root: &Module,
+    config: &ModelConfig,
+    version: TlcVersion,
+) -> Result<()> {
+    let mut replaced: Vec<(Rc<str>, Name, Option<Position>)> = Vec::new();
+    for module in &environment.modules {
+        if !BUILT_IN_CLASSES.contains(&&*module.name) {
+            continue;
+        }
+        let standard = (module.name != root.name && is_sany_standard_module(&module.name, version))
+            .then(|| {
+                get_standard_modules(version)
+                    .iter()
+                    .find(|standard| standard.name == &*module.name)
+            })
+            .flatten();
+        for definition in &module.definitions {
+            let is_replaced = crate::startup::get_overrides().any(|(class, operator, _)| {
+                class == &*module.name && operator == &*definition.name
+            });
+            let arity = match &definition.kind {
+                DefinitionKind::Operator { params, .. } => params.len(),
+                DefinitionKind::Function { .. } => 0,
+            };
+            let is_builtin = standard.is_some_and(|standard| {
+                standard
+                    .operators
+                    .iter()
+                    .any(|operator| operator.name == &*definition.name && operator.arity == arity)
+            });
+            if is_replaced && !is_builtin {
+                replaced.push((
+                    module.name.clone(),
+                    definition.name.clone(),
+                    definition.location.range.as_ref().map(|range| range.start),
+                ));
+            }
+        }
+    }
+    if replaced.is_empty() {
+        return Ok(());
+    }
+    // The keys of the replaced definitions, and of their copies an INSTANCE makes, which keep the
+    // definition's place in its module.
+    let is_replaced = |definition: &Definition| {
+        replaced.iter().any(|(module, name, start)| {
+            definition.name == *name
+                && definition
+                    .location
+                    .range
+                    .as_ref()
+                    .is_some_and(|range| range.module == *module && Some(range.start) == *start)
+        })
+    };
+    let keys: FastSet<Name> = environment
+        .definitions
+        .iter()
+        .filter(|(_, definition)| is_replaced(definition))
+        .map(|(key, _)| key.clone())
+        .collect();
+    let named = get_named_definition(environment, config, &keys);
+    match named.and_then(|key| environment.definitions.get(&key)) {
+        Some(definition) => Err(FrontError::NotYet(format!(
+            "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
+            definition
+                .location
+                .range
+                .as_ref()
+                .map_or("", |range| &*range.module),
+            definition.name
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The first of the keys that TLC may evaluate a name of, by the definition the name resolves to:
+/// one named in what TLC evaluates, from every definition without parameters (which TLC may
+/// compute as it starts), every assumption, every INSTANCE's substitutions and every name the
+/// configuration gives, through the bodies of the definitions those name. A definition with
+/// parameters that nothing reached applies is never evaluated, nor is a replaced definition's
+/// own body, which is the class's method in TLC.
+fn get_named_definition(
+    environment: &Environment,
+    config: &ModelConfig,
+    keys: &FastSet<Name>,
+) -> Option<Name> {
+    // The text of every name an expression writes, which a LET definition is named by.
+    fn written(expression: &Expr, texts: &mut FastSet<Name>) {
+        match &expression.kind {
+            ExpressionKind::Identifier { name, .. } => {
+                texts.insert(name.clone());
+            }
+            ExpressionKind::Apply { operator, .. }
+            | ExpressionKind::OperatorReference { operator, .. } => {
+                texts.insert(operator.clone());
+            }
+            _ => {}
+        }
+        for child in &expression.children() {
+            written(child, texts);
+        }
+    }
+    fn names(expression: &Expr, found: &mut Vec<Name>) {
+        // TLC evaluates a LET definition only where what it evaluates names it.
+        if let ExpressionKind::Let {
+            definitions,
+            instances: None,
+            body,
+            ..
+        } = &expression.kind
+        {
+            let mut texts = FastSet::default();
+            names(body, found);
+            written(body, &mut texts);
+            let mut included = vec![false; definitions.len()];
+            loop {
+                let mut is_grown = false;
+                for (index, definition) in definitions.iter().enumerate() {
+                    if !included[index] && texts.contains(&definition.name) {
+                        included[index] = true;
+                        is_grown = true;
+                        names(&definition.body, found);
+                        written(&definition.body, &mut texts);
+                    }
+                }
+                if !is_grown {
+                    return;
+                }
+            }
+        }
+        if !expression.is_locally_resolved()
+            && matches!(
+                expression.kind,
+                ExpressionKind::Identifier { .. }
+                    | ExpressionKind::Apply { .. }
+                    | ExpressionKind::OperatorReference { .. }
+            )
+            && let Some(key) = expression.reference()
+        {
+            found.push(key);
+        }
+        for child in &expression.children() {
+            names(child, found);
+        }
+    }
+    let is_parameterless = |definition: &Definition| match &definition.kind {
+        DefinitionKind::Operator { params, .. } => params.is_empty(),
+        DefinitionKind::Function { .. } => true,
+    };
+    let is_replaced = |definition: &Definition| {
+        keys.iter().any(|key| {
+            environment
+                .definitions
+                .get(key)
+                .is_some_and(|replaced| std::ptr::eq(&**replaced, definition))
+        })
+    };
+    let mut pending: Vec<Expr> = Vec::new();
+    for module in &environment.modules {
+        pending.extend(
+            module
+                .definitions
+                .iter()
+                .filter(|definition| is_parameterless(definition) && !is_replaced(definition))
+                .map(|definition| definition.body.clone()),
+        );
+        pending.extend(
+            module
+                .assumptions
+                .iter()
+                .map(|assumption| assumption.expression.clone()),
+        );
+        pending.extend(module.instances.iter().flat_map(|instance| {
+            instance
+                .substitutions
+                .iter()
+                .map(|substitution| substitution.expression.clone())
+        }));
+    }
+    let root_key = |name: &str| -> Name {
+        environment
+            .root_symbols
+            .get(name)
+            .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
+    };
+    let configured: Vec<Name> = [
+        &config.init,
+        &config.next,
+        &config.specification,
+        &config.symmetry,
+        &config.view,
+        &config.alias,
+        &config.periodic,
+        &config.rl_reward,
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        [
+            &config.invariants,
+            &config.properties,
+            &config.constraints,
+            &config.action_constraints,
+            &config.postconditions,
+            &config.possible,
+        ]
+        .into_iter()
+        .flatten(),
+    )
+    .chain(
+        config
+            .substitutions
+            .iter()
+            .map(|substitution| &substitution.target),
+    )
+    .map(|name| root_key(name))
+    .collect();
+    let mut visited: FastSet<Name> = FastSet::default();
+    let mut reached = |key: Name, pending: &mut Vec<Expr>| -> Option<Name> {
+        if keys.contains(&key) {
+            return Some(key);
+        }
+        if visited.insert(key.clone())
+            && let Some(definition) = environment.definitions.get(&key)
+        {
+            pending.push(definition.body.clone());
+        }
+        None
+    };
+    // What the configuration names is evaluated whatever the spec's own expressions name.
+    for key in configured {
+        if let Some(found) = reached(key, &mut pending) {
+            return Some(found);
+        }
+    }
+    let mut found = Vec::new();
+    while let Some(expression) = pending.pop() {
+        found.clear();
+        names(&expression, &mut found);
+        for key in found.drain(..) {
+            if let Some(key) = reached(key, &mut pending) {
+                return Some(key);
+            }
+        }
+    }
+    None
+}
+
 /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
 /// the constant definitions (`processConstantDefns`), after it has rejected any other error of
 /// the configuration (`processSpec`).
@@ -2467,6 +2743,7 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .map(|linked| linked.module.clone())
             .collect(),
     };
+    reject_class_overrides(&environment, &root, config, options.version)?;
     Ok(environment)
 }
 
