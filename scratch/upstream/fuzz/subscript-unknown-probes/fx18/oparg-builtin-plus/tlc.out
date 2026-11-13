@@ -1,0 +1,26 @@
+exit 150
+***Parse Error***
+Encountered ")" at line 5, column 55 and token "(+)" 
+
+Residual stack trace follows:
+ExtendableExpr starting at line 5, column 55.
+ExtendableExpr starting at line 5, column 49.
+Expression starting at line 5, column 49.
+restricted form of expression starting at line 5, column 48.
+Some [] Form starting at line 5, column 29.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

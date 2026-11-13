@@ -1,0 +1,26 @@
+exit 150
+***Parse Error***
+Encountered "1" at line 3, column 94 and token "]_" 
+
+Residual stack trace follows:
+restricted form of expression starting at line 3, column 94.
+Some [] Form starting at line 3, column 85.
+ExtendableExpr starting at line 3, column 85.
+ExtendableExpr starting at line 3, column 62.
+ExtendableExpr starting at line 3, column 29.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.
