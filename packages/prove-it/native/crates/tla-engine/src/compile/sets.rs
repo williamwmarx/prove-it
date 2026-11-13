@@ -1,6 +1,8 @@
 //! Sets the engine tests for membership without building them, and the sets of functions, records
 //! and tuples, which it builds only when it must, as `compileLazySet` and `memberTest` do.
 
+use std::sync::atomic::Ordering;
+
 use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
@@ -9,10 +11,10 @@ use tla_values::store::{
 use tla_values::{Bail, Id};
 
 use super::builtins::expect_int;
-use super::lazy::Lazy;
+use super::lazy::{Lazy, PrintedSet};
 use super::nodes::expect_set;
 use super::{
-    Compiled, Compiler, Compiling, Context, combine_references, eval, leaf, member, parts,
+    Compiled, Compiler, Compiling, Context, Shape, combine_references, eval, leaf, member, parts,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
@@ -229,10 +231,45 @@ impl Compiler<'_> {
         };
         Compiled {
             eval: eval(move |machine| {
-                let elements = reference(machine)?.enumerate(machine)?;
+                let set = reference(machine)?;
+                let elements = set.enumerate(machine)?;
+                // TLC holds the set lazily. It compares, fingerprints, sizes and enumerates it as
+                // its enumeration, which decides emptiness before it asks a part, but prints its
+                // parts where it can't size one before an empty one, which the engine's writes
+                // of a value check (`Program::holds_collapsed`).
+                if set.is_infinite()
+                    && !matches!(
+                        set.check_printed(machine),
+                        Ok(PrintedSet::Empty | PrintedSet::OfEmptyFunction)
+                    )
+                {
+                    machine.program.is_collapsed.store(true, Ordering::Relaxed);
+                }
                 machine.store.set_of(&elements)
             }),
             ..set
+        }
+    }
+
+    /// The set as an operation that only enumerates it takes it, such as a quantifier over it:
+    /// TLC's enumeration of a set it keeps lazy, which may be empty where the set's own value is
+    /// one the engine doesn't hold.
+    pub(crate) fn listed(set: &Compiled) -> Compiled {
+        let Some(reference) = set
+            .reference
+            .clone()
+            .filter(|_| set.has_infinite_part && set.infinite.is_none())
+        else {
+            return set.clone();
+        };
+        Compiled {
+            eval: eval(move |machine| {
+                let elements = reference(machine)?.enumerate(machine)?;
+                machine.store.set_of(&elements)
+            }),
+            shape: Shape::Other,
+            predicate: None,
+            ..set.clone()
         }
     }
 

@@ -762,6 +762,12 @@ impl Reporter for Relay<'_> {
             .send(Event::SymmetrySetsTooSmall(names.to_vec()));
     }
 
+    fn undumped(&mut self, reason: &'static str) {
+        if self.is_dumped {
+            self.dumped = Some(Err(reason));
+        }
+    }
+
     // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
     // a blank line.
     fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {

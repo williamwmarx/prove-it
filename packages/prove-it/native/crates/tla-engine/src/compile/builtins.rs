@@ -424,6 +424,13 @@ impl Compiler<'_> {
         ))
     }
 
+    // The operands of `=` or `#`: TLC compares a set it keeps lazy, such as Int \X {}, by its
+    // enumeration (`SetOfTuplesValue.equals`). Where the other value isn't a set, the failure
+    // TLC reports prints the lazy set as built, as the trace's evaluator does.
+    fn compared(left: Compiled, right: Compiled) -> (Compiled, Compiled) {
+        (Self::listed(&left), Self::listed(&right))
+    }
+
     // `S \subseteq T`, as TLC's isSubsetEq: for two power sets, SUBSET A \subseteq SUBSET B is
     // A \subseteq B, unless TLC can't enumerate A (SubsetValue.isSubsetEq); otherwise each element
     // of S, enumerated, is a member of T.
@@ -434,7 +441,8 @@ impl Compiler<'_> {
             return self.compile_subseteq(left_base, right_base);
         }
         let footprint = left.footprint.merge(&right.footprint);
-        let left_eval = left.eval.clone();
+        // TLC enumerates S (`Value.isSubsetEq`).
+        let left_eval = Self::listed(left).eval;
         let evaluate = if right.member.is_some() || right.infinite.is_some() {
             let test = self.member_test(right);
             // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
@@ -632,6 +640,9 @@ impl Compiler<'_> {
                     .flatten()
             })
             .collect();
+        let is_written = operands
+            .iter()
+            .any(|operand| self.may_write_held(operand.node, true));
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
         // The native binary's reporter finds what it can't print itself: TLC prints the startup's
         // in the front the binary records, and the binary stops at any later one. It prints each
@@ -653,6 +664,7 @@ impl Compiler<'_> {
                         is_unsure_declined,
                         is_print,
                     )?;
+                    check_written(machine, is_written)?;
                     let result = if is_print { values[1] } else { TRUE };
                     push_prints(machine, values, constructions.as_deref())?;
                     Ok(result)
@@ -1571,6 +1583,7 @@ impl Compiler<'_> {
                 }
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
+                let (left, right) = Self::compared(left, right);
                 predicate_node(
                     Predicate::Equal {
                         left: Leaf::of(&left),
@@ -1911,12 +1924,14 @@ impl Compiler<'_> {
                 } else {
                     Construction::Held
                 };
+                let is_written = self.may_write_held(operands[0].node, false);
                 let evaluate = value.eval.clone();
                 Compiled {
                     is_costly: true,
                     ..leaf(
                         eval(move |machine| {
                             let value = evaluate(machine)?;
+                            check_written(machine, is_written)?;
                             to_string(machine, value, &construction)
                         }),
                         value.footprint.clone(),
@@ -2266,9 +2281,13 @@ impl Compiler<'_> {
             "\\cap" => is_reducible(left) == Some(true) || is_reducible(right) == Some(true),
             _ => is_reducible(left) == Some(true),
         };
-        // TLC keeps the union of a set it can't reduce with any set as a SetCupValue.
-        let is_irreducible = name == "\\cup"
-            && (is_reducible(left) == Some(false) || is_reducible(right) == Some(false));
+        // TLC keeps the union of a set it can't reduce with any set as a SetCupValue, and an
+        // intersection or a difference it doesn't reduce as a SetCapValue or a SetDiffValue.
+        let is_irreducible = match name {
+            "\\cup" => is_reducible(left) == Some(false) || is_reducible(right) == Some(false),
+            "\\cap" => is_reducible(left) == Some(false) && is_reducible(right) == Some(false),
+            _ => is_reducible(left) == Some(false),
+        };
         // TLC evaluates both operands, left first, before it tests either for an element
         // (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), so a test that one operand decides runs the
         // other's parts too.
@@ -2365,14 +2384,31 @@ impl Compiler<'_> {
         // TLC enumerates the left set of an intersection or a difference where it can, testing
         // each element for membership in the right one (SetCapValue.elements and
         // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
-        if name != "\\cup"
+        // A set TLC keeps lazy with a part it can't enumerate, such as Int \X {}, which the
+        // engine doesn't build: TLC reduces an intersection with it to the other operand's
+        // elements it holds (`Reducible.cap`).
+        let is_unbuilt = |set: &Compiled| set.infinite.is_some() || set.has_infinite_part;
+        let tested_from = if name != "\\cup" && !is_unbuilt(left) && is_unbuilt(right) {
+            Some((left, right))
+        } else if name == "\\cap"
+            && is_unbuilt(left)
             && left.infinite.is_none()
-            && right.infinite.is_some()
-            && left.is_normalized
+            && !is_unbuilt(right)
+            && is_reducible(right) == Some(true)
         {
-            let right_member = self.member_test(right);
-            let left_eval = left.eval.clone();
+            Some((right, left))
+        } else {
+            None
+        };
+        if let Some((enumerated, tested)) = tested_from.filter(|(set, _)| set.is_normalized) {
+            let right_member = self.member_test(tested);
+            let left_eval = enumerated.eval.clone();
             let is_kept_in_right = name == "\\cap";
+            // TLC evaluates both operands, left first, before it tests one's elements in the
+            // other, so an effect of either may show in another order than the engine's.
+            let is_ordered = !has_effect || (left.infinite.is_none() && right.infinite.is_some());
+            // Where TLC tests the right operand's elements, it has evaluated the left one first.
+            let first = (!std::ptr::eq(enumerated, left)).then(|| Self::parts_of(left));
             return Ok(Some(Compiled {
                 is_costly: true,
                 is_reducible: is_reduced,
@@ -2380,6 +2416,14 @@ impl Compiler<'_> {
                 parts: lazy_parts,
                 ..leaf(
                     eval(move |machine| {
+                        if !is_ordered {
+                            return Err(Bail(
+                                "a set operation TLC reduces on an operand with effects",
+                            ));
+                        }
+                        if let Some(first) = &first {
+                            machine.run_parts(first)?;
+                        }
                         let left = left_eval(machine)?;
                         let set = expect_set(machine, left, "expected a set")?;
                         let mut kept = Vec::new();
@@ -2484,6 +2528,9 @@ impl Compiler<'_> {
                 && [left, right]
                     .iter()
                     .all(|set| set.is_in_order || set.is_reference_exact),
+            // TLC keeps an operation it doesn't reduce lazy (SetCupValue, SetCapValue,
+            // SetDiffValue), and with it the operands' parts.
+            has_infinite_part: !is_reduced && (left.may_be_infinite() || right.may_be_infinite()),
             member: lazy_member,
             parts: lazy_parts,
             reference,
@@ -2636,6 +2683,18 @@ const JAVA_PROPERTY_PREFIX: &str = "-D";
 // it declines if `is_unsure_declined` and otherwise enumerates the set. An argument only printed
 // (all but Print's second, which is its value) that TLC finds empty, or the one function of an
 // empty domain, from its parts, is that, where enumerating it may ask a part TLC never asks.
+/// What writing a value stops with where the value may hold a set TLC prints by its parts, which
+/// the store holds as its enumeration (`Program::holds_collapsed`).
+pub(crate) const COLLAPSED_WRITE: Bail =
+    Bail("unsupported: writing a value that may hold a set TLC prints by its parts");
+
+fn check_written(machine: &Machine<'_>, is_written: bool) -> Outcome<()> {
+    if is_written && machine.program.holds_collapsed() {
+        return Err(COLLAPSED_WRITE);
+    }
+    Ok(())
+}
+
 fn evaluate_printed(
     machine: &mut Machine<'_>,
     evaluators: &[Eval],

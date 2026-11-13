@@ -558,6 +558,21 @@ it from one that printed something else. Each is outside the corpus:
   which TLC prints only where CommunityModules.jar isn't beside tla2tools.jar: it matched TLC by
   where the jar was. The report declines it, as the binary did; winning it back takes knowing
   whether TLC's class path holds the CommunityModules.
+- a write of a value once the run has enumerated a set of functions, records or tuples that TLC
+  keeps lazy and prints by its parts: one with a part TLC can't size before an empty one, such as
+  `[a : Int, b : {}]` (`SetOfRcdsValue.toString` sizes the parts in order). TLC compares,
+  fingerprints, sizes and enumerates such a set as its enumeration, which decides emptiness before
+  it asks a part, so the engine holds it as that enumeration, `{}` or `{<<>>}`, and a trace's
+  states, which the trace evaluator prints, and a failure it explains print it as TLC does. Only
+  what the engine writes itself would print the enumeration instead: Print, PrintT, AssertEq and
+  ToString of a value that may hold such a set (`may_write_held`), `-dump`, a simulation's trace
+  and the message of a constant conjunct of the specification. These decline (`writing a value
+  that may hold a set TLC prints by its parts`, `dumping a state that may hold a set TLC prints by
+  its parts`). The engine records such an enumeration for the run (`Program::holds_collapsed`), not
+  for the value, so a write of a value that holds none declines too, where main printed it as TLC
+  does. Of 1,600 adversarial specs against TLC (four seeds of `scratch/upstream/gen_lazy.py` on
+  the `upstream-results` branch), none matched on main and declines. To win them back, keep the
+  lazy set as a value the store holds and prints as TLC does.
 
 A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
 through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
@@ -592,15 +607,22 @@ the front end, which resolves a subexpression name to the expression it names be
 the specification, reads the expression and finds the variables. On main alike. To fix it, keep
 a subexpression name's identity through its resolution to the subscript collector.
 
-A set operation or a membership TLC tests on a set of tuples, records or functions it holds lazily
-with a part it can't size, where the engine holds the set as the empty set it enumerated: TLC
-tests each element of the other operand for membership in it, which fails on a value of the
-wrong kind, where the engine finds the set empty and tests nothing. `Init == x = Cardinality({(Int
-\X {}) \cap {"a"}})`, `Init == x = DOMAIN [a |-> (Int \X {}) \cap {"a"}]` and, printed at startup
-and read by Init, `Test == PrintT(DOMAIN [a |-> <<BOOLEAN \X ((Int \X {}) \cap {"a"})>>])` stop
-TLC with "Attempted to check if non-tuple\n"a"\nis in the set of tuples:\n(Int \X {})" (exit
-75, as a state it fails to fingerprint), where the native checker goes on with the value it
-computed, printing `{"a"}` for the last. On main alike; found by the startup fuzz of PR 366.
+An intersection or a difference TLC doesn't reduce, of sets of tuples, records or functions it
+holds lazily with a part it can't size: TLC enumerates the left set and tests each element in the
+right one (`SetCapValue.elements`, `SetDiffValue.elements`), which fails on a value of the wrong
+kind, or comparing a function's domain with a set TLC overrides, where the engine intersects the
+two sets it enumerated and tests nothing. `Init == x = PrintT(<<[{} -> STRING] \cap ([Nat -> {}] \
+{})>>)` stops TLC with "Attempted to compare overridden value Nat with non-overridden value:\n{}" (exit
+75), where the native checker prints `<<{}>>`, and `Init == x = [f |-> ((SUBSET Nat \X (1..0))
+\cap (SUBSET Nat \X {})) \cap [STRING -> {}]]` stops TLC as a state it fails to fingerprint, where
+the native checker finds no error. A reduced intersection or difference with such a set, as
+`Cardinality({(Int \X {}) \cap {"a"}})`, tests the other operand's elements in it as TLC does.
+Relatedly, a filter or a union of such sets that TLC fails to enumerate fails in the trace
+evaluator on another part first: `ASSUME PrintT({t \in ((Seq({1}) \X {}) \cup (SUBSET Nat \X [{}
+-> SUBSET Nat])) : TRUE} = {})` prints "Attempted to compute the number of elements in the overridden
+value Nat." in TLC and "Attempted to enumerate a set of the form s1 \X s2 ... \X sn,\nbut can't
+enumerate s0:\nNat" natively. On main alike, five of 1,600 adversarial specs
+(`scratch/upstream/gen_lazy.py`); found by the startup fuzz of PR 366.
 
 A failure of a value TLC builds in the initial predicate, as in `Init == x = (DOMAIN <<1>> =
 TRUE)`, TLC reports as a state it fails to fingerprint ("TLC was unable to fingerprint", with the
