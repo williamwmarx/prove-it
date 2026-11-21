@@ -30,7 +30,7 @@ about 9.5 times the TypeScript engine the model checker replaced.
 | `prover/smt/solver/nlsat/` | 7,875 | 12 | Z3's nlsat: polynomials, univariate factorisation, real algebraic numbers, interval sets, the explain module and levelwise projection. |
 | `prover/zenon/` | 11,594 | 38 | A port of Zenon as tlapm ships it, with its TLA+ extension (`tla/`): the `.znn` reader, the tableau search, the low-level proof translation (`mltoll.ts`), the Isar printer (`isar*.ts`), and an independent proof checker (`check/`) that every proof must pass before it counts. |
 | `prover/isabelle/` | 11,713 | 50 | A port of the parts of Isabelle2025 TLAPS uses: the Pure kernel (`pure/`: terms, types, `thm`, unification, higher-order patterns, the rewriter and simplifier, nets), classical reasoning, hypsubst and blast (`provers/`), Isar's outer and inner syntax, type inference and methods (`isar/`), and the Isabelle/TLA+ object logic decoded from a generated 509 KB JSON (`tla/logic-data.ts`, made by `scripts/isabelle-logic.ts` from tlapm's heap). The encoder (`encode.ts`) writes the theory tlapm writes. |
-| `prover/ptl/` | 739 | 4 | tlapm's PTL path: the encoder to LS4's syntax and a decider (a tableau over a CDCL SAT solver) standing in for LS4. |
+| `prover/ptl/` | 739 | 4 | tlapm's PTL path: the encoder to LS4's syntax and a decider standing in for `ptl_to_trp \| ls4`: a port of ptl_to_trp's grammar and translation to LS4's clause set, of LS4's reading of it, and a tableau over a CDCL SAT solver deciding the clause set. |
 | `prover/tlapm/` | 502 | 3 | tlapm's fingerprints file (`.tlacache`) in OCaml's Marshal format (`ocaml-marshal.ts`, `cache.ts`), and the `tlapm` back end that runs a real tlapm (`tlapm.ts`). |
 | `prover/*.ts` | 1,362 | 8 | `prove.ts` (the driver: methods in turn, fingerprint reuse, ordering, CASE-error numbering, reports), `decide-pool.ts` and `prove-worker.ts` (worker threads), `deciders.ts`, `verdict.ts`, `first-order.ts`, `ocaml.ts`, and `tlaps-module.ts` (TLAPS.tla verbatim). |
 
@@ -1151,9 +1151,17 @@ is next.
   297 LS4 inputs of `tests/conformance/prover-inputs.json` (`prover-differential --side rust
   --prover ls4`, 297 same through the addon and through WebAssembly), and `deciders.test.ts` pins
   its answer on its LS4 input (`unsat` in 5 steps). PTL is decided as Zenon is, by its Rust port
-  alone; text that isn't LS4 input is a `TlaProverError` with the message the TypeScript's
-  `TlaSyntaxError` gave, where the port used to decline it. `conformance:ptl` decides with the
-  native PTL. `THIRD_PARTY_NOTICES.md` named no path of the deleted decider.
+  alone. The decider ports tlapm's `ptl_to_trp`, the program that turns the text into LS4's
+  clause set (its grammar with yacc's precedences, negation normal form, the DSNF renaming,
+  skolemization, conjunctive normal form and the printing), and LS4's reader of that clause set
+  (`core/Trp2Spec.cc`), and decides the clause set by the tableau; so text ptl_to_trp's grammar
+  rejects, a past operator its translation raises on, and a clause LS4 doesn't read (a literal
+  with arguments, an identifier of 32 characters or more) reach no verdict, as `ptl_to_trp | ls4`
+  reaches none, and `True` and `False` inside a clause are the atoms LS4 reads them as (so
+  `sometime False` is satisfiable, which tlapm avoids by writing FALSE as `(cc & ~ cc)`). Since
+  the tableau decides the clause set, not the formula, its steps differ from the TypeScript's on
+  2 of the 13 pinned inputs and on the 297 recorded LS4 inputs, re-recorded. `conformance:ptl`
+  decides with the native PTL. `THIRD_PARTY_NOTICES.md` named no path of the deleted decider.
 - P4 Isabelle, the TypeScript deleted (by the coordinator's decision, with PTL's): `src/prover/
   isabelle/` is gone but `encode.ts`, which P5c owns, with `tests/unit/isabelle.test.ts`, every
   case of which `crates/prover/isabelle/src/decide.rs` tests, and `TlaIsabelleError`. The scripts

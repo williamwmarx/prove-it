@@ -116,13 +116,20 @@ describe("the Rust ports", () => {
     },
   );
 
-  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
+  // tlapm counts a Zenon or an Isabelle that stops on its input as a failure.
   it.each([
-    ["zenon", "$sig a"],
+    ["zenon", "$include a"],
     ["isabelle", "theory \u{e9}"],
-    ["ls4", "not ((always h00000) ->"],
   ])("fails on a malformed %s input", (prover, text) => {
     expect(decide(prover, text)).toMatchObject({ kind: "error" });
+  });
+
+  // ptl_to_trp prints no clause set for text its grammar rejects, so LS4 reaches no verdict.
+  it("reaches no verdict on a malformed ls4 input", () => {
+    expect(decide("ls4", "not ((always h00000) ->")).toMatchObject({
+      kind: "decided",
+      verdict: "unknown",
+    });
   });
 
   it("declines a prover without a backend", () => {

@@ -38,7 +38,7 @@ SOFTWARE.
 
 <https://github.com/tlaplus/tlapm>
 
-The proof obligations, Prep, the backends' encoders, the prover driver and tlapm's fingerprints file and command line are ported from tlapm, first to TypeScript and then to Rust: `native/crates/prover/` and `native/crates/prove-it-check/src/tlapm.rs`. `native/crates/prover/obligations/src/tlaps_module.rs` includes tlapm's `library/TLAPS.tla` verbatim.
+The proof obligations, Prep, the backends' encoders, the prover driver and tlapm's fingerprints file and command line are ported from tlapm, first to TypeScript and then to Rust: `native/crates/prover/` and `native/crates/prove-it-check/src/tlapm.rs`. `native/crates/prover/obligations/src/tlaps_module.rs` includes tlapm's `library/TLAPS.tla` verbatim. `native/crates/prover/ptl/src/translate.rs` is ported from tlapm's `translate/`, the `ptl_to_trp` program by Boris Konev, whose `README` says its author lets tlapm use it under the terms of the BSD license and which tlapm's `README.md` lists under LGPL 2.1 with the linking exception.
 
 ```
 Copyright (c) 2008 INRIA and Microsoft Corporation
@@ -327,6 +327,37 @@ Ty Coon, President of Vice
 That's all there is to it!
 
 --------------------------------------------------
+```
+
+## LS4
+
+<https://github.com/quickbeam123/ls4>
+
+`native/crates/prover/ptl/src/spec.rs` is ported from LS4's reader of its clause sets (`core/Trp2Spec.cc`), as tlapm builds LS4 1.0.
+
+```
+Copyright (c) 2012, Martin Suda
+Max-Planck-Institut für Informatik, Saarbrücken, Germany
+
+Copyright (c) 2006 - 2011, Armin Biere, Johannes Kepler University.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to
+deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
 ```
 
 ## Z3

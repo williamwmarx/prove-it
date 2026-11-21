@@ -1,5 +1,6 @@
 //! The decider against the reference LS4: each formula in tests/conformance/ptl, which the corpora
-//! never send LS4, beside LS4's output on it.
+//! never send LS4, beside LS4's output on it, and each text of tests/fixtures/ls4 beside the verdict
+//! `ptl_to_trp -i file | ls4` gave (tla-ts's recording of tlapm's backends).
 
 use std::fs;
 use std::path::Path;
@@ -40,8 +41,8 @@ fn gives_ls4s_verdict_on_each_formula() {
     }
 }
 
-/// The inputs the encoder prints for the obligations of tests/unit/ptl.test.ts, with the verdict and
-/// the steps the TypeScript decider gave on each before it was deleted.
+/// The inputs the encoder prints for the obligations of tests/unit/ptl.test.ts, with the verdict
+/// the TypeScript decider gave on each before it was deleted, and the steps the port takes.
 #[test]
 fn decides_the_encoders_inputs_as_recorded() {
     for (text, verdict, steps) in [
@@ -68,12 +69,12 @@ fn decides_the_encoders_inputs_as_recorded() {
         (
             "not (((always (always hc5714)) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
             Verdict::Unsat,
-            16,
+            15,
         ),
         (
             "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
             Verdict::Sat,
-            36,
+            40,
         ),
         (
             "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((always (sometime hc5714)) -> (always (sometime (hfc35e & (~ h18388))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
@@ -145,24 +146,39 @@ fn a_canceled_decision_is_unknown() {
     assert_eq!(decision.verdict, Verdict::Unknown);
 }
 
-/// tlapm counts an LS4 that stops on its input as a failure.
+/// ptl_to_trp prints no clause set for text its grammar rejects, and LS4 then reads nothing it
+/// decides, which tlapm counts as a failure.
 #[test]
-fn fails_on_what_isnt_ls4_input() {
-    for (text, message) in [
-        (
-            "not ((always h00000) ->",
-            "Expected a formula in LS4 input, found the end",
-        ),
-        ("p q", "Expected the end of LS4 input, found q"),
-        ("(p", "Expected ) in LS4 input, found the end"),
-        ("p & ~", "Expected a formula in LS4 input, found the end"),
-        ("p \u{a0} q", "Expected ASCII LS4 input"),
-        ("p -> )", "Expected a formula in LS4 input, found )"),
+fn reaches_no_verdict_where_ptl_to_trp_stops() {
+    for text in [
+        "not ((always h00000) ->",
+        "p q",
+        "(p",
+        "p & ~",
+        "p \u{a0} q",
+        "p -> )",
     ] {
-        assert_eq!(
-            decide(text, None),
-            Err(DecideError::Prover(message.into())),
-            "{text}"
-        );
+        let decision = decide(text, None).expect("a decision");
+        assert_eq!(decision.verdict, Verdict::Unknown, "{text}");
     }
+}
+
+#[test]
+fn gives_the_recorded_verdict_on_each_syntax_fixture() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/ls4");
+    let recorded = fs::read_to_string(directory.join("recorded.txt")).expect("the record");
+    let mut count = 0;
+    for line in recorded.lines() {
+        let (name, verdict) = line.split_once('\t').expect("a name and a verdict");
+        let expected = match verdict {
+            "unsat" => Verdict::Unsat,
+            "sat" => Verdict::Sat,
+            _ => Verdict::Unknown,
+        };
+        let text = fs::read_to_string(directory.join(format!("{name}.ls4"))).expect("the text");
+        let decision = decide(&text, None).expect("a decision");
+        assert_eq!(decision.verdict, expected, "{name}");
+        count += 1;
+    }
+    assert_eq!(count, 25);
 }

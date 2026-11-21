@@ -9,9 +9,10 @@ use prove_decide::Verdict;
 
 use crate::sat::{Solution, Solver};
 
-/// A formula as LS4's input writes it, each node at an index of `Formulas`.
+/// A formula, each node at an index of `Formulas`.
 #[derive(Clone, Copy, Debug)]
 pub enum Formula {
+    Constant(bool),
     Atom(usize),
     Not(usize),
     Next(usize),
@@ -19,8 +20,6 @@ pub enum Formula {
     Eventually(usize),
     And(usize, usize),
     Or(usize, usize),
-    Implies(usize, usize),
-    Equiv(usize, usize),
 }
 
 /// A parsed formula: its nodes, its atoms' names, and the node at its root.
@@ -136,6 +135,7 @@ impl Normalizer<'_> {
             if is_and { Junction::And } else { Junction::Or }
         };
         let result = match self.formulas.nodes[node] {
+            Formula::Constant(value) => self.table.get_constant(value != is_negated),
             Formula::Atom(atom) => {
                 let sign = if is_negated { "-" } else { "+" };
                 let key = format!("{sign}{}", self.formulas.atoms[atom]);
@@ -166,26 +166,6 @@ impl Normalizer<'_> {
                 let right = self.normalize(right, is_negated);
                 self.table
                     .get_junction(junction(is_and != is_negated), &[left, right])
-            }
-            Formula::Implies(left, right) => {
-                let left = self.normalize(left, !is_negated);
-                let right = self.normalize(right, is_negated);
-                self.table
-                    .get_junction(junction(is_negated), &[left, right])
-            }
-            Formula::Equiv(left, right) => {
-                let first_left = self.normalize(left, !is_negated);
-                let first_right = self.normalize(right, is_negated);
-                let first = self
-                    .table
-                    .get_junction(junction(is_negated), &[first_left, first_right]);
-                let second_left = self.normalize(left, is_negated);
-                let second_right = self.normalize(right, !is_negated);
-                let second = self
-                    .table
-                    .get_junction(junction(is_negated), &[second_left, second_right]);
-                self.table
-                    .get_junction(junction(!is_negated), &[first, second])
             }
         };
         self.memo[usize::from(is_negated)][node] = Some(result);
