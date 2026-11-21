@@ -1470,15 +1470,20 @@ by zero, words TLC's failure (`except-*` fixtures), and declines only where that
 warns, which TLC did as it started and doesn't again ("a value TLC computed at startup with a
 warning").
 
-The liveness level of an application of an operator that applies an operator argument counts
-that argument's level, as SANY's does (`Specs.getLevel`, `getLevelParams`), so `<>(Apply(G)...)`
-with `G(k) == x + k` is a state predicate rather than a constant TLC evaluates as it starts. It
-counts it only where the body applies the argument at weight 1: `OpApplNode.levelCheck` adds an
-operand's level parameters only for a weight-1 operand (`BuiltInOperators`), and ENABLED, ',
-UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal quantifiers take theirs with weight
-0. So `Over(F(_)) == ENABLED F(2)` applied to an action `Op` is a state predicate, and
-`PROPERTY Prop` with `Prop == [](Over(Op))` is an invariant TLC reports violated by the initial
-state, not a temporal property.
+The liveness level of an application counts the arguments whose parameters the operator's body
+reads, as SANY's does (`Specs.getLevel` takes SANY's level, and `OpDefNode.levelCheck` weights a
+parameter 1 where the body's level parameters hold it): the front end reads the weights off its
+port of SANY's level check (`levels.rs`), which computes the level parameters node by node, as
+SANY does, through a LET's definitions, a LET function's bounds, and an operator argument the
+body applies (`OpApplNode.levelCheck` adds an operand's level parameters only for a weight-1
+operand, and ENABLED, ', UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal
+quantifiers take theirs with weight 0). So `<>(Apply(G)...)` with `G(k) == x + k` is a state
+predicate rather than a constant TLC evaluates as it starts; `Over(F(_)) == ENABLED F(2)`
+applied to an action `Op` is a state predicate, and `PROPERTY Prop` with `Prop == [](Over(Op))`
+is an invariant TLC reports violated by the initial state, not a temporal property; and `F(x')`
+with `F(p) == x = 0`, `F(p) == LET A == p  B == A IN B` or `F(p) == LET f[i \in p] == i IN 1 \in
+DOMAIN f` is an action where the body reads `p` and a state predicate where it doesn't
+(`tests/level-params`). An operator SANY's level check doesn't accept counts every argument.
 
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
