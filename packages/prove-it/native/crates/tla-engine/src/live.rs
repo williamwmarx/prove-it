@@ -947,13 +947,14 @@ pub fn answer_atoms(
                         },
                     );
                     let mut own = None;
+                    // A helper that had no states answered nothing.
                     for (member, &at) in group.iter().enumerate() {
                         let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
-                        for part in &parts {
-                            answers.extend_from_slice(&part[member].0);
+                        for part in parts.iter().filter_map(|part| part.get(member)) {
+                            answers.extend_from_slice(&part.0);
                         }
-                        for part in &parts {
-                            answers.extend_from_slice(&part[member].1);
+                        for part in parts.iter().filter_map(|part| part.get(member)) {
+                            answers.extend_from_slice(&part.1);
                         }
                         let table = Table {
                             answers,
