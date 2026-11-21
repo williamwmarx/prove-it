@@ -26,6 +26,7 @@ mod nodes;
 pub(crate) use nodes::EXCEPT_INCOMPATIBLE_KEY;
 mod pieces;
 mod predicate;
+mod pruned;
 pub(crate) mod random;
 mod sets;
 mod walker;
@@ -1174,6 +1175,9 @@ pub struct Compiler<'a> {
     /// assigns it, which only then needs the set it is assigned as TLC built it
     /// (`Machine::held`).
     held_streams: Vec<Arc<AtomicBool>>,
+    /// The pruning of the enumeration of `x' \in [D -> T]` for the walk of the membership at a
+    /// node, which its conjunction sets as it walks it (`pruned`).
+    pruning: Option<(NodeId, pruned::Pruning)>,
     /// The slots of names a walk binds over a set enumeration whose first element TLC keeps lazy,
     /// with that element's value and reference (`Compiled::unsorted_first`).
     unsorted_slots: HashMap<u32, (Eval, Option<lazy::Reference>)>,
@@ -1354,6 +1358,7 @@ impl<'a> Compiler<'a> {
             held_streams: (0..ir.variables.len())
                 .map(|_| Arc::new(AtomicBool::new(false)))
                 .collect(),
+            pruning: None,
             unsorted_slots: HashMap::new(),
             is_native: false,
             json_files: crate::search::JsonFiles::System,
