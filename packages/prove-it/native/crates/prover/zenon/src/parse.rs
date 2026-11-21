@@ -437,6 +437,15 @@ pub fn parse_zenon(exprs: &Expressions, text: &str) -> Result<Vec<Phrase>, Zenon
                     body,
                 })));
             }
+            (TokenKind::Keyword, "$sig") => {
+                parser.expect(TokenKind::Ident)?;
+                parser.expect(TokenKind::Open)?;
+                while parser.is_at(TokenKind::String) {
+                    parser.next();
+                }
+                parser.expect(TokenKind::Close)?;
+                parser.expect(TokenKind::String)?;
+            }
             _ => return Err(error(line, &format!("unsupported phrase {text}"))),
         }
     }
