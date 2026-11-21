@@ -180,8 +180,14 @@ const runOne = async (test: SuiteTest, context: { name: string; source: string; 
   const configFile = `${test.moduleName}.cfg`;
   writeFileSync(join(directory, test.fileName), context.source);
   writeFileSync(join(directory, configFile), context.config);
+  // hosts.ts since 28c823e4: Java TLC gets a java.io.tmpdir of its own in the run's directory.
+  const javaDirectory = join(directory, ".java");
+  const isJava = basename(command[0]) === "java";
+  if (isJava) mkdirSync(javaDirectory);
   const argv = [
-    ...command.map((a) => (a === "-Xss2m" && test.metadata.stack ? `-Xss${test.metadata.stack}` : a)),
+    command[0],
+    ...(isJava ? [`-Djava.io.tmpdir=${javaDirectory}`] : []),
+    ...command.slice(1).map((a) => (a === "-Xss2m" && test.metadata.stack ? `-Xss${test.metadata.stack}` : a)),
     ...(isExitOnly ? [] : ["-tool"]), ...DETERMINISTIC_ARGUMENTS, "-metadir", join(directory, ".meta"),
     ...(test.metadata.args ?? []), ...(test.metadata.args?.includes("-config") ? [] : ["-config", configFile]), test.fileName,
   ];

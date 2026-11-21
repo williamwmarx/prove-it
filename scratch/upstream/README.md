@@ -165,3 +165,22 @@ Fix: 0 wrong, 0 main match lost. The 1,600 lazy-set specs: unchanged from the PR
 Pinned-jar runs (tla2tools.jar from tlaplus d8fb231, sha256 above), by id, through `harness.ts` with the jar as the binary: `adjudication/pinned-tlc*.jsonl.gz` (the four files cover 7,652 + 214 + 25 + 76 runs; a later file's row supersedes an earlier one's). `measure.py <base.jsonl> <cand.jsonl> <jar.jsonl>...` gives classes, transitions, matches lost and each changed wrong output against the jar. To run the jar on more ids: `ONLY_IDS=<file of ids> bun harness.ts <tla-ts>/packages/conformance/test <out.jsonl> 600 2 <java> -XX:+UseParallelGC -Xss2m -cp <tla2tools.jar> tlc2.TLC`.
 
 Fuzz generators (each writes M.tla/M.cfg fixture directories): `fuzz/gen_subpos.py` (subscripts of [][Next]_v), `fuzz/gen_sub.py`, `fuzz/gen_reach.py` (Java-overridden user modules), `fuzz/gen_fuzz.py`, `fuzz/gen_lazy.py <out> <seed> <count>` (lazy sets with an unsizable part; seeds 1-4 used), `fuzz/gen_effects.py <out> <seed> all` (failing/printing parts x shapes x operators x positions, 13,740 cells). `tools/`: `jar-fixture.sh <dir>` writes the jar's `tlc.out` (JAVA and TLA2TOOLS name the JDK 21 java and the pinned jar), `try-fixture.sh <binary> <dir>...` prints MATCH, DIFF or DECLINE as `startup_checks.rs` compares, `two.sh`/`three3.sh` compare binaries over fixtures, `out-of.sh` + `vsjar.py` the three-way table of `fuzz/effects/`. Known wrong outputs left at fd6a195c are in `native/design/fallback.md` (Known wrong outputs) on main.
+
+## main b7f832b9 (PR 369 merged) on upstream tla-ts 0341dbe5
+
+- Upstream suite: aidenybai/tla-ts 0341dbe5fbebe1b48ac2da3d45dbb167c5f9c1b5 (HEAD on 2026-11-21, #642), suite `tlc`: 61,436 tests, 72,878 runs. Against 28c823e4 the `tlc` suite gained 27 tests (31 files with 4 include modules) and changed 7 files (recordings re-lined, `correct:` entries added or dropped); the other new conformance files are `tlapm`.
+- Harness: one change ported from upstream's hosts.ts since 28c823e4: a `java` host gets `-Djava.io.tmpdir=<run>/.java` (#635). Nothing else changed for the `tlc` suite (`exceeded` is now always present; the verdicts are the same).
+- Binary: main b7f832b9, `cargo build --release --locked -p prove-it-cli`, sha256 084d2da7aef9de98221d0d977bdd82317d785126949335bb478a0350aba4f6d7. 4 workers, 120 s.
+- Pinned TLC: tlaplus d8fb231d built as parity.yml does (ant compile dist, OpenJDK 21.0.13), tla2tools.jar sha256 ea5cf4b72a9d1e946ac9717f5db635e950808cd8e753c900b63261e081817713 (the jar's bytes differ from the earlier build's by its timestamps), run with the upstream `tlc` host's JVM flags.
+- Environment: both run with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS` and `CLASSPATH` unset. This container sets the first two (a proxy and `-XX:DisableIntrinsic`), and with them the binary reads the JVM as opaque, as TLC's JVM would pick them up, and declines 1,194 runs instead of 311 (`results/main-b7f832b9-javaenv` is not kept).
+
+Pinned-jar runs (`adjudication/pinned-tlc-tla-ts-0341dbe5.jsonl.gz`, ids in `jar-ids-tla-ts-0341dbe5.txt`): every run whose output differs from the recording and isn't a decline (1,175), and every run of the 34 new or changed tests (51 + 15 runs).
+
+| class against the pinned jar | runs |
+| --- | ---: |
+| match | 72,567 (1,175 of them where the recording differs) |
+| decline | 311 |
+| wrong | 0 |
+| noncompletion | 0 (the three engine262 runs finish now) |
+
+`results/main-b7f832b9-tla-ts-0341dbe5.*` hold the per-run rows.
