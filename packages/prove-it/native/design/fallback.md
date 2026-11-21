@@ -4883,6 +4883,15 @@ matches TLC or declines exactly.
   replay now walks the body of a startup definition that failed (`resolve_action`), and these
   match.
 
+- A constant definition that names a theorem whose statement reads a variable, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `getLevelBound` looks a theorem's or an
+  assumption's name up to a `ThmOrAssumpDefNode`, whose statement it never enters, so with
+  `THEOREM T == x \in {0, 1}` TLC takes `C == PrintT("c") /\ T` as constant and computes it as it
+  starts, printing `"c"` before T fails there. The front end's definition facts carried the
+  statement's level into C (`DependencyFacts`), so the binary never computed C and printed
+  nothing. They now count a fact's name at level 0 while keeping its reads; the engine then
+  declines such a definition as one TLC computes as it starts that fails there. Fixtures
+  `theorem-level-*`.
 - A definition K the configuration substitutes for a declared constant (`CONSTANT J <- K`) and
   also names as an INVARIANT, a (ACTION_)CONSTRAINT, a PROPERTY, the INIT or the SPECIFICATION.
   `processConstantDefns` takes the modules in the order SANY finishes them, each one's constants

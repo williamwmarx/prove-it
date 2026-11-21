@@ -367,6 +367,17 @@ fn is_evaluated_once(definition: &Definition, flags: u32) -> bool {
         && flags & NONCONSTANT == 0
 }
 
+// A theorem's or an assumption's name, which isn't one of TLC's OpDefNodes.
+fn is_fact(definition: &Definition) -> bool {
+    matches!(
+        definition.kind,
+        DefinitionKind::Operator {
+            body_range: None,
+            ..
+        }
+    )
+}
+
 fn address(definition: &Rc<Definition>) -> usize {
     Rc::as_ptr(definition) as usize
 }
@@ -406,6 +417,30 @@ pub fn create_definition_facts(environment: &Environment) -> DefinitionFacts {
         })
         .collect();
     let reads = close_rows(&local, words, &read_edges, READ_MASK);
+    // `getLevelBound` looks a theorem's or an assumption's name up to a `ThmOrAssumpDefNode`,
+    // whose statement it never enters: a definition that names one is constant where the rest of
+    // it is, though evaluating it reads the statement's variables.
+    let constant_edges: Vec<Vec<usize>> = edges
+        .iter()
+        .map(|own| {
+            own.iter()
+                .filter(|edge| !edge.is_overridden && !is_fact(&edge.callee))
+                .filter_map(get_id)
+                .collect()
+        })
+        .collect();
+    let constancy = close_rows(&local, words, &constant_edges, NONCONSTANT);
+    let reads: Vec<u32> = reads
+        .iter()
+        .enumerate()
+        .map(|(position, word)| {
+            if position % words == 0 {
+                (word & !NONCONSTANT) | (constancy[position] & NONCONSTANT)
+            } else {
+                *word
+            }
+        })
+        .collect();
     let level_edges: Vec<Vec<usize>> = edges
         .iter()
         .map(|own| {
