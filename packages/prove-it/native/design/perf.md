@@ -719,7 +719,16 @@ of numbers, a guard that fails on the first, a middle and the last value of T, a
 fails to evaluate or compares a number with a string, a guard reading a key the quantifier fixes,
 a value outside T, a guard that prints, and a quantifier over no keys.
 
-MEASURED
+**Measured** on Depot against `main` at b7f832b9, `bench-suite.ts` with `native` and
+`native-base`, one worker, median wall seconds with the range:
+
+| Suite, machine, runs | MCabs | Geomean, all models | Models agreeing with TLC |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 10.07 (10.04–10.11) → 0.19 (0.19–0.19) | 1.35× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | not in the suite | 1.00× | 18/18 |
+
+No other model moved outside its range on the 4-core suite, as none has the shape. MCabs is now
+start-up and its 349 states; TLC on one worker takes 34.6 s on the 16-core runner.
 
 ## Measured and dropped
 
