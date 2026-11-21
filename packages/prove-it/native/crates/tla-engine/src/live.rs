@@ -71,6 +71,7 @@ impl Taken {
         is_next: bool,
         split: Option<&Split>,
         piece: Option<u32>,
+        threads: usize,
     ) -> Option<Taken> {
         if !graph.is_next_taken {
             return None;
@@ -79,39 +80,70 @@ impl Taken {
             return Some(Taken::All);
         }
         if let (Some(Split::Some(actions)), Some(labels)) = (split, graph.labels) {
-            return Some(Self::of_steps(graph, |edge| {
-                actions.get(labels[edge] as usize).copied().unwrap_or(false)
-            }));
+            return Some(Self::of_steps(
+                graph,
+                |edge| actions.get(labels[edge] as usize).copied().unwrap_or(false),
+                threads,
+            ));
         }
         let (bit, (pieces, width)) = (piece?, graph.pieces?);
         let (byte, mask) = (bit as usize / 8, 1 << (bit % 8));
-        Some(Self::of_steps(graph, |edge| {
-            pieces[edge * width + byte] & mask != 0
-        }))
+        Some(Self::of_steps(
+            graph,
+            |edge| pieces[edge * width + byte] & mask != 0,
+            threads,
+        ))
     }
 
     // TLC evaluates the action once for each successor: it holds where any step to that successor
-    // is marked.
-    fn of_steps(graph: &LiveGraph<'_>, is_marked: impl Fn(usize) -> bool) -> Taken {
+    // is marked. Each state's steps are read on their own, so the states are split between the
+    // threads, each writing the answers of its states' steps.
+    fn of_steps(
+        graph: &LiveGraph<'_>,
+        is_marked: impl Fn(usize) -> bool + Sync,
+        threads: usize,
+    ) -> Taken {
         let mut answers = vec![false; graph.edges.len()];
-        let mut marked = Vec::new();
-        for index in 0..graph.expanded {
-            let steps = graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
-            marked.clear();
-            marked.extend(
-                steps
-                    .clone()
-                    .filter(|&edge| is_marked(edge))
-                    .map(|edge| graph.edges[edge]),
-            );
-            if marked.is_empty() {
-                continue;
+        let of_states = |states: std::ops::Range<usize>, answers: &mut [bool]| {
+            let first = graph.edge_offsets[states.start] as usize;
+            let mut marked = Vec::new();
+            for index in states {
+                let steps =
+                    graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
+                marked.clear();
+                marked.extend(
+                    steps
+                        .clone()
+                        .filter(|&edge| is_marked(edge))
+                        .map(|edge| graph.edges[edge]),
+                );
+                if marked.is_empty() {
+                    continue;
+                }
+                marked.sort_unstable();
+                for edge in steps {
+                    answers[edge - first] = marked.binary_search(&graph.edges[edge]).is_ok();
+                }
             }
-            marked.sort_unstable();
-            for edge in steps {
-                answers[edge] = marked.binary_search(&graph.edges[edge]).is_ok();
-            }
+        };
+        let ends = split_states(graph.expanded, |_| 1, threads);
+        if ends.len() < 2 {
+            of_states(0..graph.expanded, &mut answers);
+            return Taken::Steps(answers);
         }
+        std::thread::scope(|scope| {
+            let mut rest = &mut answers[..];
+            let mut start = 0;
+            for &end in &ends {
+                let first = graph.edge_offsets[start] as usize;
+                let last = graph.edge_offsets[end] as usize;
+                let (own, left) = rest.split_at_mut(last - first);
+                rest = left;
+                let of_states = &of_states;
+                scope.spawn(move || of_states(start..end, own));
+                start = end;
+            }
+        });
         Taken::Steps(answers)
     }
 
@@ -419,24 +451,50 @@ impl Run<'_, '_, '_> {
             .set_next(&graph.states[next * graph.width..(next + 1) * graph.width]);
         answer(action(self.machine))
     }
+
+    // The actions that took a step from the state changing the subscript, as bits of `words`
+    // words pushed to `changed`, and whether the subscript failed on one of its steps, pushed to
+    // `failed`: `Evaluator::changed_actions` for one state, on a helper.
+    fn changed_actions(
+        &mut self,
+        subscript: &Eval,
+        index: usize,
+        words: usize,
+        (changed, failed): &mut (Vec<u64>, Vec<bool>),
+    ) {
+        let graph = self.graph;
+        let at = changed.len();
+        changed.resize(at + words, 0);
+        let mut is_failed = false;
+        let start = graph.edge_offsets[index] as usize;
+        let end = graph.edge_offsets[index + 1] as usize;
+        for edge in start..end {
+            let label = graph.labels.map_or(0, |labels| labels[edge] as usize);
+            let (word, bit) = (at + label / 64, 1 << (label % 64));
+            if changed[word] & bit != 0 {
+                continue;
+            }
+            let next = graph.edges[edge] as usize;
+            let unchanged = self.subscript_value(subscript, next).and_then(|after| {
+                let before = self.subscript_value(subscript, index)?;
+                self.machine.store.equals(after, before)
+            });
+            match unchanged {
+                Ok(false) => changed[word] |= bit,
+                Ok(true) => {}
+                Err(_) => is_failed = true,
+            }
+        }
+        failed.push(is_failed);
+    }
 }
 
-// The answers `answer` gives for each of the first `count` states, on the helpers: each answers a
-// run of the states, of about the same `weight`, on the store of the machine that answers the
-// rest, and the runs' answers follow one another in the states' order. Each evaluation is the
-// same on any thread, since none prints, draws or reads what the search keeps. Each helper's
-// overlay copies the store's values, as each thread of a parallel search does.
-fn on_helpers(
-    machine: &mut Machine<'_>,
-    helpers: &mut [Machine<'_>],
-    graph: &LiveGraph<'_>,
-    count: usize,
-    weight: impl Fn(usize) -> usize,
-    answer: impl Fn(&mut Run<'_, '_, '_>, usize, &mut Vec<u8>) + Sync,
-) -> Vec<u8> {
+// Where the first `count` states split into `threads` runs of about the same `weight`: the end of
+// each run, the last of them `count`.
+fn split_states(count: usize, weight: impl Fn(usize) -> usize, threads: usize) -> Vec<usize> {
     let total: usize = (0..count).map(&weight).sum();
-    let share = total.div_ceil(helpers.len()).max(1);
-    let mut ends = Vec::with_capacity(helpers.len());
+    let share = total.div_ceil(threads.max(1)).max(1);
+    let mut ends = Vec::with_capacity(threads);
     let mut sum = 0;
     for index in 0..count {
         sum += weight(index);
@@ -444,7 +502,24 @@ fn on_helpers(
             ends.push(index + 1);
         }
     }
-    ends.resize(helpers.len(), count);
+    ends.resize(threads.max(1), count);
+    ends
+}
+
+// What `answer` gives for each of the first `count` states, on the helpers: each answers a run of
+// the states, of about the same `weight`, on the store of the machine that answers the rest, into
+// answers of its own, which come back in the runs' order. Each evaluation is the same on any
+// thread, since none prints, draws or reads what the search keeps. Each helper's overlay copies
+// the store's values, as each thread of a parallel search does.
+fn on_helpers<T: Default + Send>(
+    machine: &mut Machine<'_>,
+    helpers: &mut [Machine<'_>],
+    graph: &LiveGraph<'_>,
+    count: usize,
+    weight: impl Fn(usize) -> usize,
+    answer: impl Fn(&mut Run<'_, '_, '_>, usize, &mut T) + Sync,
+) -> Vec<T> {
+    let ends = split_states(count, weight, helpers.len());
     let store = Arc::new(std::mem::take(&mut machine.store));
     // The values of the definitions TLC computed once at startup, which may have drawn or printed:
     // a helper reads them, as every evaluation after startup does, rather than computing them
@@ -453,7 +528,7 @@ fn on_helpers(
     let deep_onces = &machine.deep_onces;
     // Each helper writes files for the check this thread runs ([`tla_values::written`]).
     let journal = tla_values::written::current();
-    let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
+    let parts: Vec<T> = std::thread::scope(|scope| {
         let threads: Vec<_> = helpers
             .iter_mut()
             .zip(ends.iter().enumerate())
@@ -478,7 +553,7 @@ fn on_helpers(
                             unassigned: vec![UNASSIGNED; graph.width],
                             subscripts: vec![UNASSIGNED; graph.count],
                         };
-                        let mut answers = Vec::new();
+                        let mut answers = T::default();
                         for index in start..end {
                             answer(&mut run, index, &mut answers);
                         }
@@ -498,7 +573,7 @@ fn on_helpers(
             .collect()
     });
     machine.store = Arc::into_inner(store).expect("the store, once the helpers let go of it");
-    parts.concat()
+    parts
 }
 
 /// A subscript's values on the states and, for each expanded state, the actions that took a step
@@ -676,8 +751,9 @@ pub fn answer_atoms(
                         graph,
                         graph.count,
                         |_| 1,
-                        |run, index, answers| answers.push(run.state(index, eval)),
-                    ),
+                        |run, index, answers: &mut Vec<u8>| answers.push(run.state(index, eval)),
+                    )
+                    .concat(),
                     is_from_steps: false,
                     unknown: None,
                     prints,
@@ -702,7 +778,7 @@ pub fn answer_atoms(
                     split,
                     piece,
                 } if is_shared => {
-                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece);
+                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece, helpers.len());
                     let disabled = enabled
                         .and_then(|position| tables.get(position))
                         .filter(|table: &&Table| table.answers.len() == graph.count)
@@ -710,44 +786,50 @@ pub fn answer_atoms(
                     let is_asked =
                         |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
                     let subscript = subscript.as_ref();
-                    let steps = on_helpers(
-                        evaluator.machine,
-                        helpers,
-                        graph,
-                        graph.expanded,
-                        |index| {
-                            (graph.edge_offsets[index + 1] - graph.edge_offsets[index]) as usize
-                        },
-                        |run, index, answers| {
-                            let start = graph.edge_offsets[index] as usize;
-                            let end = graph.edge_offsets[index + 1] as usize;
-                            for edge in start..end {
-                                answers.push(if is_asked(index) {
-                                    let next = graph.edges[edge] as usize;
-                                    let taken = taken.as_ref().map(|taken| taken.at(edge));
-                                    run.action(action, subscript, index, next, taken)
-                                } else {
-                                    UNKNOWN
-                                });
-                            }
-                        },
-                    );
-                    let stutters = on_helpers(
+                    // A state's steps and its stuttering step in one run, so that the helper
+                    // evaluates the subscript on the state once for them all.
+                    let parts: Vec<(Vec<u8>, Vec<u8>)> = on_helpers(
                         evaluator.machine,
                         helpers,
                         graph,
                         graph.count,
-                        |_| 1,
-                        |run, index, answers| {
-                            answers.push(if is_asked(index) {
+                        |index| {
+                            graph
+                                .edge_offsets
+                                .get(index + 1)
+                                .map_or(0, |&end| (end - graph.edge_offsets[index]) as usize)
+                                + 1
+                        },
+                        |run, index, (steps, stutters): &mut (Vec<u8>, Vec<u8>)| {
+                            if index < graph.expanded {
+                                let start = graph.edge_offsets[index] as usize;
+                                let end = graph.edge_offsets[index + 1] as usize;
+                                for edge in start..end {
+                                    steps.push(if is_asked(index) {
+                                        let next = graph.edges[edge] as usize;
+                                        let taken = taken.as_ref().map(|taken| taken.at(edge));
+                                        run.action(action, subscript, index, next, taken)
+                                    } else {
+                                        UNKNOWN
+                                    });
+                                }
+                            }
+                            stutters.push(if is_asked(index) {
                                 run.action(action, subscript, index, index, None)
                             } else {
                                 UNKNOWN
                             });
                         },
                     );
+                    let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
+                    for (steps, _) in &parts {
+                        answers.extend_from_slice(steps);
+                    }
+                    for (_, stutters) in &parts {
+                        answers.extend_from_slice(stutters);
+                    }
                     Table {
-                        answers: [steps, stutters].concat(),
+                        answers,
                         is_from_steps: false,
                         unknown: None,
                         prints,
@@ -761,7 +843,7 @@ pub fn answer_atoms(
                     split,
                     piece,
                 } => {
-                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece);
+                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece, helpers.len());
                     // The checker asks about no step from a state where the ENABLED of the action's
                     // fairness is false, and the interpreter answers any it does; where the atom
                     // prints, it evaluates the action on every step TLC does.
@@ -842,6 +924,42 @@ pub fn answer_atoms(
                     });
                     let mut changed = steps.map(|steps| {
                         changes.remove(&steps.key).unwrap_or_else(|| {
+                            if is_shared {
+                                // The helpers evaluate the subscript in overlays of their own, so
+                                // its values stay unassigned here: a state whose subscript
+                                // failed on a step, which `enabled_from_steps` scans, evaluates
+                                // them again on this thread.
+                                let parts: Vec<(Vec<u64>, Vec<bool>)> = on_helpers(
+                                    evaluator.machine,
+                                    helpers,
+                                    graph,
+                                    graph.expanded,
+                                    |index| {
+                                        (graph.edge_offsets[index + 1] - graph.edge_offsets[index])
+                                            as usize
+                                            + 1
+                                    },
+                                    |run, index, changed: &mut (Vec<u64>, Vec<bool>)| {
+                                        run.changed_actions(
+                                            &steps.subscript,
+                                            index,
+                                            words,
+                                            changed,
+                                        );
+                                    },
+                                );
+                                let mut actions = Vec::with_capacity(graph.expanded * words);
+                                let mut failed = Vec::with_capacity(graph.expanded);
+                                for (words, states) in parts {
+                                    actions.extend(words);
+                                    failed.extend(states);
+                                }
+                                return Changes {
+                                    values: std::mem::take(&mut values),
+                                    actions,
+                                    failed,
+                                };
+                            }
                             let (actions, failed) =
                                 evaluator.changed_actions(&mut values, &steps.subscript, words);
                             Changes {
