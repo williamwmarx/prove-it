@@ -3063,11 +3063,12 @@ fn expand_claimed(
                 // which the thread can't give it: the level stops here, and its rest runs on one
                 // thread, which expands this state again and prints it. A warning TLC never
                 // prints again goes unreported, as it would on one thread.
-                Ok(()) if machine.output.iter().any(|printed| {
-                    matches!(printed, Printed::Warning(warning) if {
-                        shared.warned.get(warning).is_none_or(|&count| count < 2)
-                    })
-                }) =>
+                Ok(())
+                    if machine.output.iter().any(|printed| {
+                        matches!(printed, Printed::Warning(warning) if {
+                            shared.warned.get(warning).is_none_or(|&count| count < 2)
+                        })
+                    }) =>
                 {
                     machine.output.clear();
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
