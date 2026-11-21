@@ -94,6 +94,10 @@ enum Added {
 ///
 /// It also gives each ENABLED atom the actions it splits into, which the search's steps then
 /// answer it from, and labels the steps where some atom is made of only some of them.
+/// Why the split declines what TLC evaluates as it splits the next-state relation, where that has
+/// an effect.
+pub const SPLIT_EFFECTS: &str = "TLC's actions whose split prints, draws or sets a register";
+
 pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     let mut ir = ir.clone();
     // A spec without variables has no behaviors, and the IR's next-state relation stands for none.
@@ -843,7 +847,12 @@ impl Splitter<'_, '_> {
             && !self
                 .evaluator
                 .can_read(definition.body, &Context::default())
-            && self.evaluate(definition.body, &Context::default())?.is_ok())
+            // What `processConstantDefns` computed before the split, effects and all: the
+            // split itself evaluates nothing of it.
+            && self
+                .evaluator
+                .evaluate(definition.body, &Context::default())
+                .is_ok())
     }
 
     // An expression the split evaluates, as TLC does when it starts. One that may print, draw or
@@ -854,9 +863,7 @@ impl Splitter<'_, '_> {
         context: &Context,
     ) -> Result<Evaluated<Value>, Unsupported> {
         if may_have_effect(self.evaluator, node, &mut HashSet::new()) {
-            return Err(Unsupported(
-                "TLC's actions whose split prints, draws or sets a register".into(),
-            ));
+            return Err(Unsupported(SPLIT_EFFECTS.into()));
         }
         Ok(self.evaluator.evaluate(node, context))
     }
@@ -951,6 +958,10 @@ pub(crate) fn may_have_effect(
                                 | "AssertEq"
                                 | "JavaTime"
                                 | "RandomElement"
+                                | "RandomSubset"
+                                | "RandomSetOfSubsets"
+                                | "RandomSubsetSet"
+                                | "TestRandomSetOfSubsets"
                                 | "TLCGet"
                                 | "TLCGetOrDefault"
                                 | "TLCGetAndSet"
