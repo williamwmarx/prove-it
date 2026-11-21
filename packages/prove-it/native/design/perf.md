@@ -620,6 +620,18 @@ threads (one thread is unchanged, 1.01×):
 The rest of the suite is within noise, and 16 threads go from 2.6× one thread to 3.9× in geomean
 over it. On the 4-core suite, Paxos_MC (symmetry with a PROPERTY) goes 0.61 → 0.30 s on every core.
 
+### Warnings on threads (#374)
+
+Since #369 a level ran on one thread, unpipelined, wherever the spec could raise a runtime
+warning (2143, 2144), which with warnings on, TLC's default and the npm package's, is any spec
+with an EXCEPT. TLC prints each warning's message once (`MP.printWarning`), and the first warning
+of a run once more, since its first message carries the hint to `-nowarning`. The search now
+counts the warnings it reports, and a thread that raises one TLC may still print stops the level
+at that state, as a violation does; a warning TLC never prints again stops nothing. The suites
+pass `-nowarning`, so they show no change: on `depot-ubuntu-24.04-16` and `-4` against `main` at
+b7f832b9 every model is within noise, one thread 1.00×. Commit (`benchmarks/commit`, three
+EXCEPTs) run with warnings on, on the 4-core container: 0.47 s on one worker, 0.29 s on four.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
