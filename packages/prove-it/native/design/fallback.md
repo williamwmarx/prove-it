@@ -4737,20 +4737,6 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
-- A failing comparison in UNCHANGED, found in the specs of upstream tla-ts's unit tests at
-  0341dbe5. `processUnchanged` compares a variable with its assigned successor value as
-  `val0.equals(val1)`, the current value the receiver, so `x' = {1} /\ UNCHANGED x /\ y' = 0`
-  from `x = 0` fails with "Attempted to check equality of integer 0 with non-integer: {1}" where
-  the trace evaluator compared the other way ("... of the set {1} with the value: 0"). And once
-  every variable has a value, `getNextStates0` evaluates the conjuncts left as expressions
-  (`getNextStatesAllAssigned`), where UNCHANGED e is `OPCODE_unchanged`'s
-  `eval(e, s0).equals(eval(e, s1))`: a value with a source whose `equals` fails, the tuple of
-  `UNCHANGED <<x>>` or the set of `UNCHANGED {x}`, throws a FingerprintException, which TLC
-  reports as "TLC was unable to fingerprint" headed by that value's source, as it does a
-  subscript's (`subscript_equals`); the trace evaluator reported the nested expressions. Under
-  `~` or another operator UNCHANGED is that expression too. Fixtures `unchanged-variable-current-
-  receiver*`, `unchanged-tuple-*` and `unchanged-set-all-assigned`.
-
 - A record in the value of a function TLC kept lazy, printed. TLC prints its fields as written
   where the engine printed them as TLC sorts them (by when it interned each name): a LET
   definition or an operator's argument whose function constructor TLC first computed with
@@ -4787,6 +4773,19 @@ matches TLC or declines exactly.
   prints an operator's argument's records as written wherever it is printed, so it is wrong on
   `LET Op(f) == PrintT(f) IN Op([x \in 1..2 |-> [a |-> x, b |-> x]])` in an assumption of a
   model, which TLC prints sorted.
+- A failing comparison in UNCHANGED, found in the specs of upstream tla-ts's unit tests at
+  0341dbe5. `processUnchanged` compares a variable with its assigned successor value as
+  `val0.equals(val1)`, the current value the receiver, so `x' = {1} /\ UNCHANGED x /\ y' = 0`
+  from `x = 0` fails with "Attempted to check equality of integer 0 with non-integer: {1}" where
+  the trace evaluator compared the other way ("... of the set {1} with the value: 0"). And once
+  every variable has a value, `getNextStates0` evaluates the conjuncts left as expressions
+  (`getNextStatesAllAssigned`), where UNCHANGED e is `OPCODE_unchanged`'s
+  `eval(e, s0).equals(eval(e, s1))`: a value with a source whose `equals` fails, the tuple of
+  `UNCHANGED <<x>>` or the set of `UNCHANGED {x}`, throws a FingerprintException, which TLC
+  reports as "TLC was unable to fingerprint" headed by that value's source, as it does a
+  subscript's (`subscript_equals`); the trace evaluator reported the nested expressions. Under
+  `~` or another operator UNCHANGED is that expression too. Fixtures `unchanged-variable-current-
+  receiver*`, `unchanged-tuple-*` and `unchanged-set-all-assigned`.
 - A set enumeration holding only an INSTANCE's THEOREM or ASSUME literal TLC did not initialize
   (`THEOREM A == c` with `N == INSTANCE I WITH c <- 1`, `{N!A}`), in an assumption.
   `SetEnumValue`'s enumerator returns the null element as it is, and every loop of `Tool` takes
