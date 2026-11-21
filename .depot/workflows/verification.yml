@@ -16,6 +16,10 @@ concurrency:
     github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
+  # Verification builds without the release profile's whole-program optimization, which was most of
+  # each release build's time here; release.yml and benchmark.yml build what ships with it.
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   NPM_TOKEN: ""
   NODE_AUTH_TOKEN: ""
   OP_SERVICE_ACCOUNT_TOKEN: ""
@@ -57,7 +61,7 @@ jobs:
   # The native engine's Rust workspace, and its addon loaded by Bun, Node, and the npm packages.
   native:
     name: ${{ matrix.task }}
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -111,8 +115,9 @@ jobs:
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build:binary
+          # Optimized lightly, the tests, most of which check models, run in a third of the time.
           - task: Cargo Test
-            command: cd packages/prove-it/native && cargo test --locked
+            command: cd packages/prove-it/native && CARGO_PROFILE_DEV_OPT_LEVEL=1 cargo test --locked
           - task: Cargo Clippy
             command: cd packages/prove-it/native && cargo clippy --locked --all-targets -- -D warnings
           - task: Cargo Fmt
@@ -185,9 +190,9 @@ jobs:
       matrix:
         include:
           - task: Alpine x64
-            runner: depot-ubuntu-24.04
+            runner: depot-ubuntu-24.04-8
           - task: Alpine arm64
-            runner: depot-ubuntu-24.04-arm
+            runner: depot-ubuntu-24.04-arm-8
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -197,6 +202,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --volume "$PWD:/repo" \
+            --env CARGO_PROFILE_RELEASE_LTO --env CARGO_PROFILE_RELEASE_CODEGEN_UNITS \
             alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
             /repo/scripts/ci/alpine-package.sh
   # fetch-depth 0 so a secret a later commit deleted is still found. The repository is public, so

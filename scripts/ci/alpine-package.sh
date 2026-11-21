@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds, tests and packs the native engine's musl platform package for this machine's CPU, on
 # Alpine: run it in an Alpine container with the repository at /repo. It installs Bun's musl build
-# and Rust's musl toolchain, builds the package with platform-packages.ts, runs the native unit
+# and Rust's musl toolchain, runs the crates' tests on arm64, builds the package with platform-packages.ts, runs the native unit
 # tests with the addon, runs install-test, which installs the packed packages with npm and needs
 # "native: complete" under Node and Bun, and packs the package into /repo/platform-packages.
 set -eu
@@ -40,7 +40,12 @@ git config --global --add safe.directory /repo
 cd /repo
 bun install --frozen-lockfile --ignore-scripts
 cd packages/prove-it
-(cd native && rustup toolchain install && cargo test --locked)
+(cd native && rustup toolchain install)
+# The crates' tests run on x64 in Verification's Cargo Test; arm64 runs them nowhere else before a
+# release. Optimized lightly, they run in a third of the time.
+if [ "$(uname -m)" = aarch64 ]; then
+  (cd native && CARGO_PROFILE_DEV_OPT_LEVEL=1 cargo test --locked)
+fi
 bun scripts/platform-packages.ts build
 bun run build
 addon="$PWD/native/npm/linux-$(node -p process.arch)-musl/prove-it-engine.node"
