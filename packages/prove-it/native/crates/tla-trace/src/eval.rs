@@ -6066,20 +6066,18 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    /// UNCHANGED e as an expression (`OPCODE_unchanged` of `Tool#evalImpl`, which an action
+    /// reaches once every variable has a value): `v0.equals(v1)` of e's values in the two states,
+    /// whose failure in the method of a value with a source TLC throws as a FingerprintException.
     pub(crate) fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
         let now = self.evaluate_current_state(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
-        Ok(Value::Bool(equals(&now, &then)?))
+        Ok(Value::Bool(self.sourced_equals(&now, &then)?))
     }
 
-    /// Whether the subscript of `<<A>>_v` is the same in the current state, `now`, as in the next,
-    /// `then`, as TLC compares them with `v1.equals(v2)` (`LNAction.eval`, and `Tool#enabled` for
-    /// an ENABLED). TLC's rerun with its `CallStackTool` gives the values the subscript builds
-    /// their sources, so a comparison that fails in the method of one with a source throws a
-    /// FingerprintException (`TupleValue.equals`), which escapes `Worker#doNextCheckLiveness`
-    /// and which `ModelChecker#doNextFailed` reports with no message: the replay marks the
-    /// failure fingerprinted with those sources.
-    pub(crate) fn subscript_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
+    // `now.equals(then)`, marking the replay's failure fingerprinted with the sources of the
+    // values whose `equals` failed, as TLC's `CallStackTool` gives the values it builds sources.
+    fn sourced_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
         let result = equals(now, then);
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
@@ -6095,9 +6093,30 @@ impl<'ir> Evaluator<'ir> {
                 .collect();
             if !sources.is_empty() {
                 stack.is_fingerprinted = true;
-                stack.is_subscript_fingerprinted = true;
                 stack.fingerprinted_sources = sources;
             }
+        }
+        result
+    }
+
+    /// Whether the subscript of `<<A>>_v` is the same in the current state, `now`, as in the next,
+    /// `then`, as TLC compares them with `v1.equals(v2)` (`LNAction.eval`, and `Tool#enabled` for
+    /// an ENABLED). TLC's rerun with its `CallStackTool` gives the values the subscript builds
+    /// their sources, so a comparison that fails in the method of one with a source throws a
+    /// FingerprintException (`TupleValue.equals`), which escapes `Worker#doNextCheckLiveness`
+    /// and which `ModelChecker#doNextFailed` reports with no message: the replay marks the
+    /// failure fingerprinted with those sources.
+    pub(crate) fn subscript_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
+        let was_fingerprinted = self
+            .call_stack
+            .as_ref()
+            .is_some_and(|stack| stack.is_fingerprinted);
+        let result = self.sourced_equals(now, then);
+        if let Some(stack) = &mut self.call_stack
+            && stack.is_fingerprinted
+            && !was_fingerprinted
+        {
+            stack.is_subscript_fingerprinted = true;
         }
         result
     }
