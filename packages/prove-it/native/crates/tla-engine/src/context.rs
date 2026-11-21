@@ -952,12 +952,16 @@ pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool
 
 /// Counts each `_POSSIBLE` predicate of a state, or with `is_action` of a step, that holds, as
 /// `trackPossible` does.
+#[inline(always)]
 pub fn count_possible(
     machine: &mut Machine<'_>,
     possible: &[(Eval, bool)],
     is_action: bool,
     counts: &mut [i64],
 ) -> Outcome<()> {
+    if possible.is_empty() {
+        return Ok(());
+    }
     for ((predicate, is_of_step), count) in possible.iter().zip(counts) {
         if *is_of_step == is_action {
             *count = (*count).max(0) + i64::from(holds(machine, predicate)?);

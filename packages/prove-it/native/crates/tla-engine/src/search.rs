@@ -1655,6 +1655,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     }
 
     // TLCGet("distinct") counts the states found so far, and a new state before its checks.
+    #[inline(always)]
     fn set_distinct(&self, machine: &mut Machine<'_>, count: usize) -> Outcome<()> {
         if self.is_distinct_read {
             let id = machine.store.int(count as i64)?;
@@ -1669,6 +1670,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     // (`theStateQueue.size`), and the level of the last state written to the trace, never less
     // than 1 (`TLCTrace.getLevelForReporting`). A state is written as its fingerprint is put,
     // before its checks; an initial state is queued then too, a successor once checked.
+    #[inline(always)]
     fn set_counts(
         &self,
         machine: &mut Machine<'_>,
@@ -1679,6 +1681,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if !self.is_counted {
             return Ok(());
         }
+        self.write_counts(machine, distinct, queued, written_level)
+    }
+
+    fn write_counts(
+        &self,
+        machine: &mut Machine<'_>,
+        distinct: usize,
+        queued: usize,
+        written_level: u64,
+    ) -> Outcome<()> {
         self.set_distinct(machine, distinct)?;
         for (slot, count) in [
             (crate::compile::GENERATED_SLOT, self.generated),
@@ -2071,7 +2083,19 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     // Whether every action constraint holds of the step to the successor. TLC reports one that
     // fails to evaluate with the trace to the successor, which it hasn't counted as found
     // (`Worker.addElement`, `ModelChecker.doNextFailed`).
+    #[inline(always)]
     fn holds_action_constraints(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+    ) -> Outcome<bool> {
+        if context.action_constraints.is_empty() {
+            return Ok(true);
+        }
+        self.holds_each_action_constraint(machine, context)
+    }
+
+    fn holds_each_action_constraint(
         &mut self,
         machine: &mut Machine<'_>,
         context: &EngineContext,
@@ -2453,7 +2477,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
 impl<T: Reached, E: Entries> Search<'_, T, E> {
     // Records the step to the successor, in the model, in the graph: to the state `found` names,
     // or to the one the search adds next where it is new.
+    #[inline(always)]
     fn record_step(&mut self, machine: &Machine<'_>, found: Option<Result<usize, usize>>) {
+        if self.graph.is_some() {
+            self.record_step_in_graph(machine, found);
+        }
+    }
+
+    fn record_step_in_graph(&mut self, machine: &Machine<'_>, found: Option<Result<usize, usize>>) {
         let Some(graph) = &mut self.graph else {
             return;
         };
