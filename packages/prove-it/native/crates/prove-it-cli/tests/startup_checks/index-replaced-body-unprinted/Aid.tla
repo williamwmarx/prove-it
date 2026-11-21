@@ -1,4 +1,4 @@
----- MODULE Aux ----
+---- MODULE Aid ----
 EXTENDS TLC
 Make == PrintT("BODY")
 ====

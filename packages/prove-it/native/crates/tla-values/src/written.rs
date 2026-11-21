@@ -86,8 +86,14 @@ pub fn keep_file(path: &Path) -> std::io::Result<()> {
     }
     // Only a regular file has bytes to keep: a read of a pipe or a device may never end, and a
     // write to one nothing puts back.
-    if std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() && !metadata.is_dir()) {
-        return Err(std::io::Error::other("a file that isn't a regular file"));
+    if let Ok(metadata) = std::fs::metadata(path) {
+        // A directory there no write of a file changes: the write fails, as TLC's does.
+        if metadata.is_dir() {
+            return Ok(());
+        }
+        if !metadata.is_file() {
+            return Err(std::io::Error::other("a file that isn't a regular file"));
+        }
     }
     let (path, before) = match std::fs::read(path) {
         Ok(bytes) => (path.to_path_buf(), Some(bytes)),
@@ -96,8 +102,6 @@ pub fn keep_file(path: &Path) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             (get_destination(path)?, None)
         }
-        // A directory there no write of a file changes: the write fails, as TLC's does.
-        Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => return Ok(()),
         Err(error) => return Err(error),
     };
     journal.lock().push(Before::File(path, before));
