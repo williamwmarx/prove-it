@@ -59,7 +59,12 @@ how.
     the search first. Under a VIEW or symmetry the state another thread found first can be another
     state with the same key, whose invariant TLC checks instead, so the thread only records the
     failure, an invariant false or one that fails to evaluate, and the merge stops there only if
-    that successor's key is still new when its parent's turn comes.
+    that successor's key is still new when its parent's turn comes. An action property TLC checks
+    on every step, to a successor seen or not (`Worker.doNextCheckImplied`), so a step that
+    violates one stops the thread at once whichever thread found the successor's key: deferring
+    it as an invariant's failure let the merge pass the state by where another thread had found
+    the key, which is why models with action properties under a VIEW or symmetry (MCabs,
+    FastPaxos, BufferedRandomAccessFile) once ran on one thread.
 - **How many threads.** In the binding, `PROVE_IT_WORKERS`. In the native binary, TLC's
   `-workers` (`auto` is every core), which `PROVE_IT_WORKERS` overrides, so Parity can run on four
   threads under the `-workers 1` its recordings were made with. Either way at most

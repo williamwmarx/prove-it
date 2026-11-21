@@ -1,5 +1,5 @@
 ---- MODULE M ----
-EXTENDS Aux, Naturals, TLC
+EXTENDS Aid, Naturals, TLC
 K == PrintT(Make)
 VARIABLE s
 Init == s = 0

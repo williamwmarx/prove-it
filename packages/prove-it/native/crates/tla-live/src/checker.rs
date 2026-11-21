@@ -69,6 +69,7 @@ struct Scratch {
     successors: Vec<u32>,
     targets: Vec<u32>,
     steps: Vec<u32>,
+    rows: Vec<u32>,
 }
 
 /// The results of the action checks on each step, a row of bits per step by the checks' ids:
@@ -122,11 +123,22 @@ impl StepResults {
 
     /// A word of a row's results, as a mask from `mask` reads it.
     fn word(&self, row: usize, word: usize) -> u64 {
-        let bit = row * self.stride;
-        if self.stride >= 64 {
-            self.values[bit / 64 + word]
+        Self::word_of(&self.values, self.stride, row, word)
+    }
+
+    /// Whether a row has every check a mask from `mask` names.
+    fn is_complete(&self, row: usize, mask: &[u64]) -> bool {
+        mask.iter().enumerate().all(|(word, &mask)| {
+            mask == 0 || Self::word_of(&self.checked, self.stride, row, word) & mask == mask
+        })
+    }
+
+    fn word_of(bits: &[u64], stride: usize, row: usize, word: usize) -> u64 {
+        let bit = row * stride;
+        if stride >= 64 {
+            bits[bit / 64 + word]
         } else {
-            self.values[bit / 64] >> (bit % 64) & ((1 << self.stride) - 1)
+            bits[bit / 64] >> (bit % 64) & ((1 << stride) - 1)
         }
     }
 
@@ -183,6 +195,8 @@ struct Behavior {
     solution: usize,
     /// One id per distinct action check across the solutions.
     action_ids: Vec<usize>,
+    /// The action checks as a mask of a row of `StepResults`.
+    action_mask: Vec<u64>,
     node_states: Vec<u32>,
     node_tableaux: Vec<u32>,
     edge_starts: Vec<usize>,
@@ -262,12 +276,17 @@ pub struct Checker {
     terms: Terms,
     solutions: Vec<Solution>,
     behaviors: Vec<Behavior>,
+    /// The action checks' results on the steps this checker checked itself, in the rows after
+    /// the shared table's.
     steps: StepResults,
     /// Each action check, by its id.
     action_terms: Vec<TermId>,
-    /// The action checks' results on each step of the graph, by its position, which a checker
-    /// that shares the behaviors with others reads rather than checks again.
-    positions: Option<Arc<StepResults>>,
+    /// The action checks' results the tables answer on each step of the graph, by its position,
+    /// which a checker that shares the behaviors with others reads rather than checks again or
+    /// copies: a step's row is its position where the table has every check `needed` names.
+    shared: Option<Arc<StepResults>>,
+    /// Every action check of the behaviors this checker builds, as a mask of a row.
+    needed: Vec<u64>,
     /// TLC's SetOfStates grows its capacity with every set that outgrows it.
     capacity_multiplier: usize,
     slots: Vec<u32>,
@@ -318,6 +337,7 @@ impl Checker {
             let is_covered = is_covered(&behaviors, &ids);
             behaviors.push(Behavior {
                 solution: position,
+                action_mask: Vec::new(),
                 action_ids: ids,
                 node_states: Vec::new(),
                 node_tableaux: Vec::new(),
@@ -355,11 +375,16 @@ impl Checker {
             })
             .collect();
         let global = (0..behaviors.len()).collect();
+        let steps = StepResults::new(action_ids.len());
+        for behavior in &mut behaviors {
+            behavior.action_mask = steps.mask(behavior.action_ids.iter().copied());
+        }
+        let needed = steps.mask(0..action_ids.len());
         Ok(Self {
             terms,
             solutions,
             behaviors,
-            steps: StepResults::new(action_ids.len()),
+            steps,
             action_terms: {
                 let mut terms = vec![0; action_ids.len()];
                 for (&term, &id) in &action_ids {
@@ -367,7 +392,8 @@ impl Checker {
                 }
                 terms
             },
-            positions: None,
+            shared: None,
+            needed,
             capacity_multiplier: 1,
             slots: Vec::new(),
             scratch: Scratch::default(),
@@ -603,8 +629,62 @@ impl Checker {
         edge_step(source.graph, state, edge)
     }
 
+    // --- the rows of the action checks' results: the shared table's, then this checker's ---
+
+    fn shared_rows(&self) -> usize {
+        self.shared.as_ref().map_or(0, |shared| shared.count)
+    }
+
     fn add_steps(&mut self, count: usize) -> usize {
-        self.steps.add(count)
+        self.shared_rows() + self.steps.add(count)
+    }
+
+    fn is_step_complete(&self, row: usize, mask: &[u64]) -> bool {
+        match &self.shared {
+            Some(shared) if row < shared.count => shared.is_complete(row, mask),
+            _ => self.steps.is_complete(row - self.shared_rows(), mask),
+        }
+    }
+
+    fn step_value(&self, row: usize, id: usize) -> bool {
+        match &self.shared {
+            Some(shared) if row < shared.count => shared.value(row, id),
+            _ => self.steps.value(row - self.shared_rows(), id),
+        }
+    }
+
+    fn step_word(&self, row: usize, word: usize) -> u64 {
+        match &self.shared {
+            Some(shared) if row < shared.count => shared.word(row, word),
+            _ => self.steps.word(row - self.shared_rows(), word),
+        }
+    }
+
+    /// The rows of a successor set's steps, in `rows`: the shared table's where it has every
+    /// check this checker's behaviors make, and otherwise rows of this checker's own, copied from
+    /// the shared table's for the checks to fill in.
+    fn share_rows(&mut self, graph: &Graph<'_>, set: &[Step], rows: &mut Vec<u32>) {
+        let Self {
+            shared,
+            steps,
+            needed,
+            ..
+        } = self;
+        let Some(shared) = shared else {
+            let first = steps.add(set.len());
+            rows.extend((first..first + set.len()).map(|row| row as u32));
+            return;
+        };
+        for step in set {
+            let position = graph.position(step.slot);
+            if shared.is_complete(position, needed) {
+                rows.push(position as u32);
+                continue;
+            }
+            let row = steps.add(1);
+            steps.copy_row(row, shared, position);
+            rows.push((shared.count + row) as u32);
+        }
     }
 
     fn check_step(
@@ -615,6 +695,10 @@ impl Checker {
         step: Step,
         row: usize,
     ) -> Result<(), Declined> {
+        // A shared row has every check the behaviors make.
+        let Some(row) = row.checked_sub(self.shared_rows()) else {
+            return Ok(());
+        };
         let solution = &self.solutions[self.behaviors[behavior].solution];
         for (position, &check) in solution.action_checks.iter().enumerate() {
             let id = self.behaviors[behavior].action_ids[position];
@@ -628,24 +712,33 @@ impl Checker {
         Ok(())
     }
 
-    // The action checks on each step of a successor set, in rows from `first_row`: each check's
-    // part that reads only the state once for all the steps, where the tables answer it.
+    // The action checks on each step of a successor set, in its `rows`, where the rows don't
+    // have them all: each check's part that reads only the state once for all the steps, where
+    // the tables answer it.
     fn check_steps(
         &mut self,
         source: &Source<'_>,
         behavior: usize,
         state: u32,
         set: &[Step],
-        first_row: usize,
+        rows: &[u32],
     ) -> Result<(), Declined> {
-        if !self.is_effectful()
-            && let Some(tables) = source.answers.tables()
-            && self.read_steps(tables, source.graph, behavior, state, set, first_row)
-        {
-            return Ok(());
+        if !self.is_effectful() {
+            let mask = &self.behaviors[behavior].action_mask;
+            if rows
+                .iter()
+                .all(|&row| self.is_step_complete(row as usize, mask))
+            {
+                return Ok(());
+            }
+            if let Some(tables) = source.answers.tables()
+                && self.read_steps(tables, source.graph, behavior, state, set, rows)
+            {
+                return Ok(());
+            }
         }
-        for (position, &step) in set.iter().enumerate() {
-            self.check_step(source, behavior, state, step, first_row + position)?;
+        for (&step, &row) in set.iter().zip(rows) {
+            self.check_step(source, behavior, state, step, row as usize)?;
         }
         Ok(())
     }
@@ -658,15 +751,19 @@ impl Checker {
         behavior: usize,
         state: u32,
         set: &[Step],
-        first_row: usize,
+        rows: &[u32],
     ) -> bool {
+        let shared = self.shared_rows();
         let solution = &self.solutions[self.behaviors[behavior].solution];
         let mut is_complete = true;
         for (position, &check) in solution.action_checks.iter().enumerate() {
             let id = self.behaviors[behavior].action_ids[position];
             let partial = self.read_partially(tables, check, state);
-            for (offset, &step) in set.iter().enumerate() {
-                let row = first_row + offset;
+            for (&step, &row) in set.iter().zip(rows) {
+                // A shared row has every check the behaviors make.
+                let Some(row) = (row as usize).checked_sub(shared) else {
+                    continue;
+                };
                 if self.steps.is_checked(row, id) {
                     continue;
                 }
@@ -1009,40 +1106,37 @@ impl Checker {
         let set = self.successor_set(source, state);
         // With effects, each behavior checks its actions on each step anew, as TLC does.
         let is_effectful = self.is_effectful();
-        let shared_step = self.add_steps(if is_effectful { 0 } else { set.len() });
-        if let Some(positions) = self.positions.take() {
-            for (offset, step) in set.iter().enumerate() {
-                self.steps.copy_row(
-                    shared_step + offset,
-                    &positions,
-                    source.graph.position(step.slot),
-                );
-            }
-            self.positions = Some(positions);
+        let mut rows = std::mem::take(&mut self.scratch.rows);
+        rows.clear();
+        if !is_effectful {
+            self.share_rows(source.graph, &set, &mut rows);
         }
+        let mut found = None;
         for behavior in 0..self.behaviors.len() {
             self.at.set((true, state, self.global[behavior]));
-            let first_step = if is_effectful {
-                self.add_steps(set.len())
-            } else {
-                shared_step
-            };
+            if is_effectful {
+                rows.clear();
+                let first = self.add_steps(set.len());
+                rows.extend((first..first + set.len()).map(|row| row as u32));
+            }
             if is_effectful || !self.behaviors[behavior].is_covered {
-                self.check_steps(source, behavior, state, &set, first_step)?;
+                self.check_steps(source, behavior, state, &set, &rows)?;
             }
             self.check_state(source, behavior, state)?;
             if self.tableau(behavior).is_none() {
-                self.add_plain_state(behavior, &set, first_step, state);
+                self.add_plain_state(behavior, &set, &rows, state);
                 continue;
             }
-            if let Some(path) = self.add_tableau_state(source, behavior, &set, first_step, state)? {
-                return Ok(Some(path));
+            found = self.add_tableau_state(source, behavior, &set, &rows, state)?;
+            if found.is_some() {
+                break;
             }
         }
-        Ok(None)
+        self.scratch.rows = rows;
+        Ok(found)
     }
 
-    fn add_plain_state(&mut self, behavior: usize, set: &[Step], first_step: usize, state: u32) {
+    fn add_plain_state(&mut self, behavior: usize, set: &[Step], rows: &[u32], state: u32) {
         let behavior = &mut self.behaviors[behavior];
         // A node for the state and each successor, which stays undone until its state is added.
         let last = set.iter().map(|step| step.target).fold(state, u32::max);
@@ -1052,12 +1146,12 @@ impl Checker {
         }
         let mut targets = Vec::with_capacity(set.len());
         let mut steps = Vec::with_capacity(set.len());
-        for (position, step) in set.iter().enumerate() {
+        for (step, &row) in set.iter().zip(rows) {
             if behavior.is_written(step.target) && targets.contains(&step.target) {
                 continue;
             }
             targets.push(step.target);
-            steps.push((first_step + position) as u32);
+            steps.push(row);
         }
         behavior.write_node(state, &targets, &steps);
         behavior.size += 1;
@@ -1073,7 +1167,7 @@ impl Checker {
         source: &Source<'_>,
         behavior: usize,
         set: &[Step],
-        first_step: usize,
+        rows: &[u32],
         state: u32,
     ) -> Result<Option<Vec<u32>>, Declined> {
         let node_count = self.tableau_size(behavior);
@@ -1139,7 +1233,7 @@ impl Checker {
                         None => self.behaviors[behavior].record_node(step.target, next),
                     };
                     targets.push(target);
-                    steps.push((first_step + position) as u32);
+                    steps.push(rows[position]);
                     if existing.is_none() && is_done {
                         self.expand_late(source, behavior, step.target, step.real, target)?;
                     }
@@ -1476,6 +1570,11 @@ impl Checker {
         }
         self.behaviors = kept;
         self.global = positions;
+        self.needed = self.steps.mask(
+            self.behaviors
+                .iter()
+                .flat_map(|behavior| behavior.action_ids.iter().copied()),
+        );
     }
 }
 
@@ -1774,8 +1873,7 @@ impl<'s> Search<'s> {
 
     fn is_action(&self, node: u32, edge: usize, position: usize) -> bool {
         self.checker
-            .steps
-            .value(self.row(node, edge), self.behavior.action_ids[position])
+            .step_value(self.row(node, edge), self.behavior.action_ids[position])
     }
 
     fn is_allowed(&self, node: u32, edge: usize) -> bool {
@@ -1783,7 +1881,7 @@ impl<'s> Search<'s> {
         self.allowed
             .iter()
             .enumerate()
-            .all(|(word, &mask)| mask == 0 || self.checker.steps.word(row, word) & mask == mask)
+            .all(|(word, &mask)| mask == 0 || self.checker.step_word(row, word) & mask == mask)
     }
 
     fn is_member(&self, node: u32) -> bool {
@@ -1829,7 +1927,7 @@ impl<'s> Search<'s> {
                 for (word, (satisfied, mask)) in
                     satisfied.iter_mut().zip(&self.required).enumerate()
                 {
-                    *satisfied |= self.checker.steps.word(row, word) & mask;
+                    *satisfied |= self.checker.step_word(row, word) & mask;
                 }
                 if is_done(&satisfied) {
                     return true;
@@ -2233,7 +2331,7 @@ pub fn check_shared(
                     .spawn_scoped(scope, move || -> Result<Part, Declined> {
                         let mut checker = build()?;
                         checker.keep((group..count).step_by(groups).collect());
-                        checker.positions.clone_from(positions);
+                        checker.shared.clone_from(positions);
                         let source = Source { graph, answers };
                         let added = add_states(&mut checker, &source);
                         let violation =

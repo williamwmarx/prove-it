@@ -235,6 +235,61 @@ fn reports_an_action_property_violated_under_a_view_as_tlc() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// As TLC ran it at d8fb231 with `-workers 1`: the first initial state's successors share one key
+// under the symmetry, and the second's first step reaches that key again, which TLC checks the
+// action property on although the state is seen. On threads sharing the level, the thread that
+// expands the second state takes the successor for new, where another thread found its key first,
+// and must stop the level there all the same.
+#[test]
+fn reports_an_action_property_violated_under_symmetry_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nCONSTANTS a, b, c\nVARIABLES x, y\nInit == x = a /\\ y \\in {0, 10}\nNext == y < 20 /\\ \\E v \\in {a, b, c} : x' = v /\\ y' = IF y = 10 THEN 1 ELSE y + 1\nSym == Permutations({a, b, c})\nNotBack == [][~(x' = a /\\ y = 10)]_<<x, y>>\n====\n";
+    let config = "CONSTANTS a = a b = b c = c\nINIT Init\nNEXT Next\nSYMMETRY Sym\nPROPERTY NotBack\nCHECK_DEADLOCK FALSE\n";
+    let expected = "Error: Action property NotBack is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = a\n/\\ y = 10\n\nState 2: <Next line 6, col 9 to line 6, col 81 of module Stop>\n/\\ x = a\n/\\ y = 1\n\n6 states generated, 3 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 2.\n";
+    assert_shared_as_tlc("action-symmetry", spec, config, expected);
+}
+
+// As TLC ran it at d8fb231 with `-workers 1`: the second initial state's first step reaches a
+// state that violates the invariant, but under a key the first state's expansion found, so TLC
+// checks no invariant on it, and its second step violates the action property. A thread sharing
+// the level takes the first for new and waits for the merge to tell whether its key was found
+// first; the step's violation stops the level there whether or not it was.
+#[test]
+fn reports_an_action_property_violated_after_a_seen_state_that_fails_an_invariant_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nCONSTANTS a, b, c\nVARIABLES x, y\nInit == x = a /\\ y \\in {0, 10}\nNext == \\/ y = 10 /\\ x' = c /\\ y' = 1\n        \\/ y = 10 /\\ x' = b /\\ y' = 11\n        \\/ y # 10 /\\ y < 20 /\\ \\E v \\in {a, b, c} : x' = v /\\ y' = y + 1\nSym == Permutations({a, b, c})\nInv == ~(x = c /\\ y = 1)\nNotEleven == [][~(x' = b /\\ y' = 11)]_<<x, y>>\n====\n";
+    let config = "CONSTANTS a = a b = b c = c\nINIT Init\nNEXT Next\nSYMMETRY Sym\nINVARIANT Inv\nPROPERTY NotEleven\nCHECK_DEADLOCK FALSE\n";
+    let expected = "Error: Action property NotEleven is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = a\n/\\ y = 10\n\nState 2: <Next line 7, col 12 to line 7, col 38 of module Stop>\n/\\ x = b\n/\\ y = 11\n\n7 states generated, 4 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 2.\n";
+    assert_shared_as_tlc("action-symmetry-invariant", spec, config, expected);
+}
+
+// Runs the spec on one worker, and then with every level shared between two and four threads,
+// which must each print TLC's report and exit as it does.
+fn assert_shared_as_tlc(test: &str, spec: &str, config: &str, expected: &str) {
+    let (output, directory) = run_spec(test, spec, config);
+    assert_eq!(output.status.code(), Some(13), "{}", stdout(&output));
+    assert!(stdout(&output).contains(expected), "{}", stdout(&output));
+    for threads in ["2", "4"] {
+        let shared = std::process::Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-workers", "1", "-noTE", "Stop"])
+            .current_dir(&directory)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .env("PROVE_IT_WORKERS", threads)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(
+            shared.status.code(),
+            Some(13),
+            "{threads} threads: {}",
+            stdout(&shared)
+        );
+        assert!(
+            stdout(&shared).contains(expected),
+            "{threads} threads: {}",
+            stdout(&shared)
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // TLC prints what the spec prints as it evaluates, before each violation it reports, and sets its
 // registers again as it rebuilds each trace, which the binary doesn't follow.
 #[test]
