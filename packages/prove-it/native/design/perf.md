@@ -667,6 +667,31 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 
 Together they bound StarkMutex at about 1.25×.
 
+### Start-up of the npm package: the keys a check asks for first (seeded-keys)
+
+The npm package runs the native check in-process in rounds (`checkAllSources`): the engine runs
+until it has read keys the caller hasn't answered, returns them, and the caller answers them and
+runs it again from the start. On the CLI path 2PCwithBTM took four rounds (the spec and its
+configuration; 92 keys of modules and directories; the real path of the temp directory; the
+check), each but the last re-doing the front end's work so far, and on the library path three
+(the spec and configuration texts; the built-in modules and the class space; the check). The
+caller now answers before the first round what it holds anyway, so a model whose modules are all
+built in checks in one round on the library path and two on the CLI's.
+
+What the npm CLI costs over the binary, measured on `depot-ubuntu-24.04-4` (medians of 20 runs,
+milliseconds, `main` at 31b00e33 then this):
+
+| Model | Binary | Bare Node | Node CLI, `main` | Node CLI, this |
+|---|---:|---:|---:|---:|
+| 2PCwithBTM | 12.7 | 12.5 | 36.5 | 35.8 |
+| Queue | 21.1 | 12.3 | 41.8 | 42.1 |
+| SyncCons | 22.3 | 14.1 | 51.5 | 43.6 |
+| VoucherRedeem | 26.0 | 12.6 | 47.4 | 45.8 |
+
+So the npm CLI costs about 25 ms over the binary on the smallest models, half of it Node's own
+start, not the 0.23 s a model measured before the check ran in-process; the rounds were worth 1 to
+8 ms of it. On the 4-core container a warm library check of 2PCwithBTM went 22 → 17 ms.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
