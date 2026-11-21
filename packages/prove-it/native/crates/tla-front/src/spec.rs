@@ -110,7 +110,7 @@ pub fn get_level(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LevelIdentity {
     Binding(*const Scope),
-    Definition(*const Definition, *const Scope),
+    Definition(*const Definition),
 }
 
 type LevelMemoKey = *const Definition;
@@ -265,15 +265,13 @@ fn get_level_inner(
         }
         body_shadowed.extend(formal_names.iter().cloned());
         // The sentinel belongs to the resolved operator, not its possibly shared body. A
-        // local binding also identifies its lexical context; a global definition's caller
-        // context is part of its visit identity.
+        // local binding also identifies its lexical context; a global definition's body names
+        // nothing of its caller's scope, so only recursion visits it again while it is active,
+        // whatever scope a LET of the caller's body adds.
         let (identity, memo_key) = if is_global {
             let definition = get_definition(&name, environment)?;
             let key = Rc::as_ptr(definition);
-            (
-                LevelIdentity::Definition(key, body_scope.map_or(std::ptr::null(), Rc::as_ptr)),
-                Some(key),
-            )
+            (LevelIdentity::Definition(key), Some(key))
         } else {
             let (node, _) = lookup_scope(scope, &name)?;
             (LevelIdentity::Binding(Rc::as_ptr(node)), None)
