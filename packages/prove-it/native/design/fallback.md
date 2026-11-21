@@ -6566,6 +6566,16 @@ violation).
   prints a value TLC never initialized`, a failure whose message prints a value TLC never initialized, a
   THEOREM's or an ASSUME's of an INSTANCE, whose `toString` throws a NullPointerException with a
   text that depends on the class holding it, where the evaluator writes `null`.
+- A temporal formula whose expansion doesn't end, which TLC overflows its stack on ("a temporal
+  formula whose expansion doesn't end, which TLC overflows its stack on"): a property or a
+  specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F == F /\
+  WF_x(Next)`. TLC's expansion of the formula recurses until the JVM's stack overflows and reports
+  the StackOverflowError (1005, exit 255); the binary's expansion recursed until its own stack
+  overflowed, aborting the process (exit 134, or past the conformance suite's 120 s where the
+  search's stack is larger). The expansion now declines past 1,024 levels, deeper than any spec
+  nests. Found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016, c0019);
+  fixtures `endless-expansion-*`.
+
 - _Track (see "_Track, _Counts, _CheckName and _PrintCounts"), the engine's reasons: `_Track`
   (where the context can't print), `_Track on several workers`, `_Track in a spec that reads or
   sets registers otherwise`, `_Track of constants, which TLC may compute as it starts`, `a _Track

@@ -597,7 +597,13 @@ pub struct Expansion<'a> {
     pub unroll_is_independent: std::cell::Cell<bool>,
     pub has_action_substitutions: std::cell::Cell<bool>,
     label_probe: std::cell::Cell<bool>,
+    /// How deep the expansion is, which a recursion that never ends (a LET's `RECURSIVE F` with
+    /// `F == F /\ ...`) takes past any spec's nesting, where TLC overflows its stack.
+    depth: std::cell::Cell<usize>,
 }
+
+/// The deepest expansion the front end follows.
+const MAX_EXPANSION_DEPTH: usize = 1024;
 
 impl Expansion<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
@@ -895,6 +901,25 @@ impl Expansion<'_> {
 
     /// `expandTemporal`.
     pub fn expand(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        expanding: &[*const Definition],
+        is_substituted: bool,
+        name: Option<Name>,
+    ) -> Result<Vec<Expanded>> {
+        if self.depth.get() >= MAX_EXPANSION_DEPTH {
+            return Err(not_yet(
+                "a temporal formula whose expansion doesn't end, which TLC overflows its stack on",
+            ));
+        }
+        self.depth.set(self.depth.get() + 1);
+        let expanded = self.expand_at_depth(expression, scope, expanding, is_substituted, name);
+        self.depth.set(self.depth.get() - 1);
+        expanded
+    }
+
+    fn expand_at_depth(
         &self,
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
@@ -2489,6 +2514,7 @@ pub fn read_specification(
         unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
         has_action_substitutions: std::cell::Cell::new(false),
         label_probe: std::cell::Cell::new(false),
+        depth: std::cell::Cell::new(0),
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
@@ -4249,6 +4275,7 @@ pub fn get_properties(
         unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
         has_action_substitutions: std::cell::Cell::new(false),
         label_probe: std::cell::Cell::new(false),
+        depth: std::cell::Cell::new(0),
     };
     for name in &config.properties {
         let Some(definition) =
