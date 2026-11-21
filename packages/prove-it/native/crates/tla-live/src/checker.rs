@@ -70,6 +70,41 @@ struct Scratch {
     targets: Vec<u32>,
     steps: Vec<u32>,
     rows: Vec<u32>,
+    order: Vec<u32>,
+}
+
+/// What checkers that share the behaviors between threads read ahead, on every thread: the action
+/// checks' results the tables answer on each step of the graph, by its position, and the order
+/// of each state's successor set.
+struct Shared {
+    steps: StepResults,
+    orders: Orders,
+}
+
+/// Each expanded state's successor set in TLC's order, as positions among its entries: its steps
+/// in the order generated, then its stuttering step. TLC's SetOfStates orders a set by a capacity
+/// that grows with every set that outgrows it, which a scan of the sets' sizes finds ahead of
+/// building them, so that threads build the sets, each a run of states.
+#[derive(Default)]
+struct Orders {
+    offsets: Vec<usize>,
+    positions: Vec<u32>,
+}
+
+impl Orders {
+    fn of(&self, state: u32) -> &[u32] {
+        &self.positions[self.offsets[state as usize]..self.offsets[state as usize + 1]]
+    }
+}
+
+/// What the tables answer of a behavior's state checks and of each state's consistency with its
+/// tableau's nodes, read ahead on threads for the states in order.
+#[derive(Default)]
+struct StateReads {
+    results: Vec<u8>,
+    is_checked: Vec<bool>,
+    consistency: Vec<u64>,
+    is_read: Vec<bool>,
 }
 
 /// The results of the action checks on each step, a row of bits per step by the checks' ids:
@@ -204,6 +239,8 @@ struct Behavior {
     edge_targets: Vec<u32>,
     edge_steps: Vec<u32>,
     state_results: Vec<u8>,
+    /// Whether a state's checks were read ahead into `state_results`.
+    state_checked: Vec<bool>,
     /// Whether the behaviors before this one have every action check of this one.
     is_covered: bool,
     consistency: Vec<u8>,
@@ -281,10 +318,10 @@ pub struct Checker {
     steps: StepResults,
     /// Each action check, by its id.
     action_terms: Vec<TermId>,
-    /// The action checks' results the tables answer on each step of the graph, by its position,
-    /// which a checker that shares the behaviors with others reads rather than checks again or
-    /// copies: a step's row is its position where the table has every check `needed` names.
-    shared: Option<Arc<StepResults>>,
+    /// What a checker that shares the behaviors with others reads rather than computes again:
+    /// a step's row of action checks is its position in the shared table where that has every
+    /// check `needed` names, and the successor sets come in their order.
+    shared: Option<Arc<Shared>>,
     /// Every action check of the behaviors this checker builds, as a mask of a row.
     needed: Vec<u64>,
     /// TLC's SetOfStates grows its capacity with every set that outgrows it.
@@ -346,6 +383,7 @@ impl Checker {
                 edge_targets: Vec::new(),
                 edge_steps: Vec::new(),
                 state_results: Vec::new(),
+                state_checked: Vec::new(),
                 is_covered,
                 consistency: Vec::new(),
                 read_consistency: Vec::new(),
@@ -632,7 +670,7 @@ impl Checker {
     // --- the rows of the action checks' results: the shared table's, then this checker's ---
 
     fn shared_rows(&self) -> usize {
-        self.shared.as_ref().map_or(0, |shared| shared.count)
+        self.shared.as_ref().map_or(0, |shared| shared.steps.count)
     }
 
     fn add_steps(&mut self, count: usize) -> usize {
@@ -641,21 +679,21 @@ impl Checker {
 
     fn is_step_complete(&self, row: usize, mask: &[u64]) -> bool {
         match &self.shared {
-            Some(shared) if row < shared.count => shared.is_complete(row, mask),
+            Some(shared) if row < shared.steps.count => shared.steps.is_complete(row, mask),
             _ => self.steps.is_complete(row - self.shared_rows(), mask),
         }
     }
 
     fn step_value(&self, row: usize, id: usize) -> bool {
         match &self.shared {
-            Some(shared) if row < shared.count => shared.value(row, id),
+            Some(shared) if row < shared.steps.count => shared.steps.value(row, id),
             _ => self.steps.value(row - self.shared_rows(), id),
         }
     }
 
     fn step_word(&self, row: usize, word: usize) -> u64 {
         match &self.shared {
-            Some(shared) if row < shared.count => shared.word(row, word),
+            Some(shared) if row < shared.steps.count => shared.steps.word(row, word),
             _ => self.steps.word(row - self.shared_rows(), word),
         }
     }
@@ -670,7 +708,11 @@ impl Checker {
             needed,
             ..
         } = self;
-        let Some(shared) = shared else {
+        let Some(shared) = shared
+            .as_ref()
+            .map(|shared| &shared.steps)
+            .filter(|shared| shared.count > 0)
+        else {
             let first = steps.add(set.len());
             rows.extend((first..first + set.len()).map(|row| row as u32));
             return;
@@ -804,6 +846,9 @@ impl Checker {
         behavior: usize,
         real: u32,
     ) -> Result<(), Declined> {
+        if self.behaviors[behavior].state_checked.get(real as usize) == Some(&true) {
+            return Ok(());
+        }
         let solution = &self.solutions[self.behaviors[behavior].solution];
         let count = solution.state_checks.len();
         let offset = real as usize * count;
@@ -910,26 +955,10 @@ impl Checker {
         let Some(tableau) = self.tableau(behavior) else {
             return false;
         };
-        let mut row = [0u64; READ_WORDS];
-        if words > READ_WORDS {
+        let Some(row) = read_consistency_row(&self.terms, tables, graph, tableau, state, words)
+        else {
             return false;
-        }
-        for (node, tableau_node) in tableau.nodes.iter().enumerate() {
-            let mut is_held = true;
-            for &predicate in &tableau_node.state_predicates {
-                match self.read(tables, graph, predicate, state, None) {
-                    Some(true) => {}
-                    Some(false) => {
-                        is_held = false;
-                        break;
-                    }
-                    None => return false,
-                }
-            }
-            if is_held {
-                row[node / 64] |= 1 << (node % 64);
-            }
-        }
+        };
         let behavior = &mut self.behaviors[behavior];
         if behavior.is_read.len() <= index {
             behavior.is_read.resize(index + 1, false);
@@ -1019,57 +1048,41 @@ impl Checker {
         let graph = source.graph;
         let start = graph.edge_offsets[state as usize] as usize;
         let end = graph.edge_offsets[state as usize + 1] as usize;
-        let mut entries: Vec<Step> = (start..end)
-            .map(|edge| Self::edge_step(source, state, edge))
-            .collect();
-        entries.push(Self::self_step(state, state));
-        let fingerprint =
-            |step: &Step| (graph.fingerprints[step.target as usize] as u32 & 0x7fff_ffff) as usize;
-        let insert = |slots: &mut [u32], position: usize| {
-            let entry = entries[position];
-            let size = slots.len();
-            let mut slot = fingerprint(&entry) % size;
-            loop {
-                match slots[slot] {
-                    0 => {
-                        slots[slot] = position as u32 + 1;
-                        return true;
-                    }
-                    stored
-                        if entries[stored as usize - 1].target == entry.target
-                            && entries[stored as usize - 1].real == entry.real =>
-                    {
-                        return false;
-                    }
-                    _ => slot = (slot + 1) % size,
-                }
+        let step = |position: u32| {
+            if position as usize == end - start {
+                Self::self_step(state, state)
+            } else {
+                Self::edge_step(source, state, start + position as usize)
             }
         };
-        let mut size = SUCCESSOR_CAPACITY * self.capacity_multiplier;
-        let mut count = 0;
-        self.slots.clear();
-        self.slots.resize(size, 0);
-        for position in 0..entries.len() {
-            if count >= size >> 1 {
-                let old = std::mem::take(&mut self.slots);
-                size = 2 * size + 1;
-                self.slots.resize(size, 0);
-                for stored in old.into_iter().filter(|&stored| stored != 0) {
-                    insert(&mut self.slots, stored as usize - 1);
-                }
-            }
-            if insert(&mut self.slots, position) {
-                count += 1;
-            }
+        if let Some(shared) = &self.shared {
+            return shared
+                .orders
+                .of(state)
+                .iter()
+                .map(|&position| step(position))
+                .collect();
         }
-        if size > SUCCESSOR_CAPACITY * self.capacity_multiplier {
+        let entries: Vec<(u32, u32)> = (start..end)
+            .map(|edge| {
+                let step = Self::edge_step(source, state, edge);
+                (step.target, step.real)
+            })
+            .chain([(state, state)])
+            .collect();
+        let mut order = std::mem::take(&mut self.scratch.order);
+        if slot_order(
+            &entries,
+            graph.fingerprints,
+            self.capacity_multiplier,
+            &mut self.slots,
+            &mut order,
+        ) {
             self.capacity_multiplier += 1;
         }
-        self.slots
-            .iter()
-            .filter(|&&stored| stored != 0)
-            .map(|&stored| entries[stored as usize - 1])
-            .collect()
+        let set = order.iter().map(|&position| step(position)).collect();
+        self.scratch.order = order;
+        set
     }
 
     fn add_initial_state(&mut self, source: &Source<'_>, state: u32) -> Result<(), Declined> {
@@ -1576,6 +1589,16 @@ impl Checker {
                 .flat_map(|behavior| behavior.action_ids.iter().copied()),
         );
     }
+
+    /// Takes what was read ahead of each behavior's state checks and consistency, in order.
+    fn adopt(&mut self, reads: Vec<StateReads>) {
+        for (behavior, reads) in self.behaviors.iter_mut().zip(reads) {
+            behavior.state_results = reads.results;
+            behavior.state_checked = reads.is_checked;
+            behavior.read_consistency = reads.consistency;
+            behavior.is_read = reads.is_read;
+        }
+    }
 }
 
 /// Whether the behaviors before one have every action check of it.
@@ -1681,6 +1704,257 @@ fn read_partially(terms: &Terms, tables: &[Option<&[u8]>], term: TermId, state: 
     }
 }
 
+/// `read` of each run of `count` items in order, one run a thread, as many runs as threads.
+fn on_runs<T: Send>(
+    count: usize,
+    threads: usize,
+    read: impl Fn(usize, usize) -> T + Sync,
+) -> Vec<T> {
+    let share = count.div_ceil(threads.max(1)).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..count)
+            .step_by(share)
+            .map(|start| {
+                let read = &read;
+                std::thread::Builder::new()
+                    .stack_size(STACK_BYTES)
+                    .spawn_scoped(scope, move || read(start, (start + share).min(count)))
+                    .expect("a thread for the liveness checker")
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
+/// The entries of a successor set in TLC's order, as positions in `order`: each step's (target,
+/// real) then the stuttering step's go into `slots`, `SUCCESSOR_CAPACITY` times the multiplier of
+/// them, by the target's fingerprint and linear probing, as TLC's SetOfStates keys its states,
+/// which doubles its slots and one when half full and puts the entries back in slot order; the
+/// order is the slots' without the duplicates. Returns whether the slots grew.
+fn slot_order(
+    entries: &[(u32, u32)],
+    fingerprints: &[u64],
+    multiplier: usize,
+    slots: &mut Vec<u32>,
+    order: &mut Vec<u32>,
+) -> bool {
+    let insert = |slots: &mut [u32], position: usize| {
+        let entry = entries[position];
+        let size = slots.len();
+        let mut slot = (fingerprints[entry.0 as usize] as u32 & 0x7fff_ffff) as usize % size;
+        loop {
+            match slots[slot] {
+                0 => {
+                    slots[slot] = position as u32 + 1;
+                    return true;
+                }
+                stored if entries[stored as usize - 1] == entry => return false,
+                _ => slot = (slot + 1) % size,
+            }
+        }
+    };
+    let initial = SUCCESSOR_CAPACITY * multiplier;
+    let mut size = initial;
+    let mut count = 0;
+    slots.clear();
+    slots.resize(size, 0);
+    for position in 0..entries.len() {
+        if count >= size >> 1 {
+            let old = std::mem::take(slots);
+            size = 2 * size + 1;
+            slots.resize(size, 0);
+            for stored in old.into_iter().filter(|&stored| stored != 0) {
+                insert(slots, stored as usize - 1);
+            }
+        }
+        if insert(slots, position) {
+            count += 1;
+        }
+    }
+    order.clear();
+    order.extend(
+        slots
+            .iter()
+            .filter(|&&stored| stored != 0)
+            .map(|&stored| stored - 1),
+    );
+    size > initial
+}
+
+/// The successor sets of the expanded states in TLC's order, built on threads: first how many
+/// distinct steps each state has, which says whether its set outgrows the slots, since the
+/// stuttering step goes in last; then the multiplier as each set is built, which the sets before
+/// it grew; then each run of states' sets with theirs.
+fn order_sets(graph: &Graph<'_>, threads: usize) -> Orders {
+    let expanded = graph.expanded();
+    let entries_of = |state: usize, entries: &mut Vec<(u32, u32)>| {
+        entries.clear();
+        let start = graph.edge_offsets[state] as usize;
+        let end = graph.edge_offsets[state + 1] as usize;
+        entries.extend((start..end).map(|edge| {
+            let step = edge_step(graph, state as u32, edge);
+            (step.target, step.real)
+        }));
+    };
+    let distinct: Vec<u32> = on_runs(expanded, threads, |start, end| {
+        let (mut entries, mut slots, mut order) = (Vec::new(), Vec::new(), Vec::new());
+        (start..end)
+            .map(|state| {
+                entries_of(state, &mut entries);
+                slot_order(&entries, graph.fingerprints, 1, &mut slots, &mut order);
+                order.len() as u32
+            })
+            .collect::<Vec<u32>>()
+    })
+    .concat();
+    let mut changes = vec![(0, 1)];
+    let mut multiplier = 1;
+    for (state, &distinct) in distinct.iter().enumerate() {
+        if distinct as usize >= (SUCCESSOR_CAPACITY * multiplier) >> 1 {
+            multiplier += 1;
+            changes.push((state + 1, multiplier));
+        }
+    }
+    let changes = &changes;
+    let runs: Vec<(Vec<usize>, Vec<u32>)> = on_runs(expanded, threads, |start, end| {
+        let mut next = changes.partition_point(|&(at, _)| at <= start);
+        let mut multiplier = changes[next - 1].1;
+        let (mut entries, mut slots, mut order) = (Vec::new(), Vec::new(), Vec::new());
+        let mut offsets = Vec::with_capacity(end - start + 1);
+        let mut positions = Vec::new();
+        for state in start..end {
+            while changes.get(next).is_some_and(|&(at, _)| at <= state) {
+                multiplier = changes[next].1;
+                next += 1;
+            }
+            entries_of(state, &mut entries);
+            entries.push((state as u32, state as u32));
+            offsets.push(positions.len());
+            slot_order(
+                &entries,
+                graph.fingerprints,
+                multiplier,
+                &mut slots,
+                &mut order,
+            );
+            positions.extend_from_slice(&order);
+        }
+        (offsets, positions)
+    });
+    let mut orders = Orders::default();
+    for (offsets, positions) in runs {
+        let base = orders.positions.len();
+        orders
+            .offsets
+            .extend(offsets.iter().map(|offset| base + offset));
+        orders.positions.extend(positions);
+    }
+    orders.offsets.push(orders.positions.len());
+    orders
+}
+
+/// A state's row of consistency with a tableau's nodes as the tables answer it, where they answer
+/// every node's predicates, in `words` words of bits by node.
+fn read_consistency_row(
+    terms: &Terms,
+    tables: &[Option<&[u8]>],
+    graph: &Graph<'_>,
+    tableau: &Tableau,
+    state: u32,
+    words: usize,
+) -> Option<[u64; READ_WORDS]> {
+    if words > READ_WORDS {
+        return None;
+    }
+    let mut row = [0u64; READ_WORDS];
+    for (node, tableau_node) in tableau.nodes.iter().enumerate() {
+        let mut is_held = true;
+        for &predicate in &tableau_node.state_predicates {
+            match read(terms, tables, graph, predicate, state, None) {
+                Some(true) => {}
+                Some(false) => {
+                    is_held = false;
+                    break;
+                }
+                None => return None,
+            }
+        }
+        if is_held {
+            row[node / 64] |= 1 << (node % 64);
+        }
+    }
+    Some(row)
+}
+
+/// What the tables answer of each behavior's state checks and consistency on each state the
+/// search stored or reached, read on threads, each a run of the states.
+fn read_states(
+    terms: &Terms,
+    solutions: &[Solution],
+    behaviors: &[Behavior],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+    threads: usize,
+) -> Vec<StateReads> {
+    let count = graph
+        .count()
+        .max(graph.edge_offsets.len().saturating_sub(1));
+    let runs: Vec<Vec<StateReads>> = on_runs(count, threads, |start, end| {
+        behaviors
+            .iter()
+            .map(|behavior| {
+                let solution = &solutions[behavior.solution];
+                let checks = solution.state_checks.len();
+                let tableau = solution.tableau.as_ref();
+                let words = tableau.map_or(0, |tableau| tableau.nodes.len().div_ceil(64).max(1));
+                let mut reads = StateReads {
+                    results: vec![0; (end - start) * checks],
+                    is_checked: vec![false; end - start],
+                    consistency: vec![0; (end - start) * words],
+                    is_read: vec![false; end - start],
+                };
+                for state in start..end {
+                    let at = state - start;
+                    let answered = solution.state_checks.iter().enumerate().try_for_each(
+                        |(position, &check)| {
+                            let value = read(terms, tables, graph, check, state as u32, None)?;
+                            reads.results[at * checks + position] = u8::from(value);
+                            Some(())
+                        },
+                    );
+                    reads.is_checked[at] = answered.is_some();
+                    if let Some(tableau) = tableau
+                        && let Some(row) =
+                            read_consistency_row(terms, tables, graph, tableau, state as u32, words)
+                    {
+                        reads.consistency[at * words..(at + 1) * words]
+                            .copy_from_slice(&row[..words]);
+                        reads.is_read[at] = true;
+                    }
+                }
+                reads
+            })
+            .collect()
+    });
+    let mut all: Vec<StateReads> = behaviors.iter().map(|_| StateReads::default()).collect();
+    for run in runs {
+        for (all, part) in all.iter_mut().zip(run) {
+            all.results.extend(part.results);
+            all.is_checked.extend(part.is_checked);
+            all.consistency.extend(part.consistency);
+            all.is_read.extend(part.is_read);
+        }
+    }
+    all
+}
+
 /// The action checks' results that the tables answer on each step of the graph, by its position:
 /// each step from a state the search expanded, then each state's stuttering step. Threads read
 /// them, each a run of the states, and the runs follow one another.
@@ -1692,10 +1966,8 @@ fn read_positions(
     threads: usize,
 ) -> StepResults {
     let (count, expanded) = (graph.count(), graph.expanded());
-    let share = count.div_ceil(threads.max(1)).max(1);
     // A run's steps from its states and its states' stuttering steps.
-    let read_run = |start: usize| {
-        let end = (start + share).min(count);
+    let read_run = |start: usize, end: usize| {
         let first_edge = graph.edge_offsets[start.min(expanded)] as usize;
         let last_edge = graph.edge_offsets[end.min(expanded)] as usize;
         let mut edges = StepResults::new(action_terms.len());
@@ -1734,25 +2006,7 @@ fn read_positions(
         }
         (edges, stutters)
     };
-    let runs: Vec<(StepResults, StepResults)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..count)
-            .step_by(share)
-            .map(|start| {
-                std::thread::Builder::new()
-                    .stack_size(STACK_BYTES)
-                    .spawn_scoped(scope, move || read_run(start))
-                    .expect("a thread for the liveness checker")
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            })
-            .collect()
-    });
+    let runs: Vec<(StepResults, StepResults)> = on_runs(count, threads, read_run);
     let mut positions = StepResults::new(action_terms.len());
     positions.add(graph.edges.len() + count);
     let mut row = 0;
@@ -2313,25 +2567,50 @@ pub fn check_shared(
 ) -> Result<Verdict, Declined> {
     let count = checker.behaviors.len();
     let groups = threads.clamp(1, count.max(1));
-    let positions = answers.tables().map(|tables| {
-        Arc::new(read_positions(
+    let shared = Arc::new(Shared {
+        steps: answers.tables().map_or_else(
+            || StepResults::new(checker.action_terms.len()),
+            |tables| {
+                read_positions(
+                    &checker.terms,
+                    &checker.action_terms,
+                    graph,
+                    tables,
+                    threads,
+                )
+            },
+        ),
+        orders: order_sets(graph, threads),
+    });
+    let shared = &shared;
+    // What each group's behaviors have read ahead, the behaviors a group builds being every
+    // `groups`th from its own.
+    let mut reads: Vec<Vec<StateReads>> = (0..groups).map(|_| Vec::new()).collect();
+    if let Some(tables) = answers.tables() {
+        let read = read_states(
             &checker.terms,
-            &checker.action_terms,
+            &checker.solutions,
+            &checker.behaviors,
             graph,
             tables,
             threads,
-        ))
-    });
-    let positions = &positions;
+        );
+        for (behavior, read) in read.into_iter().enumerate() {
+            reads[behavior % groups].push(read);
+        }
+    }
     let parts = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..groups)
-            .map(|group| {
+        let handles: Vec<_> = reads
+            .into_iter()
+            .enumerate()
+            .map(|(group, reads)| {
                 std::thread::Builder::new()
                     .stack_size(STACK_BYTES)
                     .spawn_scoped(scope, move || -> Result<Part, Declined> {
                         let mut checker = build()?;
                         checker.keep((group..count).step_by(groups).collect());
-                        checker.shared.clone_from(positions);
+                        checker.shared = Some(Arc::clone(shared));
+                        checker.adopt(reads);
                         let source = Source { graph, answers };
                         let added = add_states(&mut checker, &source);
                         let violation =
