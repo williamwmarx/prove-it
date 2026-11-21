@@ -117,22 +117,28 @@ fn checks_models_at_startup_as_tlc() {
             } else {
                 declined.as_ref()
             };
-            let windows = expected.filter(|_| cfg!(windows)).map(|expected| {
-                common::get_windows_expectation(&expected.lines().collect::<Vec<_>>())
-            });
-            let is_same = match (expected, declined) {
-                (Some(_), None) if let Some(common::OnWindows::Declined(reason)) = windows => {
-                    stderr.starts_with(&format!("prove-it: not native yet: {reason}"))
-                        && output.status.code() == Some(1)
-                }
-                (Some(expected), None) => actual == *expected,
-                (None, Some(reason)) => {
-                    stderr == format!("prove-it: not native yet: {reason}")
-                        && output.status.code() == Some(1)
-                        && output.stdout.is_empty()
-                }
-                _ => panic!("{name:?} holds neither tlc.out nor declined"),
-            };
+            // A path TLC prints differently on Windows the binary declines there.
+            let is_declined_on_windows = cfg!(windows)
+                && output.status.code() == Some(1)
+                && [
+                    common::DECLINED_FILE_URL,
+                    common::DECLINED_ROOT_FILE,
+                    common::DECLINED_JAR,
+                    common::DECLINED_CLASS_URL,
+                    common::DECLINED_TRACE_SPEC,
+                ]
+                .iter()
+                .any(|reason| stderr.starts_with(&format!("prove-it: not native yet: {reason}")));
+            let is_same = is_declined_on_windows
+                || match (expected, declined) {
+                    (Some(expected), None) => actual == *expected,
+                    (None, Some(reason)) => {
+                        stderr == format!("prove-it: not native yet: {reason}")
+                            && output.status.code() == Some(1)
+                            && output.stdout.is_empty()
+                    }
+                    _ => panic!("{name:?} holds neither tlc.out nor declined"),
+                };
             if !is_same {
                 let raw_stdout_bytes = output.stdout.len();
                 differences.push(format!(

@@ -88,6 +88,15 @@ fn reports_a_checkpoint_it_cant_recover_as_tlc() {
             .current_dir(&fixture)
             .output()
             .expect("the binary runs");
+        // Windows words the failure to open a file differently, so the binary declines there.
+        if cfg!(windows) {
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr),
+                "prove-it: not native yet: -recover from a checkpoint"
+            );
+            assert_eq!(output.status.code(), Some(1));
+            continue;
+        }
         let actual = format!(
             "exit {}\n{}",
             output.status.code().unwrap_or(-1),
