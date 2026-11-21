@@ -631,6 +631,30 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Memo heights beside their values
+
+#369 records, for each memo entry, how deep its evaluation nested recursive calls, so that a hit
+reaches as deep as TLC's evaluation, which keeps no table, and stops where TLC's stack would. The
+heights were kept in a map keyed by the entry's six keys and hashed a byte at a time
+(`IntegerHasher::write`). Every hit then looked its height up there, and every store removed or
+inserted one, once any entry had a height. On MCbtree, `Machine::call_recursive` went from 3.1% to
+7.5% of the run.
+
+A table of one or two keys now keeps the height in its entry, in what was its padding, and reads
+it with the value in one probe. A direct table keeps them in a parallel array once one isn't 0.
+A wider table keeps the map, hashed a word at a time. A store for keys a table already holds
+overwrites them, as the map did, so the heights are the same.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | MCbtree | TLCSailfish1 | Geomean | Agreeing |
+|---|---|---|---:|---:|
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | 0.78 → 0.73 | — | 0.99× | 18/18 |
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 0.79 → 0.74 | 3.65 → 3.39 | 1.04× | 15/15 |
+
+On a 4-core runner, with 9 interleaved runs, MCbtree took 0.633 s at fb05e28, 0.773 s at
+8f623123 (#369) and 0.725 s with this change. So it wins back about a third of the loss there.
+
 ### Liveness (`perf-liveness`)
 
 The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
