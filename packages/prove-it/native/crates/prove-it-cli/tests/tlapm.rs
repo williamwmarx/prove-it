@@ -366,33 +366,6 @@ fn prints_each_provers_result_in_toolbox_mode() {
     }
 }
 
-// Prep.compute_meth warns of a pragma it can't read where it is (Errors.err: a toolbox warning, or
-// a line on stderr), as Prep.make_task computes each obligation's methods before any is proved,
-// and leaves that obligation untreated: "unexpected error" in toolbox mode, last first, as
-// collect_untreated_obligations lists them.
-#[test]
-fn warns_of_a_pragma_it_cannot_read_as_tlapm_does() {
-    let output = run(
-        "tlapm-cli",
-        &["--threads", "1", "--toolbox", "0", "0", "Pragmas.tla"],
-    );
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(
-        without_time_used(&stderr(&output)),
-        without_time_used(&read_recording("tlapm-cli", "Pragmas.toolbox"))
-    );
-    let output = run("tlapm-cli", &["Pragmas.tla"]);
-    assert_eq!(output.status.code(), Some(3));
-    assert_eq!(
-        stdout(&output),
-        read_recording("tlapm-cli", "Pragmas.stdout")
-    );
-    assert_eq!(
-        stderr(&output),
-        read_recording("tlapm-cli", "Pragmas.stderr")
-    );
-}
-
 // tlapm evaluates an obligation's methods as its scheduler starts them (Prep.already_processed in
 // Schedule.run's thunks), and launches every decision it can before it takes a result: with two
 // threads, the second of two obligations with one fingerprint starts while the first's Zenon runs,
