@@ -6339,6 +6339,12 @@ these, each as main b7f832b9 prints it:
   TLC and `{"action", "zzq"}` natively.
 - An initial predicate that leaves a variable undefined after two complete initial states prints
   TLC's "Computed 2 initial states..." twice in TLC, once natively.
+- Random draws after a trace, not yet traced: `Init == x = RandomElement(1..1000) /\ PrintT(x)` with
+  `Next == RandomElement(1..2) = 3 /\ x' = x` and `-seed 4` prints `731` before the deadlock's trace
+  in both, and after it `882` in TLC and `731` natively, as though the binary's generator hadn't
+  advanced past Next's draw; and with `A == n' = n + 1 /\ x' = RandomElement(1..1000)`, `B ==
+  PrintT(<<"B", n>>) /\ FALSE`, `INVARIANT n < 2` and `POSTCONDITION PrintT(Cardinality(
+  CounterExample.state))`, TLC prints `<<"B", 1>>` where the binary prints `3`.
 - Two prints TLC makes that the binary doesn't, not yet traced: `PROPERTY Prop` with `Prop ==
   <>[]~S(x)`, `S(v) == v < 0 /\ PrintT("s")` and x from 0 to 4 prints `"s"` once in TLC, though
   no state makes `v < 0` hold; and `Next == \E i \in {PrintT(<<"split", TLCGet("level")>>)} :
