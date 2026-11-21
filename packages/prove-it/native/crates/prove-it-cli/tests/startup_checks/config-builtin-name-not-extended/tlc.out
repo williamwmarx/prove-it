@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Error: The name Seq specified in the configuration file
+is not defined in the specification.

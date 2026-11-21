@@ -6527,6 +6527,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   (`f[x \in S] == ...`), which TLC builds in the definition's frame, declines alike ("building a
   function a definition defines").
 
+- A name the configuration gives that is an operator of a standard module the spec extends
+  (`SPECIFICATION Nat`, `INVARIANT IsFiniteSet`, `SPECIFICATION Seq`): `defns` holds it, as the
+  Java method that overrides it, which TLC reports as the name's value ("The value of Nat is equal
+  to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>", the method
+  of the module the spec reached it through), or as its definition. The binary reported the name
+  undefined; it now declines ("a name the configuration gives that is an operator of a standard
+  module"). A module the spec doesn't extend leaves the name undefined, which matches. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `config-builtin-name-*`.
+
 - A TLCGet("spec") record a failure prints whole (`Attempted to select nonexistent field
   "properties" from the record [ inits |-> ..., actions |-> ..., temporals |-> ..., invariants |->
   ..., impliedinits |-> ..., impliedtemporals |-> ..., variables |-> ..., actionconstraints |->
