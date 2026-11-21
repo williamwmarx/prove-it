@@ -4737,6 +4737,16 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A constant-level definition through TLCCache or AssertError that the configuration names, found
+  in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
+  `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
+  `AssertError(m, e)` at the level of their arguments, and `processConstantDefns` computes such a
+  definition as TLC starts: `Inv == TLCCache(FALSE, {})` as the invariant is "The invariant of Inv
+  is equal to FALSE" (exit 151), as a property or a constraint likewise, and TRUE warns as a
+  constant invariant does. The front end's builtin table marked both state-level, so the binary
+  checked such an invariant in each state ("Invariant Inv is violated by the initial state").
+  Fixtures `tlcext-constant-*`.
+
 - The call stack of a failure in an argument of a function application of several, found in the
   specs of upstream tla-ts's unit tests at 0341dbe5. SANY parses `f[a, b]` as `f[<<a, b>>]`, a
   `$Tuple` node with the application's range, which `OPCODE_fa` evaluates (`args[1]`), so TLC's
@@ -5425,6 +5435,11 @@ declined, "a postcondition: TLCGet", until the postcondition evaluator read that
   THEN 1 ELSE 2` declines alike.
 
 #### Known wrong outputs
+
+A constant-level definition through TLCDefer that the configuration names (`Inv == TLCDefer(FALSE)`
+as the invariant): TLCDefer's Java method sets no `minLevel` either, so TLC computes the
+definition as it starts, to TRUE, and warns of a constant invariant, where the binary checks it in
+each state, as main does. The engine's packaged TLCDefer marker keeps the builtin state-level.
 
 An EXCEPT of a function constructor over a set of strings a constant definition names, applied
 to a number (`S == {"b", "a"}`, `[[x \in S |-> x] EXCEPT !["a"] = 2][1]`), fails comparing the
