@@ -94,7 +94,7 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 6] = [
+    let cases: [(&[&str], &str); 7] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
@@ -112,6 +112,17 @@ fn prints_the_obligations_tlapm_prints() {
                 "Suppressed.tla",
             ],
             "Suppressed.toolbox",
+        ),
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "SuppressedComments.tla",
+            ],
+            "SuppressedComments.toolbox",
         ),
         (&["-N", "--toolbox", "0", "0", "Omit.tla"], "Omit.toolbox"),
         (
@@ -184,13 +195,15 @@ fn prints_the_notes_and_the_summary_tlapm_prints() {
     );
     assert_eq!(stderr(&output), "");
     // The summary counts the suppressed obligations, which Proof.Gen.obligate made.
-    let output = run("obligations", &["--summary", "Suppressed.tla"]);
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(
-        stdout(&output),
-        read_recording("obligations", "Suppressed.summary")
-    );
-    assert_eq!(stderr(&output), "");
+    for module in ["Suppressed", "SuppressedComments"] {
+        let output = run("obligations", &["--summary", &format!("{module}.tla")]);
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(
+            stdout(&output),
+            read_recording("obligations", &format!("{module}.summary"))
+        );
+        assert_eq!(stderr(&output), "");
+    }
     let output = run("obligations", &["-N", "Proofs.tla"]);
     assert_eq!(
         (stdout(&output), stderr(&output)),

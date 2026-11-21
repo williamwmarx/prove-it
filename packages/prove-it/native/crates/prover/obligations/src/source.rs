@@ -16,7 +16,8 @@ use crate::expression::{
 use crate::module::{Declaration, ModuleUnit, ModuleUnitCore, Mule, MutateMode};
 use crate::operators::{Fixity, lookup_operator};
 use crate::pragma::{
-    OldMethod, Position, find_pragma, find_suppress_pragma, read_new_method, read_old_method,
+    Lexical, OldMethod, Position, find_pragma, find_suppress_pragma, read_lexical, read_new_method,
+    read_old_method,
 };
 use crate::proof::{
     Counter, Omission, Proof, ProofCore, ProofProps, QedStep, Step, StepCore, StepNumber, Usable,
@@ -154,11 +155,6 @@ fn get_index(position: u32) -> usize {
     (position as usize).wrapping_sub(1)
 }
 
-/// `lines[line].indexOf(needle, from)` on UTF-16 code units.
-fn find_units(line: &[u16], needle: &[u16], from: usize) -> Option<usize> {
-    (from..=line.len().checked_sub(needle.len())?).find(|&start| line[start..].starts_with(needle))
-}
-
 fn get_utf16_length(text: &str) -> u32 {
     text.encode_utf16().count() as u32
 }
@@ -249,6 +245,7 @@ fn proof_props(location: Option<Locus>, step: Option<StepNumber>) -> ProofProps 
 pub struct Source {
     file: Rc<str>,
     lines: Vec<Vec<u16>>,
+    lexical: Lexical,
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
 }
@@ -259,12 +256,14 @@ pub fn create_source(
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
 ) -> Source {
+    let lines: Vec<Vec<u16>> = text
+        .split('\n')
+        .map(|line| line.encode_utf16().collect())
+        .collect();
     Source {
         file: Rc::from(file),
-        lines: text
-            .split('\n')
-            .map(|line| line.encode_utf16().collect())
-            .collect(),
+        lexical: read_lexical(&lines),
+        lines,
         counter,
         is_expanding_tuples,
     }
@@ -282,7 +281,8 @@ impl Source {
     }
 
     fn with_pragma(&self, locus: Locus) -> Locus {
-        let Some(open) = find_pragma(
+        let Some(pragma) = find_pragma(
+            &self.lexical,
             &self.lines,
             Position {
                 line: get_index(locus.end_line),
@@ -291,24 +291,21 @@ impl Source {
         ) else {
             return locus;
         };
-        let needle: Vec<u16> = "}*)".encode_utf16().collect();
-        for index in open.line..self.lines.len() {
-            let from = if index == open.line { open.column } else { 0 };
-            if let Some(close) = find_units(&self.lines[index], &needle, from) {
-                return Locus {
-                    end_line: index as u32 + 1,
-                    end_column: close as u32 + 4,
-                    ..locus
-                };
-            }
+        let Some(close) = pragma.close else {
+            return locus;
+        };
+        Locus {
+            end_line: close.line as u32 + 1,
+            end_column: close.column as u32 + 1,
+            ..locus
         }
-        locus
     }
 
     /// Proof.Parser's `suppress`: where the suppression pragma before the keyword at `start`
     /// opens, if there is one.
     fn get_suppression(&self, start: &ast::Position) -> Option<Locus> {
         let opening = find_suppress_pragma(
+            &self.lexical,
             &self.lines,
             Position {
                 line: get_index(start.line),
@@ -333,6 +330,7 @@ impl Source {
             return Ok(None);
         };
         read_old_method(
+            &self.lexical,
             &self.lines,
             Position {
                 line: get_index(range.end.line),
@@ -1131,6 +1129,7 @@ impl Source {
         };
         let methods = match &definition.location.range {
             Some(range) => read_new_method(
+                &self.lexical,
                 &self.lines,
                 Position {
                     line: get_index(range.end.line),

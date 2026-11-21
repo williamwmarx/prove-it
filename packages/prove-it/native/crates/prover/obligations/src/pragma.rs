@@ -22,7 +22,7 @@ pub struct PragmaSetting {
 }
 
 /// A place in the source: `line` counts from 0 and `column` counts UTF-16 code units from 0.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
@@ -64,80 +64,301 @@ fn get_units(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
 }
 
-/// Where the pragma after start opens, past blanks and line ends.
-pub fn find_pragma<Line: AsRef<[u16]>>(lines: &[Line], start: Position) -> Option<Position> {
-    let mut position = start;
-    skip_blanks(lines, &mut position);
+/// A pragma as tlapm's lexer finds it: `(*{` and `}*)` are tokens outside comments and strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pragma {
+    pub open: Position,
+    /// After the `}*)`, where one closes it.
+    pub close: Option<Position>,
+}
+
+/// A module's text as tlapm's lexer reads it (alexer.mll `token`): the comments it drops, which
+/// `\*` opens to the line's end and `(*` to the `*)` closing its nesting, where `(*{` and `}*)`
+/// nest as `(*` and `*)` do; the strings, which hide what looks like a comment or a pragma; and
+/// the pragmas. The parser sees pragmas as tokens, so a comment inside one or between it and the
+/// keyword it qualifies is no different from a blank.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Lexical {
+    comments: Vec<(Position, Position)>,
+    pragmas: Vec<Pragma>,
+}
+
+impl Lexical {
+    /// The end of the comment `position` is in or at the start of.
+    fn get_comment_end(&self, position: Position) -> Option<Position> {
+        self.comments
+            .iter()
+            .find(|(start, end)| *start <= position && position < *end)
+            .map(|(_, end)| *end)
+    }
+
+    /// The start of the comment `position` is in or at the end of.
+    fn get_comment_start(&self, position: Position) -> Option<Position> {
+        self.comments
+            .iter()
+            .find(|(start, end)| *start < position && position <= *end)
+            .map(|(start, _)| *start)
+    }
+}
+
+fn starts_with<Line: AsRef<[u16]>>(lines: &[Line], position: Position, text: &str) -> bool {
     lines
         .get(position.line)
         .and_then(|line| line.as_ref().get(position.column..))
-        .is_some_and(|rest| rest.starts_with(&get_units("(*{")))
-        .then_some(position)
+        .is_some_and(|rest| rest.starts_with(&get_units(text)))
+}
+
+/// Where tlapm's lexer starts reading tokens: after `---- MODULE` (alexer.mll `modfile`), or at
+/// the start where there is no header, which tlapm doesn't parse at all.
+fn find_module_header<Line: AsRef<[u16]>>(lines: &[Line]) -> Position {
+    let dashes = get_units("----");
+    let module = get_units("MODULE");
+    for (index, line) in lines.iter().enumerate() {
+        let line = line.as_ref();
+        for start in 0..line.len() {
+            if !line[start..].starts_with(&dashes) {
+                continue;
+            }
+            let mut column = start + dashes.len();
+            while is_unit(line.get(column), b'-') {
+                column += 1;
+            }
+            while is_unit(line.get(column), b' ') {
+                column += 1;
+            }
+            if line[column..].starts_with(&module) {
+                return Position {
+                    line: index,
+                    column: column + module.len(),
+                };
+            }
+        }
+    }
+    Position { line: 0, column: 0 }
+}
+
+/// The end of the comment `(*` opens at `start`, nesting `(*` and `*)`, or of the text where no
+/// `*)` closes it.
+fn skip_comment<Line: AsRef<[u16]>>(lines: &[Line], start: Position) -> Position {
+    let mut depth = 0;
+    let mut position = start;
+    while let Some(line) = lines.get(position.line) {
+        let line = line.as_ref();
+        if position.column >= line.len() {
+            if position.line + 1 == lines.len() {
+                break;
+            }
+            position = Position {
+                line: position.line + 1,
+                column: 0,
+            };
+            continue;
+        }
+        if starts_with(lines, position, "(*") {
+            depth += 1;
+            position.column += 2;
+        } else if starts_with(lines, position, "*)") {
+            depth -= 1;
+            position.column += 2;
+            if depth == 0 {
+                return position;
+            }
+        } else {
+            position.column += 1;
+        }
+    }
+    position
+}
+
+/// The end of the string `"` opens at `start` (alexer.mll `string`): past its escapes, at the
+/// closing quote, or at the line's end, where tlapm stops with an error.
+fn skip_string(line: &[u16], start: Position) -> Position {
+    let mut column = start.column + 1;
+    while let Some(&unit) = line.get(column) {
+        if unit == u16::from(b'"') {
+            return Position {
+                column: column + 1,
+                ..start
+            };
+        }
+        if unit == u16::from(b'\\') {
+            let next = line.get(column + 1);
+            let is_octal = |unit: Option<&u16>| {
+                unit.is_some_and(|&unit| (b'0'..=b'7').contains(&u8::try_from(unit).unwrap_or(0)))
+            };
+            column += if next
+                .is_some_and(|&unit| b"\"\\tnfr".contains(&u8::try_from(unit).unwrap_or(0)))
+            {
+                2
+            } else if is_octal(next)
+                && is_octal(line.get(column + 2))
+                && is_octal(line.get(column + 3))
+            {
+                4
+            } else {
+                1
+            };
+            continue;
+        }
+        column += 1;
+    }
+    Position { column, ..start }
+}
+
+/// Reads the module's text as tlapm's lexer does.
+pub fn read_lexical<Line: AsRef<[u16]>>(lines: &[Line]) -> Lexical {
+    let mut lexical = Lexical::default();
+    let mut opened: Vec<(Position, Option<Position>)> = Vec::new();
+    let mut position = find_module_header(lines);
+    while let Some(line) = lines.get(position.line) {
+        let line = line.as_ref();
+        if position.column >= line.len() {
+            position = Position {
+                line: position.line + 1,
+                column: 0,
+            };
+            continue;
+        }
+        if starts_with(lines, position, "(*{") {
+            opened.push((position, None));
+            position.column += 3;
+        } else if starts_with(lines, position, "}*)") {
+            position.column += 3;
+            if let Some(index) = opened.iter().rposition(|(_, close)| close.is_none()) {
+                opened[index].1 = Some(position);
+            }
+        } else if starts_with(lines, position, "\\*") {
+            let end = Position {
+                column: line.len(),
+                ..position
+            };
+            lexical.comments.push((position, end));
+            position = end;
+        } else if starts_with(lines, position, "(*") {
+            let end = skip_comment(lines, position);
+            lexical.comments.push((position, end));
+            position = end;
+        } else if is_unit(line.get(position.column), b'"') {
+            position = skip_string(line, position);
+        } else {
+            position.column += 1;
+        }
+    }
+    lexical.pragmas = opened
+        .into_iter()
+        .map(|(open, close)| Pragma { open, close })
+        .collect();
+    lexical
+}
+
+/// Past blanks, line ends and comments.
+fn skip_blanks_and_comments<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
+    lines: &[Line],
+    position: &mut Position,
+) {
+    loop {
+        skip_blanks(lines, position);
+        match lexical.get_comment_end(*position) {
+            Some(end) => *position = end,
+            None => return,
+        }
+    }
+}
+
+/// The units from `from` to `to`, comments left out and a line end as a line feed.
+fn collect_units<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
+    lines: &[Line],
+    from: Position,
+    to: Position,
+) -> Vec<u16> {
+    let mut units = Vec::new();
+    let mut position = from;
+    while position < to {
+        if let Some(end) = lexical.get_comment_end(position) {
+            position = end;
+            continue;
+        }
+        let line = lines.get(position.line).map_or(&[][..], AsRef::as_ref);
+        match line.get(position.column) {
+            Some(&unit) => {
+                units.push(unit);
+                position.column += 1;
+            }
+            None => {
+                units.push(u16::from(b'\n'));
+                position = Position {
+                    line: position.line + 1,
+                    column: 0,
+                };
+            }
+        }
+    }
+    units
+}
+
+/// The pragma after `start`, past blanks, line ends and comments.
+pub fn find_pragma<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
+    lines: &[Line],
+    start: Position,
+) -> Option<Pragma> {
+    let mut position = start;
+    skip_blanks_and_comments(lexical, lines, &mut position);
+    lexical
+        .pragmas
+        .iter()
+        .find(|pragma| pragma.open == position)
+        .copied()
 }
 
 /// Where the suppression pragma before `keyword` opens, if there is one: Proof.Parser's
-/// `suppress`, a pragma holding `_` or `suppress` alone, which the lexer reads as one token, so
-/// that only blanks and line ends separate it from the keyword.
+/// `suppress`, a pragma holding `_` or `suppress` alone, which the parser reads as tokens, so
+/// that only blanks, line ends and comments separate it from the keyword.
 pub fn find_suppress_pragma<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
     lines: &[Line],
     keyword: Position,
 ) -> Option<Position> {
-    let closing = get_units("}*)");
-    let opening = get_units("(*{");
     let mut position = keyword;
-    // Back over blanks and line ends to the last unit before the keyword.
+    // Back over blanks, line ends and comments to the last unit before the keyword.
     loop {
         let line = lines.get(position.line)?.as_ref();
         if position.column > line.len() {
             position.column = line.len();
         }
+        if let Some(start) = lexical.get_comment_start(position) {
+            position = start;
+            continue;
+        }
         while position.column > 0 && is_blank(line.get(position.column - 1)) {
             position.column -= 1;
         }
         if position.column > 0 {
-            break;
+            if lexical.get_comment_start(position).is_none() {
+                break;
+            }
+            continue;
         }
         position.line = position.line.checked_sub(1)?;
         position.column = lines.get(position.line)?.as_ref().len();
     }
-    let line = lines.get(position.line)?.as_ref();
-    let close = position.column.checked_sub(closing.len())?;
-    if line.get(close..position.column) != Some(closing.as_slice()) {
-        return None;
-    }
-    // The opening, on this line or an earlier one; the text between, all blanks aside, is `_` or
-    // `suppress`.
-    let mut text: Vec<u16> = Vec::new();
-    let mut at = Position {
-        line: position.line,
-        column: close,
+    let pragma = lexical
+        .pragmas
+        .iter()
+        .find(|pragma| pragma.close == Some(position))?;
+    let from = Position {
+        column: pragma.open.column + 3,
+        ..pragma.open
     };
-    loop {
-        let line = lines.get(at.line)?.as_ref();
-        let open = (0..=at.column.saturating_sub(opening.len()))
-            .rev()
-            .find(|&start| line.get(start..start + opening.len()) == Some(opening.as_slice()));
-        match open {
-            Some(start) => {
-                let mut inner = line[start + opening.len()..at.column].to_vec();
-                inner.extend(text);
-                text = inner;
-                at.column = start;
-                break;
-            }
-            None => {
-                let mut inner = line[..at.column].to_vec();
-                inner.push(u16::from(b'\n'));
-                inner.extend(text);
-                text = inner;
-                at.line = at.line.checked_sub(1)?;
-                at.column = lines.get(at.line)?.as_ref().len();
-            }
-        }
-    }
-    let inner = String::from_utf16_lossy(&text);
+    let to = Position {
+        column: position.column - 3,
+        ..position
+    };
+    let inner = String::from_utf16_lossy(&collect_units(lexical, lines, from, to));
     let inner = inner.trim_matches(|character: char| matches!(character, ' ' | '\t' | '\r' | '\n'));
-    (inner == "_" || inner == "suppress").then_some(at)
+    (inner == "_" || inner == "suppress").then_some(pragma.open)
 }
 
 fn is_ascii_unit(unit: u16, predicate: impl Fn(u8) -> bool) -> bool {
@@ -237,22 +458,26 @@ fn read_string(literal: &[u16]) -> Result<String> {
 }
 
 fn tokenize_pragma<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
     lines: &[Line],
     start: Position,
 ) -> Result<Option<Vec<Token>>> {
-    let Some(open) = find_pragma(lines, start) else {
+    let Some(pragma) = find_pragma(lexical, lines, start) else {
         return Ok(None);
     };
-    let closing = get_units("}*)");
+    let closing = pragma.close.map(|close| Position {
+        column: close.column - 3,
+        ..close
+    });
     let mut position = Position {
-        line: open.line,
-        column: open.column + 3,
+        column: pragma.open.column + 3,
+        ..pragma.open
     };
     let mut tokens = Vec::new();
-    skip_blanks(lines, &mut position);
+    skip_blanks_and_comments(lexical, lines, &mut position);
     while let Some(line) = lines.get(position.line) {
         let rest = line.as_ref().get(position.column..).unwrap_or(&[]);
-        if rest.starts_with(&closing) {
+        if Some(position) == closing {
             return Ok(Some(tokens));
         }
         let length = match_ident(rest)
@@ -268,7 +493,7 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
                 Token::Ident(String::from_utf16_lossy(text))
             });
             position.column += length;
-            skip_blanks(lines, &mut position);
+            skip_blanks_and_comments(lexical, lines, &mut position);
             continue;
         }
         let Some(punctuation) = rest
@@ -280,7 +505,7 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
         };
         tokens.push(Token::Punct(punctuation));
         position.column += 1;
-        skip_blanks(lines, &mut position);
+        skip_blanks_and_comments(lexical, lines, &mut position);
     }
     Ok(None)
 }
@@ -406,10 +631,11 @@ impl OldMethodReader {
 /// axiom, which names one method, isabelle with a tactic, or zenon with a timeout and a fallback.
 /// The error is `read_string`'s.
 pub fn read_old_method<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
     lines: &[Line],
     start: Position,
 ) -> Result<Option<OldMethod>> {
-    let Some(tokens) = tokenize_pragma(lines, start)? else {
+    let Some(tokens) = tokenize_pragma(lexical, lines, start)? else {
         return Ok(None);
     };
     let mut reader = OldMethodReader { tokens, index: 0 };
@@ -428,10 +654,11 @@ pub fn read_old_method<Line: AsRef<[u16]>>(
 /// read_new_method: by (hint: value; ...), repeated, where a value is a string, a number, or @ for
 /// the argument the definition is applied to. The error is as `read_old_method`'s.
 pub fn read_new_method<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
     lines: &[Line],
     start: Position,
 ) -> Result<Option<Vec<Vec<PragmaSetting>>>> {
-    let Some(tokens) = tokenize_pragma(lines, start)? else {
+    let Some(tokens) = tokenize_pragma(lexical, lines, start)? else {
         return Ok(None);
     };
     let mut index = 0;
@@ -1092,17 +1319,17 @@ mod tests {
             let lines = get_lines(text);
             let start = Position { line, column };
             assert_eq!(
-                find_pragma(&lines, start),
+                find_pragma(&read_lexical(&lines), &lines, start).map(|pragma| pragma.open),
                 found.map(|(line, column)| Position { line, column }),
                 "case {index}"
             );
             assert_eq!(
-                read_old_method(&lines, start).map_err(|_| ()),
+                read_old_method(&read_lexical(&lines), &lines, start).map_err(|_| ()),
                 old_method,
                 "case {index}"
             );
             assert_eq!(
-                read_new_method(&lines, start).map_err(|_| ()),
+                read_new_method(&read_lexical(&lines), &lines, start).map_err(|_| ()),
                 new_method,
                 "case {index}"
             );
@@ -1110,24 +1337,36 @@ mod tests {
     }
 
     /// Proof.Parser's `suppress`: the pragma just before the keyword, over blanks and line ends,
-    /// holding `_` or `suppress` alone.
+    /// holding `_` or `suppress` alone, with only blanks, line ends and comments before the
+    /// keyword, and not what looks like one inside a comment or a string.
     #[test]
     fn finds_the_suppression_pragma_before_a_keyword() {
         type Case = (&'static str, (usize, usize), Option<(usize, usize)>);
-        let cases: [Case; 9] = [
+        let cases: [Case; 16] = [
             ("<1> (*{_}*) WITNESS 1", (0, 12), Some((0, 4))),
             ("  (*{ suppress }*)  BY A", (0, 20), Some((0, 2))),
             ("(*{_}*)\n  USE A", (1, 2), Some((0, 0))),
             ("(*{\n _ \n}*) OBVIOUS", (2, 4), Some((0, 0))),
+            ("(*{_}*) (* c *) BY A", (0, 16), Some((0, 0))),
+            ("(*{_}*) \\* c\nBY A", (1, 0), Some((0, 0))),
+            ("(*{ _ (* c *) }*) BY A", (0, 18), Some((0, 0))),
+            ("(*{ _ \\* c\n}*) OBVIOUS", (1, 4), Some((0, 0))),
             ("(*{ by (smt) }*) BY A", (0, 17), None),
-            ("(*{_}*) (* c *) BY A", (0, 16), None),
+            ("\\* (*{_}*)\nOBVIOUS", (1, 0), None),
+            ("(* (*{_}*) *)\nOBVIOUS", (1, 0), None),
+            ("(* (* (*{_}*) *) *)  \nOBVIOUS", (1, 0), None),
+            ("\"(*{_}*)\" OBVIOUS", (0, 10), None),
             ("<1> BY A", (0, 4), None),
             ("(*{suppress_}*) BY", (0, 16), None),
             ("}*) BY", (0, 4), None),
         ];
         for (text, (line, column), expected) in cases {
             assert_eq!(
-                find_suppress_pragma(&get_lines(text), Position { line, column }),
+                find_suppress_pragma(
+                    &read_lexical(&get_lines(text)),
+                    &get_lines(text),
+                    Position { line, column }
+                ),
                 expected.map(|(line, column)| Position { line, column }),
                 "{text:?}"
             );
@@ -1153,7 +1392,11 @@ mod tests {
         ] {
             let new_method = format!("(*{{ by (prover: {literal}) }}*)");
             assert_eq!(
-                read_new_method(&get_lines(&new_method), start),
+                read_new_method(
+                    &read_lexical(&get_lines(&new_method)),
+                    &get_lines(&new_method),
+                    start
+                ),
                 Ok(Some(vec![vec![set(
                     "prover",
                     PragmaValue::String(contents.to_owned())
@@ -1162,7 +1405,11 @@ mod tests {
             );
             let old_method = format!("(*{{ by (isabelle {literal}) }}*)");
             assert_eq!(
-                read_old_method(&get_lines(&old_method), start),
+                read_old_method(
+                    &read_lexical(&get_lines(&old_method)),
+                    &get_lines(&old_method),
+                    start
+                ),
                 Ok(Some(old("isabelle", Some(contents), None))),
                 "{literal}"
             );
@@ -1175,7 +1422,7 @@ mod tests {
         let start = Position { line: 0, column: 0 };
         for text in ["(*{ by (a: \"a\u{9}b\") }*)", "(*{ by (a: \"a\u{d}b\") }*)"] {
             assert!(
-                read_new_method(&get_lines(text), start).is_err(),
+                read_new_method(&read_lexical(&get_lines(text)), &get_lines(text), start).is_err(),
                 "{text:?}"
             );
         }
