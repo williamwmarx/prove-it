@@ -660,9 +660,9 @@ impl<'p> Machine<'p> {
             return inner(self);
         }
         let read = keys.map(|key| self.read_key(key));
-        let known = self.tables[table].get(&read);
+        let (known, height) = self.tables[table].find(&read);
         if known != EMPTY {
-            self.reach_cached(self.tables[table].height(&read))?;
+            self.reach_cached(height)?;
             return Ok(known);
         }
         let output_at = self.output.len();
@@ -919,10 +919,9 @@ impl<'p> Machine<'p> {
                     read[index] = self.read_key(key);
                 }
                 let keys = &read[..recursive.keys.len()];
-                let known = self.tables[table].get(keys);
+                let (known, height) = self.tables[table].find(keys);
                 if known != EMPTY {
                     // TLC calls the operator again, as deep as it went where it was kept.
-                    let height = self.tables[table].height(keys);
                     self.reach_cached(height).map(|()| known)
                 } else {
                     let output_at = self.output.len();
