@@ -666,6 +666,32 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Settled parts of a set
+
+A membership test in a set of records, of functions or of tuples, or in a `\cup`, `\cap` or `\`,
+first runs its set's parts in a round of their own (`Compiler::once_a_round`). That keeps a
+failure or a print where TLC's evaluation of the set would have it. On PaxosCommit, every message
+of every successor is tested against `Message` for `PCTypeOK`'s `msgs \in SUBSET Message`, and
+running `Message`'s record sets' parts again was 26% of the run: `parts_of` 10.9%, `once_a_round`
+9.1% and `once` 6.2%.
+
+Parts whose sets read nothing, neither a variable nor a bound name nor TLC's registers, and that
+print, draw or warn nothing (an empty footprint, which holds those as slots), do the same every
+time they run. A machine runs such a round as before until a run of it neither fails nor nests a
+recursive call, a cached one's height included, nor passes a round that ran earlier in the same
+run of parts without settling (`Machine::run_settled`). From then on it skips the round. A round
+that recursed runs every time, so TLC's stack depth is felt where TLC's is. Codex found three ways
+a static test of recursion missed it on #377: a recursive operator in a field, a LET RECURSIVE in
+one, and a set of records two others share. `prove-it-cli/tests/settled` keeps all of them,
+declining as main does, beside a shallow one that matches TLC.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | PaxosCommit | Geomean | Agreeing |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 23.06 (22.97–24.15) → 15.08 (14.92–15.37) | 1.03× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | — | 1.01× | 18/18 |
+
 ### Memo heights beside their values
 
 #369 records, for each memo entry, how deep its evaluation nested recursive calls, so that a hit

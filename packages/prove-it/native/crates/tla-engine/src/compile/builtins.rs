@@ -5057,8 +5057,10 @@ impl Compiler<'_> {
             (is_reducible(left), is_reducible(right)),
             has_effect,
         );
-        let operand_parts =
-            self.once_a_round(vec![Self::parts_of(left), Self::parts_of(right), reduction]);
+        let operand_parts = self.once_a_round(
+            vec![Self::parts_of(left), Self::parts_of(right), reduction],
+            &[left, right],
+        );
         let lazy_member = if is_lazy(left) || is_lazy(right) {
             let (left_member, right_member) = (self.member_test(left), self.member_test(right));
             let tested = match name {
