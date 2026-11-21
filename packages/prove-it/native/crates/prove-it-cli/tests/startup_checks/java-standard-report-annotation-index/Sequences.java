@@ -1,0 +1,1 @@
+import tlc2.value.impl.*; import tlc2.overrides.TLAPlusOperator; public class Sequences { @TLAPlusOperator(identifier="Seq",module="Sequences",warn=false) public static Value Seq(Value x) { return SetEnumValue.ints(7); } }

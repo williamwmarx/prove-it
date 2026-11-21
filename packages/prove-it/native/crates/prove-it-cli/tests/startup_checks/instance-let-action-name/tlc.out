@@ -1,0 +1,20 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module FixAct
+Semantic processing of module LetInstanceAction
+Linting of module FixAct
+Linting of module LetInstanceAction
+Computing initial states...
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <L!A line 5, col 13 to line 5, col 32 of module LetInstanceAction>
+x = 1
+
+State 3: <L!A line 5, col 13 to line 5, col 32 of module LetInstanceAction>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

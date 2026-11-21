@@ -1,0 +1,4 @@
+exit 1
+Error: Unable to write to file no_such_directory/states.dump
+Error: Error: Given file name no_such_directory/states.dump for dumping states invalid.
+Usage: java tlc2.TLC [-help] [-option] inputfile

@@ -1,0 +1,2 @@
+line 8, col 41 to line 8, col 41 of module mutual_before
+The operator f requires 1 arguments.

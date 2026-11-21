@@ -2,7 +2,7 @@
 //! TLC's Java Json class.
 
 use tla_values::Store;
-use tla_values::json::{read_json, read_nd_json, write_json};
+use tla_values::json::{check_json_string_value, read_json, read_nd_json, write_json};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/json");
 
@@ -60,12 +60,13 @@ fn writes_records_sequences_and_strings_as_tlc_does() {
 }
 
 #[test]
-fn orders_keys_that_are_array_indices_first_as_javascript_does() {
+fn orders_keys_as_tlc_reads_them() {
     let mut store = Store::new();
     let value =
         read_json(&mut store, &units(r#"{"b":1,"2":2,"a":3,"b":4,"1":5}"#)).expect("a value");
-    // The record holds its keys in TLC's order of strings, which ranks them as they are read.
-    assert_eq!(to_json(&store, value), r#"{"1":5,"2":2,"b":4,"a":3}"#);
+    // The record holds its keys in TLC's order of strings, which ranks them as they are read,
+    // and a key read again keeps its place: the Jar's ToJson(JsonDeserialize(...)) of this file.
+    assert_eq!(to_json(&store, value), r#"{"b":4,"2":2,"a":3,"1":5}"#);
 }
 
 #[test]
@@ -85,11 +86,30 @@ fn trim_each_line_as_java_does() {
     let value =
         read_nd_json(&mut store, &units("\u{feff}{\"a\":1}\u{b}\r\n \t\n")).expect("a value");
     assert_eq!(to_json(&store, value), r#"[{"a":1}]"#);
-    for text in [
-        "{\"a\":1}\n\u{a0}\n",
-        "\u{3000}{\"a\":1}\n",
-        "{\"a\":1}\u{feff}\n",
-    ] {
+    for text in ["\u{3000}{\"a\":1}\n", "{\"a\":1}\u{feff}\n"] {
         assert!(read_nd_json(&mut store, &units(text)).is_err(), "{text:?}");
     }
+    // A line of a no-break space, which String.trim keeps, is the string Gson reads leniently:
+    // the Jar's ToJson(ndJsonDeserialize(...)) of this file.
+    let value = read_nd_json(&mut store, &units("{\"a\":1}\n\u{a0}\n")).expect("a value");
+    assert_eq!(to_json(&store, value), "[{\"a\":1},\"\u{a0}\"]");
+}
+
+#[test]
+fn finds_lone_surrogates_inside_json_values_and_keys() {
+    let mut store = Store::new();
+    let lone = store.str(&[0xd83d]);
+    let paired = store.str(&[0xd83d, 0xde00]);
+    let scalar = store.int(1).expect("integer");
+    let tuple = store.tuple_of(&[lone]);
+    let function = store.function_of(&[lone], &[scalar]).expect("function");
+    assert!(check_json_string_value(&store, lone).is_err());
+    assert!(check_json_string_value(&store, tuple).is_err());
+    assert!(check_json_string_value(&store, function).is_err());
+    assert!(check_json_string_value(&store, paired).is_ok());
+    let mut deep = scalar;
+    for _ in 0..10_000 {
+        deep = store.tuple_of(&[deep]);
+    }
+    assert!(check_json_string_value(&store, deep).is_err());
 }

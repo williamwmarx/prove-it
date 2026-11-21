@@ -24,6 +24,10 @@ const LIVE_FORMULA_TAUTOLOGY: u32 = 2253;
 const LIVE_CANNOT_HANDLE_FORMULA: u32 = 2213;
 const LIVE_WRONG_FORMULA_FORMAT: u32 = 2214;
 const EXPECTED_VALUE: u32 = 2215;
+/// EC.TLC_FEATURE_UNSUPPORTED.
+const FEATURE_UNSUPPORTED: u32 = 2156;
+/// EC.TLC_SPECIFICATION_FEATURES_TEMPORAL_QUANTIFIER.
+const SPEC_TEMPORAL_QUANTIFIER: u32 = 2301;
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -75,6 +79,7 @@ const CODED_MESSAGES: &[(u32, &str, bool)] = &[
     (2233, "The %1% %2% cannot be a constant.", false),
     (2234, "The operator %1% cannot take any argument.", false),
     (2235, "The operator %1% is not defined in the spec.", false),
+    (2236, "The operator %1%, which equals %2%,\ncannot be used as a %3%", false),
     (2237, "The spec is trivially false because %1% is false.", false),
     (2238, "TLC cannot handle subscript %1%", false),
     (2239, "TLC cannot handle this conjunct of the spec:\n%1%", false),
@@ -82,6 +87,7 @@ const CODED_MESSAGES: &[(u32, &str, bool)] = &[
     (2241, "The property %1% is not correctly defined.", false),
     (2242, "The arity of the operator %1% is inconsistent in the configuration file.", false),
     (2244, "TLC can't handle real numbers.\n%1%", false),
+    (2245, "In the configuration file, the module name %1% is not a module in the specification.", false),
     (2247, "In computing %1%, TLC expected a %2% expression,\nbut instead found %3%.\n%4%", false),
     (2248, "In computing %1%, TLC expected a %2% expression,\nbut didn't find one.\n%3%", false),
     (2260, "In computing ENABLED, TLC encountered a temporal formula (%1%).\n%2%", false),
@@ -316,6 +322,17 @@ impl FrontError {
         if let Some(literal) = get_rejected_literal(self) {
             return Some(literal);
         }
+        // `ModelValue`'s constructor fails with `EC.TLC_FEATURE_UNSUPPORTED`, whose template is the
+        // message alone, as TLC reads the configuration.
+        if matches!(self, FrontError::Config(_))
+            && message.starts_with(crate::config::TOO_MANY_MODEL_VALUES)
+        {
+            return Some(CodedError {
+                code: FEATURE_UNSUPPORTED,
+                text: message.clone(),
+                exit_code: GENERAL_ERROR,
+            });
+        }
         let code = get_coded_message(message)
             .filter(|coded| !coded.is_eval_exception)
             .map_or(GENERAL, |coded| coded.code);
@@ -326,9 +343,10 @@ impl FrontError {
             exit_code: match code {
                 INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
                 LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
-                EXPECTED_VALUE | LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => {
-                    GENERAL_ERROR
-                }
+                EXPECTED_VALUE
+                | LIVE_CANNOT_HANDLE_FORMULA
+                | LIVE_WRONG_FORMULA_FORMAT
+                | SPEC_TEMPORAL_QUANTIFIER => GENERAL_ERROR,
                 _ if message.starts_with(crate::errors::UNEXPECTED_HEAD) => GENERAL_ERROR,
                 _ => exit_code,
             },

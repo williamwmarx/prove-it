@@ -66,3 +66,35 @@ pub const TLC_SOURCES: &[(&str, &str)] = &[
     module!("tlc", "Toolbox"),
     module!("tlc", "_Possible"),
 ];
+
+/// Whether a module's text is that of a standard or bundled module, which SANY's parser accepts
+/// in every version of TLC (`standard_modules_parse`).
+pub fn is_standard_text(source: &str) -> bool {
+    [MASTER, TLC_174, BUNDLED, TLC_SOURCES]
+        .into_iter()
+        .flatten()
+        .any(|module| module.1.len() == source.len() && module.1 == source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TlcVersion;
+    use crate::sany_parse_error::get_sany_parse_error;
+
+    #[test]
+    fn standard_modules_parse() {
+        for (name, text) in [MASTER, TLC_174, BUNDLED, TLC_SOURCES]
+            .into_iter()
+            .flatten()
+        {
+            for version in [TlcVersion::Master, TlcVersion::V1_7_4] {
+                assert_eq!(
+                    get_sany_parse_error(text, version),
+                    None,
+                    "{name} {version:?}"
+                );
+            }
+        }
+    }
+}

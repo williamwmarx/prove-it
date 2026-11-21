@@ -318,14 +318,27 @@ impl Queue {
 // A value with allocations of its own, as TLC reads it back from disk.
 fn copied(value: &Value) -> Value {
     match value {
-        Value::Set(elements) => Value::Set(std::rc::Rc::new(elements.iter().map(copied).collect())),
+        Value::Set(elements) => Value::set_with_class(
+            elements.iter().map(copied).collect(),
+            elements.java_class.map(|_| value::SetClass::Enumeration),
+        ),
         Value::Function(function) => Value::Function(std::rc::Rc::new(value::Function {
             domain: function.domain.iter().map(copied).collect(),
             range: function.range.iter().map(copied).collect(),
             class: function.class.clone(),
+            java_class: std::cell::Cell::new(function.java_class.get().map(|class| {
+                if class == value::Class::Lambda {
+                    value::Class::Plain
+                } else {
+                    class
+                }
+            })),
+            is_counter_example: std::cell::Cell::new(Some(false)),
+            is_eager_record: std::cell::Cell::new(false),
             written: std::cell::RefCell::new(None),
             search: function.search.clone(),
             interval: function.interval,
+            is_domain_interval: std::cell::Cell::new(false),
         })),
         other => other.clone(),
     }
@@ -1181,7 +1194,7 @@ pub(crate) fn is_streamed_in_order(set: &Value) -> bool {
     let Value::Lazy(lazy) = set else {
         return matches!(set, Value::Set(_) | Value::Interval(..));
     };
-    match &**lazy {
+    match &***lazy {
         value::Lazy::Subset(base) => matches!(base, Value::Set(_) | Value::Interval(..)),
         value::Lazy::FunctionSet(domain, range) => {
             matches!(domain, Value::Set(_) | Value::Interval(..)) && is_streamed_in_order(range)

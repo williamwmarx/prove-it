@@ -11,6 +11,27 @@ fn utf16(text: &str) -> Vec<u16> {
 }
 
 #[test]
+fn transports_any_as_itself_without_making_comparison_reflexive() {
+    let mut store = Store::new();
+    let any = store.any();
+    let tuple = store.tuple_of(&[any]);
+    let mut encoder = StateEncoder::new();
+    encoder.encode(&store, &[any, tuple]).unwrap();
+    let encoded = encoder.finish();
+    assert_eq!(encoded.words, [8, 7, 2, 1, 1, 8]);
+    let mut other = Store::new();
+    let values = decode_states(&mut other, &encoded, 2).unwrap();
+    assert_eq!(values[0], other.any());
+    assert!(other.equals(values[0], values[0]).is_err());
+    assert!(other.equals(values[1], values[1]).is_err());
+    let mut shared = SharedEncoder::new(&store);
+    shared.encode(&store, &[any, tuple]).unwrap();
+    let shared = shared.finish();
+    let decoded = decode_shared_states(&mut other, &shared, 2).unwrap();
+    assert_eq!(decoded, values);
+}
+
+#[test]
 fn writes_what_create_state_encoder_writes() {
     let mut store = Store::new();
     // The spec's strings, which TLC interned as it started.

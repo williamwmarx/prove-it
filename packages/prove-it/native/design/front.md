@@ -652,9 +652,13 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   RECURSIVE declaration.") or be a function when k isn't 0 ("Function N has operator arguments in
   its RECURSIVE declaration."). Where N is left undefined, defined at a deeper LET, or defined in
   one of those two other shapes, nothing may name N. A LET with RECURSIVE declarations has no
-  INSTANCE and no other such LET within it; a nested module declares nothing RECURSIVE at its own
-  level; no INSTANCE without a name follows a module-level declaration; and the resolver declines
-  a declaration of a name already bound where it appears. Within these, a LET's declarations are
+  INSTANCE and no other such LET within it; a nested module's declarations follow the same rules
+  in that module; an INSTANCE without a name after a module-level declaration instances only a
+  module nested before it that extends nothing, instances nothing without a name and mentions N
+  nowhere; a module-level definition whose parameters take operator arguments has k parameters,
+  the last taking none (`processOperator` compares only the last), with nothing between the
+  declaration and the definition naming N; and the resolver declines a declaration of a name
+  already bound where it appears. Within these, a LET's declarations are
   in the AST (`ExpressionKind::Let::recursive`) and bind as pending operators with the
   declaration's arity, and at the end of the LET's definitions, before its body, which is a level
   up, SANY reports "Symbol S declared in RECURSIVE statement but not defined." for every

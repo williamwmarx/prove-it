@@ -10961,4 +10961,1805 @@ z = 2
 
 3 states generated, 3 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 3.
+### TLCEval({1, "a"} = {2}) in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0 /\ TLCEval({1, "a"} = {2}) = <<>>
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 47 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 47 in M
+3. Line 4, column 18 to line 4, column 40 in M
+4. Line 4, column 26 to line 4, column 39 in M
+5. Line 4, column 26 to line 4, column 33 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 47 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 47 in M
+3. Line 4, column 18 to line 4, column 40 in M
+4. Line 4, column 26 to line 4, column 39 in M
+5. Line 4, column 26 to line 4, column 33 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### TLCEval(<<{1, "a"} \subseteq {1}>>) in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == TLCEval(<<{1, "a"} \subseteq {1}>>) = <<>>
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 49 in M
+2. Line 6, column 8 to line 6, column 42 in M
+3. Line 6, column 16 to line 6, column 41 in M
+4. Line 6, column 18 to line 6, column 39 in M
+5. Line 6, column 18 to line 6, column 25 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 49 in M
+2. Line 6, column 8 to line 6, column 42 in M
+3. Line 6, column 16 to line 6, column 41 in M
+4. Line 6, column 18 to line 6, column 39 in M
+5. Line 6, column 18 to line 6, column 25 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### 1 \in UNION {Nat, {2}} in the next-state relation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1 /\ 1 \in UNION {Nat, {2}}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare the set {2} with the value:
+Nat
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 53 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 53 in M
+5. Line 5, column 38 to line 5, column 53 in M
+6. Line 5, column 44 to line 5, column 53 in M
+7. Line 5, column 50 to line 5, column 52 in M
+
+
+Reason:
+Attempted to compare the set {2} with the value:
+Nat
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare the set {2} with the value:
+Nat
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 53 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 53 in M
+5. Line 5, column 38 to line 5, column 53 in M
+6. Line 5, column 44 to line 5, column 53 in M
+7. Line 5, column 50 to line 5, column 52 in M
+
+
+Reason:
+Attempted to compare the set {2} with the value:
+Nat
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### y' = {1} \cup Nat, a successor TLC can't fingerprint
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x, y
+Init == x = 0 /\ y = 0
+Next == x' = x + 1 /\ y' = {1} \cup Nat
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to enumerate S \cup T when S:
+{1}
+and T:
+Nat
+are not both enumerable
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.NullPointerException
+: Cannot read field "state" because "currentStateInfo" is null
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 5, col 28 to line 5, col 39 of module M
+
+Reason:
+Attempted to enumerate S \cup T when S:
+{1}
+and T:
+Nat
+are not both enumerable
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to enumerate S \cup T when S:
+{1}
+and T:
+Nat
+are not both enumerable
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.NullPointerException
+: Cannot read field "state" because "currentStateInfo" is null
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 5, col 28 to line 5, col 39 of module M
+
+Reason:
+Attempted to enumerate S \cup T when S:
+{1}
+and T:
+Nat
+are not both enumerable
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### y' = SUBSET SUBSET (1..32), a successor TLC can't fingerprint
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x, y
+Init == x = 0 /\ y = 0
+Next == x' = x + 1 /\ y' = SUBSET SUBSET (1..32)
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Overflow when computing the number of elements in:
+SUBSET (1..32)
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Overflow when computing the number of elements in:
+SUBSET (1..32)
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+1) line 5, col 35 to line 5, col 48 of module M
+0) line 5, col 28 to line 5, col 48 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..32)
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Overflow when computing the number of elements in:
+SUBSET (1..32)
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Overflow when computing the number of elements in:
+SUBSET (1..32)
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+1) line 5, col 35 to line 5, col 48 of module M
+0) line 5, col 28 to line 5, col 48 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..32)
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Alias == [x |-> [i \in Nat |-> i + x], y |-> y]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x, y
+Init == x = 0 /\ y = 0
+Next == x < 3 /\ x' = x + 1 /\ y' = y
+Inv == x # 2
+Alias == [x |-> [i \in Nat |-> i + x], y |-> y]
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+ALIAS Alias
+--- workers 1 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = [i \in Nat |-> <expression line 7, col 32 to line 7, col 36 of module M>]
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compute the number of elements in the overridden value Nat.
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+--- workers 4 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = [i \in Nat |-> <expression line 7, col 32 to line 7, col 36 of module M>]
+/\ y = 0
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compute the number of elements in the overridden value Nat.
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+### TLCEval(CHOOSE z \in {1, "a"} : TRUE) in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0 /\ TLCEval(CHOOSE z \in {1, "a"} : TRUE) = 1
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 58 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 58 in M
+3. Line 4, column 18 to line 4, column 54 in M
+4. Line 4, column 26 to line 4, column 53 in M
+5. Line 4, column 39 to line 4, column 46 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 58 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 58 in M
+3. Line 4, column 18 to line 4, column 54 in M
+4. Line 4, column 26 to line 4, column 53 in M
+5. Line 4, column 39 to line 4, column 46 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### TLCEval(TLCEval(1 \div 0)) in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0 /\ TLCEval(TLCEval(1 \div 0)) = 1
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 47 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 47 in M
+3. Line 4, column 18 to line 4, column 43 in M
+4. Line 4, column 26 to line 4, column 42 in M
+5. Line 4, column 34 to line 4, column 41 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 47 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 47 in M
+3. Line 4, column 18 to line 4, column 43 in M
+4. Line 4, column 26 to line 4, column 42 in M
+5. Line 4, column 34 to line 4, column 41 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### ASSUME TLCEval([z \in {1, "a"} |-> z])[1] = 1
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+ASSUME TLCEval([z \in {1, "a"} |-> z])[1] = 1
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 10
+Error: Evaluating assumption line 4, col 8 to line 4, col 45 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+--- workers 4 exit 10
+Error: Evaluating assumption line 4, col 8 to line 4, col 45 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+### ASSUME TLCEval(<<[z \in {1, "a"} |-> z]>>)[1][1] = 1
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+ASSUME TLCEval(<<[z \in {1, "a"} |-> z]>>)[1][1] = 1
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 10
+Error: Evaluating assumption line 4, col 8 to line 4, col 52 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+--- workers 4 exit 10
+Error: Evaluating assumption line 4, col 8 to line 4, col 52 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1
+### {1, 2} \subseteq {y \in Nat : y \div 0 = 1} in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0 /\ {1, 2} \subseteq {y \in Nat : y \div 0 = 1}
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 4, col 48 to line 4, col 59 of module M
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 60 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 60 in M
+3. Line 4, column 48 to line 4, column 59 in M
+4. Line 4, column 48 to line 4, column 55 in M
+
+
+Reason:
+Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 4, col 48 to line 4, col 59 of module M
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 4, col 48 to line 4, col 59 of module M
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 60 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 60 in M
+3. Line 4, column 48 to line 4, column 59 in M
+4. Line 4, column 48 to line 4, column 55 in M
+
+
+Reason:
+Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 4, col 48 to line 4, col 59 of module M
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### 1 \in {y \in Nat : y \div 0 = 1} \cap {1} in the next-state relation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1 /\ 1 \in {y \in Nat : y \div 0 = 1} \cap {1}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 5, col 51 to line 5, col 62 of module M
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 72 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 72 in M
+5. Line 5, column 38 to line 5, column 72 in M
+6. Line 5, column 51 to line 5, column 62 in M
+7. Line 5, column 51 to line 5, column 58 in M
+
+
+Reason:
+Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 5, col 51 to line 5, col 62 of module M
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 5, col 51 to line 5, col 62 of module M
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 72 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 72 in M
+5. Line 5, column 38 to line 5, column 72 in M
+6. Line 5, column 51 to line 5, column 62 in M
+7. Line 5, column 51 to line 5, column 58 in M
+
+
+Reason:
+Cannot decide if element:
+1
+ is element of:
+Nat
+and satisfies the predicate line 5, col 51 to line 5, col 62 of module M
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### 1 \in {y \in Nat : y} in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == 1 \in {y \in Nat : y}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: The evaluation of predicate line 6, col 27 to line 6, col 27 of module M yielded non-Boolean value.
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 28 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The evaluation of predicate line 6, col 27 to line 6, col 27 of module M yielded non-Boolean value.
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 28 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### 1 \in {y \in Nat : \b101} in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == 1 \in {y \in Nat : \b101}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: The evaluation of predicate \b101 yielded non-Boolean value.
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 32 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The evaluation of predicate \b101 yielded non-Boolean value.
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 32 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### "a" \in {y \in Nat : TRUE} in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0 /\ "a" \in {y \in Nat : TRUE}
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Cannot decide if element:
+"a"
+ is element of:
+Nat
+and satisfies the predicate line 4, col 39 to line 4, col 42 of module M
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 43 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 43 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Cannot decide if element:
+"a"
+ is element of:
+Nat
+and satisfies the predicate line 4, col 39 to line 4, col 42 of module M
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 43 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 43 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### <<1>> \in {<<a, b>> \in Seq(Nat) : TRUE} in the next-state relation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1 /\ <<1>> \in {<<a, b>> \in Seq(Nat) : TRUE}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check if the value:
+<<1>>
+is an element of a set of 2-tuples.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 71 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 71 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check if the value:
+<<1>>
+is an element of a set of 2-tuples.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 71 in M
+1. Line 5, column 9 to line 5, column 27 in M
+2. Line 5, column 9 to line 5, column 13 in M
+3. Line 5, column 18 to line 5, column 27 in M
+4. Line 5, column 32 to line 5, column 71 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### [[a |-> x] EXCEPT ![1] = 0] in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == [[a |-> x] EXCEPT ![1] = 0] # 0
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to access record by a non-string argument: 1
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 38 in M
+2. Line 6, column 8 to line 6, column 34 in M
+3. Line 6, column 9 to line 6, column 17 in M
+
+
+Reason:
+Attempted to access record by a non-string argument: 1
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to access record by a non-string argument: 1
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 38 in M
+2. Line 6, column 8 to line 6, column 34 in M
+3. Line 6, column 9 to line 6, column 17 in M
+
+
+Reason:
+Attempted to access record by a non-string argument: 1
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### [[a |-> <<1>>] EXCEPT !.a.b = 0] in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = [[a |-> <<1>>] EXCEPT !.a.b = 0]
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to access tuple at a non integral index: "b"
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 44 in M
+1. Line 4, column 13 to line 4, column 44 in M
+2. Line 4, column 14 to line 4, column 26 in M
+3. Line 4, column 21 to line 4, column 25 in M
+
+
+Reason:
+Attempted to access tuple at a non integral index: "b"
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to access tuple at a non integral index: "b"
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 44 in M
+1. Line 4, column 13 to line 4, column 44 in M
+2. Line 4, column 14 to line 4, column 26 in M
+3. Line 4, column 21 to line 4, column 25 in M
+
+
+Reason:
+Attempted to access tuple at a non integral index: "b"
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### [[a |-> <<1>>] EXCEPT !.a = 5, !.a.b = 0] in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = [[a |-> <<1>>] EXCEPT !.a = 5, !.a.b = 0]
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply EXCEPT construct to the value 5.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 53 in M
+1. Line 4, column 13 to line 4, column 53 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply EXCEPT construct to the value 5.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 53 in M
+1. Line 4, column 13 to line 4, column 53 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### [x EXCEPT !.a = 0] of a tuple in the next-state relation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = <<1>>
+Next == x' = [x EXCEPT !.a = 0]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access tuple at a non integral index: "a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = <<1>>
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 31 in M
+1. Line 5, column 14 to line 5, column 31 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access tuple at a non integral index: "a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = <<1>>
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 31 in M
+1. Line 5, column 14 to line 5, column 31 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### CHOOSE z \in {1, "a"} : TRUE in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = CHOOSE z \in {1, "a"} : TRUE
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to compare string "a" with non-string:
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 40 in M
+1. Line 4, column 13 to line 4, column 40 in M
+2. Line 4, column 26 to line 4, column 33 in M
+
+
+Reason:
+Attempted to compare string "a" with non-string:
+1
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to compare string "a" with non-string:
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 40 in M
+1. Line 4, column 13 to line 4, column 40 in M
+2. Line 4, column 26 to line 4, column 33 in M
+
+
+Reason:
+Attempted to compare string "a" with non-string:
+1
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### {1, "a"} = {1} in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == {1, "a"} # {1}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare string "a" with non-string:
+1
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 21 in M
+2. Line 6, column 8 to line 6, column 15 in M
+
+
+Reason:
+Attempted to compare string "a" with non-string:
+1
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare string "a" with non-string:
+1
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 21 in M
+2. Line 6, column 8 to line 6, column 15 in M
+
+
+Reason:
+Attempted to compare string "a" with non-string:
+1
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### [i \in Nat |-> i] = [i \in Nat |-> i] in the next-state relation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = IF [i \in Nat |-> i] = [i \in Nat |-> i] THEN 1 ELSE 2
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compute the number of elements in the overridden value Nat.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 76 in M
+1. Line 5, column 9 to line 5, column 13 in M
+2. Line 5, column 18 to line 5, column 76 in M
+3. Line 5, column 23 to line 5, column 76 in M
+4. Line 5, column 26 to line 5, column 62 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compute the number of elements in the overridden value Nat.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 76 in M
+1. Line 5, column 9 to line 5, column 13 in M
+2. Line 5, column 18 to line 5, column 76 in M
+3. Line 5, column 23 to line 5, column 76 in M
+4. Line 5, column 26 to line 5, column 62 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### IsABag([i \in Nat |-> 1]) in an invariant
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Inv == x = 0 \/ IsABag([i \in Nat |-> 1])
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 76
+Error: Evaluating invariant Inv failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compute the number of elements in the overridden value Nat.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module M>
+x = 1
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+--- workers 4 exit 76
+Error: Evaluating invariant Inv failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compute the number of elements in the overridden value Nat.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module M>
+x = 1
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+### CHOOSE f \in [(Nat \ {0}) -> STRING] : TRUE in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = CHOOSE f \in [(Nat \ {0}) -> STRING] : TRUE
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate S \ T when S:
+Nat
+is not enumerable.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 55 in M
+1. Line 4, column 13 to line 4, column 55 in M
+2. Line 4, column 26 to line 4, column 48 in M
+3. Line 4, column 28 to line 4, column 36 in M
+
+
+Reason:
+Attempted to enumerate S \ T when S:
+Nat
+is not enumerable.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate S \ T when S:
+Nat
+is not enumerable.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 55 in M
+1. Line 4, column 13 to line 4, column 55 in M
+2. Line 4, column 26 to line 4, column 48 in M
+3. Line 4, column 28 to line 4, column 36 in M
+
+
+Reason:
+Attempted to enumerate S \ T when S:
+Nat
+is not enumerable.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### PrintT(DOMAIN [a \in Nat, b \in {1} |-> a]) in the initial predicate
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x = 0 /\ PrintT(DOMAIN [a \in Nat, b \in {1} |-> a])
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compute the number of elements in the overridden value Nat.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 60 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 60 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compute the number of elements in the overridden value Nat.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 60 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 60 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### PrintT(x) in an invariant that fails on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+Inv == PrintT(x) /\ (x = 1 => 1 \div 0 = 1)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 43 in M
+2. Line 6, column 22 to line 6, column 42 in M
+3. Line 6, column 31 to line 6, column 42 in M
+4. Line 6, column 31 to line 6, column 38 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 43 in M
+2. Line 6, column 22 to line 6, column 42 in M
+3. Line 6, column 31 to line 6, column 42 in M
+4. Line 6, column 31 to line 6, column 38 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT of a filter in an invariant that fails on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+Inv == PrintT({y \in 1..x : TRUE}) /\ (x = 1 => 1 \div 0 = 1)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+{}
+{1}
+Error: The second argument of \div is 0.
+{}
+{1}
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 61 in M
+2. Line 6, column 40 to line 6, column 60 in M
+3. Line 6, column 49 to line 6, column 60 in M
+4. Line 6, column 49 to line 6, column 56 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+{}
+{1}
+Error: The second argument of \div is 0.
+{}
+{1}
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 61 in M
+2. Line 6, column 40 to line 6, column 60 in M
+3. Line 6, column 49 to line 6, column 60 in M
+4. Line 6, column 49 to line 6, column 56 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT(x) in an invariant whose comparison fails on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..2
+Next == UNCHANGED x
+Inv == PrintT(x) /\ (x = 1 => 1 = "a")
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+0
+1
+Error: Attempted to check equality of integer 1 with non-integer:
+"a"
+While working on the initial state:
+x = 1
+
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 38 in M
+2. Line 6, column 22 to line 6, column 37 in M
+3. Line 6, column 31 to line 6, column 37 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+1
+Error: Attempted to check equality of integer 1 with non-integer:
+"a"
+While working on the initial state:
+x = 1
+
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 38 in M
+2. Line 6, column 22 to line 6, column 37 in M
+3. Line 6, column 31 to line 6, column 37 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT in a constraint, an invariant that fails on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+C == PrintT(<<"c", x>>)
+Inv == (x = 1 => 1 \div 0 = 1)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+CONSTRAINT C
+--- workers 1 exit 75
+<<"c", 0>>
+<<"c", 1>>
+Error: The second argument of \div is 0.
+<<"c", 0>>
+<<"c", 1>>
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 9 to line 7, column 29 in M
+2. Line 7, column 18 to line 7, column 29 in M
+3. Line 7, column 18 to line 7, column 25 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+<<"c", 0>>
+<<"c", 1>>
+Error: The second argument of \div is 0.
+<<"c", 0>>
+<<"c", 1>>
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 9 to line 7, column 29 in M
+2. Line 7, column 18 to line 7, column 29 in M
+3. Line 7, column 18 to line 7, column 25 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT in two invariants, the first fails on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+Inv2 == PrintT(<<"i2", x>>)
+Inv == PrintT(x) /\ (x = 1 => 1 \div 0 = 1)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+INVARIANT Inv2
+--- workers 1 exit 75
+0
+<<"i2", 0>>
+1
+Error: The second argument of \div is 0.
+0
+<<"i2", 0>>
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 8 to line 7, column 43 in M
+2. Line 7, column 22 to line 7, column 42 in M
+3. Line 7, column 31 to line 7, column 42 in M
+4. Line 7, column 31 to line 7, column 38 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+<<"i2", 0>>
+1
+Error: The second argument of \div is 0.
+0
+<<"i2", 0>>
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 8 to line 7, column 43 in M
+2. Line 7, column 22 to line 7, column 42 in M
+3. Line 7, column 31 to line 7, column 42 in M
+4. Line 7, column 31 to line 7, column 38 in M
+
+
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT(x) in an invariant, a constraint that excludes the first initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+C == x = 1
+Inv == PrintT(x) /\ (x = 1 => 1 \div 0 = 1)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+CONSTRAINT C
+--- workers 1 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 8 to line 7, column 43 in M
+2. Line 7, column 22 to line 7, column 42 in M
+3. Line 7, column 31 to line 7, column 42 in M
+4. Line 7, column 31 to line 7, column 38 in M
+
+
+2 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 7, column 8 to line 7, column 43 in M
+2. Line 7, column 22 to line 7, column 42 in M
+3. Line 7, column 31 to line 7, column 42 in M
+4. Line 7, column 31 to line 7, column 38 in M
+
+
+2 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT(x) in an invariant, the initial predicate fails after a state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1 /\ (x = 1 => 1 \div 0 = 1)
+Next == UNCHANGED x
+Inv == PrintT(x)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+0
+Error: The second argument of \div is 0.
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+Error: The second argument of \div is 0.
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT(x) in an invariant, the initial predicate fails after a duplicate state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == (x = 0 \/ x = 0) \/ (1 \div 0 = 1 /\ x = 1)
+Next == UNCHANGED x
+Inv == PrintT(x)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+0
+Error: The second argument of \div is 0.
+0
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 51 in M
+1. Line 4, column 30 to line 4, column 50 in M
+2. Line 4, column 30 to line 4, column 41 in M
+3. Line 4, column 30 to line 4, column 37 in M
+
+
+2 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+Error: The second argument of \div is 0.
+0
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 51 in M
+1. Line 4, column 30 to line 4, column 50 in M
+2. Line 4, column 30 to line 4, column 41 in M
+3. Line 4, column 30 to line 4, column 37 in M
+
+
+2 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### PrintT(x) in an invariant whose function fails to fingerprint on the second initial state
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1
+Next == UNCHANGED x
+Inv == PrintT(x) /\ (x = 1 => LET g == [y \in 1..x |-> 1 \div 0] IN g = g)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 74 in M
+2. Line 6, column 22 to line 6, column 73 in M
+3. Line 6, column 31 to line 6, column 73 in M
+4. Line 6, column 69 to line 6, column 73 in M
+5. Line 6, column 69 to line 6, column 69 in M
+6. Line 6, column 40 to line 6, column 64 in M
+7. Line 6, column 56 to line 6, column 63 in M
+
+
+Reason:
+The second argument of \div is 0.
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+1
+Error: The second argument of \div is 0.
+0
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 18 in M
+1. Line 6, column 8 to line 6, column 74 in M
+2. Line 6, column 22 to line 6, column 73 in M
+3. Line 6, column 31 to line 6, column 73 in M
+4. Line 6, column 69 to line 6, column 73 in M
+5. Line 6, column 69 to line 6, column 69 in M
+6. Line 6, column 40 to line 6, column 64 in M
+7. Line 6, column 56 to line 6, column 63 in M
+
+
+Reason:
+The second argument of \div is 0.
+2 states generated, 2 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 1.
+### the initial predicate fails after a state the constraint excludes
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1 /\ (x = 1 => 1 \div 0 = 1)
+Next == UNCHANGED x
+C == x = 1
+Inv == PrintT(x)
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+CONSTRAINT C
+--- workers 1 exit 75
+0
+Error: The second argument of \div is 0.
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+0
+Error: The second argument of \div is 0.
+0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### the initial predicate fails after a state the constraint excludes, without printing
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, TLC, Bags
+VARIABLE x
+Init == x \in 0..1 /\ (x = 1 => 1 \div 0 = 1)
+Next == UNCHANGED x
+C == x = 5
+Inv == TRUE
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+CONSTRAINT C
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 45 in M
+1. Line 4, column 9 to line 4, column 18 in M
+2. Line 4, column 24 to line 4, column 44 in M
+3. Line 4, column 33 to line 4, column 44 in M
+4. Line 4, column 33 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
 ### end

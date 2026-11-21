@@ -1,0 +1,5 @@
+exit 10
+Semantic processing of module M
+Linting of module M
+Error: Evaluating assumption line 2, col 8 to line 2, col 24 of module M failed.
+TLC expected a boolean value, but did not find one. line 2, col 8 to line 2, col 24 of module M

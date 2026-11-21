@@ -1,0 +1,21 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module random_int
+Linting of module random_int
+Computing initial states...
+Error: Applying RandomElement to the following value,
+which is not a finite set:
+3
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 14, column 9 to line 14, column 30 in random_int
+1. Line 14, column 27 to line 14, column 30 in random_int
+2. Line 12, column 9 to line 12, column 28 in random_int
+3. Line 12, column 9 to line 12, column 24 in random_int
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

@@ -1,0 +1,16 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module Trace061
+Linting of module TLCExt
+Linting of module Trace061
+Computing initial states...
+Error: Evaluating postcondition Post at line 15, col 9 to line 15, col 49 of module Trace061 failed.
+The argument of ToTrace should be a CounterExample, but instead it is:
+[action |-> {}, state |-> {}]
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

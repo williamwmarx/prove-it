@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use crate::store::{
-    Bail, FALSE, Id, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, SMALL_INT_MAX, Store, TRUE,
+    Bail, FALSE, Id, KIND_ANY, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET,
+    KIND_STRING, KIND_TUPLE, SMALL_INT_MAX, Store, TRUE,
 };
 
 /// Why a value has no encoding: a function TLC keeps lazy, or Nat, Int or STRING, which
@@ -24,6 +24,7 @@ const MODEL_VALUE_TAG: i32 = 4;
 const SET_TAG: i32 = 5;
 const FUNCTION_TAG: i32 = 6;
 const INTERVAL_FUNCTION_TAG: i32 = 7;
+const ANY_TAG: i32 = 8;
 
 // The positions of TLC's function classes in FUNCTION_CLASSES: none, "lambda", "tuple", "record".
 const NO_CLASS: i32 = 0;
@@ -74,6 +75,7 @@ impl StateEncoder {
     fn encode_value(&mut self, store: &Store, id: Id) -> Result<(), Bail> {
         let size = store.size_of(id);
         match store.kind_of(id) {
+            KIND_ANY => self.encoded.words.push(ANY_TAG),
             KIND_BOOL => self
                 .encoded
                 .words
@@ -208,7 +210,7 @@ impl SharedEncoder {
         }
         let size = store.size_of(id);
         let position = match store.kind_of(id) {
-            KIND_BOOL | KIND_INT => {
+            KIND_BOOL | KIND_INT | KIND_ANY => {
                 self.encoder.encode_value(store, id)?;
                 self.encoder.encoded.count += 1;
                 self.encoder.encoded.count as i32 - 1
@@ -448,6 +450,7 @@ impl Reader<'_> {
 
     fn read_value(&mut self, store: &mut Store) -> Result<Id, DecodeError> {
         match self.next()? {
+            ANY_TAG => Ok(store.any()),
             FALSE_TAG => Ok(FALSE),
             TRUE_TAG => Ok(TRUE),
             INTEGER_TAG => Ok(store.int(i64::from(self.next()?))?),

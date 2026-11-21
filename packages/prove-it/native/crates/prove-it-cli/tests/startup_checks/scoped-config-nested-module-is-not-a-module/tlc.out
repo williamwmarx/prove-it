@@ -1,0 +1,4 @@
+exit 151
+Semantic processing of module nested_module_is_not_a_module
+Linting of module nested_module_is_not_a_module
+Error: In the configuration file, the module name inner is not a module in the specification.

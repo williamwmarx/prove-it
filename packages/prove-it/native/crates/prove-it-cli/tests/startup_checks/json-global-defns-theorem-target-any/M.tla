@@ -1,0 +1,6 @@
+---- MODULE M ----
+EXTENDS Json
+CONSTANT F
+THEOREM T == TRUE
+ASSUME 1 \in SUBSET {1,"a"}
+====

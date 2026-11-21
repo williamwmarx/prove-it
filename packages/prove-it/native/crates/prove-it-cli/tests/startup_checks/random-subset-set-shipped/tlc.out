@@ -1,0 +1,16 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Randomization
+Semantic processing of module sss_not_in_shipped_module
+Semantic errors:
+
+*** Errors: 1
+
+line 12, col 9 to line 12, col 23 of module sss_not_in_shipped_module
+
+Unknown operator: `RandomSubsetSet'.
+
+
+Error: Parsing or semantic analysis failed.

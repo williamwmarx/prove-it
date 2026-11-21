@@ -1,0 +1,9 @@
+---- MODULE Probe ----
+EXTENDS TLC, Integers
+INSTANCE Base WITH C <- 7
+CONSTANT K
+L == 0
+Ignore(x) == TRUE
+ASSUME Ignore(K)
+ASSUME IF TRUE THEN TRUE ELSE L = 2
+====

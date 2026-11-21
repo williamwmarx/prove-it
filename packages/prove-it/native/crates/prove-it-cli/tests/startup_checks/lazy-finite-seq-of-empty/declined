@@ -1,1 +1,1 @@
-the engine stopped: unsupported: IsFiniteSet of a set TLC keeps lazy
+the engine stopped: IsFiniteSet of a set TLC may fail to tell finite: evaluating the failure again: it didn't fail

@@ -341,6 +341,7 @@ struct State {
     tokens: Vec<Token>,
     lexer: Lexer,
     lexical_error: Option<String>,
+    parse_errors: Vec<String>,
     operators: Rc<Operators>,
     is_174: bool,
     token: usize,
@@ -1085,8 +1086,38 @@ impl Grammar {
     }
 }
 
+thread_local! {
+    // What SANY's parser reported for the texts it read last, which the front end asks again of
+    // a module as each of its passes parses it.
+    static PARSE_ERRORS: std::cell::RefCell<Vec<(TlcVersion, String, Option<String>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+// How many texts' reports `PARSE_ERRORS` keeps.
+const KEPT_PARSE_ERRORS: usize = 16;
+
 /// What SANY reports for a module its lexer or parser rejects, or none if it accepts the module.
 pub fn get_sany_parse_error(source: &str, version: TlcVersion) -> Option<String> {
+    let known = PARSE_ERRORS.with_borrow(|errors| {
+        errors
+            .iter()
+            .find(|(known, text, _)| *known == version && text == source)
+            .map(|(_, _, error)| error.clone())
+    });
+    if let Some(error) = known {
+        return error;
+    }
+    let error = parse_error(source, version);
+    PARSE_ERRORS.with_borrow_mut(|errors| {
+        if errors.len() == KEPT_PARSE_ERRORS {
+            errors.remove(0);
+        }
+        errors.push((version, source.to_owned(), error.clone()));
+    });
+    error
+}
+
+fn parse_error(source: &str, version: TlcVersion) -> Option<String> {
     let grammar = grammar::create_grammar();
     let start = Token {
         kind: get_kind("EOF"),
@@ -1099,6 +1130,7 @@ pub fn get_sany_parse_error(source: &str, version: TlcVersion) -> Option<String>
         tokens: vec![start],
         lexer: Lexer::new(source),
         lexical_error: None,
+        parse_errors: Vec::new(),
         operators: Rc::new(create_operators()),
         is_174: version == TlcVersion::V1_7_4,
         token: 0,
@@ -1125,13 +1157,14 @@ pub fn get_sany_parse_error(source: &str, version: TlcVersion) -> Option<String>
         report: None,
     };
     let is_parsed = grammar.parse_production(&mut state, "CompilationUnit");
-    if state.lexical_error.is_some() {
-        return state.lexical_error;
+    if let Some(error) = state.lexical_error {
+        state.parse_errors.push(error);
+        return Some(state.parse_errors.join("\n"));
     }
-    if is_parsed {
-        return None;
+    if !is_parsed && let Some(report) = state.report {
+        state
+            .parse_errors
+            .push(format!("***Parse Error***\n{report}"));
     }
-    state
-        .report
-        .map(|report| format!("***Parse Error***\n{report}"))
+    (!state.parse_errors.is_empty()).then(|| state.parse_errors.join("\n"))
 }

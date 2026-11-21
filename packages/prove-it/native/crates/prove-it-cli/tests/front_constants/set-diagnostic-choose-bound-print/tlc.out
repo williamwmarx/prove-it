@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+"bound"  1
+Error: Evaluating assumption line 6, col 8 to line 6, col 66 of module M failed.
+Attempted to compute the value of an expression of
+form CHOOSE x \in S: P, but S was not enumerable.
+line 6, col 15 to line 6, col 65 of module M

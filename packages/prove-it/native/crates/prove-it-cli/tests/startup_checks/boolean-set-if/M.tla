@@ -1,0 +1,3 @@
+---- MODULE M ----
+ASSUME IF {1} THEN TRUE ELSE FALSE
+====

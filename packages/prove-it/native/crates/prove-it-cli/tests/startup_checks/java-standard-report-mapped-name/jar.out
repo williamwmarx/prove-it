@@ -1,0 +1,10 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module M
+Linting of module M
+Warning: Failed to match Neg operator override from file:{directory}/Integers.class with signature: <Java Method: public static tlc2.value.impl.Value Integers.Neg(tlc2.value.impl.IntValue)>.
+(Use the -nowarning option to disable this warning.)
+Error: Evaluating assumption line 3, col 8 to line 3, col 22 of module M failed.
+Attempted to evaluate an expression of form S \subseteq T, but S was not enumerable.
+line 3, col 8 to line 3, col 22 of module M

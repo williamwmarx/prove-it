@@ -20,6 +20,12 @@
 //! - `path:<name>#<n>`, the file the module `prove` reads as `module:<name>#<n>` came from, which
 //!   errors name (`obligations` and `fingerprint`).
 //!
+//! - `class-space`, `"absent"` only for the library's explicitly empty child-class namespace,
+//!   and `class-origin:<path>`, `"absent"`, `"present"`, or `"unknown"` from a pure presence
+//!   witness (never inferred from a failed byte read);
+//! - `variable:<name>`, the CLI's environment variable, for those the JVM TLC's command line
+//!   starts reads (`JAVA_TOOL_OPTIONS` and its kin, and `CLASSPATH`).
+//!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
 use std::cell::RefCell;

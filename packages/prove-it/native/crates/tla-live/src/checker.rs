@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
+pub(crate) mod trace;
+
 use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
 use crate::{Answers, Declined, Event, Graph, Slot, Source, Unanswered, Verdict};
 

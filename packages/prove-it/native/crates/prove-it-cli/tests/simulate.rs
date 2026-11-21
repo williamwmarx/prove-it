@@ -334,6 +334,36 @@ x = 3
     );
 }
 
+const PARTIAL: &str = "---- MODULE Part ----
+EXTENDS Naturals
+VARIABLES x, y
+Init == \\/ x = 0 /\\ y = 1
+        \\/ x = 1
+Next == x' = x /\\ y' = y
+====
+";
+
+// TLC's simulator counts the initial states, then stops at the first one that leaves a variable
+// without a value, as it goes through them.
+#[test]
+fn reports_an_incomplete_initial_state_once_it_has_counted_them() {
+    let (code, text) = simulate(
+        "simulate-partial",
+        "Part",
+        (PARTIAL, "INIT Init\nNEXT Next\n"),
+        &["-seed", "3", "-simulate", "num=1"],
+    );
+    assert_eq!(code, Some(255), "{text}");
+    assert_eq!(
+        text,
+        "Computed 2 initial states...
+Error: State is not completely specified by the initial predicate:
+/\\ x = 1
+/\\ y = null
+"
+    );
+}
+
 // TLC's worker goes on as its main thread prints a violation, so the counts it reports after one
 // race the worker, but for a violation in the last trace.
 #[test]
@@ -495,4 +525,561 @@ The number of states generated: 1
 Simulation using seed 4 and aril 0
 Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
     );
+}
+
+#[test]
+fn executes_only_the_chosen_successors_last_deferred_call() {
+    let spec = "---- MODULE Deferred ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == \\E i \\in 1..2 : TLCDefer(PrintT(\"overwritten\")) /\\ TLCDefer(PrintT(<<i, x, x'>>)) /\\ x' = i\n====\n";
+    let (code, text) = simulate(
+        "simulate-deferred",
+        "Deferred",
+        (spec, "INIT Init\nNEXT Next\n"),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "2"],
+    );
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+<<1, 0, 1>>
+<<1, 1, 1>>
+Progress: 3 states checked, 1 traces generated (trace length: mean=2, var(x)=0, sd=0)
+The number of states generated: 3
+Simulation using seed 4 and aril 0"
+    );
+}
+
+#[test]
+fn exit_stops_simulation_without_completing_the_trace_statistics() {
+    let spec = "---- MODULE Exit ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2 /\\ TLCSet(\"exit\", TRUE)\n====\n";
+    let (code, text) = simulate(
+        "simulate-exit",
+        "Exit",
+        (spec, "INIT Init\nNEXT Next\n"),
+        &["-seed", "4", "-simulate", "num=2", "-depth", "3"],
+    );
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Progress: 2 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)
+The number of states generated: 2
+Simulation using seed 4 and aril 0"
+    );
+}
+
+#[test]
+fn deferred_calls_in_enabled_and_unchosen_actions_do_not_execute() {
+    for next in [
+        "(TLCDefer(PrintT(\"failed\")) /\\ FALSE /\\ x' = 1) \\/ x' = 1",
+        "x' = 1 /\\ ENABLED (x' = 1 /\\ TLCDefer(PrintT(\"enabled\")))",
+    ] {
+        let spec = format!(
+            "---- MODULE Silent ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == {next}\n====\n"
+        );
+        let (code, text) = simulate(
+            "simulate-deferred-silent",
+            "Silent",
+            (&spec, "INIT Init\nNEXT Next\n"),
+            &["-seed", "4", "-simulate", "num=1", "-depth", "2"],
+        );
+        assert_eq!(code, Some(0), "{text}");
+        assert_eq!(
+            text,
+            "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Progress: 3 states checked, 1 traces generated (trace length: mean=2, var(x)=0, sd=0)
+The number of states generated: 3
+Simulation using seed 4 and aril 0"
+        );
+    }
+}
+
+#[test]
+fn preserves_discarded_clock_queries_in_deferred_calls() {
+    for expression in ["JavaTime", "<<JavaTime, 1>>", "LET t == JavaTime IN t"] {
+        let spec = format!(
+            "---- MODULE Clock ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1 /\\ TLCDefer({expression})\n====\n"
+        );
+        let (code, text) = simulate(
+            "simulate-deferred-clock",
+            "Clock",
+            (&spec, "INIT Init\nNEXT Next\n"),
+            &["-seed", "4", "-simulate", "num=1", "-depth", "2"],
+        );
+        assert_eq!(code, Some(0), "{text}");
+        assert_eq!(
+            text,
+            "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Progress: 3 states checked, 1 traces generated (trace length: mean=2, var(x)=0, sd=0)
+The number of states generated: 3
+Simulation using seed 4 and aril 0"
+        );
+    }
+}
+
+#[test]
+fn reports_a_failure_in_the_next_states_with_the_summary() {
+    let (code, text) = simulate(
+        "simulate-nextfail",
+        "NextFail",
+        (
+            "---- MODULE NextFail ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = 1 \\div (1 - x)
+====
+",
+            "INIT Init
+NEXT Next
+",
+        ),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "5"],
+    );
+    assert_eq!(code, Some(255), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a tlc2.tool.EvalException
+: The second argument of \\div is 0.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module NextFail>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module NextFail>
+x = 1
+
+The number of states generated: 2
+Simulation using seed 4 and aril 0
+Progress: 2 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+#[test]
+fn reports_a_tlc_runtime_exception_without_the_summary() {
+    let (code, text) = simulate(
+        "simulate-recfail",
+        "RecFail",
+        (
+            "---- MODULE RecFail ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x + [a |-> 1].b
+====
+",
+            "INIT Init
+NEXT Next
+",
+        ),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "5"],
+    );
+    assert_eq!(code, Some(255), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to select nonexistent field \"b\" from the record
+[a |-> 1]
+line 5, col 18 to line 5, col 28 of module RecFail
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module RecFail>
+x = 0
+
+Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+#[test]
+fn reports_an_invariant_that_fails_to_evaluate() {
+    let (code, text) = simulate(
+        "simulate-invfail",
+        "InvFail",
+        (
+            "---- MODULE InvFail ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+Inv == 1 \\div (1 - x) >= 0
+====
+",
+            "INIT Init
+NEXT Next
+INVARIANT Inv
+",
+        ),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "5"],
+    );
+    assert_eq!(code, Some(76), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Evaluating invariant Inv failed.
+The second argument of \\div is 0.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module InvFail>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module InvFail>
+x = 1
+
+The number of states generated: 2
+Simulation using seed 4 and aril 0
+Progress: 2 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+#[test]
+fn checks_the_postconditions_once_it_has_simulated() {
+    let (code, text) = simulate(
+        "simulate-postfalse",
+        "PostFalse",
+        (
+            "---- MODULE PostFalse ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+Post == PrintT(x) /\\ x = 9
+====
+",
+            "INIT Init
+NEXT Next
+POSTCONDITION Post
+",
+        ),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "5"],
+    );
+    assert_eq!(code, Some(10), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Evaluating postcondition Post at line 6, col 9 to line 6, col 26 of module PostFalse failed.
+In evaluation, the identifier x is either undefined or not an operator.
+line 6, col 16 to line 6, col 16 of module PostFalse
+Progress: 6 states checked, 1 traces generated (trace length: mean=5, var(x)=0, sd=0)"
+    );
+}
+
+#[test]
+fn reports_a_violated_action_property() {
+    let (code, text) = simulate(
+        "simulate-actprop",
+        "ActProp",
+        (
+            "---- MODULE ActProp ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+P == [][x' < 2]_x
+====
+",
+            "INIT Init
+NEXT Next
+PROPERTY P
+",
+        ),
+        &["-seed", "4", "-simulate", "num=1", "-depth", "5"],
+    );
+    assert_eq!(code, Some(13), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Action property P is violated.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module ActProp>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module ActProp>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 18 of module ActProp>
+x = 2
+
+The number of states generated: 3
+Simulation using seed 4 and aril 0
+Progress: 3 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+#[test]
+fn reads_the_simulations_run_with_tlcget() {
+    let (code, text) = simulate(
+        "simulate-run",
+        "Run",
+        ("---- MODULE Run ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+A == x' = x + 1 /\\ PrintT(<<TLCGet(\"action\").name, TLCGet(\"diameter\"), TLCGet(\"stats\").generated, TLCGet(\"stats\").behavior.id>>)
+B == x' = x + 2 /\\ PrintT(TLCGet(\"action\").location)
+Next == A \\/ B
+====
+", "INIT Init
+NEXT Next
+"),
+        &["-seed", "4", "-simulate", "num=2", "-depth", "2"],
+    );
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+<<\"Init\", 1, 1, 1>>
+<<\"A\", 1, 2, 1>>
+[ beginLine |-> 4,
+  beginColumn |-> 9,
+  endLine |-> 4,
+  endColumn |-> 13,
+  module |-> \"Run\" ]
+<<\"B\", 2, 4, 2>>
+Progress: 5 states checked, 2 traces generated (trace length: mean=2, var(x)=0, sd=0)
+The number of states generated: 5
+Simulation using seed 4 and aril 0"
+    );
+}
+
+const TEMPORAL_CONFIG: &str = "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE\n";
+
+// TLC's LiveCheck1 prints the behavior's states, from its first, as many as the prefix to the
+// bad cycle and the cycle change state, then steps back by the behavior's next step.
+#[test]
+fn prints_a_behaviors_counterexample_to_a_temporal_property_as_tlc() {
+    let (code, text) = simulate(
+        "simulate-lasso",
+        "Lasso",
+        (
+            "---- MODULE Lasso ----
+EXTENDS Naturals
+VARIABLE x
+Next == x' = (x + 1) % 3
+Spec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)
+Prop == x = 1 ~> x = 99
+====
+",
+            TEMPORAL_CONFIG,
+        ),
+        &["-seed", "4", "-simulate", "num=8", "-depth", "6"],
+    );
+    assert_eq!(code, Some(13), "{text}");
+    assert_eq!(
+        text,
+        "Implied-temporal checking--satisfiability problem has 1 branches.
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Temporal property Prop was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate line 5, col 9 to line 5, col 13 of module Lasso>
+x = 0
+
+State 2: <Next line 4, col 9 to line 4, col 24 of module Lasso>
+x = 1
+
+State 3: <Next line 4, col 9 to line 4, col 24 of module Lasso>
+x = 2
+
+State 4: <Next line 4, col 9 to line 4, col 24 of module Lasso>
+x = 0
+
+Back to state 2: <Next line 4, col 9 to line 4, col 24 of module Lasso>
+
+The number of states generated: 7
+Simulation using seed 4 and aril 0
+Progress: 7 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+// Where the bad cycle's node is the last state printed, TLC ends with a stuttering step.
+#[test]
+fn ends_a_behaviors_counterexample_by_stuttering_as_tlc() {
+    let (code, text) = simulate(
+        "simulate-stuttering-lasso",
+        "Stut",
+        (
+            "---- MODULE Stut ----
+EXTENDS Naturals
+VARIABLE x
+Next == x < 2 /\\ x' = x + 1
+Spec == x = 0 /\\ [][Next]_x
+Prop == []<>(x = 2)
+====
+",
+            TEMPORAL_CONFIG,
+        ),
+        &["-seed", "4", "-simulate", "num=8", "-depth", "6"],
+    );
+    assert_eq!(code, Some(13), "{text}");
+    assert_eq!(
+        text,
+        "Implied-temporal checking--satisfiability problem has 1 branches.
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Temporal property Prop was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate line 5, col 9 to line 5, col 13 of module Stut>
+x = 0
+
+State 2: <Next line 4, col 9 to line 4, col 27 of module Stut>
+x = 1
+
+State 3: Stuttering
+The number of states generated: 3
+Simulation using seed 4 and aril 0
+Progress: 3 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}
+
+// With temporal properties, TLC counts a trace's length at the level `SimulationWorker.getTrace`
+// leaves its last state at: the number of states without the stuttering steps, unless the last
+// step stutters, whose state keeps the level it was generated at. Recorded from TLC at d8fb231.
+#[test]
+fn counts_the_lengths_of_the_traces_it_checks_the_properties_of_as_tlc() {
+    let cases = [
+        (
+            "---- MODULE Live ----
+EXTENDS Naturals
+VARIABLE x
+Init == x \\in 0..2
+Next == \\/ x' = (x + 1) % 4
+        \\/ UNCHANGED x
+Spec == Init /\\ [][Next]_x /\\ WF_x(x' = (x + 1) % 4)
+Live == []<>(x = 3)
+====
+",
+            "Computed 3 initial states...
+Finished computing initial states: 3 distinct state generated at _.
+Progress: 78 states checked, 5 traces generated (trace length: mean=12, var(x)=8, sd=3)
+The number of states generated: 78
+Simulation using seed 4 and aril 0",
+        ),
+        (
+            "---- MODULE Live ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == \\/ x < 5 /\\ x' = x + 1
+        \\/ UNCHANGED x
+Spec == Init /\\ [][Next]_x /\\ WF_x(x < 5 /\\ x' = x + 1)
+Live == <>(x = 5)
+====
+",
+            "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Progress: 76 states checked, 5 traces generated (trace length: mean=15, var(x)=0, sd=0)
+The number of states generated: 76
+Simulation using seed 4 and aril 0",
+        ),
+    ];
+    for (index, (spec, expected)) in cases.into_iter().enumerate() {
+        let (code, text) = simulate(
+            &format!("simulate-live-lengths-{index}"),
+            "Live",
+            (spec, "SPECIFICATION Spec\nPROPERTY Live\n"),
+            &["-seed", "4", "-simulate", "num=5", "-depth", "15"],
+        );
+        assert_eq!(code, Some(0), "{text}");
+        assert_eq!(
+            text,
+            format!(
+                "Implied-temporal checking--satisfiability problem has 1 branches.\n{expected}"
+            )
+        );
+    }
+}
+
+// A simulation without `num=` runs until it is stopped, as TLC's does, and holds no more memory
+// the more traces it generates: the trace's number TLCGet("diameter") reads is never made a
+// value, and a read of it or of TLCGet("stats") as the worker runs declines.
+#[cfg(target_os = "linux")]
+#[test]
+fn simulates_without_end_in_constant_memory() {
+    let spec = |invariant: &str| {
+        format!(
+            "---- MODULE Soak ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\n\
+             Next == x' = (x + 1) % 3\nInv == {invariant}\n====\n"
+        )
+    };
+    let run = |name: &str, invariant: &str, depth: &str| {
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-simulate-soak-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join("Soak.tla"), spec(invariant)).expect("a spec");
+        std::fs::write(directory.join("Soak.cfg"), INVARIANT_CONFIG).expect("a configuration");
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args([
+                "-workers",
+                "1",
+                "-noTE",
+                "-simulate",
+                "-depth",
+                depth,
+                "Soak.tla",
+            ])
+            .current_dir(&directory)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the binary runs");
+        (directory, child)
+    };
+    // The diameter in a disjunct the model never evaluates.
+    for depth in ["0", "1", "5"] {
+        let (directory, mut child) = run("flat", "x < 5 \\/ TLCGet(\"diameter\") > 0", depth);
+        let resident = |pid: u32| -> Option<u64> {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+            let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+            line.split_whitespace().nth(1)?.parse().ok()
+        };
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let early = resident(child.id());
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let late = resident(child.id());
+        let still_running = child.try_wait().expect("the child's status").is_none();
+        child.kill().ok();
+        child.wait().ok();
+        std::fs::remove_dir_all(&directory).expect("removed");
+        assert!(still_running, "the simulation stopped by itself");
+        let (Some(early), Some(late)) = (early, late) else {
+            panic!("no resident set size in /proc");
+        };
+        assert!(
+            late < early + 16 * 1024,
+            "the resident set grew from {early} kB to {late} kB at depth {depth}"
+        );
+    }
+    for invariant in ["TLCGet(\"diameter\") >= 0", "TLCGet(\"stats\").traces >= 0"] {
+        for depth in ["0", "5"] {
+            let (directory, child) = run("declined", invariant, depth);
+            let output = child.wait_with_output().expect("the binary ends");
+            std::fs::remove_dir_all(&directory).expect("removed");
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr),
+                "prove-it: not native yet: the engine declined: unsupported: TLCGet of a trace's \
+                 count in a simulation without end\n"
+            );
+        }
+    }
 }

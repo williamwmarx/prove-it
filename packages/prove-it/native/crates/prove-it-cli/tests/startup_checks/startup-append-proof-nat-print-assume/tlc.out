@@ -1,0 +1,12 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+"right"
+Error: Evaluating assumption line 3, col 9 to line 3, col 65 of module M failed.
+Evaluating an expression of the form Append(s, v) when s is not a sequence:
+Nat

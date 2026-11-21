@@ -1,0 +1,1 @@
+import tlc2.value.impl.*;import tlc2.overrides.TLAPlusOperator;public class CustomOverrides {@TLAPlusOperator(identifier="P", module="M", warn=false) public static Value domain(){return BoolValue.ValFalse;}}

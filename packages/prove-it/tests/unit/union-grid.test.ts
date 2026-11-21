@@ -35,12 +35,16 @@ const describeGrid = (
   cells: GridCell[],
   recordedName: string,
   differencesName: string,
+  requiredName?: string,
 ) => {
   const recordedAnswers = readFixture<Answer>(recordedName);
   const differences = readFixture<Report>(differencesName);
+  const required: Record<string, true> =
+    requiredName === undefined ? {} : readFixture<true>(requiredName);
   describe(name, () => {
     it("covers every cell of the grid with TLC's answer", () => {
       expect(cells.map((cell) => cell.id)).toEqual(Object.keys(recordedAnswers));
+      for (const id of Object.keys(required)) expect(recordedAnswers[id]).toBeDefined();
     });
 
     // The native check prints and answers as TLC does, or declines.
@@ -62,6 +66,7 @@ const describeGrid = (
             throw error;
           },
         );
+        if (required[id]) expect(report).toBeDefined();
         if (report === undefined) return;
         const recorded = recordedAnswers[id];
         expect(getVerdict(report)).toBe(getVerdict(recorded));
@@ -74,7 +79,13 @@ const describeGrid = (
   });
 };
 
-describeGrid("a membership in a union", getUnionGrid(), "tlc.json", "native-differences.json");
+describeGrid(
+  "a membership in a union",
+  getUnionGrid(),
+  "tlc.json",
+  "native-differences.json",
+  "native-required.json",
+);
 describeGrid(
   "a membership in a set operation TLC reduces",
   getReductionGrid(),

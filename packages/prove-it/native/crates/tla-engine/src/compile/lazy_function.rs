@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
-use tla_values::store::{KIND_LAZY_FUNCTION, KIND_TUPLE, Outcome};
+use tla_values::store::{
+    KIND_ANY, KIND_INFINITE_SET, KIND_LAZY_FUNCTION, KIND_SET, KIND_TUPLE, Outcome,
+};
 use tla_values::{Bail, Id};
 
 use super::lazy::Lazy;
@@ -23,7 +25,16 @@ pub(crate) struct LambdaDefinition {
     pub(crate) captured: Vec<u32>,
     pub(crate) vars: Vec<u32>,
     pub(crate) primes: Vec<u32>,
+    /// Whether the body may print, draw or set a register.
+    pub(crate) has_effect: bool,
 }
+
+/// `FcnLambdaValue.apply` of a key outside the domain words the whole function
+/// (`Values.ppr(this.toString())`), which evaluates the body at every element of the domain, with
+/// its effects, before it fails: the engine doesn't.
+const OUTSIDE_WITH_EFFECTS: Bail = Bail(
+    "unsupported: a function TLC keeps lazy whose body has effects, applied outside its domain",
+);
 
 /// A function TLC keeps lazy, as the machine keeps it.
 pub(crate) struct Lambda {
@@ -82,8 +93,18 @@ pub(crate) fn build(
 
 fn add(machine: &mut Machine<'_>, function: Lambda) -> Id {
     let index = machine.lazy_functions.len() as u32;
+    // TLC fails to compare one over a value that isn't a set, as `[e \in <<2>> |-> e]`, as it
+    // builds it to compare it (`FcnLambdaValue.toFcnRcd`): the store marks it so.
+    let is_over_non_set = function.domains.iter().any(|domain| {
+        matches!(domain, Lazy::Set(value)
+            if !matches!(machine.store.kind_of(*value), KIND_SET | KIND_INFINITE_SET | KIND_ANY))
+    });
     machine.lazy_functions.push(function);
-    machine.store.lazy_function(index)
+    if is_over_non_set {
+        machine.store.lazy_function_over_non_set(index)
+    } else {
+        machine.store.lazy_function(index)
+    }
 }
 
 /// `f[k]`, of any function.
@@ -100,14 +121,7 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
     if machine.store.kind_of(function) != KIND_LAZY_FUNCTION {
         return machine.store.except(function, key, value);
     }
-    // TLC reads the function at the key first (`FcnLambdaValue.select`): outside its domain the
-    // EXCEPT changes nothing, but TLC warns that it was applied to non-existing fields (`Tool`'s
-    // OPCODE_exc), which the engine leaves to the reference interpreter as the store does for
-    // any other function. Inside it the function's value there is evaluated, and may fail.
-    if !is_in_domain(machine, function, key)? {
-        return Err(Bail("EXCEPT outside the domain"));
-    }
-    apply_lazy(machine, function, key)?;
+    // The EXCEPT evaluator selected the path before evaluating the right-hand side.
     let lazy = &machine.lazy_functions[machine.store.lazy_index_of(function) as usize];
     let mut excepts = lazy.excepts.clone();
     excepts.push((key, value));
@@ -119,6 +133,16 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
         excepts,
     };
     Ok(add(machine, function))
+}
+
+/// The domain captured when TLC built the function, without evaluating its body.
+pub(crate) fn domain_value(machine: &mut Machine<'_>, function: Id) -> Outcome<Id> {
+    let index = machine.store.lazy_index_of(function) as usize;
+    let domains = Arc::clone(&machine.lazy_functions[index].domains);
+    match domains.as_slice() {
+        [domain] => domain.value(machine),
+        domains => Lazy::Product(domains.to_vec()).value(machine),
+    }
 }
 
 /// Whether a value is in DOMAIN f of a function TLC keeps lazy: its bound's set, or the tuples
@@ -163,13 +187,19 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
         }
     }
     in_built_context(machine, index, |machine, definition, domains| {
-        // One bound takes the key; several take a tuple of as many elements, one for each.
+        // One bound takes the key; several take a tuple of an element for each, and TLC ignores
+        // the elements past them.
         let elements: Vec<Id> = match &definition.levels[..] {
             [_] => vec![key],
             levels => {
                 let store = &machine.store;
-                if store.kind_of(key) != KIND_TUPLE || store.size_of(key) as usize != levels.len() {
-                    return Err(Bail("applied a function outside its domain"));
+                if store.kind_of(key) != KIND_TUPLE || (store.size_of(key) as usize) < levels.len()
+                {
+                    return Err(if definition.has_effect {
+                        OUTSIDE_WITH_EFFECTS
+                    } else {
+                        Bail("applied a function outside its domain")
+                    });
                 }
                 (0..levels.len() as u32)
                     .map(|position| store.get_range_value(key, position))
@@ -178,11 +208,21 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
         };
         for (domain, &element) in domains.iter().zip(&elements) {
             if !domain.contains(machine, element)? {
-                return Err(Bail("applied a function outside its domain"));
+                return Err(if definition.has_effect {
+                    OUTSIDE_WITH_EFFECTS
+                } else {
+                    Bail("applied a function outside its domain")
+                });
             }
         }
         for ((slots, tuple), &element) in definition.levels.iter().zip(&elements) {
-            assign_converted(machine, slots, *tuple, element)?;
+            assign_converted(machine, slots, *tuple, element).map_err(|bail| {
+                if definition.has_effect {
+                    OUTSIDE_WITH_EFFECTS
+                } else {
+                    bail
+                }
+            })?;
         }
         (definition.body)(machine)
     })

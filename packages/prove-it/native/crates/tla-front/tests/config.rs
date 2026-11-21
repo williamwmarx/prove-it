@@ -24,6 +24,31 @@ fn reads_constants_substitutions_and_lists() {
 }
 
 #[test]
+fn preserves_string_token_images_in_substitutions() {
+    let config = parse_config(
+        r#"CONSTANTS A <- "Foo" B <- [M] "a\"b" C = "Foo""#,
+        TlcVersion::Master,
+    )
+    .expect("a config");
+    assert_eq!(config.substitutions[0].target, "\"Foo\"");
+    assert_eq!(config.substitutions[1].target, "\"a\\\"b\"");
+    assert_eq!(config.constants[0].value, ConfigValue::String("Foo".into()));
+}
+
+#[test]
+fn preserves_string_images_in_names_without_treating_them_as_keywords() {
+    let config = parse_config(
+        r#"INIT "Init" NEXT Next INVARIANTS "INIT" "" "a\"b" CONSTANT "N" = 1"#,
+        TlcVersion::Master,
+    )
+    .expect("a config");
+    assert_eq!(config.init.as_deref(), Some("\"Init\""));
+    assert_eq!(config.next.as_deref(), Some("Next"));
+    assert_eq!(config.invariants, ["\"INIT\"", "\"\"", "\"a\\\"b\""]);
+    assert_eq!(config.constants[0].name, "\"N\"");
+}
+
+#[test]
 fn reports_errors_as_tlc_does() {
     assert_eq!(
         error("INIT Init\nINIT Other", TlcVersion::Master),

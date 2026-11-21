@@ -71,10 +71,10 @@ fn reports_a_mistyped_membership_in_the_initial_predicate() {
         // The replay prints again what the initial predicate prints before it fails.
         assert_eq!(
             failure.printed,
-            [[
+            [tla_trace::OutputEvent::Print(vec![
                 "\"Should report error here\"".to_string(),
                 "TRUE".to_string()
-            ]]
+            ])]
         );
         let (whole, start, finish) = end;
         let first = if name == "etest11" { 16 } else { 18 };

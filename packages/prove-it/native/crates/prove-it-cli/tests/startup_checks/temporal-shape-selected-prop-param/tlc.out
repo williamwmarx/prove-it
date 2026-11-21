@@ -1,0 +1,16 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 6, col 11 to line 6, col 23 of module M
+
+Label L declares extra parameter(s)  a  
+
+
+Error: Parsing or semantic analysis failed.

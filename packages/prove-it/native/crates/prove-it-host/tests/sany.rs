@@ -82,7 +82,9 @@ fn writes_the_report_once_it_has_the_modules_and_files_it_names() {
 
 #[test]
 fn declines_what_tla_front_does_not_write() {
-    let (result, _) = write("---- MODULE Main ----\na' == a\n====\n", |_| {
+    // SANY names a prefix operator parameter written `~ _` by its image, which the front end
+    // doesn't follow.
+    let (result, _) = write("---- MODULE Main ----\nop(~ _) == 1\n====\n", |_| {
         Some("Main.tla".to_owned())
     });
     assert_eq!(text(&get(&result, "kind")), "declined");

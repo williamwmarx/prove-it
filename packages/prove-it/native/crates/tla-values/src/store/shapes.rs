@@ -391,7 +391,7 @@ impl Store {
 
     fn find_shape(&mut self, id: Id) -> Shape {
         let meta = *self.meta(id);
-        if self.is_kept_lazy(id) {
+        if self.comparison_can_fail(id) {
             return NONE;
         }
         let is_ordered = |store: &Store| store.is_startup_rank(store.text(meta.payload).rank);

@@ -25,6 +25,7 @@ fn push_int(bytes: &mut Vec<u8>, int: i32) {
 /// fingerprint as TLC does.
 pub(crate) fn value_bytes(value: &Value, bytes: &mut Vec<u8>) -> Option<()> {
     match value {
+        Value::Null => return None,
         Value::Bool(boolean) => {
             bytes.push(BOOL_VALUE);
             bytes.push(if *boolean { b't' } else { b'f' });

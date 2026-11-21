@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module M
+Semantic processing of module Probe
+Linting of module M
+Linting of module Probe
+Error: In the configuration file, the identifier Bad does not appear in the specification.

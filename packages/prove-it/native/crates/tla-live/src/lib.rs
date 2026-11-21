@@ -536,6 +536,59 @@ impl Lasso<'_> {
     }
 }
 
+pub use checker::trace::TraceCounterexample;
+
+/// TLC's check of a behavior its simulator generated (`LiveCheck1.checkTrace`): `trace` holds
+/// the state of `source`'s graph at each position of the behavior, whose steps the graph holds as
+/// its edges. The first counterexample TLC finds, with the positions of the properties it names
+/// as violated (`Liveness.findViolatedProperties` of the states it prints), or none.
+pub fn check_trace(
+    formula: &[Term],
+    properties: &[&[Term]],
+    source: &Source<'_>,
+    trace: &[u32],
+) -> Result<Option<(TraceCounterexample, Vec<usize>)>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let mut checker = checker::Checker::new(terms, root)?;
+    let Some(found) = checker::trace::check_trace(&mut checker, source, trace)? else {
+        return Ok(None);
+    };
+    let graph = source.graph;
+    // The step from the state at one position of the trace to that at another: an edge of the
+    // graph, or the state's stuttering step.
+    let step = |from: u32, to: u32| -> Result<Slot, Declined> {
+        if from == to {
+            return Ok(Slot::Stutter(from));
+        }
+        let start = graph.edge_offsets[from as usize] as usize;
+        let end = graph.edge_offsets[from as usize + 1] as usize;
+        (start..end)
+            .find(|&edge| graph.edges[edge] == to)
+            .map(|edge| Slot::Step {
+                state: from,
+                edge: edge as u32,
+            })
+            .ok_or_else(|| Declined::from("a step of a counterexample its trace doesn't take"))
+    };
+    let violated = violated_on_lasso(
+        properties,
+        found.length,
+        found.loop_start,
+        &mut |term, position, next| {
+            let (state, next) = (trace[position], trace[next]);
+            match term {
+                Term::State(atom) | Term::Enabled(atom) => {
+                    source.answers.answer(atom, Slot::State(state), 1)
+                }
+                Term::Action { atom, .. } => source.answers.answer(atom, step(state, next)?, 1),
+                _ => Err(Declined::from("a term that isn't an atom")),
+            }
+        },
+    )?;
+    Ok(Some((found, violated)))
+}
+
 /// How many solutions of a formula TLC checks, which it calls branches and reports as it builds
 /// its liveness checker ("Implied-temporal checking--satisfiability problem has N branches.").
 pub fn count_branches(formula: &[Term]) -> Result<usize, Declined> {

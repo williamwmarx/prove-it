@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { getErrors } from "../native-check";
+
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 const BUILT_CLI = join(import.meta.dirname, "../../dist/cli.js");
 const WASM = process.env.PROVE_IT_ENGINE_WASM;
@@ -102,9 +104,9 @@ it("XMLExporter names where it looked for a root module it doesn't find", () =>
     );
   }));
 
-// TLC checks the config -config names, here reporting Other.cfg's invariant violated, where the
-// binary declines another option on the command line.
-it("declines -config beside an option the binary declines", () =>
+// TLC checks the config -config names, here reporting Other.cfg's invariant violated, beside
+// another option on the command line.
+it("checks the config -config names beside another option", () =>
   useDirectory("prove-it-config-option-", (directory) => {
     writeFileSync(
       join(directory, "Spec.tla"),
@@ -117,9 +119,10 @@ it("declines -config beside an option the binary declines", () =>
       [CLI, "-noGenerateSpecTE", "-lncheck", "off", "-config", "Other.cfg", "Spec"],
       { cwd: directory, encoding: "utf8" },
     );
-    expect({ status: run.status, stderr: run.stderr }).toEqual({
-      status: 1,
-      stderr: "prove-it: not native yet: -lncheck off\n",
+    expect({ status: run.status, stderr: run.stderr, errors: getErrors(run.stdout) }).toEqual({
+      status: 12,
+      stderr: "",
+      errors: ["Invariant Inv is violated by the initial state:\nx = 0"],
     });
   }));
 
@@ -135,9 +138,9 @@ it("XMLExporter exports with a system property of TLC's that SANY doesn't read",
     expect(run.stdout).toContain("<uniquename>C</uniquename>");
   }));
 
-// TLC rejects -config without a file name where it reads it among the other options, which the
-// binary declines rather than check another config.
-it("declines -config without a value beside an option the binary declines", () =>
+// TLC rejects -config without a file name where it reads it among the other options, -view
+// among them, which the binary does as TLC does.
+it("rejects -config without a value beside -view as TLC does", () =>
   useDirectory("prove-it-config-missing-", (directory) => {
     writeFileSync(
       join(directory, "Spec.tla"),
@@ -148,10 +151,10 @@ it("declines -config without a value beside an option the binary declines", () =
       cwd: directory,
       encoding: "utf8",
     });
-    expect({ status: run.status, stderr: run.stderr }).toEqual({
-      status: 1,
-      stderr: "prove-it: not native yet: the TLC option -view\n",
-    });
+    expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 1, stderr: "" });
+    expect(run.stdout).toContain(
+      "Error: Error: expect a file name for -config option.\nUsage: java tlc2.TLC [-help] [-option] inputfile",
+    );
     expect(run.stdout).not.toContain("Model checking completed");
   }));
 

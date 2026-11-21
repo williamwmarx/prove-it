@@ -1,9 +1,9 @@
-//! TLC's model configuration, as `src/config.ts` reads it: a port of TLC's `ModelConfig.parse`,
+//! TLC's model configuration: a port of TLC's `ModelConfig.parse`,
 //! which reads its tokens with SANY's lexer and takes any token where it expects a name or a
 //! value. Columns count UTF-16 code units, as in TypeScript.
 
 use crate::TlcVersion;
-use crate::lexer::{is_js_whitespace, match_operator, match_unicode_token};
+use crate::lexer::{is_js_whitespace, match_based_number, match_operator, match_unicode_token};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfigValue {
@@ -95,9 +95,16 @@ enum Kind {
     Word,
     Number,
     String,
-    Symbol,
     End,
     Error,
+}
+
+fn token_image(kind: Kind, text: String) -> String {
+    if kind == Kind::String {
+        format!("\"{text}\"")
+    } else {
+        text
+    }
 }
 
 struct ConfigToken {
@@ -137,10 +144,6 @@ const MASTER_KEYWORDS: &[&str] = &[
 /// TLC 1.7.4 reads a TYPE and a TYPE_CONSTRAINT, which it doesn't check, and none of the keywords
 /// that came after it.
 const TYPE_KEYWORDS: &[&str] = &["TYPE", "TYPE_CONSTRAINT"];
-
-const SYMBOLS: &[&str] = &[
-    "<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!",
-];
 
 fn is_keyword(word: &str, version: TlcVersion) -> bool {
     SHARED_KEYWORDS.contains(&word)
@@ -263,16 +266,34 @@ impl Tokenizer<'_> {
                 continue;
             }
             if rest.starts_with("(*") {
-                let Some(end) = rest.find("*)") else {
-                    self.skip(rest.len());
+                let mut depth = 1;
+                self.skip(2);
+                while self.index < self.source.len() && depth > 0 {
+                    let rest = &self.source[self.index..];
+                    if rest.starts_with("(*") {
+                        depth += 1;
+                        self.skip(2);
+                    } else if rest.starts_with("*)") {
+                        depth -= 1;
+                        self.skip(2);
+                    } else {
+                        self.skip(rest.chars().next().map_or(0, char::len_utf8));
+                    }
+                }
+                if depth > 0 {
                     self.end_of_input_error("");
                     return self.tokens;
-                };
-                self.skip(end + 2);
+                }
                 continue;
             }
             let line = self.line;
             let bytes = rest.as_bytes();
+            let based = match_based_number(bytes, 0);
+            if based > 0 {
+                self.push(Kind::Number, rest[..based].to_string(), line);
+                self.skip(based);
+                continue;
+            }
             let digits = bytes
                 .iter()
                 .take_while(|byte| byte.is_ascii_digit())
@@ -316,16 +337,11 @@ impl Tokenizer<'_> {
                 self.skip(length);
                 continue;
             }
-            if let Some(symbol) = SYMBOLS.iter().find(|symbol| rest.starts_with(**symbol)) {
-                self.push(Kind::Symbol, symbol.to_string(), line);
-                self.skip(symbol.len());
-                continue;
-            }
             let operator = match_unicode_token(self.source, self.index)
                 .map(|token| (token.to_string(), token.len()))
                 .or_else(|| {
                     match_operator(self.source, self.index)
-                        .map(|operator| (operator.text.to_string(), operator.length))
+                        .map(|operator| (rest[..operator.length].to_string(), operator.length))
                 });
             let Some((text, length)) = operator else {
                 self.lexical_error("");
@@ -363,7 +379,16 @@ struct Parser {
     config: ModelConfig,
     /// The first token of the CONSTANT entry being read.
     entry_start: Option<usize>,
+    /// The model values made so far (`ModelValue.mvTable`).
+    model_values: std::collections::HashSet<String>,
 }
+
+/// The most model values TLC makes, `Short.MAX_VALUE + 1`: `ModelValue`'s index is a short.
+const MAX_MODEL_VALUES: usize = 32768;
+
+/// The start of TLC's message for the model value past that limit, `EC.TLC_FEATURE_UNSUPPORTED`,
+/// which TLC exits with as any general error.
+pub const TOO_MANY_MODEL_VALUES: &str = "TLC supports at most 32768 model values, but model value ";
 
 impl Parser {
     fn advance(&mut self) -> Parsed<(Kind, String, u32)> {
@@ -450,6 +475,17 @@ impl Parser {
             return Ok(ConfigValue::Set(elements));
         }
         if kind != Kind::End {
+            // `ModelValue.make` makes a value for a name it hasn't made one for, and its
+            // constructor fails past the limit, as the configuration is read.
+            if !self.model_values.contains(&text) {
+                if self.model_values.len() >= MAX_MODEL_VALUES {
+                    return Err(ConfigError {
+                        message: format!("{TOO_MANY_MODEL_VALUES}{text} exceeds this limit."),
+                        unworded: None,
+                    });
+                }
+                self.model_values.insert(text.clone());
+            }
             return Ok(ConfigValue::ModelValue(text));
         }
         Err(syntax_error(
@@ -484,12 +520,12 @@ impl Parser {
                 self.record_raw_constant(start);
             }
             let first = self.advance()?;
-            if first.0 == Kind::End || self.is_keyword(&first.1) {
+            if first.0 == Kind::End || self.is_keyword(&token_image(first.0, first.1.clone())) {
                 return Ok(first);
             }
             self.entry_start = Some(self.index - 1);
             let mut current = self.advance()?;
-            let mut name = first.1;
+            let mut name = token_image(first.0, first.1);
             while current.1 == "!" {
                 name = format!("{name}!{}", self.advance()?.1);
                 current = self.advance()?;
@@ -507,7 +543,7 @@ impl Parser {
                     }
                     self.config.substitutions.push(Substitution {
                         name,
-                        target: target.1,
+                        target: token_image(target.0, target.1),
                         module: Some(module),
                     });
                     continue;
@@ -517,7 +553,7 @@ impl Parser {
                 }
                 self.config.substitutions.push(Substitution {
                     name,
-                    target: current.1,
+                    target: token_image(current.0, current.1),
                     module: None,
                 });
                 continue;
@@ -571,10 +607,10 @@ impl Parser {
     ) -> Parsed<(Kind, String, u32)> {
         loop {
             let token = self.advance()?;
-            if token.0 == Kind::End || self.is_keyword(&token.1) {
+            if token.0 == Kind::End || self.is_keyword(&token_image(token.0, token.1.clone())) {
                 return Ok(token);
             }
-            list(&mut self.config).push(token.1);
+            list(&mut self.config).push(token_image(token.0, token.1));
         }
     }
 }
@@ -643,12 +679,13 @@ pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, Co
             ..ModelConfig::default()
         },
         entry_start: None,
+        model_values: std::collections::HashSet::new(),
     };
     let mut is_deadlock_set = false;
     let mut type_keywords: Vec<String> = Vec::new();
     let mut current = parser.advance()?;
     while current.0 != Kind::End {
-        let keyword = current.1.clone();
+        let keyword = token_image(current.0, current.1.clone());
         let line = current.2;
         let is_known = parser.is_keyword(&keyword);
         let advance_to_argument = |parser: &mut Parser| {
@@ -667,7 +704,7 @@ pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, Co
             if slot.is_some() {
                 return Err(duplicate_keyword_error(line, &keyword));
             }
-            *slot = Some(name.1);
+            *slot = Some(token_image(name.0, name.1));
             current = parser.advance()?;
             continue;
         }

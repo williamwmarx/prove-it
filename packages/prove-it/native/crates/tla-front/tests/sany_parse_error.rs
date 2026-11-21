@@ -49,3 +49,28 @@ fn reports_lexical_errors() {
         )
     );
 }
+
+#[test]
+fn reports_except_at_fields_as_parser_errors_without_a_parse_exception() {
+    assert_eq!(
+        parse_error("---- MODULE M ----\nx == [[a |-> 1] EXCEPT !.@ = 2]\n===="),
+        Some("@ used in !.@".to_owned())
+    );
+    assert_eq!(
+        parse_error("---- MODULE M ----\nx == [[a |-> 1] EXCEPT !.@ = 2, !.@ = 3]\n===="),
+        Some("@ used in !.@\n@ used in !.@".to_owned())
+    );
+}
+
+#[test]
+fn preserves_parser_error_order_when_java_lookahead_reaches_a_lexical_error() {
+    let error =
+        parse_error("---- MODULE M ----\nbad == [[a |-> 1] EXCEPT !.@ = \"unclosed\n====\n")
+            .expect("a lexical error");
+    assert!(error.starts_with("Lexical error"));
+    let error = parse_error(
+        "---- MODULE M ----\nbad == [[a |-> 1] EXCEPT !.@ = 2]\nLater == 2 (* unclosed\n====\n",
+    )
+    .expect("parser and lexical errors");
+    assert!(error.starts_with("@ used in !.@\nLexical {error: EOF reached"));
+}

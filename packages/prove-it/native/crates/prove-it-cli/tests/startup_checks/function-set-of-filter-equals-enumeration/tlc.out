@@ -1,0 +1,27 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 32 in M
+1. Line 5, column 29 to line 5, column 32 in M
+2. Line 3, column 9 to line 3, column 41 in M
+3. Line 3, column 9 to line 3, column 36 in M
+
+
+Reason:
+Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

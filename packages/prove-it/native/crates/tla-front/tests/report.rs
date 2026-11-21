@@ -42,6 +42,7 @@ fn get_report_with_files(
             describe_file: &|name, origin| Ok(format!("{name} {origin:?}")),
             root_extendees: &[],
             is_xml_export: false,
+            lint_codes: Default::default(),
         },
     );
     std::fs::remove_dir_all(&directory).expect("a removed directory");
@@ -84,6 +85,7 @@ fn reports_every_recursive_shape_as_sany_does() {
                 },
                 root_extendees: &[],
                 is_xml_export: false,
+                lint_codes: Default::default(),
             },
         )
         .unwrap_or_else(|error| panic!("{name}: {error:?}"));
@@ -213,6 +215,7 @@ fn check_recorded_cases_here(cases: &str, recordings: &BTreeMap<String, String>)
                 },
                 root_extendees,
                 is_xml_export: false,
+                lint_codes: Default::default(),
             },
         );
         let expected = get_recorded_report(&recordings[&format!("{cases}/{name}")]);

@@ -1,0 +1,3 @@
+-nowarning
+-config
+./Other.tla

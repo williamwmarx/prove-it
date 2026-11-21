@@ -28,6 +28,21 @@ fn run(path: &str, settings: &Settings) -> SearchOutcome {
 fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
+        SearchOutcome::DfidInitialIncomplete { .. } => "DFID incomplete initial state".into(),
+        SearchOutcome::DfidIncomplete { .. } => "DFID incomplete successor".into(),
+        SearchOutcome::DfidActionFailure(_) => "DFID action failure".into(),
+        SearchOutcome::DfidInitialInvariantFailure(_) => "DFID initial invariant failure".into(),
+        SearchOutcome::DfidInitialFailure(_) => "DFID initial failure".into(),
+        SearchOutcome::DfidInvariantFailure(_) => "DFID invariant failure".into(),
+        SearchOutcome::DfidNextFailure(_) => "DFID next-state failure".into(),
+        SearchOutcome::DfidViolation(_) => "DFID violation".into(),
+        SearchOutcome::DfidUnsupported { multiple_workers } => {
+            format!("unsupported DFID: {multiple_workers}")
+        }
+        SearchOutcome::DfidLimited {
+            generated,
+            distinct,
+        } => format!("DFID limit: {generated} generated, {distinct} distinct"),
         SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
         SearchOutcome::ConfigError { message } => format!("configuration error: {message}"),
         SearchOutcome::StartupException { message } => format!("exception: {message}"),

@@ -17,42 +17,61 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
     let held: Vec<&Value> = match value {
         Value::Set(elements) => elements.iter().collect(),
         Value::Function(function) => function.domain.iter().chain(&function.range).collect(),
-        Value::Lazy(lazy) => match &**lazy {
-            Lazy::Subset(base) => {
-                // TLC sizes the power set by its base, which it sizes first.
-                if let Some((mut chain, message)) = fingerprint_failure(base)? {
-                    chain.insert(0, value.clone());
-                    return Ok(Some((chain, message)));
+        Value::Lazy(lazy) => {
+            match &***lazy {
+                Lazy::Any => {
+                    return Ok(Some((vec![value.clone()], TlcMessage {
+                    text: "TLC has found a state in which the value of a variable contains ANY".into(),
+                    code: None,
+                    is_eval_exception: false,
+                    inner: None,
+                })));
                 }
-                if size(base)? >= 31 {
-                    let message = TlcMessage {
-                        text: format!(
-                            "Overflow when computing the number of elements in:\n{}",
-                            format_pretty(value)
-                        ),
-                        code: Some(OVERFLOW),
-                        is_eval_exception: false,
-                        inner: None,
+                Lazy::Subset(base) => {
+                    // TLC sizes the power set by its base, which it sizes first.
+                    if let Some((mut chain, message)) = fingerprint_failure(base)? {
+                        chain.insert(0, value.clone());
+                        return Ok(Some((chain, message)));
+                    }
+                    if size(base)? >= 31 {
+                        let message = TlcMessage {
+                            text: format!(
+                                "Overflow when computing the number of elements in:\n{}",
+                                format_pretty(value)
+                            ),
+                            code: Some(OVERFLOW),
+                            is_eval_exception: false,
+                            inner: None,
+                        };
+                        return Ok(Some((vec![value.clone()], message)));
+                    }
+                    // Each subset holds elements of the base, which fingerprint.
+                    return Ok(None);
+                }
+                // TLC enumerates it to fingerprint it (`SetCupValue.fingerPrint`,
+                // `SetPredValue.convertAndCache`). The evaluator follows only one that fails to
+                // enumerate.
+                Lazy::Cup(..) | Lazy::Filter(..) => {
+                    // A filter whose set holds a union TLC fails to enumerate fails again as TLC
+                    // prints the state to report it (`SetPredValue.toString` prints its set, and
+                    // `UnionValue.toString` expands the union by `toSetEnum`), which escapes as
+                    // an exception TLC didn't expect: the evaluator doesn't follow it.
+                    if let Lazy::Filter(base, _) = &***lazy
+                        && holds_failing_union(base)
+                    {
+                        return Err(());
+                    }
+                    let Err(error) = crate::sets::enumerate(lazy) else {
+                        return Err(());
                     };
-                    return Ok(Some((vec![value.clone()], message)));
+                    return error
+                        .message
+                        .map(|message| Some((vec![value.clone()], message)))
+                        .ok_or(());
                 }
-                // Each subset holds elements of the base, which fingerprint.
-                return Ok(None);
+                _ => return Err(()),
             }
-            // TLC enumerates it to fingerprint it (`SetCupValue.fingerPrint`,
-            // `SetPredValue.convertAndCache`). The evaluator follows only one that fails to
-            // enumerate.
-            Lazy::Cup(..) | Lazy::Filter(..) => {
-                let Err(error) = crate::sets::enumerate(lazy) else {
-                    return Err(());
-                };
-                return error
-                    .message
-                    .map(|message| Some((vec![value.clone()], message)))
-                    .ok_or(());
-            }
-            _ => return Err(()),
-        },
+        }
         Value::Unsorted(_) => return Err(()),
         _ => Vec::new(),
     };
@@ -69,8 +88,8 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
 fn size(set: &Value) -> Result<u64, ()> {
     match set {
         Value::Set(elements) => Ok(elements.len() as u64),
-        Value::Interval(low, high) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as u64),
-        Value::Lazy(lazy) => match &**lazy {
+        Value::Interval(low, high, _) => Ok((i64::from(*high) - i64::from(*low) + 1).max(0) as u64),
+        Value::Lazy(lazy) => match &***lazy {
             Lazy::Subset(base) => match size(base)? {
                 count if count < 31 => Ok(1 << count),
                 _ => Err(()),
@@ -96,6 +115,7 @@ pub fn state_fingerprint(fingerprints: &mut Fingerprints, values: &[&Value]) -> 
 fn value_fingerprint(fingerprints: &mut Fingerprints, value: &Value) -> Option<(u64, u64)> {
     let polynomial = fingerprints.polynomial();
     match value {
+        Value::Null => None,
         Value::Bool(boolean) => Some(polynomial.of_bool(*boolean)),
         Value::Int(int) => Some(polynomial.of_int(*int)),
         Value::Str(text) => Some(polynomial.of_string(&text.units)),
@@ -117,5 +137,33 @@ fn value_fingerprint(fingerprints: &mut Fingerprints, value: &Value) -> Option<(
                 .collect();
             Some(fingerprints.of_parts(true, &parts?))
         }
+    }
+}
+
+// Whether a value is or holds, as a part TLC prints, a union TLC fails to enumerate.
+fn holds_failing_union(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            elements.iter().any(holds_failing_union)
+        }
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(holds_failing_union),
+        Value::Lazy(lazy) => match &***lazy {
+            Lazy::Union(sets) => crate::sets::enumerate(lazy).is_err() || holds_failing_union(sets),
+            Lazy::Subset(inner) | Lazy::Seq(inner) | Lazy::Filter(inner, _) => {
+                holds_failing_union(inner)
+            }
+            Lazy::FunctionSet(left, right)
+            | Lazy::Cap(left, right)
+            | Lazy::Cup(left, right)
+            | Lazy::Diff(left, right) => holds_failing_union(left) || holds_failing_union(right),
+            Lazy::Product(sets) => sets.iter().any(holds_failing_union),
+            Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| holds_failing_union(set)),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => false,
+        },
+        _ => false,
     }
 }

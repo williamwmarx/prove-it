@@ -2,7 +2,7 @@
 //! evaluator's values: a record in the order written until TLC sorts it, an interval as `1..3`,
 //! and a lazy set expanded where TLC enumerates it to print it.
 
-use tla_values::print::{get_field_name, is_field_name};
+use tla_values::print::{get_field_name, is_field_name, java_text};
 
 use crate::sets::cardinality;
 use crate::value::{Class, Function, Lazy, Value, normalize};
@@ -12,42 +12,64 @@ const MAXIMUM_EXPANDED_PRODUCT: usize = 1999;
 /// The largest base whose SUBSET TLC expands to print it.
 const MAXIMUM_EXPANDED_SUBSET_BASE: usize = 6;
 
-/// A value's text, pretty printed as TLC's messages print it.
-pub fn format_pretty(value: &Value) -> String {
-    crate::pretty::pretty_print(&format_value(value).encode_utf16().collect::<Vec<_>>())
+/// A value's text as TLC's Java string holds it, in UTF-16, a lone surrogate kept.
+#[derive(Default)]
+struct Units(Vec<u16>);
+
+impl Units {
+    fn push_str(&mut self, text: &str) {
+        self.0.extend(text.encode_utf16());
+    }
+
+    fn push(&mut self, character: char) {
+        let mut buffer = [0; 2];
+        self.0
+            .extend_from_slice(character.encode_utf16(&mut buffer));
+    }
 }
 
-/// TLC's text of a value in a state (`formatValue(value)`).
+/// A value's text, pretty printed as TLC's messages print it.
+pub fn format_pretty(value: &Value) -> String {
+    crate::pretty::pretty_print(&format_units(value))
+}
+
+/// TLC's text of a value in a state (`formatValue(value)`), as its output writes it: a lone
+/// surrogate as `?` ([`java_text`]).
 pub fn format_value(value: &Value) -> String {
-    let mut out = String::new();
-    write_value(value, false, false, &mut out);
-    out
+    java_text(&format_units(value))
+}
+
+/// TLC's text of a value in a state as its Java string holds it, which ToString makes a string
+/// of: a lone surrogate stays one.
+pub fn format_units(value: &Value) -> Vec<u16> {
+    let mut out = Units::default();
+    crate::sets::unordered(|| write_value(value, false, false, &mut out));
+    out.0
 }
 
 /// TLC's text of a value Print or PrintT prints (`formatValue(value, true, true)`): records
 /// sorted, except in the range of a lambda, which TLC evaluates again to print.
 pub fn format_printed(value: &Value) -> String {
-    let mut out = String::new();
-    write_value(value, true, true, &mut out);
-    out
+    let mut out = Units::default();
+    crate::sets::unordered(|| write_value(value, true, true, &mut out));
+    java_text(&out.0)
 }
 
-fn write_text(units: &[u16], out: &mut String) {
-    out.extend(char::decode_utf16(units.iter().copied()).map(|unit| unit.unwrap_or('\u{fffd}')));
+fn write_text(units: &[u16], out: &mut Units) {
+    out.0.extend_from_slice(units);
 }
 
-fn write_string(units: &[u16], out: &mut String) {
+fn write_string(units: &[u16], out: &mut Units) {
     out.push('"');
-    for item in char::decode_utf16(units.iter().copied()) {
-        match item {
-            Ok('"') => out.push_str("\\\""),
-            Ok('\\') => out.push_str("\\\\"),
-            Ok('\t') => out.push_str("\\t"),
-            Ok('\n') => out.push_str("\\n"),
-            Ok('\u{c}') => out.push_str("\\f"),
-            Ok('\r') => out.push_str("\\r"),
-            Ok(character) => out.push(character),
-            Err(_) => out.push('\u{fffd}'),
+    for &unit in units {
+        match u8::try_from(unit) {
+            Ok(b'"') => out.push_str("\\\""),
+            Ok(b'\\') => out.push_str("\\\\"),
+            Ok(b'\t') => out.push_str("\\t"),
+            Ok(b'\n') => out.push_str("\\n"),
+            Ok(0x0c) => out.push_str("\\f"),
+            Ok(b'\r') => out.push_str("\\r"),
+            _ => out.0.push(unit),
         }
     }
     out.push('"');
@@ -59,7 +81,7 @@ fn write_joined(
     close: &str,
     is_strict: bool,
     is_normalized: bool,
-    out: &mut String,
+    out: &mut Units,
 ) {
     out.push_str(open);
     for (index, value) in values.iter().enumerate() {
@@ -71,17 +93,64 @@ fn write_joined(
     out.push_str(close);
 }
 
-fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut String) {
+thread_local! {
+    static UNSORTED_PRINTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NULL_PRINTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static UNEXPANDED_PRINTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times the evaluator wrote the operation of a lazy set whose `toString` throws as it
+/// fails to expand the set: a `UnionValue`, which catches nothing, or a `SubsetValue` of a base
+/// under 7 elements, which expands outside its catch. TLC prints neither so but under `-terse`.
+pub(crate) fn unexpanded_prints() -> usize {
+    UNEXPANDED_PRINTS.with(|prints| prints.get())
+}
+
+/// How many times the evaluator wrote the text of a value TLC never initialized, a THEOREM's or
+/// an ASSUME's of an INSTANCE: TLC's `toString` of a value holding it throws a
+/// NullPointerException, whose text depends on the class that holds it, where the evaluator
+/// writes `null`.
+pub(crate) fn null_prints() -> usize {
+    NULL_PRINTS.with(|prints| prints.get())
+}
+
+/// How many times the evaluator wrote the text of a set TLC can't normalize since the count was
+/// last cleared: TLC normalizes a `SetEnumValue` to print it (`SetEnumValue.toString`), which
+/// fails comparing its elements, where the evaluator writes it as built.
+pub(crate) fn unsorted_prints() -> usize {
+    UNSORTED_PRINTS.with(|prints| prints.get())
+}
+
+/// Clears the count of `unsorted_prints`.
+pub(crate) fn clear_unsorted_prints() {
+    UNSORTED_PRINTS.with(|prints| prints.set(0));
+}
+
+fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut Units) {
+    if matches!(value, Value::Unsorted(_)) {
+        UNSORTED_PRINTS.with(|prints| prints.set(prints.get() + 1));
+    }
+    if matches!(value, Value::Null) {
+        NULL_PRINTS.with(|prints| prints.set(prints.get() + 1));
+    }
     match value {
+        Value::Null => out.push_str("null"),
         Value::Bool(boolean) => out.push_str(if *boolean { "TRUE" } else { "FALSE" }),
         Value::Int(int) => out.push_str(&int.to_string()),
         Value::Str(text) => write_string(&text.units, out),
         Value::Model(text) => write_text(&text.units, out),
-        Value::Set(elements) | Value::Unsorted(elements) => {
+        Value::Set(_) | Value::Unsorted(_) => {
             normalize(value);
-            write_joined(elements, "{", "}", is_strict, is_normalized, out)
+            write_joined(
+                value.set_items().expect("an enumeration"),
+                "{",
+                "}",
+                is_strict,
+                is_normalized,
+                out,
+            )
         }
-        Value::Interval(low, high) => {
+        Value::Interval(low, high, _) => {
             if low <= high {
                 out.push_str(&format!("{low}..{high}"));
             } else {
@@ -94,7 +163,9 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
         Value::Lambda(lambda) => {
             let (before, after) = lambda.text();
             out.push_str(before);
-            write_value(lambda.domain(), is_strict, false, out);
+            if lambda.is_domain_printed() {
+                write_value(lambda.domain(), is_strict, false, out);
+            }
             out.push_str(after);
         }
         Value::Function(function) => write_function(function, is_strict, is_normalized, out),
@@ -109,13 +180,25 @@ fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
         }
         // TLC prints the set it enumerates, and the operation where it can't (`toString` with
         // `TLCGlobals.expand`, swallowing the failure).
-        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Union(_) | Lazy::Filter(..) => {
+        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Filter(..) => {
             return crate::sets::enumerate(lazy).ok();
         }
+        Lazy::Union(_) => {
+            let expanded = crate::sets::enumerate(lazy).ok();
+            if expanded.is_none() {
+                UNEXPANDED_PRINTS.with(|prints| prints.set(prints.get() + 1));
+            }
+            return expanded;
+        }
         Lazy::Subset(base) => {
-            return (cardinality(base).ok()? <= MAXIMUM_EXPANDED_SUBSET_BASE)
-                .then(|| crate::sets::enumerate(lazy).ok())
-                .flatten();
+            if cardinality(base).ok()? > MAXIMUM_EXPANDED_SUBSET_BASE {
+                return None;
+            }
+            let expanded = crate::sets::enumerate(lazy).ok();
+            if expanded.is_none() {
+                UNEXPANDED_PRINTS.with(|prints| prints.set(prints.get() + 1));
+            }
+            return expanded;
         }
         Lazy::FunctionSet(domain, range) => {
             let domain = cardinality(domain).ok()?;
@@ -134,9 +217,17 @@ fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     if size == 0 {
         return Some(Vec::new());
     }
-    (size <= MAXIMUM_EXPANDED_PRODUCT)
-        .then(|| crate::sets::enumerate(lazy).ok())
-        .flatten()
+    if size > MAXIMUM_EXPANDED_PRODUCT {
+        return None;
+    }
+    // TLC expands a set of this size to print it, where the evaluator may fail to, as for a
+    // function set over a domain of ANY (`[{Any} -> {1, 2}]`, which TLC prints as
+    // `{(ANY :> 1), (ANY :> 2)}`): the text the evaluator falls back to isn't TLC's.
+    let expanded = crate::sets::enumerate(lazy).ok();
+    if expanded.is_none() {
+        UNEXPANDED_PRINTS.with(|prints| prints.set(prints.get() + 1));
+    }
+    expanded
 }
 
 fn product_size<'a>(sets: impl Iterator<Item = &'a Value>) -> Option<usize> {
@@ -150,11 +241,11 @@ fn product_size<'a>(sets: impl Iterator<Item = &'a Value>) -> Option<usize> {
     Some(size)
 }
 
-fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut String) {
+fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Units) {
     if let Some(expanded) = expand(lazy) {
         return write_joined(&expanded, "{", "}", is_strict, is_normalized, out);
     }
-    let format = |value: &Value, out: &mut String| write_value(value, is_strict, false, out);
+    let format = |value: &Value, out: &mut Units| write_value(value, is_strict, false, out);
     match lazy {
         Lazy::Nat => out.push_str("Nat"),
         Lazy::Any => out.push_str("ANY"),
@@ -171,7 +262,7 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
             let is_parenthesized = match base {
                 Value::Interval(..) => true,
                 Value::Lazy(lazy) => {
-                    matches!(**lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
+                    matches!(***lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
                 }
                 _ => false,
             };
@@ -232,7 +323,7 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
                 _ => " \\ ",
             };
             // `toStringForCupCapDiff`: an `EnumerableValue` operand in parentheses.
-            let operand = |value: &Value, out: &mut String| {
+            let operand = |value: &Value, out: &mut Units| {
                 if crate::value::is_enumerable(value) {
                     out.push('(');
                     format(value, out);
@@ -248,7 +339,7 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
     }
 }
 
-fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out: &mut String) {
+fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out: &mut Units) {
     // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
     let is_range_normalized = is_normalized && function.class.get() != Class::Lambda;
     let is_tuple = function
@@ -310,21 +401,114 @@ pub(crate) fn print_order(function: &Function, is_sorted: bool) -> Vec<usize> {
 
 /// A text's units as a string.
 pub(crate) fn text_string(units: &[u16]) -> String {
-    let mut out = String::new();
-    write_text(units, &mut out);
-    out
+    java_text(units)
 }
 
 /// Whether TLC's text of a value turns on a string key whose letters Unicode's categories decide
 /// (`get_field_name`), whether it prints the function holding it as a record.
 pub fn holds_unknown_key(value: &Value) -> bool {
     match value {
-        Value::Set(elements) | Value::Unsorted(elements) => elements.iter().any(holds_unknown_key),
+        Value::Set(_) | Value::Unsorted(_) => value
+            .set_items()
+            .expect("an enumeration")
+            .iter()
+            .any(holds_unknown_key),
         Value::Function(function) => {
             function.domain.iter().any(|key| {
                 matches!(key, Value::Str(text) if get_field_name(&text.units).is_none())
                     || holds_unknown_key(key)
             }) || function.range.iter().any(holds_unknown_key)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value holds the string TLCGet("config") gives for TLC's install, which the
+/// evaluator words "unknown" and TLC as where its jar is (`TLCGlobals.Version.installLocation`).
+/// Whether a value holds a set of functions, of records or of tuples that TLC expands to print
+/// into two elements or more, one of whose component sets holds ANY: TLC writes the expansion in
+/// the order it builds it (`{(ANY :> 1), (ANY :> 2)}`), where the evaluator, normalizing it,
+/// compares ANY with itself and fails.
+pub fn holds_any_expansion(value: &Value) -> bool {
+    let Value::Lazy(lazy) = value else {
+        return held_values(value).iter().any(holds_any_expansion);
+    };
+    let components: Vec<&Value> = match &***lazy {
+        Lazy::FunctionSet(domain, range) => vec![domain, range],
+        Lazy::RecordSet(fields, _) => fields.iter().map(|(_, set)| set).collect(),
+        Lazy::Product(factors) => factors.iter().collect(),
+        _ => return held_values(value).iter().any(holds_any_expansion),
+    };
+    components
+        .iter()
+        .any(|component| holds_any_expansion(component))
+        || components.iter().any(|component| holds_any(component))
+            && !matches!(expansion_size(lazy), Some(0 | 1))
+}
+
+// Whether a value is or holds ANY.
+fn holds_any(value: &Value) -> bool {
+    matches!(value, Value::Lazy(lazy) if matches!(&***lazy, Lazy::Any))
+        || held_values(value).iter().any(holds_any)
+}
+
+// The values a value holds: a set's elements, a function's keys and values, a lambda's domain
+// and a lazy set's operands.
+fn held_values(value: &Value) -> Vec<Value> {
+    match value {
+        Value::Set(_) | Value::Unsorted(_) => value.set_items().expect("an enumeration").to_vec(),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(function.range.iter())
+            .cloned()
+            .collect(),
+        Value::Lambda(lambda) => vec![lambda.domain().clone()],
+        Value::Lazy(lazy) => match &***lazy {
+            Lazy::Subset(base) | Lazy::Seq(base) | Lazy::Union(base) | Lazy::Filter(base, _) => {
+                vec![base.clone()]
+            }
+            Lazy::FunctionSet(left, right)
+            | Lazy::Cap(left, right)
+            | Lazy::Cup(left, right)
+            | Lazy::Diff(left, right) => vec![left.clone(), right.clone()],
+            Lazy::RecordSet(fields, _) => fields.iter().map(|(_, set)| set.clone()).collect(),
+            Lazy::Product(factors) => factors.clone(),
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+// How many elements a set of functions, of records or of tuples has, where it is known.
+fn expansion_size(lazy: &Lazy) -> Option<usize> {
+    match lazy {
+        Lazy::FunctionSet(domain, range) => {
+            let domain = cardinality(domain).ok()?;
+            if domain == 0 {
+                return Some(1);
+            }
+            let range = cardinality(range).ok()?;
+            u32::try_from(domain)
+                .ok()
+                .and_then(|domain| range.checked_pow(domain))
+        }
+        Lazy::RecordSet(fields, _) => product_size(fields.iter().map(|(_, set)| set)),
+        Lazy::Product(factors) => product_size(factors.iter()),
+        _ => None,
+    }
+}
+
+pub fn holds_install(value: &Value) -> bool {
+    match value {
+        Value::Str(text) => *text.units == *"unknown".encode_utf16().collect::<Vec<_>>(),
+        Value::Set(_) | Value::Unsorted(_) => value
+            .set_items()
+            .expect("an enumeration")
+            .iter()
+            .any(holds_install),
+        Value::Function(function) => {
+            function.domain.iter().any(holds_install) || function.range.iter().any(holds_install)
         }
         _ => false,
     }
@@ -383,7 +567,7 @@ mod tests {
             (text("b", 0), Value::Int(1)),
         ])
         .expect("a record");
-        let subset = Value::Lazy(Rc::new(Lazy::Subset(set_of(vec![record]).expect("a set"))));
+        let subset = Value::lazy(Lazy::Subset(set_of(vec![record]).expect("a set")));
         assert_eq!(format_value(&subset), "{{}, {[a |-> 1, b |-> 1]}}");
         settle(&subset);
         assert_eq!(format_value(&subset), "{{}, {[b |-> 1, a |-> 1]}}");
@@ -425,10 +609,10 @@ mod tests {
 
     #[test]
     fn enumerates_the_functions_from_the_empty_set_without_their_range() {
-        let functions = Value::Lazy(Rc::new(Lazy::FunctionSet(
+        let functions = Value::lazy(Lazy::FunctionSet(
             Value::empty_set(),
-            Value::Lazy(Rc::new(Lazy::Nat)),
-        )));
+            Value::lazy(Lazy::Nat),
+        ));
         let elements = crate::value::elements(&functions).expect("an enumerable set");
         assert_eq!(elements.len(), 1);
         assert_eq!(format_value(&elements[0]), "<<>>");
@@ -439,16 +623,16 @@ mod tests {
         let union = |left: &Value, right: &Value| {
             format_value(&crate::sets::union(left, right).expect("a union"))
         };
-        assert_eq!(union(&Value::empty_set(), &Value::Interval(0, 0)), "0..0");
-        let subset = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 7))));
+        assert_eq!(union(&Value::empty_set(), &Value::interval(0, 0)), "0..0");
+        let subset = Value::lazy(Lazy::Subset(Value::interval(1, 7)));
         assert_eq!(union(&subset, &Value::empty_set()), "SUBSET (1..7)");
-        assert_eq!(union(&Value::Interval(1, 2), &Value::empty_set()), "{1, 2}");
+        assert_eq!(union(&Value::interval(1, 2), &Value::empty_set()), "{1, 2}");
     }
 
     #[test]
     fn prints_intervals_functions_and_tuples() {
-        assert_eq!(format_value(&Value::Interval(1, 3)), "1..3");
-        assert_eq!(format_value(&Value::Interval(2, 1)), "{}");
+        assert_eq!(format_value(&Value::interval(1, 3)), "1..3");
+        assert_eq!(format_value(&Value::interval(2, 1)), "{}");
         let set = set_of(vec![Value::Int(3), Value::Int(1), Value::Int(2)]).expect("a set");
         assert_eq!(format_value(&set), "{1, 2, 3}");
         let function = Value::function(
@@ -465,17 +649,17 @@ mod tests {
     #[test]
     fn prints_a_lazy_set_expanded_where_tlc_enumerates_it() {
         let base = set_of(vec![Value::Int(1), Value::Int(2)]).expect("a set");
-        let subset = Value::Lazy(Rc::new(Lazy::Subset(base)));
+        let subset = Value::lazy(Lazy::Subset(base));
         assert_eq!(format_value(&subset), "{{}, {1}, {2}, {1, 2}}");
-        let large = Value::Lazy(Rc::new(Lazy::Subset(Value::Interval(1, 7))));
+        let large = Value::lazy(Lazy::Subset(Value::interval(1, 7)));
         assert_eq!(format_value(&large), "SUBSET (1..7)");
-        let functions = Value::Lazy(Rc::new(Lazy::FunctionSet(
-            Value::Lazy(Rc::new(Lazy::Nat)),
-            Value::Interval(0, 1),
-        )));
+        let functions = Value::lazy(Lazy::FunctionSet(
+            Value::lazy(Lazy::Nat),
+            Value::interval(0, 1),
+        ));
         assert_eq!(format_value(&functions), "[Nat -> 0..1]");
         assert_eq!(
-            format_value(&Value::Lazy(Rc::new(Lazy::Seq(Value::Interval(1, 2))))),
+            format_value(&Value::lazy(Lazy::Seq(Value::interval(1, 2)))),
             "Seq(1..2)"
         );
     }

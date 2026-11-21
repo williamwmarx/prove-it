@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Error: TLC cannot handle this conjunct of the spec:
+line 8, col 17 to line 8, col 24 of module M

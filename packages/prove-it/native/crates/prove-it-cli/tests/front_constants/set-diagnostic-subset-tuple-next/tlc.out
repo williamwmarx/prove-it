@@ -1,0 +1,28 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to evaluate an expression of form S \subseteq T, but S was not enumerable.
+line 5, col 21 to line 5, col 53 of module M
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = TRUE
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 54 in M
+1. Line 5, column 14 to line 5, column 54 in M
+2. Line 5, column 21 to line 5, column 53 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

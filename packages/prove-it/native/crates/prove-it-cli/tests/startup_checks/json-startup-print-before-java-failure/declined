@@ -1,0 +1,1 @@
+a constant definition with effects applying a Json operator, which TLC computes as it starts

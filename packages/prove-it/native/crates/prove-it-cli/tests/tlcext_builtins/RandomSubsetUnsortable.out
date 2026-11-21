@@ -1,0 +1,14 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Randomization
+Semantic processing of module RandomSubsetUnsortable
+Linting of module RandomSubsetUnsortable
+Error: Evaluating assumption line 6, col 8 to line 6, col 37 of module RandomSubsetUnsortable failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1

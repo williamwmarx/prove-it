@@ -79,13 +79,31 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
   });
 
   const HEAD = "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLE x\n";
+
+  // TLC evaluates the ALIAS on each state of the trace as it prints the state, after it has
+  // rebuilt the state from its predecessor, and again on every state once more after it.
+  it("prints the trace's prints of a printing ALIAS in TLC's order", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `${HEAD}Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x>>)\nInv == x < 3\nAlias == [x |-> x, p |-> PrintT(<<"alias", x>>)]\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      onPrint: (text) => printed.push(text),
+    });
+    const a = (value: number) => `<<"A", ${value}>>`;
+    const alias = (value: number) => `<<"alias", ${value}>>`;
+    expect([result.status, result.violations[0]?.headline, printed]).toEqual([
+      "invariant-violation",
+      "Invariant Inv is violated.",
+      [
+        ...[0, 1, 2].map(a),
+        ...[a(0), alias(0), alias(1), a(1), alias(2), a(2), alias(3)],
+        ...[0, 1, 2].map(a),
+        ...[0, 1, 2, 3].map(alias),
+      ],
+    ]);
+  });
+
   it.each([
-    [
-      "a printing ALIAS",
-      `${HEAD}Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x>>)\nInv == x < 3\nAlias == [x |-> x, p |-> PrintT(<<"alias", x>>)]\n====`,
-      "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-      "an ALIAS that prints",
-    ],
     [
       "a printing temporal property",
       `${HEAD}Init == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x>>)\n        \\/ x = 3 /\\ x' = 0 /\\ PrintT(<<"B", x>>)\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(PrintT(<<"lp", x>>) /\\ x = 7)\n====`,

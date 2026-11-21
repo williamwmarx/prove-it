@@ -1,0 +1,27 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module CacheLiteral
+Linting of module TLCExt
+Linting of module CacheLiteral
+Computing initial states...
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcEval2(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+class tlc2.value.impl.IntValue cannot be cast to class java.util.HashMap (tlc2.value.impl.IntValue is in unnamed module of loader 'app'; java.util.HashMap is in module java.base of loader 'bootstrap')
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in CacheLiteral
+1. Line 6, column 8 to line 6, column 25 in CacheLiteral
+2. Line 6, column 8 to line 6, column 21 in CacheLiteral
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

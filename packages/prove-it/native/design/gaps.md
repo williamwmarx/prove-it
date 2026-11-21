@@ -809,9 +809,17 @@ successor from `Worker.addElement`, with the successor in the trace. The search 
 these, and filed them as a failure of the next-state relation at the parent, which the replay
 confirmed where the relation failed later in the same expansion. `check_successor` now turns any
 such failure into a limit of its own ("a constraint, a VIEW or an action property that fails on a
-successor"), as `visit_initial` does for a VIEW that fails on an initial state, so both are not
-native. The search also evaluates the VIEW of a successor only where the action constraints hold,
-as TLC fingerprints it only then.
+successor"), which is not native. The search also evaluates the VIEW of a successor only where
+the action constraints hold, as TLC fingerprints it only then.
+
+A VIEW that fails on an initial state is noted at a site of its own, `InitialView`, once the
+constraints held of the state (`DoInitFunctor.addElement` checks `isInModel`, then fingerprints).
+The evaluator of failures replays the initial predicate and evaluates the VIEW on the state the
+search stopped at, after normalizing its values, outside the call stack: `TLCStateMut.fingerPrint`
+evaluates it with the tool the state holds, not the replay's `CallStackTool`, so TLC's stack holds
+only the initial predicate's frames. Under SYMMETRY, where TLC evaluates the VIEW of the state's
+least permutation, it still declines ("a VIEW that fails on an initial state"), as does a failure
+in a method of a value with a source, which TLC throws as a FingerprintException.
 
 ## What the pre-PR engine review found (2026-11-10)
 

@@ -1,0 +1,42 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+1
+1
+Computing initial states...
+<<"inv", 0>>
+<<"inv", 0>>
+<<"next", 0>>
+<<"next", 1>>
+<<"inv", 1>>
+<<"inv", 1>>
+<<"next", 1>>
+<<"next", 2>>
+<<"inv", 2>>
+<<"inv", 2>>
+Error: Deadlock reached.
+<<"next", 0>>
+<<"next", 1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 8, col 46 to line 8, col 81 of module M>
+x = 1
+
+<<"next", 1>>
+<<"next", 2>>
+State 3: <Next line 8, col 46 to line 8, col 81 of module M>
+x = 2
+
+<<"next", 0>>
+<<"next", 1>>
+<<"next", 1>>
+<<"next", 2>>
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

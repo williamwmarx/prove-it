@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use tla_values::store::{EMPTY_SET, KIND_INT, Outcome, is_tested_set_kind};
-use tla_values::{Bail, Id};
+use tla_values::{Bail, Id, check_set_insertion};
 
 use super::lazy_function;
-use super::nodes::{assign_bound, evaluate_set};
+use super::nodes::assign_bound;
 use super::predicate::{self, Predicate, Test};
 use super::{Compiled, Filter, Shape, bool_id, eval, leaf};
 use crate::footprint::Footprint;
@@ -41,6 +41,21 @@ pub(crate) fn interval_bounds(
         return Err(Bail("an interval too large to build"));
     }
     Ok(Some((low, high)))
+}
+
+/// The number of elements of `a..b` (`IntervalValue.size`), its bounds checked as the interval's
+/// own node checks them, or None where it has more than 2^31 - 1, where TLC fails.
+pub(crate) fn interval_size(
+    machine: &mut Machine<'_>,
+    low: &Eval,
+    high: &Eval,
+) -> Outcome<Option<i64>> {
+    let low = low(machine)?;
+    let high = high(machine)?;
+    let low = i64::from(expect_int(machine, low)?);
+    let high = i64::from(expect_int(machine, high)?);
+    let size = (high - low + 1).max(0);
+    Ok((size <= i64::from(i32::MAX)).then_some(size))
 }
 
 /// `a..b`, built.
@@ -159,12 +174,21 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
 }
 
 /// ExceptVarAt: `[x EXCEPT ![k] = v]` of a variable x.
-pub(crate) fn except_var_at(variable: u32, key: Eval, value: Eval) -> Eval {
+pub(crate) fn except_var_at(
+    variable: u32,
+    key: Eval,
+    value: Eval,
+    warning: Option<tla_ir::NodeId>,
+) -> Eval {
     eval(move |machine| {
         let function = machine.read_current(variable)?;
         let key = key(machine)?;
+        if super::nodes::select_except(machine, function, key)?.is_none() {
+            super::nodes::except_warning(machine, warning)?;
+            return Ok(function);
+        }
         let value = value(machine)?;
-        machine.store.except(function, key, value)
+        lazy_function::except(machine, function, key, value)
     })
 }
 
@@ -186,18 +210,29 @@ pub(crate) fn member_const(element: &Compiled, set: &Compiled, is_in: bool) -> O
     }))
 }
 
-/// CardinalityFilter: `Cardinality({x \in S : P})`, counted without building the filtered set.
+/// CardinalityFilter: `Cardinality({x \in S : P})`, counted directly for a materialized input.
 pub(crate) fn cardinality_filter(filter: Arc<Filter>) -> Eval {
     eval(move |machine| {
-        let id = evaluate_set(machine, &filter.set, "filtered a non-set")?;
-        let mut count = 0i64;
-        for index in 0..machine.store.size_of(id) {
-            let element = machine.store.element_at(id, index);
+        let (input, elements) = filter.elements(machine)?;
+        let mut kept = input.is_none().then(Vec::new);
+        let mut count = 0usize;
+        for element in elements {
             assign_bound(machine, &filter.slots, filter.tuple, element)?;
             if (filter.predicate)(machine)? {
+                check_set_insertion(count)?;
                 count += 1;
+                if let Some(kept) = &mut kept {
+                    kept.push(element);
+                }
             }
         }
-        machine.store.int(count)
+        let size = match kept {
+            Some(kept) => {
+                let set = machine.store.set_of(&kept)?;
+                machine.store.size_of(set) as i64
+            }
+            None => count as i64,
+        };
+        machine.store.int(size)
     })
 }

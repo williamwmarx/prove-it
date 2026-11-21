@@ -1,0 +1,33 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module AliasPrintLassoDiff
+Linting of module AliasPrintLassoDiff
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+<<"next", 0>>
+<<"next", 1>>
+<<"next", 0>>
+<<"next", 1>>
+<<"alias", 0>>
+<<"alias", 1>>
+<<"alias", 2>>
+Error: Temporal property P was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ x = 0
+/\ p = TRUE
+
+State 2: <Next line 5, col 10 to line 5, col 63 of module AliasPrintLassoDiff>
+/\ x = 1
+
+State 3: <Next line 5, col 10 to line 5, col 63 of module AliasPrintLassoDiff>
+/\ x = 2
+
+State 4: Stuttering
+4 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

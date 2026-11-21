@@ -1,0 +1,25 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module random_function_set_nat_domain
+Linting of module random_function_set_nat_domain
+Computing initial states...
+Error: Applying RandomElement to the following value,
+which is not a finite set:
+[Nat -> {1}]
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+conformance_state = TRUE
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 15, column 9 to line 15, column 31 in random_function_set_nat_domain
+1. Line 15, column 28 to line 15, column 31 in random_function_set_nat_domain
+2. Line 12, column 9 to line 12, column 39 in random_function_set_nat_domain
+3. Line 12, column 9 to line 12, column 35 in random_function_set_nat_domain
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

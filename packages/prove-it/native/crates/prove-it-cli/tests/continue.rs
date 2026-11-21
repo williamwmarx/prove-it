@@ -151,7 +151,7 @@ fn reports_an_action_property_violated_as_tlc() {
 
 #[test]
 fn declines_continue_where_the_binary_doesnt_follow_tlc() {
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 2)\nPost == TLCGet(\"distinct\") > 0\nView == x\n====\n";
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 2)\nPost == TLCGet(\"distinct\") > 0\nView == x\nFail == x' = 1 \\div x\n====\n";
     for (test, config, reason) in [
         (
             "continue-temporal",
@@ -169,8 +169,8 @@ fn declines_continue_where_the_binary_doesnt_follow_tlc() {
             "-continue with a POSTCONDITION",
         ),
         (
-            "continue-deadlock",
-            "INIT Init\nNEXT Next\n",
+            "continue-failure",
+            "INIT Init\nNEXT Fail\n",
             "-continue to a search that stops",
         ),
     ] {
@@ -201,7 +201,9 @@ fn declines_continue_where_the_binary_doesnt_follow_tlc() {
 
 // As TLC ran it at d8fb231 with `-workers 1`: all three initial states step to the VIEW's one key,
 // and only the step from x = 3 violates the action property. TLC checks the property on each
-// step, whichever found the key first, so the binary stops there on any number of threads.
+// step, whichever found the key first, so the binary stops there on any number of threads. With
+// `-workers 4` TLC's other workers take the initial states left on the queue as they race the
+// stop (7 states generated and none left, in each of eight runs of the Jar), which declines.
 #[test]
 fn reports_an_action_property_violated_under_a_view_as_tlc() {
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x \\in 1..3 /\\ y = 0\nNext == x' = 0 /\\ y' = x\nView == x\nNotThree == [][y' # 3]_y\n====\n";
@@ -211,13 +213,25 @@ fn reports_an_action_property_violated_under_a_view_as_tlc() {
     assert_eq!(output.status.code(), Some(13), "{}", stdout(&output));
     assert!(stdout(&output).contains(expected), "{}", stdout(&output));
     let shared = std::process::Command::new(env!("CARGO_BIN_EXE_prove-it"))
-        .args(["-workers", "4", "-noTE", "Stop"])
+        .args(["-workers", "1", "-noTE", "Stop"])
         .current_dir(&directory)
         .env("PROVE_IT_SHARED_LEVEL", "1")
+        .env("PROVE_IT_WORKERS", "4")
         .output()
         .expect("the binary runs");
     assert_eq!(shared.status.code(), Some(13), "{}", stdout(&shared));
     assert!(stdout(&shared).contains(expected), "{}", stdout(&shared));
+    let raced = std::process::Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-workers", "4", "-noTE", "Stop"])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(raced.status.code(), Some(1), "{}", stdout(&raced));
+    assert_eq!(
+        stderr(&raced),
+        "prove-it: not native yet: the engine stopped: an action property violated: a stop \
+         several workers race to\n"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -294,5 +308,22 @@ fn reports_invariants_sharing_a_conjunct_under_continue_as_tlc() {
         text.contains("Model checking completed. No error has been found.\n"),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// A deadlock stops TLC under -continue as without it (`doNextSetErr` keeps no error state), as
+// TLC printed it at d8fb231 with `-workers 1`.
+#[test]
+fn reports_a_deadlock_under_continue_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 2)\nPost == TLCGet(\"distinct\") > 0\nView == x\n====\n";
+    let (output, directory) = run_spec_with(
+        "continue-deadlock",
+        spec,
+        "INIT Init\nNEXT Next\n",
+        &["-continue"],
+    );
+    assert_eq!(output.status.code(), Some(11), "{}", stderr(&output));
+    let expected = "Starting... (_)\nComputing initial states...\nFinished computing initial states: 1 distinct state generated at _.\nError: Deadlock reached.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module Stop>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module Stop>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\nFinished in _ at (_)\n";
+    assert_eq!(steady_lines(&stdout(&output)), steady_lines(expected));
     std::fs::remove_dir_all(directory).expect("removed");
 }

@@ -1,0 +1,4 @@
+-config
+missing_module_consumed_by_flag.cfg
+-metadir
+missing_module_consumed_by_flag.tla

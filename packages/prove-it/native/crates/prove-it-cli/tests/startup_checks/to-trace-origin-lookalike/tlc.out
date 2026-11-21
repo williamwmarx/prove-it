@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module to_trace_lookalike_record
+Linting of module TLCExt
+Linting of module to_trace_lookalike_record
+Error: Evaluating assumption line 13, col 8 to line 13, col 11 of module to_trace_lookalike_record failed.
+The argument of ToTrace should be a CounterExample, but instead it is:
+[state |-> {}, action |-> {}]

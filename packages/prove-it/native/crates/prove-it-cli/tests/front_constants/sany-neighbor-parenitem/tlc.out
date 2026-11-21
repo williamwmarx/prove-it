@@ -1,0 +1,27 @@
+exit 150
+***Parse Error***
+Was expecting "Identifier or >>"
+Encountered "(" at line 2, column 10 and token "<<" 
+
+Residual stack trace follows:
+Identifier tuple starting at line 2, column 8.
+Some { } form starting at line 2, column 7.
+ExtendableExpr starting at line 2, column 7.
+Expression starting at line 2, column 7.
+Definition starting at line 2, column 1.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

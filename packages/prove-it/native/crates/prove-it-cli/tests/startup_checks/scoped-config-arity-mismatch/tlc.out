@@ -1,0 +1,7 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module module_overrides_fixture
+Semantic processing of module arity_mismatch
+Linting of module module_overrides_fixture
+Linting of module arity_mismatch
+Error: The configuration file substitutes for K with Alt of different number of arguments.

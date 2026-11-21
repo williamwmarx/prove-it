@@ -18,6 +18,11 @@ Constant == 1 + 1 = 2
 Zero == x = 0
 Enumerated == (CHOOSE f \\in [STRING -> {0}] : TRUE) = 0 => []<>(x = 0)
 Redefined == x \\in {0, 1} /\\ Init
+Fair == WF_x(Next)
+FairAlias == Fair
+NamedSpec == Init /\\ [][Next]_x /\\ FairAlias
+ExtraSpec == NamedSpec /\\ SF_x(Next)
+OtherFair == SF_x(Next)
 ====
 ";
 
@@ -195,4 +200,79 @@ fn writes_what_tlc_prints_as_it_starts() {
         .collect();
     assert_eq!(codes, [2212]);
     assert!(startup_messages("SPECIFICATION Spec\n", true).is_empty());
+}
+
+#[test]
+fn warns_when_one_named_property_contains_all_specification_temporals() {
+    let model = try_lower_front(
+        "fairness-tautology",
+        "SPECIFICATION NamedSpec\nPROPERTY Fair\n",
+        true,
+    )
+    .expect("a lowered model");
+    let warnings = model.startup_messages.expect("startup messages");
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|message| message.code == 2258)
+            .count(),
+        1
+    );
+    let warning = warnings
+        .iter()
+        .find(|message| message.code == 2258)
+        .unwrap();
+    assert!(warning.is_warning);
+    assert!(
+        warning
+            .text
+            .contains("The temporal formula Fair at line 14, col 1")
+    );
+    assert!(warning.text.ends_with(
+        "checking whether NamedSpec => Fair using TLC will never result in a violation of Fair."
+    ));
+    for (name, config, enabled) in [
+        ("extra", "SPECIFICATION ExtraSpec\nPROPERTY Fair\n", true),
+        (
+            "two",
+            "SPECIFICATION NamedSpec\nPROPERTIES Fair FairAlias\n",
+            true,
+        ),
+        ("same-formula", "SPECIFICATION Spec\nPROPERTY Fair\n", true),
+        (
+            "disabled",
+            "SPECIFICATION NamedSpec\nPROPERTY Fair\n",
+            false,
+        ),
+    ] {
+        let lowered = try_lower_front(name, config, enabled).expect("a lowered model");
+        assert!(
+            !lowered
+                .startup_messages
+                .expect("startup messages")
+                .iter()
+                .any(|message| message.code == 2258),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn fairness_warning_names_the_configured_property_at_its_override_location() {
+    let model = try_lower_front(
+        "fairness-override",
+        "SPECIFICATION NamedSpec\nPROPERTY Fair\nCONSTANT Fair <- OtherFair\n",
+        true,
+    )
+    .expect("a lowered model");
+    let warnings = model.startup_messages.expect("startup messages");
+    let warning = warnings
+        .iter()
+        .find(|message| message.code == 2258)
+        .expect("fairness warning");
+    assert!(
+        warning
+            .text
+            .contains("The temporal formula Fair at line 18, col 1")
+    );
 }

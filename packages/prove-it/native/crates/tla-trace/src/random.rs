@@ -6,26 +6,120 @@ use std::rc::Rc;
 
 use tla_values::random::{JavaRandom, get_large_subset_indices, get_subset_indices};
 
-use crate::value::{Class, Evaluated, Lazy, Value, elements, fail, set_of, sorted_function};
+use crate::print::format_pretty;
+use crate::value::{
+    Class, Evaluated, Lazy, SetClass, Value, elements, fail, fail_coded, fail_runtime,
+    is_enumerable, java_set_class, set_of, sorted_function,
+};
 
 // A set's elements in its normalized order (`toSetEnum` and `normalize`).
 fn normalized(set: &Value) -> Evaluated<Rc<Vec<Value>>> {
     match set_of(elements(set)?.to_vec())? {
-        Value::Set(elements) => Ok(elements),
+        Value::Set(elements) => Ok(Rc::clone(&elements.elements)),
         _ => fail("a set that isn't one"),
     }
 }
 
+pub(crate) fn check_random_element_argument(set: &Value) -> Evaluated<()> {
+    if java_set_class(set) == Some(SetClass::Overridden) {
+        return fail_coded(
+            "RandomElement of a value that isn't a finite set",
+            2176,
+            format!(
+                "Applying RandomElement to the following value,\nwhich is not a finite set:\n{}",
+                format_pretty(set)
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn random_element_normalization_is_known(value: &Value) -> bool {
+    matches!(value, Value::Lazy(lazy) if matches!(&***lazy, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any))
+        || subset_set_input_is_known(value)
+}
+
+fn wrong_random_element(set: &Value) -> Evaluated<()> {
+    let symbolic_function = matches!(set, Value::Lazy(lazy) if matches!(&***lazy, Lazy::FunctionSet(domain, range)
+        if matches!(domain, Value::Lazy(domain) if matches!(&***domain, Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any))
+            && (matches!(range, Value::Interval(..)) || matches!(range, Value::Set(elements) if elements.iter().all(|value| matches!(value, Value::Int(_) | Value::Bool(_) | Value::Str(_) | Value::Model(_)))))));
+    if !symbolic_function {
+        crate::eval::check_merge_argument_format(set)?;
+    }
+    fail_coded(
+        "RandomElement of a value that isn't a finite set",
+        2176,
+        format!(
+            "Applying RandomElement to the following value,\nwhich is not a finite set:\n{}",
+            crate::print::format_pretty(set)
+        ),
+    )
+}
+
+pub(crate) fn validate_random_element(set: &Value) -> Evaluated<()> {
+    check_random_element_argument(set)?;
+    if !is_enumerable(set) {
+        return wrong_random_element(set);
+    }
+    if let Value::Lazy(lazy) = set {
+        match &***lazy {
+            Lazy::FunctionSet(domain, range)
+                if random_element_normalization_is_known(domain)
+                    && random_element_normalization_is_known(range) =>
+            {
+                crate::value::normalize(domain);
+                crate::value::normalize(range);
+                if !is_enumerable(domain) {
+                    return wrong_random_element(set);
+                }
+                if !normalized(domain)?.is_empty() {
+                    validate_random_element(range)?;
+                }
+            }
+            Lazy::RecordSet(fields, _)
+                if fields
+                    .iter()
+                    .all(|(_, set)| random_element_normalization_is_known(set)) =>
+            {
+                for (_, set) in fields {
+                    crate::value::normalize(set);
+                }
+                if let Some((_, first)) = fields.first() {
+                    validate_random_element(first)?;
+                }
+            }
+            Lazy::Product(parts) if parts.iter().all(random_element_normalization_is_known) => {
+                for set in parts {
+                    crate::value::normalize(set);
+                }
+                if let Some(first) = parts.first() {
+                    validate_random_element(first)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// RandomElement(set): each component of a set of functions, records or tuples in turn, and
 /// otherwise the normalized set indexed with nextDouble.
-pub fn random_element(random: &mut JavaRandom, set: &Value) -> Evaluated<Value> {
+pub fn random_element(
+    random: &mut JavaRandom,
+    set: &Value,
+    default_method: bool,
+) -> Evaluated<Value> {
+    check_random_element_argument(set)?;
+    if default_method {
+        validate_random_element(set)?;
+    }
     match set {
-        Value::Lazy(lazy) => match &**lazy {
+        Value::Lazy(lazy) => match &***lazy {
             Lazy::FunctionSet(domain, range) => {
                 let keys = normalized(domain)?.to_vec();
                 let values = keys
                     .iter()
-                    .map(|_| random_element(random, range))
+                    .map(|_| random_element(random, range, default_method))
                     .collect::<Evaluated<_>>()?;
                 return sorted_function(keys, values, Class::Plain);
             }
@@ -36,24 +130,31 @@ pub fn random_element(random: &mut JavaRandom, set: &Value) -> Evaluated<Value> 
                     .collect();
                 let values = fields
                     .iter()
-                    .map(|(_, set)| random_element(random, set))
+                    .map(|(_, set)| random_element(random, set, default_method))
                     .collect::<Evaluated<_>>()?;
                 return sorted_function(keys, values, Class::Record);
             }
             Lazy::Product(factors) => {
                 let values = factors
                     .iter()
-                    .map(|factor| random_element(random, factor))
+                    .map(|factor| random_element(random, factor, default_method))
                     .collect::<Evaluated<_>>()?;
                 return Ok(Value::tuple(values));
             }
             _ => {}
         },
-        Value::Interval(low, high) => {
+        Value::Interval(low, high, _) => {
             let size = (i64::from(*high) - i64::from(*low) + 1).max(0) as usize;
             let offset = random.next_index(size);
             if offset >= size {
-                return fail("RandomElement of the empty set");
+                if !default_method {
+                    return fail("RandomElement of the empty set");
+                }
+                return fail_runtime(
+                    "RandomElement of the empty set",
+                    "Attempted to retrieve out-of-bounds element from the interval value {}."
+                        .to_owned(),
+                );
             }
             return Ok(Value::Int(low + offset as i32));
         }
@@ -62,7 +163,11 @@ pub fn random_element(random: &mut JavaRandom, set: &Value) -> Evaluated<Value> 
     let elements = normalized(set)?;
     match elements.get(random.next_index(elements.len())) {
         Some(element) => Ok(element.clone()),
-        None => fail("RandomElement of the empty set"),
+        None if !default_method => fail("RandomElement of the empty set"),
+        None => fail_runtime(
+            "RandomElement of the empty set",
+            "Index 0 out of bounds for length 0".to_owned(),
+        ),
     }
 }
 
@@ -73,7 +178,7 @@ pub fn random_subset(random: &mut JavaRandom, count: u64, set: &Value) -> Evalua
     if crate::sets::is_empty_by_argument(set) {
         return set_of(Vec::new());
     }
-    if let Value::Interval(low, high) = set {
+    if let Value::Interval(low, high, _) = set {
         let size = (i64::from(*high) - i64::from(*low) + 1).max(0) as u64;
         let drawn = get_subset_indices(count, size, random, false)
             .into_iter()
@@ -84,7 +189,7 @@ pub fn random_subset(random: &mut JavaRandom, count: u64, set: &Value) -> Evalua
     // The lists a product draws an element of each from, and the keys of a function or record.
     // An empty set, of any shape, draws nothing.
     let product = match set {
-        Value::Lazy(lazy) => match &**lazy {
+        Value::Lazy(lazy) => match &***lazy {
             Lazy::FunctionSet(domain, range) => {
                 let keys = normalized(domain)?.to_vec();
                 let range = normalized(range)?;
@@ -148,4 +253,60 @@ pub fn random_subset(random: &mut JavaRandom, count: u64, set: &Value) -> Evalua
         });
     }
     set_of(drawn)
+}
+
+/// RandomSubsetSet: exactly `count` coin-toss choices; duplicate choices are not retried.
+pub fn random_subset_set(
+    random: &mut JavaRandom,
+    count: u32,
+    probability: f64,
+    set: &Value,
+) -> Evaluated<Value> {
+    let elements = normalized(set)?;
+    let mut indices = std::collections::BTreeSet::new();
+    for _ in 0..count {
+        indices.insert(tla_values::random::coin_subset_indices(
+            random,
+            elements.len(),
+            probability,
+        ));
+    }
+    let subsets = indices
+        .into_iter()
+        .map(|indices| {
+            set_of(
+                indices
+                    .into_iter()
+                    .map(|index| elements[index].clone())
+                    .collect(),
+            )
+        })
+        .collect::<Evaluated<Vec<_>>>()?;
+    let value = set_of(subsets)?;
+    // HashSet.add fingerprints each generated subset, normalizing its shared concrete values.
+    crate::value::settle(&value);
+    Ok(value)
+}
+
+/// Shapes whose size and fingerprint normalization the value tree can preserve without deferred
+/// function evaluation or a lazy set's mutable conversion cache.
+pub fn subset_set_input_is_known(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) | Value::Lambda(_) | Value::Lazy(_) => false,
+        Value::Set(set) => {
+            set.java_class == Some(crate::value::SetClass::Enumeration)
+                && set.iter().all(subset_set_input_is_known)
+        }
+        Value::Function(function) => {
+            matches!(
+                function.java_class.get(),
+                Some(Class::Plain | Class::Tuple | Class::Record)
+            ) && function
+                .domain
+                .iter()
+                .chain(&function.range)
+                .all(subset_set_input_is_known)
+        }
+        _ => true,
+    }
 }

@@ -217,6 +217,25 @@ impl Compiler<'_> {
             NodeKind::Product(factors) => self.compile_product(factors, context),
             _ => unreachable!("a lazy set of another kind"),
         }?;
+        // A part that prints prints as TLC evaluates the parts, once each, in the order written,
+        // as it builds the set (`Tool`'s OPCODE_cp, OPCODE_sof and OPCODE_sor), which the set's
+        // value does. Its membership test and its enumeration in TLC's order evaluate the parts
+        // apart, so the set is its value alone, which a use that takes it as TLC holds it
+        // declines.
+        if set.is_printing() {
+            if set.may_be_infinite() {
+                return super::unsupported(
+                    "a set of functions, records or tuples of parts that print",
+                );
+            }
+            return Ok(Compiled {
+                member: None,
+                parts: None,
+                reference: None,
+                is_normalized: false,
+                ..set
+            });
+        }
         // Where a part may be a set TLC can't enumerate, TLC's own enumeration decides: it finds
         // the set empty, or its one function of an empty domain, before it asks that part.
         let is_lazy = set.has_infinite_part;
@@ -249,6 +268,20 @@ impl Compiler<'_> {
             }),
             ..set
         }
+    }
+
+    pub(crate) fn referenced_value(value: &Compiled) -> Compiled {
+        if let Some(name) = value.infinite_value {
+            return value.with_eval(eval(move |machine| Ok(machine.store.infinite_set(name))));
+        }
+        let Some(reference) = value
+            .reference
+            .clone()
+            .filter(|_| value.has_infinite_part && value.infinite.is_none())
+        else {
+            return value.clone();
+        };
+        value.with_eval(eval(move |machine| reference(machine)?.value(machine)))
     }
 
     /// The set as an operation that only enumerates it takes it, such as a quantifier over it:
@@ -350,10 +383,10 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         let mut written = Vec::new();
-        for &(name, value) in fields {
+        for (index, &(name, value)) in fields.iter().enumerate() {
             let units = self.units(name);
             let key = self.store.str(&units);
-            written.push((key, self.compile(value, context)?));
+            written.push((key, self.compile(value, context)?, index));
         }
         // TLC evaluates the fields' sets in the order they're written.
         let set_parts = self.once_a_round(
@@ -381,6 +414,19 @@ impl Compiler<'_> {
             .collect();
         let sets: Vec<Eval> = sorted.iter().map(|field| field.1.eval.clone()).collect();
         let footprint = Footprint::merge_all(sorted.iter().map(|field| &field.1.footprint));
+        // Where a field prints, the fields' places in TLC's order, in the order written, which
+        // TLC evaluates them in.
+        let written_places: Option<Vec<usize>> =
+            footprint.slots.contains(&super::PRINT_SLOT).then(|| {
+                (0..sorted.len())
+                    .map(|written| {
+                        sorted
+                            .iter()
+                            .position(|field| field.2 == written)
+                            .expect("a field")
+                    })
+                    .collect()
+            });
         let member_keys = keys.clone();
         let reference_keys = keys.clone();
         let member_parts = set_parts.clone();
@@ -429,8 +475,15 @@ impl Compiler<'_> {
             ..leaf(
                 eval(move |machine| {
                     let mut values = Vec::with_capacity(sets.len());
-                    for set in &sets {
-                        values.push(set(machine)?);
+                    if let Some(places) = &written_places {
+                        values.resize(sets.len(), 0);
+                        for &place in places {
+                            values[place] = sets[place](machine)?;
+                        }
+                    } else {
+                        for set in &sets {
+                            values.push(set(machine)?);
+                        }
                     }
                     for &set in &values {
                         expect_set(machine, set, "a record set of a non-set")?;

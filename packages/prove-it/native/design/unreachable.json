@@ -1,0 +1,104 @@
+[
+  {
+    "id": "tlc/generated/random/000/random_00102#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building DOMAIN of a function over 21..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "FcnLambdaValue.toFcnRcd allocates its domain and values arrays (new Value[sz]) for the whole interval before it applies the body, about 8.6 GB each for some 2^31 elements; TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/generated/random/013/random_06550#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building a membership in a function over 7..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "FcnLambdaValue.toFcnRcd allocates its domain and values arrays (new Value[sz]) for the whole interval before it applies the body, about 8.6 GB each for some 2^31 elements; TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/generated/random/003/random_01576#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building CHOOSE over 7..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "Tool's quantifier, CHOOSE and set-map enumeration asks for normalized order (EnumerableValue.elements(Ordering.NORMALIZED)), which builds the interval with IntervalValue.toSetEnum: new Value[size()] of some 2^31 elements (8.6 GB) and one IntValue each (about 34 GB more); TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/generated/random/007/random_03717#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building \\E over 7..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "Tool's quantifier, CHOOSE and set-map enumeration asks for normalized order (EnumerableValue.elements(Ordering.NORMALIZED)), which builds the interval with IntervalValue.toSetEnum: new Value[size()] of some 2^31 elements (8.6 GB) and one IntValue each (about 34 GB more); TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/generated/random/008/random_04041#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building \\A over 7..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "Tool's quantifier, CHOOSE and set-map enumeration asks for normalized order (EnumerableValue.elements(Ordering.NORMALIZED)), which builds the interval with IntervalValue.toSetEnum: new Value[size()] of some 2^31 elements (8.6 GB) and one IntValue each (about 34 GB more); TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/generated/random/012/random_06258#assume",
+    "kind": "heap",
+    "reason": "TLC runs out of memory building a set map over 3..2147483647; whether it does depends on the JVM's heap.",
+    "evidence": "Tool's quantifier, CHOOSE and set-map enumeration asks for normalized order (EnumerableValue.elements(Ordering.NORMALIZED)), which builds the interval with IntervalValue.toSetEnum: new Value[size()] of some 2^31 elements (8.6 GB) and one IntValue each (about 34 GB more); TLC.process catches the OutOfMemoryError and prints EC.SYSTEM_OUT_OF_MEMORY (1001), exit 255. The pinned jar printed 1001 'Java ran out of memory' (exit 255) within 4 s at each heap it was run at (-Xmx512m, 1g, 3g twice, 6g, 8g, G1, no compressed oops, -Xss16m: 9 runs); the same expression with the interval's bound cut to 60,000,000 prints 1001 at -Xmx256m and TLC's own error at -Xmx3g, so the output is a function of the heap, which Prove It doesn't have. Its upstream suite file records 1001 (exit 255), what the jar prints at the corpus's -Xmx3g; an array of 2^31 - 21 to 2^31 - 3 elements is within HotSpot's limit, so above a heap of roughly 9 to 43 GB TLC goes on to its own result. tla-ts tags it tlc-bug and checks its 'correct' (unbounded heap) output instead. Prove It declines."
+  },
+  {
+    "id": "tlc/errors/TLC_POSTCONDITION_EVALUATION_ERROR/unknown_stats_key",
+    "kind": "wall-clock",
+    "reason": "The error prints TLCGet(\"stats\").duration, the seconds since TLC started.",
+    "evidence": "AbstractChecker.getStatistics: (System.currentTimeMillis() - startTime) / 1000L, with startTime set in TLC.process before parsing. The recorded output has duration |-> 1. The pinned jar printed 1 in 5 plain reruns under load and 3, 1, 2 and 2 in 4 more; freezing the JVM with SIGSTOP for 1, 2, 3 and 5 s printed 2, 3, 4 and 6. tla-ts reads its own clock (Date.now()), and main prints 0. Prove It declines ('a postcondition that shows how long TLC ran')."
+  },
+  {
+    "id": "tlc/checker/errors/nonterminal_constant_recursion",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "CallStackTool.eval/evalAppl push each node and pop it in a finally block (CallStack.pop); StackOverflowError is not caught there, so a pop that overflows again leaves its entry and CallStack.toString prints the outermost entries left. The upstream suite file records 'The error call stack is empty.', and the jar sometimes prints one position instead ('0. Line 15, column 9 to line 15, column 13'): the pinned jar printed the one position in 1 of 11 runs at the corpus's settings (-Xmx3g -Xss2m), 3 of 13 in another series, and 2 of 20 over -Xss256k..16m, -Xint, C1 only and no tiered compilation, printing 'The error call stack is empty.' otherwise. tla-ts always prints the empty stack. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/checker/errors/stack_overflow_constraint",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. Through the corpus's harness on the pinned jar at its settings (-Xmx3g -Xss2m), the recorded empty call stack came in 24 of 27 runs, and '0. Line 15, column 9 to line 15, column 13' in 3; at -Xss8m the position came in 4 of 5. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/checker/errors/stack_overflow_init",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. At the corpus's settings the recorded empty call stack came in 27 of 27 runs, and with -Xss8m '0. Line 14, column 9 to line 14, column 16' came in 5 of 5; the same operator recursion in an expression context (infinite_operator_recursion) printed a position at the corpus's settings in 6 of 36. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/checker/invariants/stack_overflow_in_invariant_records_error",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. At the corpus's settings the recorded empty call stack came in 27 of 27 runs, and with -Xss8m '0. Line 15, column 9 to line 15, column 18' came in 4 of 5. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_operator_recursion#init",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. At the corpus's settings, over 12 runs the recorded empty call stack came 10 times in the initial predicate, 9 in the invariant and 11 in the property, and '0. Line 13, column 9 to line 13, column 32' otherwise. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_operator_recursion#invariant",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. At the corpus's settings, over 12 runs the recorded empty call stack came 10 times in the initial predicate, 9 in the invariant and 11 in the property, and '0. Line 13, column 9 to line 13, column 32' otherwise. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_operator_recursion#property",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. At the corpus's settings, over 12 runs the recorded empty call stack came 10 times in the initial predicate, 9 in the invariant and 11 in the property, and '0. Line 13, column 9 to line 13, column 32' otherwise. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_function_recursion#init",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. The recorded empty call stack came in each of 27 runs at the corpus's settings and 25 more over -Xss512k to 8m, the interpreter only and C1 only; over 240 runs across ten stack sizes from 256 KB to 32 MB and four compiler modes, '0. Line 13, column 9 to line 13, column 32' came 6 times: in the initial predicate at -Xss32m and at -Xss32m and -Xss6m without tiered compilation, in the invariant at -Xss6m without tiered compilation, and in the property twice at -Xss32m. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_function_recursion#invariant",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. The recorded empty call stack came in each of 27 runs at the corpus's settings and 25 more over -Xss512k to 8m, the interpreter only and C1 only; over 240 runs across ten stack sizes from 256 KB to 32 MB and four compiler modes, '0. Line 13, column 9 to line 13, column 32' came 6 times: in the initial predicate at -Xss32m and at -Xss32m and -Xss6m without tiered compilation, in the invariant at -Xss6m without tiered compilation, and in the property twice at -Xss32m. Prove It declines ('recursion too deep')."
+  },
+  {
+    "id": "tlc/expressions/operators/recursive/infinite_function_recursion#property",
+    "kind": "stack-unwinding",
+    "reason": "After a StackOverflowError in the initial states, the call stack TLC prints depends on how many of CallStackTool's pops themselves overflowed on the way out, which depends on the JVM's stack size and on which frames the JIT has compiled.",
+    "evidence": "ModelChecker.doInit replays the initial states with a CallStackTool after the StackOverflowError; CallStackTool.eval/evalAppl/getInitStates push each node and pop it in a finally block, which doesn't catch StackOverflowError, so a pop that itself overflows on the way out leaves its entry, and CallStack.toString prints the outermost entries left instead of 'The error call stack is empty.'. Whether a pop overflows depends on the JVM's stack size and on which frames the JIT compiled, not on the spec. The recorded empty call stack came in each of 27 runs at the corpus's settings and 25 more over -Xss512k to 8m, the interpreter only and C1 only; over 240 runs across ten stack sizes from 256 KB to 32 MB and four compiler modes, '0. Line 13, column 9 to line 13, column 32' came 6 times: in the initial predicate at -Xss32m and at -Xss32m and -Xss6m without tiered compilation, in the invariant at -Xss6m without tiered compilation, and in the property twice at -Xss32m. Prove It declines ('recursion too deep')."
+  }
+]

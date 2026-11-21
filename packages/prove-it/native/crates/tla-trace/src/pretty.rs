@@ -253,7 +253,7 @@ struct Formatter<'a> {
 
 impl Formatter<'_> {
     fn text(&self, node: &Node) -> String {
-        String::from_utf16_lossy(&self.text[node.first..=node.last])
+        tla_values::print::java_text(&self.text[node.first..=node.last])
     }
 
     fn length(node: &Node) -> i64 {
@@ -385,8 +385,8 @@ pub fn pretty_print(text: &[u16]) -> String {
     match tree {
         Some(tree) if tree.last + 1 >= text.len() => Formatter { text }
             .format(&tree, WIDTH, 0, "")
-            .unwrap_or_else(|| String::from_utf16_lossy(text)),
-        _ => String::from_utf16_lossy(text),
+            .unwrap_or_else(|| tla_values::print::java_text(text)),
+        _ => tla_values::print::java_text(text),
     }
 }
 

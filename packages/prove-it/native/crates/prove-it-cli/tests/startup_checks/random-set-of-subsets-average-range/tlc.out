@@ -1,0 +1,21 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Randomization
+Semantic processing of module sos_n_over_size
+Linting of module sos_n_over_size
+Computing initial states...
+Error: The second argument of RandomSetOfSubsets should be a nonnegative integer in range 0..Cardinality(S), but instead it is:
+3
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 14, column 9 to line 14, column 30 in sos_n_over_size
+1. Line 16, column 8 to line 16, column 32 in sos_n_over_size
+2. Line 16, column 29 to line 16, column 32 in sos_n_over_size
+3. Line 12, column 9 to line 12, column 45 in sos_n_over_size
+4. Line 12, column 9 to line 12, column 40 in sos_n_over_size
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

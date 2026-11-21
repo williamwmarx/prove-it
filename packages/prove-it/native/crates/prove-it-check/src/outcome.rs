@@ -6,7 +6,7 @@ use tla_front::errors::SanyReport;
 
 use crate::plain::Variable;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Outcome {
     /// The status, where the check ends as the library reports it: none where TLC stops before it
     /// searches, such as at a spec SANY rejects, for which the library throws.
@@ -43,6 +43,7 @@ pub enum Thrown {
     NotNative(&'static str),
 }
 
+#[derive(Clone)]
 pub struct Message {
     pub code: u32,
     pub level: u8,
@@ -63,6 +64,7 @@ pub struct Counts {
 
 /// A violation or an error TLC reports: its message's code and text, and the behavior it prints
 /// with it. A lasso's cycle starts at `loop_start`, which is the last state where it stutters.
+#[derive(Clone)]
 pub struct Reported {
     pub code: u32,
     pub headline: String,
@@ -72,6 +74,7 @@ pub struct Reported {
 
 /// A state of a behavior: TLC's label of the step to it, and its variables in TLC's order, or the
 /// fields of the ALIAS TLC prints in their place.
+#[derive(Clone)]
 pub struct ReportedState {
     pub label: String,
     pub variables: Vec<Variable>,

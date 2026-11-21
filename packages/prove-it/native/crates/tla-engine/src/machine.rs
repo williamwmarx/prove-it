@@ -5,10 +5,11 @@
 //! program on one store.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use tla_ir::NodeId;
+pub use tla_ir::RuntimeWarning;
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
@@ -36,11 +37,59 @@ pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> +
 pub enum Printed {
     Values(Prints),
     InitialStates(u64),
+    /// The base expression of an EXCEPT whose selected path does not exist.
+    Warning(RuntimeWarning),
+}
+
+/// What TLC's workers printed, with several of them: where one printed as another may have
+/// (`Machine::is_print_raced`), the order of what they print changes from run to run, unless
+/// they all print the same.
+#[derive(Clone, Debug, Default)]
+pub struct WorkerPrints {
+    /// The first thing a worker printed.
+    pub first: Option<Prints>,
+    /// Whether a worker printed something else since.
+    pub is_mixed: bool,
+    /// Whether a worker printed as another may have.
+    pub is_raced: bool,
 }
 
 /// What a search stops with once its machines evaluated as many bodies of recursive definitions
 /// as PROVE_IT_TEST_EVALUATIONS allows.
 pub const EVALUATIONS_SPENT: &str = "stopped where PROVE_IT_TEST_EVALUATIONS asked";
+
+/// What TLCGet reads of TLC's simulation (`Simulator.getStatistics`, `TLCGetSet`'s ACTION), as the
+/// simulation sets it: TLC's main thread once it has started, and its one worker.
+#[derive(Clone, Debug, Default)]
+pub struct SimulationRun {
+    /// Whether TLC's simulator runs: as TLC starts, before it makes its simulator, TLCGet of the
+    /// run fails, and the engine leaves it.
+    pub is_running: bool,
+    /// Whether the machine simulates (`-simulate`), from TLC's start: TLC's main thread then has
+    /// no model checker, whose empty trace TLCGet("diameter") reads as 1 in the assumptions.
+    pub is_simulated: bool,
+    /// Whether the simulation has no end (`-simulate` without `num=`). Each trace's count, which
+    /// TLCGet("diameter") and TLCGet("stats") read, would then make a new integer the store keeps
+    /// for good, where TLC's simulator runs in constant memory: the engine declines a read of
+    /// either as the worker runs.
+    pub is_endless: bool,
+    /// The record of the action that made the state TLC evaluates in (`TLCState.getAction`), or
+    /// none where the engine doesn't know it.
+    pub action: Option<Id>,
+    /// The action of the state the walk expands, kept while TLC checks a successor of it.
+    pub expanding_action: Option<Id>,
+    /// The positions in the model's actions of the steps that lead to that state.
+    pub steps: Vec<u32>,
+    /// The traces TLC started, and the states it generated.
+    pub traces: u64,
+    pub generated: u64,
+    /// TLC's packed mean and squared deviations of the lengths of the traces it finished.
+    pub lengths: i64,
+    /// The name of each of the model's actions, as the store holds it.
+    pub action_names: Vec<Id>,
+    /// When TLC's simulator started, which TLCGet("stats").duration counts the seconds from.
+    pub started: Option<crate::clock::Instant>,
+}
 
 /// What one Print or PrintT printed: the values, and in the native checker TLC's text of each,
 /// which the compiler knows where the store forgets how TLC built a value the spec writes there.
@@ -50,28 +99,58 @@ pub struct Prints {
     /// TLC's text of each value, before TLC's pretty-printer breaks its lines; `None` where the
     /// engine doesn't know one, or isn't the native checker.
     pub texts: Option<Vec<Vec<u16>>>,
+    /// Whether this is the prompt TLCSet("pause", TRUE) prints, after which TLC reads a byte of
+    /// its standard input (`System.in.read`) before it goes on.
+    pub is_pause_prompt: bool,
+}
+
+impl Prints {
+    /// A startup PrintT whose argument the engine can't compute, but the trace evaluator can,
+    /// which words it as TLC prints it: it holds no value (a Print or PrintT holds at least one).
+    pub fn unworded() -> Prints {
+        Prints {
+            values: Vec::new(),
+            texts: None,
+            is_pause_prompt: false,
+        }
+    }
+
+    /// Whether this is the print `Prints::unworded` makes, which only the trace evaluator words.
+    pub fn is_unworded(&self) -> bool {
+        self.values.is_empty() && self.texts.is_none()
+    }
 }
 
 /// A variable that has no value yet, -1 in the TypeScript registers.
 pub const UNASSIGNED: Id = u32::MAX;
 
+/// What a constant definition's once slot holds where the definition failed as TLC started, which
+/// TLC keeps no value of and evaluates again at each use (`Machine::constant_once`).
+pub(crate) const RETRIED_ONCE: Id = u32::MAX - 1;
+
 /// How deep recursive operators and functions may call themselves before the engine hands over,
 /// so that deep TLA+ recursion stops cleanly rather than overflow the native stack. WebAssembly's
 /// frames are on the host's stack, which holds about 1,500 calls of a simple recursive operator
 /// under Bun and 1,800 under Node's default stack (fallback.md), so it stops sooner there. TLC's
-/// own JVM stack holds a few hundred.
+/// own JVM stack holds a few hundred to a few thousand, by the frames each level takes: under a
+/// 2 MB thread stack the cheapest recursion, `G(n) == IF n = 0 THEN 0 ELSE G(n - 1)`, evaluated
+/// 2,000 calls and overflowed past 2,900 in every probe, so a recursion that ends deeper than
+/// that is one TLC overflows on, which the engine leaves to TLC rather than answer. A value the
+/// engine kept counts the calls nested below its evaluation where it is read again
+/// (`reach_cached`), since TLC evaluates it again there.
 const MAXIMUM_RECURSION: u32 = if cfg!(target_arch = "wasm32") {
     1_000
 } else {
-    20_000
+    3_000
 };
 
 /// Why the engine as WebAssembly stops at that bound, for which the library throws
 /// `WebAssemblyStackError` (`src/library-check.ts`).
 pub const WEBASSEMBLY_TOO_DEEP: &str = "recursion deeper than WebAssembly's stack holds";
 
-/// Why the engine stops at that bound.
-const TOO_DEEP: &str = if cfg!(target_arch = "wasm32") {
+/// Why the engine stops at that bound, which the evaluator of failures evaluates again: TLC
+/// overflows its stack where the recursion never ends.
+pub(crate) const TOO_DEEP: &str = if cfg!(target_arch = "wasm32") {
     WEBASSEMBLY_TOO_DEEP
 } else {
     "recursion too deep"
@@ -123,6 +202,17 @@ pub struct Program {
     /// prints by its parts (`Lazy::check_printed`), whose enumeration the store holds and would
     /// print instead.
     pub(crate) is_collapsed: AtomicBool,
+    /// The AssertError applications the engine leaves to its caller to compute once as it
+    /// starts, each with the value the caller computed: their message is a string, and their
+    /// expression reads neither the state nor a name bound around it and has no effect, so TLC
+    /// computes the same value wherever it evaluates them.
+    pub(crate) delegated: Vec<(NodeId, Arc<OnceLock<bool>>)>,
+    /// How many workers TLC runs, whose threads share the system properties TLCSet sets in
+    /// whatever order they race to them.
+    pub(crate) workers: usize,
+    /// Whether the model may read TLCGet("config"), whose install the engine writes "unknown"
+    /// where TLC writes where its jar is (`TLCGlobals.Version.installLocation`).
+    pub(crate) reads_config: bool,
 }
 
 impl Program {
@@ -154,6 +244,14 @@ pub struct MemoStatistics {
     pub is_enabled: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct DeferredCall {
+    pub evaluate: Eval,
+    pub locals: Vec<Id>,
+    pub current: Vec<Id>,
+    pub next: Vec<Id>,
+}
+
 pub struct Machine<'p> {
     pub store: Store,
     pub(crate) cur: Vec<Id>,
@@ -166,11 +264,20 @@ pub struct Machine<'p> {
     pub(crate) tables: Vec<MemoTable>,
     pub(crate) epochs: Vec<EpochCache>,
     pub(crate) onces: Vec<Id>,
+    /// The values computed once whose evaluation nested recursive calls, with how deep they
+    /// went, which a machine that adopts them counts where it reads them too.
+    pub(crate) deep_onces: Vec<(Id, u32)>,
     // The round of membership tests in which each set's parts last ran (`onceARound`).
     pub(crate) rounds: Vec<u64>,
     pub(crate) parts_round: u64,
     parts_rounds: u64,
-    depth: u32,
+    pub(crate) depth: u32,
+    /// The depth at which a recursive call stops with TOO_DEEP: MAXIMUM_RECURSION, or less while
+    /// the engine looks for a substitute TLC's stack may not hold (`within_recursion`).
+    recursion_limit: u32,
+    /// The deepest `depth` the evaluation reached since the innermost cache that measures it
+    /// started (`reach_from_here`), counting what a cached value's evaluation nested below it.
+    reach: u32,
     /// How many variables the walk has assigned (`registers.assigned`).
     pub(crate) assigned: u32,
     /// Whether a step took TLC's shortcut past a conjunct it would otherwise walk
@@ -191,16 +298,53 @@ pub struct Machine<'p> {
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
     pub output: Vec<Printed>,
+    pub(crate) deferred: Option<DeferredCall>,
     /// The generator RandomElement and RandomSubset draw from: the interpreter's for the initial
     /// states, then one seeded for each state the search expands (`runtime.getRandom`).
     pub(crate) random: JavaRandom,
     /// The state of the generator the startup left, which a violation's trace draws from.
     pub(crate) startup_random: u64,
+    pub(crate) startup_values: Option<Vec<Id>>,
+    pub(crate) keeping_lazy_function_value: bool,
+    /// The functions an application read with KeepLazy from an argument or a LET definition
+    /// whose constructor holds records TLC may print as written (`names_argument_with_written_records`).
+    /// The last value put in `kept_lazy_records`, which an application reading it again skips.
+    pub(crate) last_kept_lazy_record: Id,
+    pub(crate) kept_lazy_records: std::collections::HashSet<
+        Id,
+        std::hash::BuildHasherDefault<crate::symmetry::IntegerHasher>,
+    >,
+    /// Where the function of an application may be the value of a function constructor, the
+    /// bodies of those constructors, until one of them takes it (`Tool`'s OPCODE_fa evaluates it with KeepLazy).
+    pub(crate) applying_construction: Option<Arc<[NodeId]>>,
+    /// The function a constructor kept lazy where building it failed, which no cache keeps:
+    /// TLC builds it again, at once, where it isn't applied.
+    pub(crate) kept_lazy_function: Id,
+    /// How many times a startup definition that failed as TLC started has been evaluated again
+    /// at a use (`constant_once`), which a read of a name TLC binds to a `LazyValue` counts.
+    pub(crate) retried_reads: u32,
+    pub(crate) guarding_function_body_warnings: bool,
+    /// Whether the liveness checker's atom being answered is evaluating: TLC prints a warning
+    /// such as an EXCEPT's missing path (2144) or an UNCHANGED that doesn't hold (2143) as its
+    /// liveness checker evaluates the atom, between what it reports there, which the engine
+    /// doesn't place.
+    pub(crate) guarding_atom_warnings: bool,
     /// TLC's registers, which TLCSet sets and TLCGet reads.
     pub registers: Registers,
+    /// What TLCGet reads of TLC's simulation as it runs, where the machine simulates.
+    pub simulation: SimulationRun,
     /// Whether TLC has seen the successor whose action constraints the search checks, which
     /// PickSuccessor reads; None elsewhere.
     pub(crate) is_successor_seen: Option<bool>,
+    /// Whether, with several workers, another of TLC's workers may print as this one does: TLC's
+    /// queue holds a state other than the one being expanded, which another worker takes and
+    /// expands as this one goes on (`StateQueue.sDequeue`), so the order of what they print
+    /// changes from run to run.
+    pub(crate) is_print_raced: bool,
+    /// Whether, with several workers, the machine evaluates as one of TLC's workers does.
+    pub(crate) is_worker_evaluating: bool,
+    /// What TLC's workers printed so far, with several workers.
+    pub(crate) worker_prints: WorkerPrints,
     /// TLCCache's value of each expression it caches, by the expression's node and the key's
     /// fingerprint (`tlcEval2`).
     pub(crate) tlc_caches: HashMap<(NodeId, u64), Id>,
@@ -217,6 +361,35 @@ pub struct Machine<'p> {
     /// which TLC fingerprints no state, so it has cached no value a state holds as its
     /// normalized set (`DoInitFunctor.addElement`).
     pub(crate) is_before_initial_state: bool,
+    /// Whether the machine computes the substitutes and the constant definitions as TLC does
+    /// as it processes the spec (`SpecProcessor.processConstantDefns`), before it has made its
+    /// checker or simulator (`TLCGlobals.mainChecker`), whose registers TLCExt reads.
+    pub(crate) is_processing_constants: bool,
+    /// Whether the machine computes a definition as TLC does as it starts only to find whether
+    /// TLC fails or completes there before any effect, stopping at its TLCSet
+    /// (`tla_ir::Startup::register_probes`).
+    pub(crate) is_probing_registers: bool,
+    /// Whether such a computation reached TLCSet of a key that sets nothing as TLC starts.
+    pub(crate) has_probed_unset_register: bool,
+    /// Whether TLCSet("pause", TRUE) prompts, as TLC's breadth-first model checker does from its
+    /// one worker and its main thread once it computes the initial states; elsewhere the engine
+    /// declines it, but in a simulation, which has no model checker and ignores it.
+    pub(crate) is_pause_prompted: bool,
+    /// Whether the machine runs TLC's startup, the constant definitions and then the
+    /// assumptions, on the one thread TLC runs them on, before any state: a recursive function
+    /// TLC keeps lazy may print as it is applied or converted only there
+    /// (`Compiler::kept_lazy_conversion`).
+    pub(crate) is_starting: bool,
+    /// Where the simulation generates (`-generate`), the walk of an action: the worker's
+    /// generator, and whether the walk kept a successor, past which TLC's walk stops.
+    pub(crate) generate: Option<Generate>,
+}
+
+/// What a walk of an action TLC generates draws from and has found (`Tool.probabilistic`).
+pub(crate) struct Generate {
+    pub(crate) random: JavaRandom,
+    /// Whether the walk kept a successor (`SimulationWorker.hasStates`).
+    pub(crate) has_states: bool,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -230,11 +403,16 @@ pub struct Registers {
     pub is_exit: bool,
     /// How many times TLCSet has set a register.
     pub writes: u64,
+    /// The system properties TLCSet("-D<name>", v) set, by name, each the string of the value's
+    /// text (`System.setProperty`), which every worker reads alike.
+    pub properties: Vec<(Vec<u16>, Id)>,
 }
 
 impl Registers {
     pub fn is_empty(&self) -> bool {
-        self.numbered.iter().all(Option::is_none) && self.named.is_empty()
+        self.numbered.iter().all(Option::is_none)
+            && self.named.is_empty()
+            && self.properties.is_empty()
     }
 }
 
@@ -264,10 +442,13 @@ impl<'p> Machine<'p> {
                 .map(|_| EpochCache::default())
                 .collect(),
             onces: vec![EMPTY; program.once_count],
+            deep_onces: vec![(EMPTY, 0); program.once_count],
             rounds: vec![u64::MAX; program.round_count],
             parts_round: 0,
             parts_rounds: 0,
             depth: 0,
+            recursion_limit: MAXIMUM_RECURSION,
+            reach: 0,
             assigned: 0,
             is_past_walk: false,
             assigned_shapes: None,
@@ -275,15 +456,35 @@ impl<'p> Machine<'p> {
             piece_bits: 0,
             spare_states: Vec::new(),
             output: Vec::new(),
+            deferred: None,
             random: JavaRandom::seeded(program.random_seed),
             startup_random: 0,
+            startup_values: None,
+            keeping_lazy_function_value: false,
+            last_kept_lazy_record: crate::memo::EMPTY,
+            kept_lazy_records: std::collections::HashSet::default(),
+            applying_construction: None,
+            kept_lazy_function: EMPTY,
+            retried_reads: 0,
+            guarding_function_body_warnings: false,
+            guarding_atom_warnings: false,
             registers: Registers::default(),
+            simulation: SimulationRun::default(),
             is_successor_seen: None,
+            is_print_raced: false,
+            is_worker_evaluating: false,
+            worker_prints: WorkerPrints::default(),
             tlc_caches: HashMap::new(),
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
             is_before_initial_state: false,
+            generate: None,
+            is_processing_constants: false,
+            is_probing_registers: false,
+            has_probed_unset_register: false,
+            is_pause_prompted: false,
+            is_starting: false,
         }
     }
 
@@ -322,9 +523,14 @@ impl<'p> Machine<'p> {
     }
 
     /// Takes the values another machine on the same store computed once where this one has none.
-    pub(crate) fn adopt_onces(&mut self, onces: &[Id]) {
+    pub(crate) fn adopt_onces(&mut self, onces: &[Id], deep_onces: &[(Id, u32)]) {
         for (own, &other) in self.onces.iter_mut().zip(onces) {
             if *own == EMPTY {
+                *own = other;
+            }
+        }
+        for (own, &other) in self.deep_onces.iter_mut().zip(deep_onces) {
+            if own.0 == EMPTY {
                 *own = other;
             }
         }
@@ -338,8 +544,15 @@ impl<'p> Machine<'p> {
         for cache in &mut self.epochs {
             *cache = EpochCache::default();
         }
-        for once in self.onces.iter_mut().filter(|once| **once >= bound) {
+        for once in self
+            .onces
+            .iter_mut()
+            .filter(|once| **once >= bound && **once != RETRIED_ONCE)
+        {
             *once = EMPTY;
+        }
+        for once in self.deep_onces.iter_mut().filter(|once| once.0 >= bound) {
+            *once = (EMPTY, 0);
         }
         self.spare_states.clear();
     }
@@ -449,10 +662,17 @@ impl<'p> Machine<'p> {
         let read = keys.map(|key| self.read_key(key));
         let known = self.tables[table].get(&read);
         if known != EMPTY {
+            self.reach_cached(self.tables[table].height(&read))?;
             return Ok(known);
         }
-        let value = inner(self)?;
-        self.tables[table].set(&read, value);
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let value = inner(self);
+        let height = self.reached_below(outer);
+        let value = value?;
+        if self.output.len() == output_at && value != self.kept_lazy_function {
+            self.tables[table].set_with_height(&read, value, height);
+        }
         Ok(value)
     }
 
@@ -476,28 +696,181 @@ impl<'p> Machine<'p> {
             if self.program.is_epoch_checked && inner(self)? != known {
                 panic!("an epoch cache hit a stale value");
             }
+            self.reach_cached(self.epochs[cache].height(entry))?;
             return Ok(known);
         }
-        let value = inner(self)?;
-        self.epochs[cache].set(epoch, entry, &keys, value);
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let value = inner(self);
+        let height = self.reached_below(outer);
+        let value = value?;
+        if self.output.len() == output_at && value != self.kept_lazy_function {
+            self.epochs[cache].set(epoch, entry, &keys, value, height);
+        }
         Ok(value)
     }
 
+    /// Evaluates an expression that reads nothing once. One whose evaluation nests recursive
+    /// calls is kept with how deep they went, which reading it counts (`reach_cached`), as TLC
+    /// evaluates it again where it reads it.
     pub(crate) fn once(&mut self, once: usize, inner: &Eval) -> Outcome<Id> {
+        if let Some(known) = self.known_once(once)? {
+            return Ok(known);
+        }
+        let outer = self.reach_from_here();
+        let value = inner(self);
+        let height = self.reached_below(outer);
+        let value = value?;
+        if value != self.kept_lazy_function {
+            self.keep_once(once, value, height);
+        }
+        Ok(value)
+    }
+
+    /// The value kept once, counting the recursive calls its evaluation nested.
+    #[inline(always)]
+    fn known_once(&mut self, once: usize) -> Outcome<Option<Id>> {
         let known = self.onces[once];
+        if known != EMPTY {
+            return Ok(Some(known));
+        }
+        let (deep, height) = self.deep_onces[once];
+        if deep != EMPTY {
+            self.reach_cached(height)?;
+            return Ok(Some(deep));
+        }
+        Ok(None)
+    }
+
+    // Keeps a value computed once. One whose evaluation nested recursive calls is kept apart, with
+    // its height, which the machines that share it (`adopt_onces`) count too.
+    fn keep_once(&mut self, once: usize, value: Id, height: u32) {
+        if height == 0 {
+            self.onces[once] = value;
+        } else {
+            self.deep_onces[once] = (value, height);
+        }
+    }
+
+    /// Evaluates a definition TLC computes once at startup (`processConstantDefns`), whose value
+    /// it then reads wherever it is used, however deep its evaluation went.
+    pub(crate) fn constant_once(&mut self, once: usize, inner: &Eval) -> Outcome<Id> {
+        let known = self.onces[once];
+        // One that failed as TLC started TLC keeps no value of (`processConstantDefns` swallows
+        // the failure before `setToolObject`), and evaluates again at every use, with its prints
+        // and draws, though it computed at a use before.
+        if known == RETRIED_ONCE {
+            self.retried_reads = self.retried_reads.wrapping_add(1);
+            return inner(self);
+        }
         if known != EMPTY {
             return Ok(known);
         }
         let value = inner(self)?;
-        self.onces[once] = value;
+        if value != self.kept_lazy_function {
+            self.onces[once] = value;
+        }
         Ok(value)
+    }
+
+    /// Starts measuring how deep recursive calls nest below here, for a cache to keep with the
+    /// value; returns the outer measure, which `reached_below` restores.
+    #[inline(always)]
+    fn reach_from_here(&mut self) -> u32 {
+        std::mem::replace(&mut self.reach, self.depth)
+    }
+
+    /// Ends the measure `reach_from_here` started: how many recursive calls nested below here.
+    /// The outer measure reaches at least as deep.
+    #[inline(always)]
+    fn reached_below(&mut self, outer: u32) -> u32 {
+        let height = self.reach.saturating_sub(self.depth);
+        self.reach = self.reach.max(outer);
+        height
+    }
+
+    /// Reads a cached value whose evaluation nested `height` recursive calls below where it ran:
+    /// TLC keeps no cache and evaluates it again here, so its stack goes that much deeper than
+    /// this call's, and past the bound the engine stops as it does for a call it makes
+    /// (`MAXIMUM_RECURSION`).
+    #[inline(always)]
+    fn reach_cached(&mut self, height: u32) -> Outcome<()> {
+        if height == 0 {
+            return Ok(());
+        }
+        let reached = self.depth.saturating_add(height);
+        if reached > self.recursion_limit {
+            return Err(Bail(TOO_DEEP));
+        }
+        self.reach = self.reach.max(reached);
+        Ok(())
+    }
+
+    pub(crate) fn once_quiet(&mut self, once: usize, inner: &Eval) -> Outcome<Id> {
+        if let Some(known) = self.known_once(once)? {
+            return Ok(known);
+        }
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let value = inner(self);
+        let height = self.reached_below(outer);
+        let value = value?;
+        if self.output.len() == output_at && value != self.kept_lazy_function {
+            self.keep_once(once, value, height);
+        }
+        Ok(value)
+    }
+
+    /// Evaluates the function of an application, with KeepLazy, and marks the constructors that
+    /// may be its value. Where its arguments are values, the mark of an application whose
+    /// function this one is holds again once its function is evaluated, as TLC applies it with
+    /// that application's control (`FcnLambdaValue.apply`); otherwise it is dropped.
+    pub(crate) fn function_value(
+        &mut self,
+        evaluate: &Eval,
+        construction: Option<&Arc<[NodeId]>>,
+        is_applied_to_values: bool,
+    ) -> Outcome<Id> {
+        let outer = self.keeping_lazy_function_value;
+        let applying = self.applying_construction.take();
+        let kept = self.kept_lazy_function;
+        self.keeping_lazy_function_value = true;
+        self.applying_construction = construction.cloned();
+        let result = evaluate(self);
+        self.keeping_lazy_function_value = outer;
+        self.applying_construction = if is_applied_to_values { applying } else { None };
+        self.kept_lazy_function = kept;
+        result
+    }
+
+    /// Whether the constructor of this body is the function an application evaluates.
+    pub(crate) fn take_applied_construction(&mut self, body: NodeId) -> bool {
+        let is_applied = self
+            .applying_construction
+            .as_ref()
+            .is_some_and(|bodies| bodies.contains(&body));
+        if is_applied {
+            self.applying_construction = None;
+        }
+        is_applied
+    }
+
+    pub(crate) fn constructed_function_body(&mut self, evaluate: &Eval) -> Outcome<Id> {
+        let outer = self.guarding_function_body_warnings;
+        self.guarding_function_body_warnings |= self.keeping_lazy_function_value;
+        let result = evaluate(self);
+        self.guarding_function_body_warnings = outer;
+        result
     }
 
     /// What the effects so far have left: what was printed, the random draws, and the writes of
     /// TLC's registers, which differ after an evaluation that printed, drew or set a register.
     pub(crate) fn effects(&self) -> (usize, u64, u64) {
         (
-            self.output.len(),
+            self.output
+                .iter()
+                .filter(|output| !matches!(output, Printed::Warning(_)))
+                .count(),
             self.random.state(),
             self.registers.writes,
         )
@@ -534,10 +907,11 @@ impl<'p> Machine<'p> {
         let recursive = program.recursives[index]
             .as_ref()
             .expect("a recursive definition called before its body settled");
-        if self.depth >= MAXIMUM_RECURSION {
+        if self.depth >= self.recursion_limit {
             return Err(Bail(TOO_DEEP));
         }
         self.depth += 1;
+        self.reach = self.reach.max(self.depth);
         let result = match recursive.table {
             Some(table) if self.tables[table].is_enabled() => {
                 let mut read = [0; 6];
@@ -547,11 +921,19 @@ impl<'p> Machine<'p> {
                 let keys = &read[..recursive.keys.len()];
                 let known = self.tables[table].get(keys);
                 if known != EMPTY {
-                    Ok(known)
+                    // TLC calls the operator again, as deep as it went where it was kept.
+                    let height = self.tables[table].height(keys);
+                    self.reach_cached(height).map(|()| known)
                 } else {
+                    let output_at = self.output.len();
+                    let outer = self.reach_from_here();
                     let value = self.evaluate_recursive(recursive);
-                    if let Ok(value) = value {
-                        self.tables[table].set(keys, value);
+                    let height = self.reached_below(outer);
+                    if let Ok(value) = value
+                        && self.output.len() == output_at
+                        && value != self.kept_lazy_function
+                    {
+                        self.tables[table].set_with_height(keys, value, height);
                     }
                     value
                 }
@@ -571,13 +953,28 @@ impl<'p> Machine<'p> {
         self.keeping_slots(&recursive.body, recursive.slot_start, recursive.slot_end)
     }
 
+    /// Runs `run` with recursive calls stopped with TOO_DEEP once they nest `calls` deeper than
+    /// where it starts (or at MAXIMUM_RECURSION, whichever comes first).
+    pub(crate) fn within_recursion<T>(
+        &mut self,
+        calls: u32,
+        run: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let limit = self.recursion_limit;
+        self.recursion_limit = limit.min(self.depth.saturating_add(calls));
+        let result = run(self);
+        self.recursion_limit = limit;
+        result
+    }
+
     /// Runs a walk of a recursive function's body one call deeper, as `call_recursive` runs a
     /// call.
     pub(crate) fn nested(&mut self, run: impl FnOnce(&mut Self) -> Outcome<()>) -> Outcome<()> {
-        if self.depth >= MAXIMUM_RECURSION {
+        if self.depth >= self.recursion_limit {
             return Err(Bail(TOO_DEEP));
         }
         self.depth += 1;
+        self.reach = self.reach.max(self.depth);
         let result = run(self);
         self.depth -= 1;
         result

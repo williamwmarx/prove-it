@@ -355,6 +355,24 @@ impl Scope {
         })))
     }
 
+    pub(crate) fn bind_parameters(&self, parameters: &[OperatorParam]) -> Scope {
+        self.bind(
+            parameters
+                .iter()
+                .map(|parameter| (parameter.name.clone(), Entry::Formal(parameter.arity)))
+                .collect(),
+        )
+    }
+
+    pub(crate) fn bind_definitions(&self, definitions: &[Rc<Definition>]) -> Scope {
+        self.bind(
+            definitions
+                .iter()
+                .map(|definition| (definition.name.clone(), Entry::Let(definition.clone())))
+                .collect(),
+        )
+    }
+
     fn bind_formals(&self, formals: &[Formal]) -> Scope {
         self.bind(
             formals

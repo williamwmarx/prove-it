@@ -3,6 +3,7 @@ import {
   constants,
   existsSync,
   globSync,
+  lstatSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -53,11 +54,26 @@ const isFileWritable = (path: string) => {
 // What the native check reads of the machine's files, by the keys prove-it-host's `check` names:
 // what is at a path, a file's bytes, the path with its links followed, the working directory, the
 // temporary directory, the platform, whose rules the engine as WebAssembly names paths by, and
-// whether the CLI can write a file. A path the system can't follow, as a loop of links, has none,
-// and a file it can't read, as a socket, has no bytes, as the binary reads them.
+// whether the CLI can write a file, whether anything, even a broken link, is at a path, and an
+// environment variable. A path the system can't follow, as a loop of links, has none, and a file
+// it can't read, as a socket, has no bytes, as the binary reads them.
 export const readFileKey = (key: string) => {
   const [kind, ...rest] = key.split(":");
   const path = rest.join(":");
+  if (kind === "class-origin") {
+    try {
+      lstatSync(path);
+      return "present";
+    } catch (error) {
+      return typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+        ? "absent"
+        : "unknown";
+    }
+  }
+  if (kind === "variable") return process.env[path];
   if (kind === "platform") return process.platform;
   if (kind === "cwd") return process.cwd();
   if (kind === "tmpdir") return tmpdir();

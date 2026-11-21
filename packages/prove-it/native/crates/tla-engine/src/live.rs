@@ -450,20 +450,25 @@ fn on_helpers(
     // a helper reads them, as every evaluation after startup does, rather than computing them
     // again with its own generator.
     let onces = &machine.onces;
+    let deep_onces = &machine.deep_onces;
+    // Each helper writes files for the check this thread runs ([`tla_values::written`]).
+    let journal = tla_values::written::current();
     let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
         let threads: Vec<_> = helpers
             .iter_mut()
             .zip(ends.iter().enumerate())
             .map(|(helper, (position, &end))| {
                 let start = if position == 0 { 0 } else { ends[position - 1] };
-                let (store, answer) = (&store, &answer);
+                let (store, answer, journal) = (&store, &answer, &journal);
                 std::thread::Builder::new()
                     .stack_size(NESTING_STACK_BYTES)
                     .spawn_scoped(scope, move || {
+                        let _entered = journal.as_ref().map(tla_values::written::Journal::enter);
                         // What the helper cached in an earlier run may name values of the
                         // overlay it lays again, or ids the store has given since.
                         helper.forget_from(0);
                         helper.onces.clone_from(onces);
+                        helper.deep_onces.clone_from(deep_onces);
                         helper.store.attach(store.clone());
                         let mut run = Run {
                             machine: helper,

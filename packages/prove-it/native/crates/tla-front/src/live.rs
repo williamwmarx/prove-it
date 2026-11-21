@@ -119,6 +119,8 @@ struct Converter<'a> {
     facts: &'a DefinitionFacts,
     evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
+    /// Levels of pure, context-free global calls whose translation is non-temporal.
+    call_levels: HashMap<*const Definition, Level>,
     /// Whether the formula being translated is part of an expression an INSTANCE put in for a
     /// declaration, or of what it calls.
     is_substituted: bool,
@@ -228,6 +230,26 @@ impl Converter<'_> {
         self.whole(expression, scope, result?)
     }
 
+    /// Whether the operator resolves to a recursive global definition or local closure.
+    fn is_recursive_call(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> bool {
+        let name = expression.reference().unwrap_or_default();
+        let global = get_definition(&name, self.environment);
+        if expression.is_locally_resolved() || global.is_none() {
+            matches!(
+                lookup_scope(scope, &name),
+                Some((
+                    _,
+                    Binding::Closure {
+                        is_recursive: true,
+                        ..
+                    }
+                ))
+            )
+        } else {
+            global.is_some_and(|definition| definition.is_recursive)
+        }
+    }
+
     /// `convertCall`: a definition of a LET or an operator, expanded.
     fn call(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
         let name = expression.reference().unwrap_or_default();
@@ -259,9 +281,7 @@ impl Converter<'_> {
             ExpressionKind::Apply { args, .. } => &args[..],
             _ => &[],
         };
-        let is_recursive = !is_local
-            && get_definition(&name, self.environment)
-                .is_some_and(|definition| definition.is_recursive);
+        let is_recursive = self.is_recursive_call(expression, scope);
         let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
         let expanded = self.expand(&body, bound.as_ref(), expression, scope);
         Self::expanded_call(expression, expanded, is_recursive)
@@ -326,6 +346,41 @@ impl Converter<'_> {
         }
         let level = self.level(expression, scope);
         if level <= Level::Action && !Self::is_translated_whole(expression) {
+            let name = expression.reference().unwrap_or_default();
+            let recursive = self.is_recursive_call(expression, scope);
+            if !recursive
+                && resolve_apply_operator(expression, scope, self.environment).is_some()
+                && (scope.is_some()
+                    || crate::ordinary_liveness::may_use_operator_values(
+                        expression,
+                        self.environment,
+                    ))
+            {
+                let definition = (!expression.is_locally_resolved() && scope.is_none())
+                    .then(|| get_definition(&name, self.environment))
+                    .flatten()
+                    .filter(|definition| {
+                        matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                            && !self.facts.is_impure_definition(definition, self.environment)
+                    });
+                let key = definition.map(Rc::as_ptr);
+                if let Some(level) = key.and_then(|key| self.call_levels.get(&key).copied()) {
+                    return self.atom(expression, scope, level);
+                }
+                match self.call(expression, scope) {
+                    Ok(expanded) => {
+                        let translated_level = live_level(&expanded);
+                        if let Some(key) = key
+                            && translated_level <= Level::Action
+                        {
+                            self.call_levels.insert(key, translated_level);
+                        }
+                        return Ok(expanded);
+                    }
+                    Err(FrontError::Evaluation(_) | FrontError::Config(_)) => {}
+                    Err(error) => return Err(error),
+                }
+            }
             return self.atom(expression, scope, level);
         }
         match &expression.kind {
@@ -384,7 +439,9 @@ impl Converter<'_> {
                     return Err(cannot_handle(expression));
                 }
                 let reason = "a temporal quantifier over a set TLC fails to list";
-                let bindings = self.get_evaluator(reason)?.get_bindings(bounds, scope);
+                let bindings = self
+                    .get_evaluator(reason)?
+                    .get_temporal_bindings(bounds, scope);
                 // TLC takes a quantified formula whose sets or body fail for one it can't handle,
                 // and under \A it adds the message of a failure that isn't an EvalException.
                 let operands = match bindings.and_then(|bindings| {
@@ -503,6 +560,7 @@ pub fn get_liveness(
         facts,
         evaluator,
         depth: 0,
+        call_levels: HashMap::new(),
         is_substituted: false,
     };
     let fairness = temporals

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { checkOnEngine, expectDeclined, getAssumptionFailure } from "../native-check";
+import { checkOnEngine, getAssumptionFailure } from "../native-check";
 
 const getSource = (body: string) => `---- MODULE M ----\nEXTENDS Integers, TLC\n${body}\n====`;
 
@@ -166,15 +166,23 @@ describe("functions over infinite domains print like TLC", () => {
     expect((await checkPrinting(body)).printed).toEqual([text]);
   });
 
-  // TLC's text of these depends on how it built the function, which the engine doesn't follow.
+  // TLC prints a function of several parameters over a domain it can't count as its parameters,
+  // naming only the first of the names a domain bounds together (`FcnParams.toString`), and
+  // where its body is. The texts are TLC's.
   it.each([
-    "ASSUME PrintT([n, m \\in Nat |-> n])",
-    "ASSUME PrintT([n \\in Nat, m \\in 1..2 |-> n])",
-    "ASSUME PrintT([<<a, b>> \\in Nat \\X Nat |-> a])",
-  ])("declines %s", async (body) => {
-    await expectDeclined(
-      { source: getSource(body), config: "" },
-      "printing a value whose text depends on how TLC built it",
-    );
+    [
+      "ASSUME PrintT([n, m \\in Nat |-> n])",
+      "[n \\in Nat |-> <expression line 3, col 33 to line 3, col 33 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([n \\in Nat, m \\in 1..2 |-> n])",
+      "[n \\in Nat, m \\in 1..2 |-> <expression line 3, col 42 to line 3, col 42 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([<<a, b>> \\in Nat \\X Nat |-> a])",
+      "[<<a, b>> \\in (Nat \\X Nat) |-> <expression line 3, col 44 to line 3, col 44 of module M>]",
+    ],
+  ])("prints %s as its parameters and body location", async (body, text) => {
+    expect((await checkPrinting(body)).printed).toEqual([text]);
   });
 });

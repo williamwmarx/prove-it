@@ -1,0 +1,4 @@
+exit 255
+Semantic processing of module M
+Linting of module M
+Error: TLC does not support temporal existential, nor universal, quantification over state variables.

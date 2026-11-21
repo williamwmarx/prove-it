@@ -1,0 +1,1 @@
+package tlc2.overrides; public class TLCOverrides implements ITLCOverrides { public Class<?>[] get() { try { return new Class<?>[]{Class.forName("probe.Ov")}; } catch(Exception e) { throw new RuntimeException(e); } } }

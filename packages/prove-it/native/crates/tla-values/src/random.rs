@@ -173,6 +173,165 @@ pub fn get_large_subset_indices(count: u64, size: u128, random: &mut JavaRandom)
         .collect()
 }
 
+/// `Double.valueOf`, whose accepted probability literals include hex floats and type suffixes.
+pub fn parse_java_double(units: &[u16]) -> Option<f64> {
+    let first = units.iter().position(|&unit| unit > 0x20)?;
+    let last = units.iter().rposition(|&unit| unit > 0x20)?;
+    let bytes = units[first..=last]
+        .iter()
+        .map(|&unit| u8::try_from(unit).ok().filter(u8::is_ascii))
+        .collect::<Option<Vec<_>>>()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let (negative, unsigned) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    match unsigned {
+        "NaN" => return Some(f64::NAN),
+        "Infinity" => {
+            return Some(if negative {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            });
+        }
+        _ => {}
+    }
+    let number = unsigned
+        .strip_suffix(['f', 'F', 'd', 'D'])
+        .unwrap_or(unsigned);
+    let value = if let Some(hex) = number
+        .strip_prefix("0x")
+        .or_else(|| number.strip_prefix("0X"))
+    {
+        parse_hex_double(hex)?
+    } else {
+        let mut digits = 0;
+        let mut dot = false;
+        let mut at = 0;
+        let bytes = number.as_bytes();
+        while at < bytes.len() {
+            match bytes[at] {
+                b'0'..=b'9' => digits += 1,
+                b'.' if !dot => dot = true,
+                _ => break,
+            }
+            at += 1;
+        }
+        if digits == 0 {
+            return None;
+        }
+        if at < bytes.len() && matches!(bytes[at], b'e' | b'E') {
+            at += 1;
+            if at < bytes.len() && matches!(bytes[at], b'+' | b'-') {
+                at += 1;
+            }
+            let start = at;
+            while at < bytes.len() && bytes[at].is_ascii_digit() {
+                at += 1;
+            }
+            if at == start {
+                return None;
+            }
+        }
+        if at != bytes.len() {
+            return None;
+        }
+        number.parse::<f64>().ok()?
+    };
+    Some(if negative { -value } else { value })
+}
+
+fn parse_hex_double(text: &str) -> Option<f64> {
+    let (mantissa, exponent) = text.split_once(['p', 'P'])?;
+    let (negative, exponent) = match exponent.as_bytes().first() {
+        Some(b'-') => (true, &exponent[1..]),
+        Some(b'+') => (false, &exponent[1..]),
+        _ => (false, exponent),
+    };
+    if exponent.is_empty() || !exponent.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let exponent = exponent.bytes().fold(0i64, |value, byte| {
+        value
+            .saturating_mul(10)
+            .saturating_add(i64::from(byte - b'0'))
+    });
+    let exponent = if negative { -exponent } else { exponent };
+    let mut bits = Vec::new();
+    let mut dot = false;
+    let mut fractional = 0i64;
+    for byte in mantissa.bytes() {
+        if byte == b'.' && !dot {
+            dot = true;
+            continue;
+        }
+        let digit = char::from(byte).to_digit(16)?;
+        for bit in (0..4).rev() {
+            bits.push(digit & (1 << bit) != 0);
+        }
+        if dot {
+            fractional = fractional.saturating_add(4);
+        }
+    }
+    if bits.is_empty() {
+        return None;
+    }
+    let Some(first) = bits.iter().position(|bit| *bit) else {
+        return Some(0.0);
+    };
+    let bits = &bits[first..];
+    let scale = exponent.saturating_sub(fractional);
+    let power = scale.saturating_add(bits.len() as i64 - 1);
+    if power > 1023 {
+        return Some(f64::INFINITY);
+    }
+    if power < -1075 {
+        return Some(0.0);
+    }
+    if power < -1022 {
+        return Some(f64::from_bits(round_hex_bits(bits, -1074 - scale)));
+    }
+    let mut significand = round_hex_bits(bits, bits.len() as i64 - 53);
+    let mut power = power;
+    if significand == 1 << 53 {
+        significand >>= 1;
+        power += 1;
+    }
+    if power > 1023 {
+        return Some(f64::INFINITY);
+    }
+    Some(f64::from_bits(
+        ((power + 1023) as u64) << 52 | (significand & ((1 << 52) - 1)),
+    ))
+}
+
+fn round_hex_bits(bits: &[bool], shift: i64) -> u64 {
+    let kept = (bits.len() as i64 - shift).clamp(0, bits.len() as i64) as usize;
+    let mut value = bits[..kept]
+        .iter()
+        .fold(0u64, |value, &bit| (value << 1) | u64::from(bit));
+    if shift < 0 {
+        return value << -shift;
+    }
+    if kept < bits.len()
+        && shift <= bits.len() as i64
+        && bits[kept]
+        && (value & 1 != 0 || bits[kept + 1..].iter().any(|bit| *bit))
+    {
+        value += 1;
+    }
+    value
+}
+
+/// One `CoinTossingSubsetEnumerator` choice, including a draw for probabilities 0 and 1.
+pub fn coin_subset_indices(random: &mut JavaRandom, size: usize, probability: f64) -> Vec<usize> {
+    (0..size)
+        .filter(|_| random.next_double() < probability)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +350,23 @@ mod tests {
     fn lists_the_primes_tlc_draws_increments_from() {
         let primes = get_primes();
         assert_eq!((primes[0], primes[1340]), (1_277_011, 1_295_953));
+    }
+}
+
+#[cfg(test)]
+mod java_double_tests {
+    #[test]
+    fn parses_probabilities_as_java_double() {
+        for line in include_str!("../tests/java-double.tsv")
+            .lines()
+            .chain(include_str!("../tests/java-double-fuzz.tsv").lines())
+        {
+            let (text, expected) = line.split_once('\t').expect("a recorded row");
+            let units = text.replace("\\t", "\t").encode_utf16().collect::<Vec<_>>();
+            let actual = super::parse_java_double(&units).map(f64::to_bits);
+            let expected = (expected != "invalid")
+                .then(|| u64::from_str_radix(expected, 16).expect("recorded bits"));
+            assert_eq!(actual, expected, "{text:?}");
+        }
     }
 }

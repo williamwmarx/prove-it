@@ -5,6 +5,7 @@
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{DeadlockAtom, Violation};
+use tla_front::tlc_messages::STACK_OVERFLOW_MESSAGE;
 use tla_ir::{Ir, NodeId, NodeKind, SourceRange};
 use tla_trace::{
     Alias, CounterExample, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported,
@@ -23,8 +24,8 @@ pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
 pub(crate) const ERROR: i32 = 255;
 use crate::plain::Variable;
 use crate::trace::{
-    PostconditionRun, Postconditions, check, format_print, format_texts, get_field_variables,
-    get_partial_variables, get_state_variables, state_values,
+    PostconditionRun, Postconditions, check, format_texts, get_comparable, get_diff_text,
+    get_field_variables, get_partial_variables, get_state_variables, state_values,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -56,6 +57,8 @@ pub struct ErrorStop<'a> {
     /// Where the search placed what TLC prints adding the state it stopped at to the behavior
     /// graphs, which comes after the trace and before the replay of the expansion.
     pub added: Option<Vec<String>>,
+    /// How many workers TLC runs, which TLCGet("config") reads.
+    pub workers: usize,
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -64,7 +67,7 @@ pub struct ErrorStop<'a> {
 struct Report {
     failure: Failure,
     states: Vec<PrintedStep>,
-    after: Vec<String>,
+    after: Vec<crate::trace::PrintedOutput>,
     postconditions: Option<Postconditions>,
 }
 
@@ -72,7 +75,41 @@ struct PrintedStep {
     label: String,
     variables: Vec<Variable>,
     values: Vec<Option<String>>,
-    output: Vec<String>,
+    output: Vec<crate::trace::PrintedOutput>,
+    alias_output: Vec<crate::trace::PrintedOutput>,
+    comparable: Vec<bool>,
+    is_alias_record: bool,
+}
+
+/// Prints the state at `position` of a behavior of `count` states that `TLCTrace.printTrace`
+/// prints, which under -difftrace diffs each state against the one before it but the first and
+/// the last.
+fn print_step(
+    printer: &mut Printer,
+    steps: &[PrintedStep],
+    position: usize,
+    count: usize,
+) -> Result<(), String> {
+    let step = &steps[position];
+    if printer.is_diff_trace && position > 0 && position + 1 < count {
+        let previous = &steps[position - 1];
+        let text = get_diff_text(
+            (&step.variables, &step.comparable, step.is_alias_record),
+            (
+                &previous.variables,
+                &previous.comparable,
+                previous.is_alias_record,
+            ),
+        )
+        .ok_or(crate::check::DIFF_UNKNOWN)?;
+        printer.state_text(position + 1, &step.label, &text, step.variables.clone());
+    } else {
+        printer.state(position + 1, &step.label, step.variables.clone());
+    }
+    printer
+        .recorded_trace
+        .record_state(position + 1, step.values.clone());
+    Ok(())
 }
 
 /// Prints TLC's report of the error and returns the status TLC exits with, or why the run isn't
@@ -94,6 +131,7 @@ pub fn print_failure(
         stop.site,
         Site::Init
             | Site::InitialConstraint(_)
+            | Site::InitialView
             | Site::InitialInvariant(_)
             | Site::InitialPredicate(_)
             | Site::InitialAtom { .. }
@@ -107,7 +145,7 @@ pub fn print_failure(
     // An action constraint that fails to evaluate fails TLC's next states (`Worker.addElement`).
     let is_next = matches!(
         stop.site,
-        Site::Next | Site::NextAtom { .. } | Site::ActionConstraint(_)
+        Site::Next | Site::NextAtom { .. } | Site::ActionConstraint(_) | Site::Constraint(_)
     );
     let is_followed = is_atom
         || is_initial
@@ -120,6 +158,9 @@ pub fn print_failure(
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
         return print_incomplete(printer, ir, stop, start);
     }
+    if stop.reason == TOO_DEEP {
+        return print_overflow(printer, ir, stop, start);
+    }
     // TLC hands an initial state it fails on to the trace exploration spec's postcondition, which
     // fails in turn on a variable without a value.
     if printer.is_trace_recorded && stop.reason == "an initial state that isn't complete" {
@@ -127,19 +168,39 @@ pub fn print_failure(
             "an incomplete initial state the trace exploration spec's postcondition reads".into(),
         );
     }
-    let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
+    let report = evaluate(
+        ir,
+        stop,
+        printer.is_tool,
+        printer.host.is_plain(),
+        printer
+            .host
+            .is_file_system()
+            .then(|| printer.made_paths.clone()),
+    )?;
     let failure = &report.failure;
     if stop.replayed.is_some() && failure.fingerprint.is_some() {
         return Err("a state TLC fails to fingerprint with an ALIAS or a POSTCONDITION".into());
     }
     // TLC rebuilds the trace again for the postconditions, between what it prints after the
-    // trace and what the replay prints, which the printing doesn't order.
-    if let Some(checked) = &report.postconditions
-        && (!checked.printed.is_empty() || !report.after.is_empty())
-    {
+    // trace and what the replay prints, which the printing doesn't order. What the postconditions
+    // print alone comes after the trace, before the report of one that fails and the replay's
+    // call stack (`Worker.doPostCondition`).
+    if report.postconditions.is_some() && !report.after.is_empty() {
         return Err("a failure with a POSTCONDITION in a spec that prints".into());
     }
-    if is_atom && failure.fingerprint.is_some() {
+    // TLC's rerun of an atom with its `CallStackTool` that throws a FingerprintException escapes
+    // its worker to a report of a general error without a message, which prints only the trace
+    // (`Worker#doNextCheckLiveness`, `ModelChecker#doNextFailed`).
+    let is_unreported = is_atom
+        && failure
+            .fingerprint
+            .as_ref()
+            .is_some_and(|fingerprint| fingerprint.is_replayed);
+    if is_unreported && !failure.printed.is_empty() {
+        return Err("an atom that prints as its rerun fails as a FingerprintException".into());
+    }
+    if is_atom && failure.fingerprint.is_some() && !is_unreported {
         return Err("a state TLC fails to fingerprint as it adds it to the behavior graphs".into());
     }
     // TLC prints the call stack of an error adding a state to the behavior graphs before the
@@ -153,6 +214,18 @@ pub fn print_failure(
     } else {
         &failure.message
     };
+    // An initial atom that fails before the already-fingerprinted state is replayed
+    // prints during the original evaluation, before TLC reports the error.
+    let initial_atom_prints_before_error =
+        matches!(stop.site, Site::InitialAtom { replayed: None, .. })
+            && stop.added.is_none()
+            && report.states.is_empty()
+            && report.after.len() == failure.printed.len();
+    if initial_atom_prints_before_error {
+        for line in &report.after {
+            printer.replayed(ir, line)?;
+        }
+    }
     // TLC names the initial state it failed to fingerprint in the message.
     printer.outcome.status = Some("error");
     match &failure.state {
@@ -163,6 +236,7 @@ pub fn print_failure(
                 format_texts(ir, state)
             ),
         ),
+        None if is_unreported => {}
         None => printer.report(failure.code, message),
     }
     // TLC reports an exception it didn't expect without the call stack or statistics, but for one
@@ -174,6 +248,16 @@ pub fn print_failure(
         && !failure.replay.is_failed
         && !is_next
     {
+        // An initial state some variable lacks a value in is the one such report TLC checks the
+        // postconditions after (`ModelChecker.modelCheck`), which `evaluate` checked.
+        for line in report
+            .postconditions
+            .iter()
+            .flat_map(|checked| &checked.printed)
+        {
+            printer.replayed(ir, line)?;
+        }
+        print_postcondition_failure(printer, ir, report.postconditions.as_ref());
         print_finished(printer, start);
         return Ok(ERROR);
     }
@@ -182,7 +266,7 @@ pub fn print_failure(
     // before the state (`printTrace`).
     if let Some(first) = report.states.first() {
         for line in &first.output {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
         }
         printer.print(
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -192,13 +276,13 @@ pub fn print_failure(
         for (position, step) in report.states.iter().enumerate() {
             if position > 0 {
                 for line in &step.output {
-                    printer.printed(line);
+                    printer.replayed(ir, line)?;
                 }
             }
-            printer.state(position + 1, &step.label, step.variables.clone());
-            printer
-                .recorded_trace
-                .record_state(position + 1, step.values.clone());
+            for output in &step.alias_output {
+                printer.replayed(ir, output)?;
+            }
+            print_step(printer, &report.states, position, report.states.len())?;
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
@@ -207,7 +291,27 @@ pub fn print_failure(
         .as_ref()
         .is_some_and(|fingerprint| fingerprint.is_replayed);
     if failure.fingerprint.is_some() && !is_replayed && !report.states.is_empty() {
-        printer.report(failure.code, message);
+        let is_skipped_again = failure
+            .fingerprint
+            .as_ref()
+            .is_some_and(|fingerprint| fingerprint.is_skipped_again);
+        if !is_skipped_again {
+            printer.report(failure.code, message);
+        } else if report.states.len() == 1 {
+            // TLC found no successor of the initial state to print the second state with, and
+            // `TLCTrace.printTrace` reads the state of the info it didn't find.
+            printer.report(
+                code::GENERAL,
+                "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null",
+            );
+        } else {
+            // A longer trace's last state TLC reports as one it failed to recover from its
+            // fingerprint (2123, "TLC bug(5)"), and exits as for a bug.
+            return Err(
+                "a successor TLC fails to fingerprint with an error it skips finding it again"
+                    .into(),
+            );
+        }
     }
     // TLC computes the initial states again for the call stack, from a count of none, and
     // reports its progress at each power of two before the state that fails again
@@ -217,6 +321,7 @@ pub fn print_failure(
         Site::Init
             | Site::InitialAtom { .. }
             | Site::InitialConstraint(_)
+            | Site::InitialView
             | Site::InitialInvariant(_)
             | Site::InitialPredicate(_)
     );
@@ -239,11 +344,21 @@ pub fn print_failure(
             &format!("Computed {count} initial states..."),
         );
     }
-    for line in &report.after {
-        printer.printed(line);
+    if !initial_atom_prints_before_error {
+        for line in &report.after {
+            printer.replayed(ir, line)?;
+        }
+    }
+    for line in report
+        .postconditions
+        .iter()
+        .flat_map(|checked| &checked.printed)
+    {
+        printer.replayed(ir, line)?;
     }
     print_postcondition_failure(printer, ir, report.postconditions.as_ref());
     match &failure.fingerprint {
+        Some(_) if is_unreported => {}
         // TLC reports where it failed to fingerprint in place of the call stack, innermost first.
         // TLC prints the call stack of its replay where the replay threw the FingerprintException.
         Some(fingerprint) if fingerprint.is_replayed => {
@@ -303,7 +418,15 @@ pub fn print_failure(
     // fingerprint, whether as a FingerprintException or not.
     let is_unfingerprinted = stop.site == Site::Init && failure.state.is_some();
     let statistics = match (&failure.fingerprint, stop.site) {
-        (Some(fingerprint), _) if fingerprint.is_replayed => stop.statistics,
+        // TLC's replay of the initial predicate goes on past a check of an initial state it
+        // fails as a FingerprintException, and counts each state it generates.
+        (Some(fingerprint), _) if fingerprint.is_replayed => Statistics {
+            generated: failure
+                .replay
+                .initial_states
+                .unwrap_or(stop.statistics.generated),
+            ..stop.statistics
+        },
         (None, _) if !is_unfingerprinted => stop.statistics,
         (_, site) => Statistics {
             generated: failure
@@ -322,6 +445,17 @@ pub fn print_failure(
     let statistics = Statistics {
         distinct: statistics.distinct + failure.replay.found,
         queued: statistics.queued + failure.replay.queued,
+        ..statistics
+    };
+    // `ModelChecker.printSummary` reports the depth of a run that generated a state as
+    // `ConcurrentTLCTrace.getLevel`, which is never below 1, where no initial state the
+    // constraints keep was found before the failure too.
+    let statistics = Statistics {
+        depth: match statistics.generated {
+            0 => statistics.depth,
+            _ if is_progress_replayed => statistics.depth.max(1),
+            _ => statistics.depth,
+        },
         ..statistics
     };
     print_statistics(printer, &statistics, start);
@@ -450,28 +584,54 @@ pub fn print_assumption_failure(
     ir: &Ir,
     position: u32,
     failed_startup: &[bool],
-    printed: &[String],
+    printed: &[crate::trace::PrintedOutput],
     workers: usize,
     start: Instant,
 ) -> Result<i32, String> {
+    let reads_files = printer
+        .host
+        .is_file_system()
+        .then(|| printer.made_paths.clone());
     let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
+            if let Some(made_paths) = reads_files {
+                rebuilder.set_reads_files(made_paths);
+            }
             rebuilder.set_workers(workers);
             rebuilder.set_searched_failing(failed_startup);
-            rebuilder.evaluate_assumption(position, printer.is_tool)
+            tla_trace::take_endless_recursion();
+            let failure = rebuilder.evaluate_assumption(position, printer.is_tool);
+            Ok(if is_endless(&failure) {
+                None
+            } else {
+                Some(failure?)
+            })
         })
     })?;
+    // An assumption that recurses without end overflows TLC's stack, a `StackOverflowError`
+    // `checkAssumptions` doesn't catch, which TLC reports as it stops (`TLC.process`).
+    let Some(failure) = failure else {
+        if printer.host.is_plain() {
+            return Err(LIBRARY_OVERFLOW.into());
+        }
+        if !printed.is_empty() || may_print(ir) {
+            return Err("an assumption that overflows TLC's stack in a spec that prints".into());
+        }
+        printer.report(code::SYSTEM_STACK_OVERFLOW, STACK_OVERFLOW_MESSAGE);
+        print_finished(printer, start);
+        return Ok(ERROR);
+    };
     // What TLC prints of the assumptions before this one, which hold, and of this one.
-    let mut expected: Vec<String> = failure
+    let mut expected: Vec<crate::trace::PrintedOutput> = failure
         .printed
         .iter()
-        .map(|print| format_print(print))
+        .map(crate::trace::format_output)
         .collect();
     if !expected.starts_with(printed) {
         return Err("the assumptions printing other than TLC prints".into());
     }
     for text in &expected.split_off(printed.len()) {
-        printer.printed(text);
+        printer.replayed(ir, text)?;
     }
     let message = if printer.is_tool {
         &failure.tool_message
@@ -484,17 +644,127 @@ pub fn print_assumption_failure(
     Ok(failure.exit_code)
 }
 
+/// Why the engine and the evaluator of failures stop where a recursion goes deeper than they
+/// follow.
+const TOO_DEEP: &str = "recursion too deep";
+
+/// Why the library declines where TLC overflows its stack, which it throws as
+/// `TlaStackOverflowError` only where TLC overflows as it computes its constants.
+const LIBRARY_OVERFLOW: &str = "a recursion that overflows TLC's stack, in the library";
+
+// Whether an evaluation of a failure stopped where a recursion went too deep that TLC never
+// finishes, reached only through what TLC's `Tool` evaluates itself
+// (`tla_trace::take_endless_recursion`): TLC then overflows its stack.
+fn is_endless<T>(result: &Result<T, Unsupported>) -> bool {
+    matches!(result, Err(Unsupported(reason)) if reason.ends_with(TOO_DEEP))
+        && tla_trace::take_endless_recursion()
+}
+
+// Whether the spec may print: Print and PrintT, anywhere in it.
+pub(crate) fn may_print(ir: &Ir) -> bool {
+    ir.nodes.arena.iter().any(|node| {
+        matches!(&node.kind, NodeKind::Apply { name, .. } if !name.is_local
+            && matches!(name.resolution, tla_ir::Resolution::Builtin(index)
+                if matches!(&*ir.texts[ir.builtins[index as usize].name as usize], "Print" | "PrintT")))
+    })
+}
+
+/// Prints TLC's report of a recursion without end the search stopped at in the next-state
+/// relation, or in a check of a successor: an invariant, an action constraint or a state
+/// constraint. The recursion overflows TLC's stack, a `StackOverflowError` its worker catches as
+/// any `Throwable` (`Worker.run`) and reports as `EC.SYSTEM_STACK_OVERFLOW`, with the trace to the
+/// state it was expanding and no call stack, since it keeps none for that error
+/// (`ModelChecker.doNextFailed`); TLC then exits with 255. The evaluator of failures evaluates
+/// the failure again to find the recursion never ends (`is_endless`). The search counted the
+/// states as TLC has when it stops: the successor an invariant fails on is in its set of states
+/// and not its queue, and one a constraint fails on in neither.
+fn print_overflow(
+    printer: &mut Printer,
+    ir: &Ir,
+    stop: &ErrorStop<'_>,
+    start: Instant,
+) -> Result<i32, String> {
+    // The library throws `TlaStackOverflowError` where TLC overflows, which this doesn't build.
+    if printer.host.is_plain() {
+        return Err(LIBRARY_OVERFLOW.into());
+    }
+    let is_successor = matches!(
+        stop.site,
+        Site::Invariant(_) | Site::ActionConstraint(_) | Site::Constraint(_)
+    );
+    if !(stop.site == Site::Next || is_successor && stop.states.len() >= 2) {
+        return Err(
+            "a recursion that overflows TLC's stack as it computes the initial states".into(),
+        );
+    }
+    if stop.replayed.is_some()
+        || stop.postconditions.is_some()
+        || stop.added.is_some()
+        || !ir.model.live_properties.is_empty()
+        || may_print(ir)
+    {
+        return Err(
+            "a recursion that overflows TLC's stack in a model that prints or checks more".into(),
+        );
+    }
+    // TLC prints the trace to the state it was expanding, not the successor.
+    let states = if is_successor {
+        &stop.states[..stop.states.len() - 1]
+    } else {
+        &stop.states[..]
+    };
+    let actions = &stop.actions[..states.len().saturating_sub(1).min(stop.actions.len())];
+    let is_plain = printer.host.is_plain();
+    let steps = evaluate_on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_fingerprints(stop.fingerprints);
+        rebuilder.set_failed_startup(stop.startup);
+        tla_trace::take_endless_recursion();
+        let failure =
+            rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site);
+        if !is_endless(&failure) {
+            return Err(Unsupported(
+                "a recursion too deep that may end, or that TLC may report otherwise".into(),
+            ));
+        }
+        let trace = rebuilder.rebuild(stop.store, states, actions, Ending::Kept)?;
+        labelled(ir, &trace, None, is_plain)
+    })?;
+    printer.outcome.status = Some("error");
+    printer.report(code::SYSTEM_STACK_OVERFLOW, STACK_OVERFLOW_MESSAGE);
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for position in 0..steps.len() {
+        print_step(printer, &steps, position, steps.len())?;
+    }
+    print_statistics(printer, &stop.statistics, start);
+    print_finished(printer, start);
+    Ok(ERROR)
+}
+
 // Evaluates the failure again and rebuilds the trace.
 fn evaluate(
     ir: &Ir,
     stop: &ErrorStop<'_>,
     is_tool: bool,
     is_plain: bool,
+    reads_files: Option<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<Report, String> {
     evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
+        if let Some(made_paths) = reads_files.clone() {
+            rebuilder.set_reads_files(made_paths);
+        }
         rebuilder.set_fingerprints(stop.fingerprints);
         rebuilder.set_failed_startup(stop.startup);
+        rebuilder.set_workers(stop.workers);
+        rebuilder.place_enumerators();
+        if tla_engine::search::is_replayed_limit(stop.reason) {
+            rebuilder.decline_walked_intervals();
+        }
         if let Some(violation) = stop.replayed {
             rebuilder.set_startup(
                 &violation.store,
@@ -509,29 +779,27 @@ fn evaluate(
                 &violation.store,
                 &violation.registers.numbered,
                 &violation.registers.named,
+                &violation.registers.properties,
             )?);
         }
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
         // TLC holds a successor that fails an invariant or an action constraint as it found it.
         let ending = match stop.site {
-            Site::Invariant(_) => Ending::Violation,
-            Site::ActionConstraint(_) => Ending::Failed,
+            Site::Invariant(_) | Site::ActionProperty(_) => Ending::Violation,
+            Site::ActionConstraint(_) | Site::Constraint(_) => Ending::Failed,
             _ => Ending::Kept,
         };
         // TLC prints no trace for a check of an initial state that fails.
         let trace = if matches!(
             stop.site,
             Site::InitialConstraint(_)
+                | Site::InitialView
                 | Site::InitialInvariant(_)
                 | Site::InitialPredicate(_)
                 | Site::InitialAtom { .. }
         ) {
-            Trace {
-                states: Vec::new(),
-                trace_output: Vec::new(),
-                is_successor_lost: false,
-            }
+            Trace::new(Vec::new(), Vec::new(), false)
         } else {
             // An atom's state past the path is no state of the trace.
             let (states, actions) = match stop.site {
@@ -549,7 +817,10 @@ fn evaluate(
         // it, and never after an invariant or an action constraint fails to evaluate, since it
         // generated the successor (`Worker.run`, `Worker.addElement`).
         let is_rebuilt_again = match stop.site {
-            Site::Invariant(_) | Site::ActionConstraint(_) => false,
+            Site::Invariant(_)
+            | Site::ActionConstraint(_)
+            | Site::Constraint(_)
+            | Site::ActionProperty(_) => false,
             Site::Next | Site::NextAtom { .. } => {
                 ir.model.check_deadlock && !failure.replay.is_successor_generated
             }
@@ -561,9 +832,15 @@ fn evaluate(
             .trace_output
             .iter()
             .filter(|_| is_rebuilt_again)
-            .map(|print| format_print(print))
-            .chain(stop.added.iter().flatten().cloned())
-            .chain(failure.printed.iter().map(|print| format_print(print)))
+            .map(crate::trace::format_output)
+            .chain(
+                stop.added
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .map(crate::trace::PrintedOutput::Print),
+            )
+            .chain(failure.printed.iter().map(crate::trace::format_output))
             .collect();
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
@@ -572,7 +849,22 @@ fn evaluate(
         } else {
             None
         };
-        // TLC's worker checks the postconditions on the trace to the state it was expanding.
+        // TLC's worker checks the postconditions on the trace to the state it was expanding, in a
+        // CounterExample it builds once it has stopped, which has a third field, `console |->
+        // FALSE` (`Worker.doPostCondition`'s `isConsole`), whose name TLC interns as it first
+        // builds one: one the postconditions read isn't followed.
+        if stop.postconditions.is_some()
+            && ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "CounterExample" | "ToTrace"
+                )
+            })
+        {
+            return Err(Unsupported(
+                "a POSTCONDITION after a failure that reads TLC's CounterExample".into(),
+            ));
+        }
         let postconditions = stop
             .postconditions
             .as_ref()
@@ -586,7 +878,7 @@ fn evaluate(
             .transpose()?;
         Ok(Report {
             failure,
-            states: labelled(ir, &trace, aliases.as_deref(), is_plain)?,
+            states: labelled(ir, &trace, aliases.as_ref(), is_plain)?,
             after,
             postconditions,
         })
@@ -605,7 +897,7 @@ fn evaluate_on_search_stack<T: Send>(
 fn labelled(
     ir: &Ir,
     trace: &Trace,
-    aliases: Option<&[Alias]>,
+    aliases: Option<&tla_trace::Aliases>,
     is_plain: bool,
 ) -> Result<Vec<PrintedStep>, Unsupported> {
     let mut states = Vec::with_capacity(trace.states.len());
@@ -624,6 +916,15 @@ fn labelled(
         };
         states.push(PrintedStep {
             label,
+            comparable: get_comparable(
+                ir,
+                aliases.map(|aliases| &aliases[position]),
+                &state.values,
+            ),
+            is_alias_record: matches!(
+                aliases.map(|aliases| &aliases[position]),
+                Some(Alias::Record(_))
+            ),
             variables: match aliases.map(|aliases| &aliases[position]) {
                 Some(Alias::Record(fields)) => get_field_variables(
                     fields
@@ -637,7 +938,12 @@ fn labelled(
             output: state
                 .printed
                 .iter()
-                .map(|print| format_print(print))
+                .map(crate::trace::format_output)
+                .collect(),
+            alias_output: aliases
+                .into_iter()
+                .flat_map(|aliases| &aliases.output[position])
+                .map(crate::trace::format_output)
                 .collect(),
         });
     }
@@ -694,11 +1000,15 @@ fn print_incomplete(
         return Err("an incomplete successor of an action the IR lacks".into());
     };
     let label = &ir.texts[action.label as usize];
+    // `doNextSetErr` names the action by `Action.getName`, without the values of its
+    // parameters its location shows.
     let subject = if actions.len() == 1 {
         "the next-state action".to_string()
     } else {
-        let name = label.split(" line ").next().unwrap_or(label);
-        format!("action {name} of the next-state relation")
+        format!(
+            "action {} of the next-state relation",
+            ir.texts[action.name as usize]
+        )
     };
     let names: Vec<&str> = missing
         .iter()
@@ -722,17 +1032,19 @@ fn print_incomplete(
         Level::Error,
         "The behavior up to this point is:",
     );
+    // TLC prints the successor whole, which the binary never diffs.
     let successor = PrintedStep {
+        alias_output: Vec::new(),
         label: label.to_string(),
         variables: partial,
         values: partial_values,
         output: Vec::new(),
+        comparable: Vec::new(),
+        is_alias_record: false,
     };
-    for (position, step) in states.into_iter().chain([successor]).enumerate() {
-        printer.state(position + 1, &step.label, step.variables);
-        printer
-            .recorded_trace
-            .record_state(position + 1, step.values);
+    let steps: Vec<PrintedStep> = states.into_iter().chain([successor]).collect();
+    for position in 0..steps.len() {
+        print_step(printer, &steps, position, steps.len())?;
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {
@@ -742,4 +1054,119 @@ fn print_incomplete(
     print_statistics(printer, &statistics, start);
     print_finished(printer, start);
     Ok(FAILURE_SPEC_EVAL)
+}
+
+/// Re-evaluate a pure DFID next-state failure for the message and call stack, or `None` where
+/// the failure is a recursion TLC never finishes, which overflows its stack (`is_endless`).
+pub(crate) fn dfid_next_failure(ir: &Ir, violation: &Violation) -> Result<Option<Failure>, String> {
+    evaluate_on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        )?;
+        rebuilder.set_chosen(&violation.store, &violation.chosen);
+        rebuilder.set_registers(Registers::from_store(
+            &violation.store,
+            &violation.registers.numbered,
+            &violation.registers.named,
+            &violation.registers.properties,
+        )?);
+        let states = violation
+            .states
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        tla_trace::take_endless_recursion();
+        let failure =
+            rebuilder.evaluate_failure(&violation.store, &states, &violation.labels, Site::Next);
+        Ok(if is_endless(&failure) {
+            None
+        } else {
+            Some(failure?)
+        })
+    })
+}
+
+/// Re-evaluate a pure DFID action-property failure for its call stack.
+pub(crate) fn dfid_action_failure(
+    ir: &Ir,
+    violation: &Violation,
+    position: usize,
+) -> Result<Vec<SourceRange>, String> {
+    evaluate_on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        )?;
+        rebuilder.set_chosen(&violation.store, &violation.chosen);
+        rebuilder.set_registers(Registers::from_store(
+            &violation.store,
+            &violation.registers.numbered,
+            &violation.registers.named,
+            &violation.registers.properties,
+        )?);
+        let states = violation
+            .states
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        rebuilder.dfid_action_failure(&violation.store, &states, &violation.labels, position)
+    })
+}
+
+/// Re-evaluate the initial predicate DFID failed in, as TLC's `Tool` does, for the exception it
+/// throws.
+pub(crate) fn dfid_initial_failure(
+    ir: &Ir,
+    violation: &Violation,
+) -> Result<tla_trace::SimulatedFailure, String> {
+    on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        )?;
+        rebuilder.set_chosen(&violation.store, &violation.chosen);
+        rebuilder.evaluate_simulated_failure(&violation.store, &[], &[], Site::Init, None)
+    })
+    .map_err(|Unsupported(why)| why)
+}
+
+/// Re-evaluate a DFID initial invariant failure for its nested message.
+pub(crate) fn dfid_initial_invariant_failure(
+    ir: &Ir,
+    violation: &Violation,
+    position: u32,
+) -> Result<Failure, String> {
+    evaluate_on_search_stack(|| {
+        let mut rebuilder = Rebuilder::new(ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        )?;
+        rebuilder.set_chosen(&violation.store, &violation.chosen);
+        rebuilder.set_registers(Registers::from_store(
+            &violation.store,
+            &violation.registers.numbered,
+            &violation.registers.named,
+            &violation.registers.properties,
+        )?);
+        let states = violation
+            .states
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        rebuilder.evaluate_failure(
+            &violation.store,
+            &states,
+            &violation.labels,
+            Site::InitialInvariant(position),
+        )
+    })
 }

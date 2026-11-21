@@ -413,7 +413,7 @@ fn match_step(bytes: &[u8], index: usize) -> usize {
 }
 
 /// The length of a based numeral such as `\b01` or `\hFF` at `index`, or 0.
-fn match_based_number(bytes: &[u8], index: usize) -> usize {
+pub(crate) fn match_based_number(bytes: &[u8], index: usize) -> usize {
     if bytes.get(index) != Some(&b'\\') {
         return 0;
     }
@@ -442,14 +442,14 @@ pub(crate) fn is_js_whitespace(character: char) -> bool {
     )
 }
 
-/// Where `/-{4,}[ \t]*MODULE\b/` first matches.
+/// Where `/-{4,} *MODULE\b/` first matches.
 fn find_module_header(source: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = 0;
     while let Some(offset) = source[index..].find("----") {
         let start = index + offset;
         let dashes_end = skip_bytes(bytes, start, |byte| byte == b'-');
-        let module = skip_bytes(bytes, dashes_end, |byte| byte == b' ' || byte == b'\t');
+        let module = skip_bytes(bytes, dashes_end, |byte| byte == b' ');
         if source[module..].starts_with("MODULE")
             && !bytes
                 .get(module + 6)

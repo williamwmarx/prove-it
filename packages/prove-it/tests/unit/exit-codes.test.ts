@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import { check, TlaEvaluationError } from "../../src";
-import { runOnEngine, runTlcNatively } from "../native-check";
+import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { getErrors, runOnEngine, runTlcNatively } from "../native-check";
 
 const STEP = "Init == x = 0\nNext == x < 2 /\\ x' = x + 1";
 
@@ -48,19 +49,25 @@ describe("CLI exit codes match TLC", () => {
     expect(getExitCode(definitions)).toBe(code);
   });
 
-  it("declines a wrong argument to +", () => {
-    expectRunDeclined(
-      'Init == x = 0\nNext == x\' = x + "a"',
-      "INIT Init\nNEXT Next",
-      "the engine stopped: expected an integer: evaluating the failure again: expected an integer, not a string",
+  it("exits with 75 for a wrong argument to +", () => {
+    const run = runOnEngine({
+      source: getSource('Init == x = 0\nNext == x\' = x + "a"'),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(run.exitCode).toBe(75);
+    expect(getErrors(run.output)[0]).toBe(
+      `${UNEXPECTED_EXCEPTION}Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue`,
     );
   });
 
-  it("declines a next-state relation that is not a boolean", () => {
-    expectRunDeclined(
-      "Init == x = 0\nNext == 3",
-      "INIT Init\nNEXT Next",
-      "the engine stopped: a guard that isn't a boolean: evaluating the failure again: a next-state relation the IR holds no actions of",
+  it("exits with 255 for a next-state relation that is not a boolean", () => {
+    const run = runOnEngine({
+      source: getSource("Init == x = 0\nNext == 3"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(run.exitCode).toBe(255);
+    expect(getErrors(run.output)[0]).toBe(
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
     );
   });
 
@@ -75,23 +82,30 @@ describe("CLI exit codes match TLC", () => {
     expect(getExitCode(`${STEP}\nSpec == Init /\\ [][Next]_x /\\ [](x < 3)`, config)).toBe(255);
   });
 
-  it("declines a stack overflow in each phase", () => {
+  // TLC reports a recursion without end in the next-state relation, in an invariant of a successor
+  // and in an assumption as the StackOverflowError it is, and exits with 255. As it computes the
+  // initial states, the call stack it prints of its replay may keep a frame or not, so that
+  // declines, as an invariant TLC computes as it starts does.
+  it("exits with 255 for a stack overflow it reports", () => {
     const recursion = "RECURSIVE R(_)\nR(n) == R(n + 1)";
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
-    const step = "INIT Init\nNEXT Next";
-    const overflow = "the engine stopped: recursion too deep";
-    expectRunDeclined(`${recursion}\nInit == x = R(0)\nNext == x' = x`, step, overflow);
-    expectRunDeclined(`${recursion}\nInit == x = 0\nNext == x' = R(0)`, step, overflow);
+    expect(getExitCode(`${recursion}\nInit == x = 0\nNext == x' = R(0)`)).toBe(255);
+    expect(getExitCode(`${recursion}\n${STEP}\nInv == x = 0 \\/ R(0) = 0`, config)).toBe(255);
+    expect(getExitCode(`${recursion}\nASSUME R(0) = 0\n${STEP}`)).toBe(255);
+  });
+
+  it("declines a stack overflow as TLC computes the initial states", () => {
+    const recursion = "RECURSIVE R(_)\nR(n) == R(n + 1)";
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    expectRunDeclined(
+      `${recursion}\nInit == x = R(0)\nNext == x' = x`,
+      "INIT Init\nNEXT Next",
+      "the engine stopped: recursion too deep: a recursion that overflows TLC's stack as it computes the initial states",
+    );
     expectRunDeclined(
       `${recursion}\n${STEP}\nInv == R(0) = 0`,
       config,
-      "the engine declined: recursion too deep",
-    );
-    expectRunDeclined(`${recursion}\n${STEP}\nInv == x = 0 \\/ R(0) = 0`, config, overflow);
-    expectRunDeclined(
-      `${recursion}\nASSUME R(0) = 0\n${STEP}`,
-      step,
-      "an assumption that fails to evaluate: evaluating the assumption again: recursion too deep",
+      "the engine stopped: recursion too deep: a recursion that overflows TLC's stack as it computes the initial states",
     );
   });
 
@@ -108,15 +122,24 @@ describe("CLI exit codes match TLC", () => {
     expect(getExitCode(`${STEP}\nInv == x < 1 \\/ 1 \\div 0 = 1`, config)).toBe(76);
   });
 
+  // TLC exits with the status of the failure's kind: 14 for an Assert, 255 otherwise.
   it.each([
-    ["an Assert", 'Assert(x < 1, "a")'],
-    ["a standard-module failure", "1 \\div (1 - x) = 1"],
-    ["a core failure", "<<1>>[x + 1] = 1"],
-  ])("declines %s in an action property", (_, action) => {
+    ["an Assert", 'Assert(x < 1, "a")', 14],
+    ["a standard-module failure", "1 \\div (1 - x) = 1", 255],
+  ])("exits with the status of %s in an action property", (_, action, status) => {
+    expect(
+      getExitCode(
+        `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == [][${action}]_x`,
+        "SPECIFICATION Spec\nPROPERTY Prop",
+      ),
+    ).toBe(status);
+  });
+
+  it("declines a core failure in an action property", () => {
     expectRunDeclined(
-      `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == [][${action}]_x`,
+      `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == [][<<1>>[x + 1] = 1]_x`,
       "SPECIFICATION Spec\nPROPERTY Prop",
-      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+      "the engine stopped: applied a function outside its domain: evaluating the failure again: a failure TLC reports as a FingerprintException",
     );
   });
 
@@ -125,12 +148,15 @@ describe("CLI exit codes match TLC", () => {
     expect(getExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);
   });
 
-  it("declines a temporal quantifier over variables in the specification", () => {
-    expectRunDeclined(
-      `${STEP}\nSpec == Init /\\ [][Next]_x /\\ \\EE y : y = x`,
-      "SPECIFICATION Spec",
-      "temporal quantification in the specification",
-    );
+  it("exits with 255 for a temporal quantifier over variables in the specification", () => {
+    const run = runOnEngine({
+      source: getSource(`${STEP}\nSpec == Init /\\ [][Next]_x /\\ \\EE y : y = x`),
+      config: "SPECIFICATION Spec",
+    });
+    expect(run.exitCode).toBe(255);
+    expect(getErrors(run.output)).toEqual([
+      "TLC does not support temporal existential, nor universal, quantification over state variables.",
+    ]);
   });
 
   it("exits with 77 for a property that is a tautology and 76 for an invariant with a prime", async () => {

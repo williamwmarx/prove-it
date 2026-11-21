@@ -10,7 +10,7 @@ use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
-use crate::eval::{Context, Evaluator, Registers};
+use crate::eval::{CallStack, Context, Evaluator, Registers};
 use std::rc::Rc;
 
 use crate::value::{
@@ -55,9 +55,21 @@ fn is_effectful(ir: &Ir) -> bool {
     ir.builtins.iter().any(|builtin| {
         matches!(
             &*ir.texts[builtin.name as usize],
-            "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet"
+            "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet" | "_Track"
         )
-    })
+    }) || (ir.model.is_warning_enabled
+        && ir
+            .nodes
+            .arena
+            .iter()
+            .any(|node| matches!(node.kind, NodeKind::Unchanged(_) | NodeKind::Except { .. })))
+}
+
+// The rebuilder's evaluation ends with it: another enumerates an interval as TLC counts it.
+impl Drop for Rebuilder<'_> {
+    fn drop(&mut self) {
+        crate::value::decline_walked_intervals(false);
+    }
 }
 
 impl<'ir> Rebuilder<'ir> {
@@ -104,12 +116,28 @@ impl<'ir> Rebuilder<'ir> {
         run(evaluator.compute_startup())?;
         evaluator.printed.clear();
         let writes = evaluator.register_writes;
+        // Within a call stack, which tells a failure TLC's evaluation may not meet.
+        let call_stack = evaluator.call_stack.replace(CallStack::default());
+        let counts = evaluator.startup_failure_counts();
         let computed = evaluator.evaluate(defined.body, &Context::default());
-        if computed.is_err() || !evaluator.printed.is_empty() || evaluator.register_writes != writes
-        {
+        let is_unsure = match computed.as_ref().err() {
+            None => true,
+            Some(error) => {
+                error.message.is_none() || evaluator.is_unsure_startup_failure(error, counts)
+            }
+        };
+        evaluator.call_stack = call_stack;
+        if !evaluator.printed.is_empty() || evaluator.register_writes != writes {
             return unsure();
         }
-        Ok(true)
+        match computed {
+            Ok(_) => Ok(true),
+            // TLC swallows what fails as it computes the definition, and holds the definition
+            // to evaluate where it is used (`processConstantDefns`): a failure the evaluator
+            // words as TLC does, of nothing TLC may hold otherwise, is one TLC meets too.
+            Err(_) if !is_unsure => Ok(false),
+            Err(_) => unsure(),
+        }
     }
 
     pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {
@@ -165,16 +193,60 @@ impl<'ir> Rebuilder<'ir> {
         Ok(())
     }
 
+    /// Takes whether the search printed each startup definition without computing what it prints,
+    /// which the evaluator's startup must compute.
+    pub fn set_searched_unworded(&mut self, unworded: &[bool]) {
+        self.evaluator.set_searched_unworded(unworded);
+    }
+
     /// Takes whether the search found each startup definition failing as TLC started, which the
     /// evaluator's startup must find failing too.
     pub fn set_searched_failing(&mut self, failed: &[bool]) {
         self.evaluator.set_searched_failing(failed);
     }
 
+    /// Takes how many prints each startup definition made as the search evaluated it, and whether
+    /// it drew, which the evaluator's startup must make too before each failure it confirms.
+    pub fn set_searched_effects(&mut self, effects: &[(usize, bool)]) {
+        self.evaluator.set_searched_effects(effects);
+    }
+
+    /// Takes which of those the search failed at a limit of its own before any warning, which the
+    /// evaluator's startup must find failing without a warning.
+    pub fn set_searched_limited(&mut self, limited: &[bool]) {
+        self.evaluator.set_searched_limited(limited);
+    }
+
+    /// Takes which of those are warning-only and the search failed on otherwise before any
+    /// warning, which the evaluator's startup must not find warning or printing.
+    pub fn set_searched_unwarned(&mut self, unwarned: &[bool]) {
+        self.evaluator.set_searched_unwarned(unwarned);
+    }
+
+    /// Takes how many prints the search made of each startup definition before it stopped, which
+    /// the evaluator's startup must make of each the search found failing.
+    pub fn set_searched_printed(&mut self, printed: &[usize]) {
+        self.evaluator.set_searched_printed(printed);
+    }
+
     /// Takes, of the values the search computed at startup, ids of a store, which startup
     /// definitions failed there, which TLC evaluates again at each use.
     pub fn set_failed_startup(&mut self, values: &[Id]) {
         self.evaluator.set_failed_startup(values);
+    }
+
+    /// Makes the evaluation of a failure decline where TLC's enumerator of a set fails in a
+    /// method the evaluator doesn't place, as it must where the search stopped at a set it can't
+    /// enumerate: TLC may report that failure as a FingerprintException.
+    pub fn place_enumerators(&mut self) {
+        self.evaluator.is_enumerator_placed = true;
+    }
+
+    /// Makes the evaluation of a failure decline where it enumerates an interval too large to
+    /// build, as it must where the search stopped at a value TLC can't enumerate or count, which
+    /// TLC may walk without counting it (`IntervalValue.elements`) and answer.
+    pub fn decline_walked_intervals(&mut self) {
+        crate::value::decline_walked_intervals(true);
     }
 
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
@@ -254,6 +326,13 @@ impl<'ir> Rebuilder<'ir> {
         }
     }
 
+    /// Takes that the files the Json module's operators read are the file system's, and the
+    /// paths TLC makes on it before it evaluates anything, where the caller knows them.
+    pub fn set_reads_files(&mut self, made_paths: Option<Vec<std::path::PathBuf>>) {
+        self.evaluator.reads_files = true;
+        self.evaluator.made_paths = made_paths;
+    }
+
     /// Takes how many workers TLC runs, which TLCGet("config") reads.
     pub fn set_workers(&mut self, workers: usize) {
         self.evaluator.workers = Some(workers);
@@ -309,6 +388,7 @@ impl<'ir> Rebuilder<'ir> {
                 states: Vec::new(),
                 trace_output: Vec::new(),
                 is_successor_lost: false,
+                quiet_prefixes: None,
             });
         };
         // TLC rebuilds a violation's trace once more after it has printed it, for the
@@ -323,11 +403,15 @@ impl<'ir> Rebuilder<'ir> {
                 let is_drawing = ir.builtins.iter().any(|builtin| {
                     matches!(
                         &*ir.texts[builtin.name as usize],
-                        "RandomElement" | "RandomSubset"
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSubsetSet"
+                            | "RandomSetOfSubsets"
+                            | "TestRandomSetOfSubsets"
                     )
                 });
                 let registers = format!("{:?}", self.evaluator.registers);
-                let output: Option<Vec<Vec<String>>> = self
+                let output: Option<Vec<crate::OutputEvent>> = self
                     .rebuild_pass(store, states, actions, ending, false, false)?
                     .map(|pass| {
                         pass.initial_output
@@ -372,6 +456,7 @@ impl<'ir> Rebuilder<'ir> {
                 states: Vec::new(),
                 trace_output: Vec::new(),
                 is_successor_lost: false,
+                quiet_prefixes: None,
             });
         };
         if let (Some(last), Some(found)) = (rebuilt.rebuilt.last_mut(), held.rebuilt.pop()) {
@@ -406,7 +491,11 @@ impl<'ir> Rebuilder<'ir> {
         let is_drawing = ir.builtins.iter().any(|builtin| {
             matches!(
                 &*ir.texts[builtin.name as usize],
-                "RandomElement" | "RandomSubset"
+                "RandomElement"
+                    | "RandomSubset"
+                    | "RandomSubsetSet"
+                    | "RandomSetOfSubsets"
+                    | "TestRandomSetOfSubsets"
             )
         });
         // A random draw depends on every draw before it in the expansion, as what the spec prints
@@ -485,7 +574,7 @@ impl<'ir> Rebuilder<'ir> {
             return unsupported("no initial state is the trace's first");
         };
         let initial_output = std::mem::take(&mut evaluator.printed);
-        let mut outputs: Vec<Vec<Vec<String>>> = vec![Vec::new()];
+        let mut outputs: Vec<Vec<crate::OutputEvent>> = vec![Vec::new()];
         rebuilt.push(initial);
         // Each candidate action, with its position in the model's actions: the next-state
         // relation, which is none of them, when the IR has none.
@@ -509,7 +598,10 @@ impl<'ir> Rebuilder<'ir> {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
             settle_recovered(evaluator, &self.key, &rebuilt[position])?;
             let previous = rebuilt[position].clone();
-            if pair[0] == pair[1] {
+            // A step that stutters, but the step to a held successor, which TLC finds among the
+            // state's successors (`Tool.getState`): one that failed a check of the step, as an
+            // action constraint, may be the state again.
+            if pair[0] == pair[1] && !(is_held && position + 2 == states.len()) {
                 rebuilt.push(previous);
                 outputs.push(Vec::new());
                 steps.push(None);
@@ -628,8 +720,8 @@ impl<'ir> Rebuilder<'ir> {
 struct Pass {
     rebuilt: Vec<Vec<Value>>,
     steps: Vec<Option<u32>>,
-    initial_output: Vec<Vec<String>>,
-    outputs: Vec<Vec<Vec<String>>>,
+    initial_output: Vec<crate::OutputEvent>,
+    outputs: Vec<Vec<crate::OutputEvent>>,
     /// Whether TLC fails to find the violating successor of the initial state again.
     is_successor_lost: bool,
 }
@@ -675,7 +767,7 @@ fn settle_recovered(
 // prints each later state with what finding its step printed. A trace of one state prints only
 // what the initial predicate printed, after it. A violation's trace is rebuilt once more after it
 // is printed, which `again` holds what the spec printed in where it may differ.
-fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace {
+fn compose(pass: Pass, again: Option<Vec<crate::OutputEvent>>, ending: Ending) -> Trace {
     let Pass {
         rebuilt,
         steps,
@@ -684,6 +776,16 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
         is_successor_lost,
     } = pass;
     let count = rebuilt.len();
+    let mut quiet = initial_output.is_empty();
+    let quiet_prefixes: Vec<_> = (0..count)
+        .map(|position| {
+            let prefix_is_quiet = position == 0 || quiet;
+            if position > 0 {
+                quiet &= outputs[position].is_empty();
+            }
+            prefix_is_quiet
+        })
+        .collect();
     if count == 1 {
         return Trace {
             states: rebuilt
@@ -696,6 +798,7 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
                 .collect(),
             trace_output: initial_output,
             is_successor_lost,
+            quiet_prefixes: Some(quiet_prefixes),
         };
     }
     // The states TLC holds rather than rebuilds at the trace's end (`known` in `toTrace`).
@@ -741,6 +844,7 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
         states,
         trace_output,
         is_successor_lost,
+        quiet_prefixes: Some(quiet_prefixes),
     }
 }
 
@@ -975,7 +1079,7 @@ fn run_in_model(
             evaluator.level = last as i32 + 1;
         }
         let body = evaluator.definition(ir.definitions[index as usize]).body;
-        match evaluator.boolean(body, &Context::default()) {
+        match evaluator.check_holds(body, &Context::default()) {
             Ok(true) => {}
             held => return Ok(held),
         }
@@ -1014,7 +1118,7 @@ fn check_violation(
     );
     for (invariant, scope) in invariants {
         let context = run(evaluator.scope_context(scope))?;
-        if !run(evaluator.boolean(invariant, &context))? {
+        if !run(evaluator.check_holds(invariant, &context))? {
             return Ok(());
         }
     }
@@ -1043,8 +1147,8 @@ fn check_violation(
 mod tests {
     use super::*;
 
-    fn print(text: &str) -> Vec<String> {
-        vec![text.to_string()]
+    fn print(text: &str) -> crate::OutputEvent {
+        crate::OutputEvent::Print(vec![text.to_string()])
     }
 
     // The prints of a trace of states 0..count: Init printed "i", and the step to state n "n".
@@ -1068,7 +1172,7 @@ mod tests {
         )
     }
 
-    fn printed(trace: &Trace) -> Vec<Vec<Vec<String>>> {
+    fn printed(trace: &Trace) -> Vec<Vec<crate::OutputEvent>> {
         trace
             .states
             .iter()

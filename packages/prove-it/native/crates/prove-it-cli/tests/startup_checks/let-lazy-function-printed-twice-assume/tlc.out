@@ -1,0 +1,27 @@
+exit 150
+***Parse Error***
+
+  Precedence conflict between ops \land in block line 3, col 94 to line 3, col 95 of module M and \lor.
+
+Residual stack trace follows:
+ExtendableExpr starting at line 3, column 101.
+ExtendableExpr starting at line 3, column 97.
+ExtendableExpr starting at line 3, column 84.
+ExtendableExpr starting at line 3, column 71.
+Expression starting at line 3, column 71.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

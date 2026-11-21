@@ -1,0 +1,21 @@
+exit 75
+Semantic processing of module Randomization
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module sss_second_non_string
+Linting of module sss_second_non_string
+Computing initial states...
+Error: The second argument of RandomSubsetSetProbability should be a string literal representing a probability, but instead it is:
+1
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 16, column 9 to line 16, column 30 in sss_second_non_string
+1. Line 18, column 8 to line 18, column 32 in sss_second_non_string
+2. Line 18, column 29 to line 18, column 32 in sss_second_non_string
+3. Line 14, column 9 to line 14, column 39 in sss_second_non_string
+4. Line 14, column 9 to line 14, column 34 in sss_second_non_string
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

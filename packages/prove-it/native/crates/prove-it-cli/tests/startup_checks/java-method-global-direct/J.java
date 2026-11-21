@@ -1,0 +1,1 @@
+import tlc2.value.impl.*;public class J {public static Value Any() {return IntValue.gen(42);}}

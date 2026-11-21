@@ -1,0 +1,24 @@
+exit 150
+***Parse Error***
+Was expecting "---- MODULE (beginning of module)"
+Encountered "<EOF>" at line 3, column 5 and token "" 
+
+Residual stack trace follows:
+Begin module starting at line 3, column 5.
+Module definition starting at line 3, column 5.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

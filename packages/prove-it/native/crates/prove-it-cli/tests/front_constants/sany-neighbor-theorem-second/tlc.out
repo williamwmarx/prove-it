@@ -1,0 +1,26 @@
+exit 150
+***Parse Error***
+Encountered "THEOREM" at line 2, column 17 and token "," 
+
+Residual stack trace follows:
+Field Value starting at line 2, column 17.
+Some [] Form starting at line 2, column 7.
+ExtendableExpr starting at line 2, column 7.
+Expression starting at line 2, column 7.
+Definition starting at line 2, column 1.
+
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

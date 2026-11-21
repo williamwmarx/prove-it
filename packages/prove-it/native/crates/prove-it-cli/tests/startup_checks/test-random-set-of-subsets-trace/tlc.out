@@ -1,0 +1,25 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Randomization
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = <<4, 4, 4, 4, 4>>
+
+State 2: <Next line 5, col 9 to line 5, col 76 of module M>
+/\ x = 1
+/\ y = <<4, 4, 4, 4, 4>>
+
+State 3: <Next line 5, col 9 to line 5, col 76 of module M>
+/\ x = 2
+/\ y = <<3, 3, 4, 4, 4>>
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

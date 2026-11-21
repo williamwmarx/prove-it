@@ -95,6 +95,7 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
         },
         root_extendees: &root_extendees,
         is_xml_export: false,
+        lint_codes: Default::default(),
     };
     let name = file_name.as_deref().unwrap_or(&root);
     let standard = source

@@ -62,3 +62,36 @@ fn divides_with_naturals_or_integers_as_tlc_loads_them() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+#[test]
+fn fails_a_comparison_printing_its_operand_in_the_method_tlc_loads() {
+    // `Values.ppr(y.toString())` of a set TLC can't normalize fails in the comparison's Java
+    // method, of Integers where the spec uses it and of Naturals otherwise, though the spec
+    // uses no other arithmetic to tell.
+    for (test, uses, method) in [
+        (
+            "compare-naturals",
+            "EXTENDS Naturals",
+            "IBoolValue tlc2.module.Naturals.LT",
+        ),
+        (
+            "compare-integers",
+            "EXTENDS Integers",
+            "IBoolValue tlc2.module.Integers.LT",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Compare ----\n{uses}\nVARIABLE x\nInit == x = 0\nNext == x' = x\nASSUME 1 < {{1, \"a\"}}\n====\n"
+        );
+        let (output, directory) = run_spec(test, &spec, "INIT Init\nNEXT Next\n");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!(
+                "failed.\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.{method}(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare string \"a\" with non-string:\n1\n"
+            )),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}

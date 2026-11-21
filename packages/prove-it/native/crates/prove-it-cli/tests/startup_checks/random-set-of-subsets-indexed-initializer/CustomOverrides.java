@@ -1,0 +1,1 @@
+import tlc2.value.impl.*; import tlc2.overrides.TLAPlusOperator; public class CustomOverrides {static {System.out.println("INDEX-PROVIDER-INIT");} @TLAPlusOperator(identifier="RandomSetOfSubsets",module="Randomization",warn=false) public static Value probe(Value k,Value n,Value x){System.out.println("RANDOM-OVERRIDE-EFFECT");return IntValue.gen(999);} }

@@ -78,14 +78,19 @@ fn reports_as_tlc() {
                 ),
                 expected,
             ),
-            Err(_) => (
-                format!("exit {}\n{stderr}", output.status.code().unwrap_or(-1)),
-                format!(
-                    "exit 1\nprove-it: not native yet: {}",
-                    std::fs::read_to_string(fixtures.join(format!("{name}.declined")))
-                        .expect("TLC's output or the reason the binary declines")
-                ),
-            ),
+            Err(_) => {
+                if !stdout.is_empty() {
+                    differences.push(format!("{name}: a decline emitted stdout:\n{stdout}"));
+                }
+                (
+                    format!("exit {}\n{stderr}", output.status.code().unwrap_or(-1)),
+                    format!(
+                        "exit 1\nprove-it: not native yet: {}",
+                        std::fs::read_to_string(fixtures.join(format!("{name}.declined")))
+                            .expect("TLC's output or the reason the binary declines")
+                    ),
+                )
+            }
         };
         if actual != expected {
             differences.push(format!("{name}: {stderr}\n{actual}"));

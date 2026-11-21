@@ -1,0 +1,22 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module M
+Linting of module TLCExt
+Linting of module M
+Computing initial states...
+Error: current state is not a legal state
+While working on the initial state:
+/\ Z = null
+/\ x = 1
+/\ y = 0
+
+Error: Evaluating postcondition Post at line 6, col 9 to line 6, col 22 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException,
+but it produced the following error:
+In evaluating TLCExt!Trace, the state is not completely specified yet (variables Z, x, y undefined).

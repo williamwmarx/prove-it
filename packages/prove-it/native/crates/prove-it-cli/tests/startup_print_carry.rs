@@ -2,7 +2,9 @@
 //! into the printed value (`Compiler::carried_children`): each row prints an expression holding
 //! `Int \X {}` at one operand, which TLC fails to size where it prints it, and says whether the
 //! value printed may hold it, where the native checker declines the definition, or not, where TLC
-//! prints the value as the engine does.
+//! prints the value as the engine does. The first assumption doesn't name the definition, so the
+//! engine doesn't leave it to the trace evaluator (`is_left_to_reporter`), which computes it as
+//! TLC does whatever it holds.
 
 use std::process::Command;
 
@@ -84,7 +86,7 @@ fn counts_a_set_only_where_the_printed_value_may_hold_it() {
         std::fs::write(
             directory.join("M.tla"),
             format!(
-                "---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nTest == PrintT({expression})\nASSUME Test\n====\n"
+                "---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nTest == PrintT({expression})\nASSUME TRUE\nASSUME Test\n====\n"
             ),
         )
         .expect("the spec");

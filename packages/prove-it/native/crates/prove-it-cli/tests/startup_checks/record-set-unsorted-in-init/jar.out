@@ -1,0 +1,25 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to compare string "a" with non-string:
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 41 in M
+1. Line 4, column 14 to line 4, column 40 in M
+2. Line 4, column 20 to line 4, column 40 in M
+3. Line 4, column 20 to line 4, column 33 in M
+4. Line 4, column 25 to line 4, column 32 in M
+
+
+Reason:
+Attempted to compare string "a" with non-string:
+1
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

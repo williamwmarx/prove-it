@@ -16,17 +16,31 @@ and exit code.
 
 What a decline leaves printed:
 
-- **The binary prints as it checks.** A decline found while it checks the initial states or a
-  definition prints none of TLC's report of the initial states. A decline found in the next-state
-  relation comes after that report. Either way the binary has printed only TLC's own lines, up to
-  and including that report. Then it writes `prove-it: not native yet: <reason>` to stderr and
-  exits 1.
+- **The binary holds its output, then prints as it checks.** A run's output waits in
+  `transaction.rs` for its first two seconds: a decline within them prints nothing but
+  `prove-it: not native yet: <reason>` on stderr, and exits 1. After them the output streams as
+  TLC prints it, so that a user watching a long check sees its progress and stopping it leaves
+  what TLC would have printed so far; the engine can decline at any point of a search, so no run
+  is known to be native before it ends. A decline after the hold follows TLC's own lines printed
+  so far, as the binary printed before it held its output, and as `main` does: a run that declines
+  after two seconds can leave TLC's transcript up to where the engine stopped on stdout, then
+  `prove-it: not native yet: <reason>` on stderr, and exit 1. This is the contract; a decline is
+  atomic only within the hold.
+- **A decline leaves the files the spec writes as the run found them.** Each top-level check
+  keeps a journal of the files the spec's Json and IOUtils operators write, and of the `-dump`
+  file, which it keeps before it opens it (`tla_values::written`), and a decline puts them back.
+  The files of `-userFile`, `-dumpTrace` and `-teSpecOutDir`, and a `-dump` file it can't read
+  whole or of more than 64 MiB (which a `-dfid` run declines before it opens), it doesn't keep: a
+  decline leaves what the run wrote to them ([fallback.md](fallback.md), "Known wrong outputs"). Where it can't put one back,
+  the run doesn't decline: it prints `prove-it: a run that wasn't native (<reason>) couldn't put
+  back <path> as it found it: <error>` instead ([fallback.md](fallback.md), "What a decline
+  leaves").
 - **The library and the dist CLI print none of it.** `checkSources` returns `declined` without what
   the check printed (`prove-it-host/src/check.rs`). The CLI's per-call fallback then checks the spec
   in the interpreter, whose output stands alone (`src/cli/tlc.ts`).
 - **The tests hold the binary to this.** `prove-it-cli/tests/lazy_duplicates.rs` records which
-  cells decline after the initial states (`not native yet after the initial states`). A declining
-  cell prints nothing after that report, and only those cells print it.
+  cells decline after the initial states (`not native yet after the initial states`); each
+  declines within the hold, printing nothing but the decline.
 
 ## The library's check
 
@@ -510,11 +524,64 @@ It models `-config` (with or without `.cfg`, as TLC, which looks for the file wh
 the spec's modules, in that order), `-continue`, `-coverage`, `-deadlock`,
 `-dump`, `-dumpTrace tlc` and `-dumpTrace json` (below), `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
-`-noGenerateSpecTEBin`/`-noTEBin`), and `-simulate`, `-depth` and `-aril` (below). Every other
-option TLC reads (`-generate`, `-difftrace`, `-maxSetSize`, `-dfid`, ...) is not native, as are the
+`-noGenerateSpecTEBin`/`-noTEBin`), `-teSpecOutDir` (a directory for the trace exploration
+spec's files, or, ending in `.tla`, the spec's file, whose name then names the files and the
+module, `TLC.process`; a relative path of plain names. Where its directory isn't there,
+`_TLCTrace`'s postcondition fails to write the trace's `.bin` into it, which TLC reports after a
+safety violation's trace as the failure of `ioSerialize`, and TLC then makes the directory as it
+writes the spec, or reports why it can't; the binary follows that report after a trace whose
+other postconditions hold, and declines the other runs that find an error), `-difftrace` (below),
+`-terse` (TLC prints a value it keeps lazy as written rather than expanded,
+`TLCGlobals.expand`; the binary checks a spec that builds no such value as without the option,
+and declines one that may: a power set, a set of functions, records or tuples, a function
+defined as `f[x \in S] == e` or by a constant definition, UNION but of set enumerations, and a
+set TLC doesn't enumerate, such as Nat, which keeps an operation on it lazy),
+`-view` (TLC prints a state as its VIEW's value, `TLCStateMut.toString`; the binary checks a
+model without a VIEW as without the option, and declines one with a VIEW),
+`-help` and `-h` (TLC's usage text, as the jar at d8fb231 prints it, exit 1), `-userFile` (TLC
+creates the file as it reads the option, or rejects it with TLC's message where it can't, and
+Print and PrintT write their lines to it in place of the console; the binary declines a
+`-userFile` before an option TLC rejects), `-recover` (the binary recovers from no checkpoint: it
+reports TLC's FileNotFoundException where `<directory>/vars.chkpt` can't be read, followed by the
+Finished line that `TLC.process`'s finally block prints, and declines one that can), and `-simulate`, `-generate`, `-depth` and `-aril`
+(below), and `-dfid` (depth-first iterative deepening, with the shapes it declines
+listed under "Depth-first iterative deepening" in `fallback.md`, among them a `-dfid` deep enough
+that TLC's worker may not have the memory for its stacks). TLC's rejections of `-maxSetSize` (not an int, or below one), `-invlevel` (not an int)
+and `-postCondition` (no `!`, not two pieces as `String.split("!")` cuts them, an empty module, or
+a dot in either name), and `-loadTrace` without a format and a file or with a format other than
+`tlc` and `json`, print as TLC's, and so does the second input TLC finds where an option
+took `-config` for its value, on Prove It's form too; a valid `-maxSetSize` or `-loadTrace`
+declines, as does `-invlevel` last, where TLC throws.
+`-inv expr` and `-invlevel n` add an invariant TLC parses on its own
+(`TLCDebuggerExpression.process`): `__DebuggerExpr__<millis> == expr` on the fourth line of a
+module `__DebuggerModule__<millis>` that extends the root module, where `-invlevel n` is
+`LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet("level"), n)`; TLC loads the
+modules the expression names after INSTANCE (TLC and Naturals for `-invlevel`) beside the root
+module, and checks the invariant after the configuration's, in each state, without the
+configuration's checks of a constant invariant. The binary lowers the definition at the end of
+the root module and moves it to TLC's module and line, and reports an expression that doesn't
+parse as TLC does, after SANY. It declines an expression that fails SANY's analysis or its level
+check, an action or a temporal formula, the name of a definition, one of several lines, one of
+several modules, a root module with LOCAL definitions, `-invlevel` of a sign, and `-inv` under
+DFID, in a simulation, with -dumpTrace, -coverage or the trace exploration spec. A valid
+`-postCondition module!operator` loads the module beside the root module and checks the operator's body at the end as a POSTCONDITION, before the
+configuration's, even where TLC computed it as it started (`ParameterizedSpecObj`); the binary
+follows one whose operator, without parameters, the root module finds in that module, and
+declines one beside a POSTCONDITION, -dumpTrace or the trace exploration spec's postcondition,
+under DFID or in a simulation.
+TLC only adds these modules to the root module's `ModuleRelatives`
+(`ParameterizedSpecObj.findOrCreateParsedUnit`), which orders SANY's loading and analysis; SANY's
+`Generator` builds the root module's scope from its own EXTENDS, so their CONSTANTs, VARIABLEs
+and ASSUMEs aren't the root module's, TLC never evaluates their ASSUMEs, and their definitions
+answer no name of the configuration. The front end links them into the root module's EXTENDS,
+which reads as TLC does only where it shows nothing, so the binary declines where a module they
+bring into scope that the root module doesn't declares a CONSTANT, a VARIABLE or an ASSUME, or
+defines a name the root module's scope, the configuration or another such module has. TLC checks no postcondition of a spec without a next-state
+relation (`ModelChecker.modelCheck` returns first where `getActions()` is empty). Every other
+option TLC reads (`-debug`, `-debugger`, ...) is not native, as are the
 shapes where TLC
 throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
-the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
+the module on the `tlc2.TLC` form. Under `-lncheck off` TLC skips the check of the complete state graph (`LiveCheck.finalCheck`, `LiveCheck.java:238`) and prints neither 2192 nor 2267 for it, but still adds each state to the behavior graphs and stops at the first tableau node that accepts every behavior, as under `final`: the binary runs it as `final` and drops a lasso the final check found.
 `-fp N` picks `FP64.Polys[N]`, one of TLC's 131 irreducible polynomials, which every fingerprint
 extends from: of the states, which the search keys its table on, seeds each state's draws with and
 measures the "actual fingerprints" estimate by, and which order the liveness checker's tables; of
@@ -529,7 +596,10 @@ read alike.
 the liveness checker's atoms between, at most the cores ([parallel.md](parallel.md)). They find
 what one thread finds, so the binary prints what TLC prints on one worker, whatever `-workers`
 says; only the banner names N workers, as TLC's does. TLC on N workers may find another
-counterexample or report a greater depth, as its workers don't keep to levels.
+counterexample or report a greater depth, as its workers don't keep to levels: a stop past the
+expansion of a lone state, with states left on the queue or a trace through a state two of a
+level step to, declines ("a stop several workers race to", under "A constraint that fails on a
+successor" in `fallback.md`).
 
 On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Dutil.…`,
 `-Dtla2sany.…`, `-Dtlc.…`) is not native, except the two that only reach the execution statistics
@@ -543,6 +613,19 @@ and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:7
 that sets a property whose `-Dname` the model's strings hold, since the spec may read it.
 The TypeScript CLI carries the launch's properties into the run (`systemProperties`), with the
 platform's separators and `user.dir`, and fails as unsupported on another of the JVM's own.
+
+On the `tlc2.TLC` form the JVM also reads options from `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`
+and `_JAVA_OPTIONS`, and its class path from `CLASSPATH` where the command line names none.
+A system property set there is read as one on the command line: one of TLC's declines, one the
+command line models (`TLA-Library`, `java.io.tmpdir`, `tla-ts.tlc`) declines, and a TLCGet of
+its name declines. What may change which classes TLC loads makes the Java profile opaque, as on
+the command line, so that a Java override's origin is unproven: an option adding to the boot
+class path or reading an options file, a system property in the JVM's namespaces, `CLASSPATH`
+without `-cp` or `-jar`, and any other option but a heap, stack, collector or log `-X` option and
+`--add-opens`, `--add-exports` or `--add-reads`.
+The TypeScript CLI answers these variables as the native check asks for them
+(`variable:<name>`, `prove-it-host`'s `sources.rs`), so its run reads them as the binary does; the
+library reads none.
 
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
@@ -582,6 +665,13 @@ binary prints each as TLC does, without TLC's trace spec, which `-continue` turn
 ([gaps.md](gaps.md)). The search runs on one thread, whatever `-workers` says, so it finds the
 violations in the order TLC's worker finds them. Checked against TLC's ContinueTest,
 DoInitFunctorInvariantContinueTest and ContinueSuccessors, and the corpus run with `-continue`.
+
+A deadlock and an initial state that violates a property's state predicate stop TLC under
+`-continue` as they do without it (`doNextSetErr` with no error state kept, `DoInitFunctor`'s
+throw), so where the search went on past no violation before, the binary prints them as without
+`-continue`. Any other stop under `-continue` declines ("-continue to a search that stops"):
+TLC carries on past an evaluation error of Next or an invariant, an Assert and an incomplete
+successor, and reports them otherwise.
 
 ## -coverage
 
@@ -704,10 +794,40 @@ the same `-seed` and `-aril` takes TLC's traces and prints TLC's output:
   TLC keeps them, which the progress line prints.
 - RandomElement and RandomSubset draw, past the startup and the initial states, from a generator
   of the worker's thread seeded with `-seed` and never reseeded (`RandomEnumerableValues`).
+- `-generate` simulates with `Tool.probabilistic`: the walk of an action stops once it keeps a
+  successor. A disjunction draws its first disjunct with `floor(nextDouble() * n)` of the worker's
+  generator and a prime stride with `nextPrime()`, a bulleted list of n disjuncts at once and an
+  infix chain, which SANY nests as binary disjunctions, once for each from the outermost. An
+  `\E` evaluates each bound's set and draws its order in turn (`Tool.contexts` with
+  `Ordering.RANDOMIZED`): the elements in their normalized order, taken in the order of the
+  `SubsetEnumerator` RandomSubset draws from the generator of RandomElement, the first bound
+  varying fastest. `x' \in S` and `x' \subseteq S` draw an order so too, and where none keeps a
+  successor take every element again in their order. ENABLED walks every successor. A set TLC
+  keeps lazy, whose order the engine doesn't follow there, a CASE, where TLC throws, and a
+  disjunction of more than two whose nesting the IR doesn't record, decline.
 - TLCGet("level") counts the trace's steps, stuttering ones too; TLCGet("config") is the
-  simulation's record (`Simulator.createConfig`). Any other key of the run declines, and so does an
-  assumption left to the trace evaluator in a spec that reads TLCGet, which it answers as the
-  model checker.
+  simulation's record (`Simulator.createConfig`), whose mode is `generate` under `-generate`. Once TLC's simulator runs (not as TLC starts,
+  where the engine declines: TLCGet of the run fails in a constant definition TLC computes before
+  it sets `TLCGlobals.simulator`, but reads 0 in an assumption), TLCGet("diameter") is the number of the
+  trace the worker generates and 0 on the main thread (`SimulationWorker.getTraceCnt`);
+  TLCGet("action") the record of the action that made the state TLC evaluates in, `UnnamedAction`
+  as TLC computes the initial states and the last of its initial predicates for an initial state
+  (an action of an operator with parameters declines); TLCGet("stats") `Simulator.getStatistics`
+  of the state (traces, duration, generated, the behavior's action counts and number, worker 0,
+  -1 or an empty record for the extended statistics, the mean and variance of the lengths); and
+  TLCGet("all") and TLCGet("all:named") each register the worker set, to a tuple of its value.
+  TLCGet("generated"), ("distinct") and ("queue") fail as undefined: the simulation has no model
+  checker. The store holds TLC's empty record (`RecordValue.EmptyRcd`, the statistics' actions
+  and an initial state's behavior's) and TLC's empty `FcnRcdValue` of no registers as `<<>>`, and
+  the `FcnRcdValue` of named registers as a record, which TLC applies, compares and updates
+  otherwise (`RecordValue.equals` of a tuple and its EXCEPT of a number fail, an EXCEPT outside a
+  `FcnRcdValue`'s domain warns 2144). So the engine evaluates TLCGet("stats"), ("all") and
+  ("all:named") only where they are printed (Print, PrintT, ToString), their domain is read, or a
+  field of the statistics or its behavior is read other than `actions` (and the behavior's
+  `actions` once it isn't empty): elsewhere the run declines, and the binary still declines
+  writing any empty sequence. Any other key of the
+  run declines, and so does an assumption left to the trace evaluator in a spec that reads TLCGet,
+  which it answers as the model checker.
 
 The report: the banner `Running Random Simulation with seed ...`, `Computed N initial states...`,
 `Finished computing initial states: K distinct state generated` (no plural), then for a violation
@@ -722,13 +842,57 @@ on how TLC built it, and else as the trace evaluator rebuilds them along the act
 a state holds a record of several fields: the evaluator sorts its fields as TLC's fingerprints do,
 and the simulation fingerprints no state, sorting a record only where it happens to compare it.
 
+A failure evaluating the model is reported as `Simulator.simulate` reports it, the message worded
+by the trace evaluator, evaluating again as TLC's simulator does with `Tool` (no call stack, no
+replay): on the main thread a general error computing the initial states, or `While working on the
+initial state` checking one (an invariant), each with the summary; on the worker, an invariant's
+or an action property's failure on a successor with the trace to it and the summary, and any other
+error with the trace to the state it was expanding, the one action it tried evaluated again: a
+TLCRuntimeException at its own code, or as an unexpected exception where it has none, without the
+summary, and any other exception as an unexpected one with it. The final progress line follows on
+the worker. It declines where the spec printed in the evaluation that failed, a constraint's
+failure, TLCDefer's, a model that sets registers or draws at random, a state whose values TLC may
+hold otherwise than the store, an exception class or exit status it doesn't map, and a successor's
+check that fails before the last trace (as for a violation; an exception stops the worker).
+
+An action property a step violates is reported as an invariant is (`Action property P is
+violated.`, exit 13). The postconditions are checked as `Simulator.simulate` checks them: after
+the run, then the progress line, and the summary only where no error was found; after a
+violation's report, on its trace as CounterExample; after an initial state's violation, on that
+state, before TLC returns. A postcondition TLC holds as a constant's value is rejected once the run
+is over (`The post condition P cannot be a constant.`, exit 151, no progress line). The status is
+the more severe of the violation's and the postconditions'.
+
+Temporal properties are checked as `LiveCheck1.checkTrace` checks each behavior, after its
+last step and before its length is counted: the behavior without its stuttering steps
+(`SimulationWorker.getTrace`, which also renumbers the levels of the states it keeps, so the
+length the progress line averages is the number of states kept, unless the last step stutters,
+whose dropped state keeps the level it was generated at), for each solution in turn a behavior graph of its states, or of
+its states and tableau nodes (`constructBEGraph`, which goes on only from the nodes a step
+made, so a revisited state ends it), and Tarjan's search of its components, then of their parts
+that keep the eventually-always actions (`checkSccs`, `checkSccs1`, `checkSubcomponent`). The
+atoms are evaluated as the checker asks for them. The first part that satisfies a solution's
+checks is a counterexample, which stops the worker: `printErrorTrace` prints as many of the
+behavior's states, from its first, as the prefix to the part's node and the bad cycle change
+state (`StateTraceResolver`), names the properties those states violate as a lasso, and ends
+with a stuttering step where the node's state is the last state printed, and else steps back by
+the behavior's next step. The summary and the progress line follow, and the exit status is 13.
+
 Declined, each with its reason:
 
-- several workers; `-generate`; `file=`, `stats=` and `sched=`;
+- several workers; `file=`, `stats=` and `sched=` (`file=` without `num=` is TLC's
+  usage error);
 - `-coverage`, whose report TLC's simulator prints too (`Simulator.reportCoverage`), where the
   coverage pass replays the model checker's search;
 - `-dumpTrace`, a postcondition TLC's simulator checks as it checks the model's;
-- temporal properties (TLC's `LiveCheck1` per trace), POSTCONDITION, `_POSSIBLE`, SYMMETRY,
+- a POSTCONDITION with an ALIAS, in a model that sets registers or draws at random, with
+  `-depth -1`, after a failure evaluating the model, or one TLC rejects after an initial state's
+  violation; one that reads TLCGet of the run other than the level;
+- temporal properties with a POSTCONDITION or a VIEW (whose fingerprints key the behavior
+  graph's nodes), in a model that sets registers or draws at random,
+  whose atoms print or read TLCGet("diameter") or TLCGet("level"), that one of the checker's
+  atoms fails on, under an ALIAS, or whose counterexample steps back past the end of the
+  behavior or holds a record of several fields; `_POSSIBLE`, SYMMETRY,
   `_PERIODIC` (evaluated with each progress report), a model without a next-state relation or
   whose relation the engine doesn't split into TLC's actions;
 - a violation before the last trace, or without `num=`: TLC's worker goes on generating traces
@@ -736,14 +900,19 @@ Declined, each with its reason:
   In one run of an MCConsensus model on the jar, the summary said 23 states generated where the
   progress line, printed after it, said 24. The sweep declines 60
   runs for this; the tests pin `num=1`, where the violation is in the last trace;
-- a failure evaluating the model, an incomplete state, an action property violated, an initial
-  state outside a constraint or none;
+- an incomplete state. An initial predicate that gives no state, or none the constraints keep,
+  is reported as `Simulator.simulate` reports it once it has checked each initial state's
+  invariants: `There is no state satisfying the initial state predicate.` (2118), or `... and
+  the state-constraint(s).` (2256) where it gave some, exit 255, with no postcondition checked;
 - a violation under `-continue`, after which TLC's simulator goes on generating traces
   (`TLCGlobals.continuation`) and exits with 0;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
   that holds a record of several fields where the store can't print it;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
+- TLCGet("stats"), ("all") or ("all:named") used other than where it is printed, its domain read
+  or a field read that holds none of TLC's empty records (`TLCGet of a simulation's run where its
+  empty records may matter`), as above.
 
 ## Handoff
 
@@ -755,3 +924,19 @@ Declined, each with its reason:
   `bun scripts/run.ts differential --compare-backends --filter <id> --native
   native/target/release/prove-it` for each, on freshly built `dist/`, addon and binary. Any native
   "differs" is a blocker: fix it or decline the run as not native.
+
+## -difftrace
+
+`TLCGlobals.printDiffsOnly` changes how TLC prints a trace's states: each lists only the variables
+whose values `TLCState.isUnchanged` doesn't find equal to the predecessor's of the same name,
+under the conjunction the whole state takes (`TLCStateMut.toString(TLCState)`). A model checker's
+trace (`TLCTrace.printTrace`) prints its first and last states whole, a liveness counterexample
+(`LiveCheck.printTrace`, `LiveWorker`) diffs every state but the first, and an ALIAS's record is
+diffed against the predecessor as printed, with `_ALIASEvalError` always listed
+(`PrintTLCState.toString(TLCState)`, `StatePrinter.getPreviousState`). The binary compares the
+values' texts, which tells TLC's equality only of atoms and of finite sets and functions of them:
+an interval, which TLC finds equal to the enumerated set it prints otherwise, a lazy value, which
+TLC may fail to compare and takes for changed, and a state the ALIAS gives no record for after one
+it does (TLC diffs it against the predecessor's own state) decline, "-difftrace of a value TLC may
+compare otherwise than its text". A simulation (which also leaves out stuttering steps), DFID and
+`-dump dot` decline under -difftrace.

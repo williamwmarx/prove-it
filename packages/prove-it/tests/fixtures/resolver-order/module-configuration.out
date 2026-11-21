@@ -1,0 +1,4 @@
+exit 151
+Starting... (_)
+Error: The configuration file did not specify the initial state predicate.
+Finished in _ at (_)

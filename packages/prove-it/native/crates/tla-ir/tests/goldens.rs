@@ -240,3 +240,208 @@ fn refuses_a_damaged_file() {
         }
     }
 }
+
+#[test]
+fn unavailable_literal_marker_retains_its_decline_boundary() {
+    use tla_ir::Builtin;
+    let (_, mut ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    let name = ir.texts.len() as u32;
+    ir.texts.push("$UninitializedLiteral".into());
+    let marker = Builtin {
+        name,
+        arity: 0,
+        flags: Builtin::UNINITIALIZED_LITERAL | Builtin::DECLINED,
+        table: Vec::new(),
+    };
+    ir.builtins.push(marker.clone());
+    assert_eq!(decode(&encode(&ir)).unwrap().builtins.last(), Some(&marker));
+    for malformed in [
+        Builtin {
+            arity: 1,
+            ..marker.clone()
+        },
+        Builtin {
+            name: 0,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: Builtin::UNINITIALIZED_LITERAL,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: marker.flags | Builtin::TABLE,
+            ..marker.clone()
+        },
+    ] {
+        *ir.builtins.last_mut().unwrap() = malformed;
+        assert!(decode(&encode(&ir)).is_err());
+    }
+}
+
+#[test]
+fn packaged_defer_provenance_round_trips_only_on_its_builtin() {
+    use tla_ir::Builtin;
+    let (_, mut ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    let name = ir.texts.len() as u32;
+    ir.texts.push("TLCDefer".into());
+    let marker = Builtin {
+        name,
+        arity: 1,
+        flags: Builtin::STATE_LEVEL | Builtin::LAZY | Builtin::PACKAGED_TLC_DEFER,
+        table: Vec::new(),
+    };
+    ir.builtins.push(marker.clone());
+    assert_eq!(decode(&encode(&ir)).unwrap().builtins.last(), Some(&marker));
+    for malformed in [
+        Builtin {
+            arity: 0,
+            ..marker.clone()
+        },
+        Builtin {
+            name: 0,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: marker.flags | Builtin::TABLE,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: marker.flags | Builtin::DECLINED,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: marker.flags | Builtin::EXTERNAL_CLASS,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: Builtin::PACKAGED_TLC_DEFER,
+            ..marker.clone()
+        },
+        Builtin {
+            flags: marker.flags | 8192,
+            ..marker.clone()
+        },
+    ] {
+        *ir.builtins.last_mut().unwrap() = malformed;
+        assert!(decode(&encode(&ir)).is_err());
+    }
+}
+
+#[test]
+fn startup_warning_flag_round_trips_without_accepting_unknown_definition_flags() {
+    let (_, mut ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    let node = ir.definitions[0] as usize;
+    let NodeKind::Definition(definition) = &mut ir.nodes.arena[node].kind else {
+        panic!("a definition");
+    };
+    let original_flags = definition.flags;
+    assert_eq!(tla_ir::Definition::STARTUP_WARNING_ONLY, 256);
+    definition.flags |= tla_ir::Definition::STARTUP_WARNING_ONLY;
+    let encoded = encode(&ir);
+    assert_eq!(u32::from_le_bytes(encoded[4..8].try_into().unwrap()), 16);
+    assert_eq!(decode(&encoded).unwrap(), ir);
+    let NodeKind::Definition(definition) = &mut ir.nodes.arena[node].kind else {
+        unreachable!();
+    };
+    assert_eq!(tla_ir::Definition::CONFIGURED_SUBSTITUTE, 2048);
+    definition.flags = original_flags | tla_ir::Definition::CONFIGURED_SUBSTITUTE;
+    assert_eq!(decode(&encode(&ir)).unwrap(), ir);
+    assert_eq!(tla_ir::Definition::NAMED_AT_STARTUP, 4096);
+    let NodeKind::Definition(definition) = &mut ir.nodes.arena[node].kind else {
+        unreachable!();
+    };
+    definition.flags = original_flags | tla_ir::Definition::NAMED_AT_STARTUP;
+    assert_eq!(decode(&encode(&ir)).unwrap(), ir);
+    let NodeKind::Definition(definition) = &mut ir.nodes.arena[node].kind else {
+        unreachable!();
+    };
+    assert_eq!(tla_ir::Definition::NESTED_SUBSTITUTION, 1024);
+    definition.flags =
+        original_flags | tla_ir::Definition::SUBSTITUTED | tla_ir::Definition::NESTED_SUBSTITUTION;
+    assert_eq!(decode(&encode(&ir)).unwrap(), ir);
+    for invalid in [
+        128,
+        512,
+        8192,
+        16384,
+        128 | 256,
+        128 | 2048,
+        128 | 1024,
+        128 | 4096,
+    ] {
+        let NodeKind::Definition(definition) = &mut ir.nodes.arena[node].kind else {
+            unreachable!();
+        };
+        definition.flags = original_flags | invalid;
+        assert!(
+            decode(&encode(&ir)).is_err(),
+            "IR16 definition flags {invalid}"
+        );
+    }
+}
+
+#[test]
+fn closed_java_membership_marker_accepts_only_core_membership() {
+    use tla_ir::Builtin;
+    let (_, mut ir) = read_golden("examples/specifications/transaction_commit/TCommit.ir");
+    for operator in ["\\in", "\\notin"] {
+        let name = ir.texts.len() as u32;
+        ir.texts.push(operator.into());
+        let marker = Builtin {
+            name,
+            arity: 2,
+            flags: Builtin::CLOSED_JAVA_CONTEXT,
+            table: Vec::new(),
+        };
+        ir.builtins.push(marker.clone());
+        assert_eq!(decode(&encode(&ir)).unwrap().builtins.last(), Some(&marker));
+        for malformed in [
+            Builtin {
+                arity: 1,
+                ..marker.clone()
+            },
+            Builtin {
+                name: 0,
+                ..marker.clone()
+            },
+            Builtin {
+                flags: marker.flags | Builtin::TABLE,
+                ..marker.clone()
+            },
+            Builtin {
+                flags: marker.flags | Builtin::EXTERNAL_CLASS,
+                ..marker.clone()
+            },
+            Builtin {
+                flags: marker.flags | Builtin::PACKAGED_TLC_DEFER,
+                ..marker.clone()
+            },
+            Builtin {
+                flags: marker.flags | Builtin::TABLE_PHASE_KNOWN,
+                ..marker.clone()
+            },
+            Builtin {
+                flags: marker.flags | (1 << 20),
+                ..marker.clone()
+            },
+        ] {
+            *ir.builtins.last_mut().unwrap() = malformed;
+            assert!(decode(&encode(&ir)).is_err());
+        }
+        ir.builtins.pop();
+    }
+}
+
+#[test]
+fn writes_the_startup_dependents_only_in_their_version() {
+    let (bytes, mut ir) = read_golden("examples/specifications/transaction_commit/2PCwithBTM.ir");
+    assert!(ir.model.startup.dependents.is_empty());
+    assert_eq!(encode(&ir), bytes);
+    ir.model.startup.dependents.push((0, 0));
+    let encoded = encode(&ir);
+    assert_eq!(
+        u32::from_le_bytes(encoded[4..8].try_into().unwrap()),
+        tla_ir::IR_VERSION
+    );
+    assert_eq!(decode(&encoded).unwrap(), ir);
+}

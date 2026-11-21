@@ -283,7 +283,10 @@ A liveness atom can be an operator whose body holds a temporal formula in a bran
 takes, such as TLC's Github1389ViolatedB/C, where the atom is `Reach(0)` of a recursive `Reach`
 whose other branch is `<>(Reach(n - 1))`. The engine compiled none of it; it now compiles `[]`,
 `<>`, `WF` and `SF` to a stop at run time ("a temporal formula in a state"), so the native checker
-decides both models, and where a run does reach one the interpreter reports the error as TLC does.
+decides both models. A run that reaches one stops as TLC does (`Tool#evalAppl`'s
+`EC.TLC_ENCOUNTERED_FORMULA_IN_PREDICATE`, a TLC failure of `search.rs`), and the trace evaluator
+words it, but within ENABLED, where `Tool#enabled` words its own (`EC.TLC_ENABLED_WRONG_FORMULA`)
+and the failure declines.
 
 ## Liveness under SYMMETRY and VIEW (as built)
 
@@ -491,6 +494,15 @@ over can't give that, so the native checker answers them as the search goes:
   state, `take_events`, `finish` for TLC's check of the graphs at the end.
 - `tla-engine`'s `LiveAnswers` evaluates an atom when asked, on the machine as it is then:
   `<<A>>_v` as TLC's `LNAction#eval` does, v of each state and A only where they differ.
+- An atom whose value isn't a boolean stops the search, and the evaluator of failures words it as
+  `LNStateAST.eval` and `LNAction.eval` do once the evaluation is over, with no call stack: "A
+  state predicate was evaluated to a non-boolean value." (2250) or "Encountered an action
+  predicate that's not a boolean." (2252), the latter of `<<A>>_v` only where the step changes v.
+- `Tool.enabled` fails on a temporal operator it is asked of, before it evaluates any operand:
+  []A, <>A, WF and SF with `TLC_ENABLED_WRONG_FORMULA` (2260), `~>` and `-+->` with its own
+  text, each naming the operator by where it is written, which the evaluator of failures words
+  where its walk of ENABLED's action reaches one. A temporal or an unbounded quantifier there
+  still declines: the IR doesn't keep `\EE` apart from `\E`.
 - The search runs this way where it reports violations itself (the native binary) and an atom
   uses the registers (`EngineContext::is_live_registered`): after each expansion it adds the
   state (`add_online`), and what the search and the atoms print comes out as it is printed, with

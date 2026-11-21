@@ -144,17 +144,34 @@ type SelectionError = (Expr, Vec<Expr>, SanyError);
 /// (`renamedArities`), the names of the definitions instances copy (`sourceNames`), and the
 /// expressions instances put in for declarations. A table
 /// keeps each node it names, so no other node takes its address.
+/// A copy a module's subexpressions are resolved with, and the definition it stands for.
+type AliasSource = (Rc<Definition>, Rc<Definition>);
+
 #[derive(Default)]
 pub struct Tables {
     /// Whether the linker collects SANY's messages, for which an error that stops linking carries
     /// SANY's report.
     pub is_collecting: std::cell::Cell<bool>,
-    selected: RefCell<FastMap<usize, Expr>>,
+    selected: RefCell<FastMap<usize, (Expr, Location, bool)>>,
+    instance_contexts: RefCell<InstanceContexts>,
+    selection_origins: RefCell<FastMap<usize, Vec<Rc<Definition>>>>,
+    /// The definition each copy a module's subexpressions are resolved with stands for, by the
+    /// copy's address, the copy kept so no other takes it.
+    alias_sources: RefCell<FastMap<usize, AliasSource>>,
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
     renamed_arities: RefCell<FastMap<usize, (Expr, usize)>>,
     substitutions: RefCell<FastMap<usize, Expr>>,
+    synthetic_zero_arity: RefCell<SyntheticZeroArity>,
+    substitute_uses: RefCell<FastMap<usize, SubstituteUse>>,
 }
+
+/// A use of an INSTANCE's substitute where the instantiated module names the declaration: the
+/// copy that stands for it there, the declaration's name as written there, and the substitute.
+type SubstituteUse = (Expr, Location, Expr);
+
+type InstanceContexts = FastMap<usize, (Rc<Definition>, Vec<Expr>)>;
+type SyntheticZeroArity = FastMap<usize, (Expr, Expr, Rc<Definition>)>;
 
 fn address(expression: &Expr) -> usize {
     Rc::as_ptr(expression) as usize
@@ -171,9 +188,71 @@ impl Tables {
     /// Notes a copy of an expression an INSTANCE put in for a declaration as one too, as a later
     /// INSTANCE or a renaming makes it.
     pub fn carry_substitution(&self, source: &Expr, copy: &Expr) {
+        if let Some((original, header)) = self.synthetic_zero_arity(source)
+            && source.reference() == copy.reference()
+            && let (
+                ExpressionKind::Apply { args: old, .. },
+                ExpressionKind::Apply { args: new, .. },
+            ) = (&source.kind, &copy.kind)
+            && old.len() == new.len()
+            && old.iter().zip(new).all(|(a, b)| Rc::ptr_eq(a, b))
+        {
+            self.add_synthetic_zero_arity(copy, original, header);
+        }
         if self.is_substitution(source) {
             self.add_substitution(copy);
         }
+        let selection = self.selected.borrow().get(&address(source)).cloned();
+        if let Some((_, location, is_nop)) = selection {
+            self.add_selection(copy, &location, is_nop);
+        }
+        // A copy whose parts differ from the source's, as one an enclosing INSTANCE's
+        // substitution rewrote, no longer stands for the substitute as written, which the IR
+        // would write unsubstituted: it is lowered as itself.
+        if let Some((location, substitute)) = self.substitute_use(source) {
+            let (old, new) = (source.children(), copy.children());
+            if old.len() == new.len() && old.iter().zip(&new).all(|(a, b)| Rc::ptr_eq(a, b)) {
+                self.add_substitute_use(copy, location, substitute);
+            }
+        }
+    }
+
+    /// Notes `copy` as a use of `substitute` where the instantiated module names the
+    /// declaration at `location`: `CallStackTool` evaluates the declaration's name there, in a
+    /// frame of its own, before the substitute TLC's `SubstInNode` binds it to.
+    pub fn add_substitute_use(&self, copy: &Expr, location: Location, substitute: Expr) {
+        self.substitute_uses
+            .borrow_mut()
+            .insert(address(copy), (copy.clone(), location, substitute));
+    }
+
+    /// Where `expression` uses an INSTANCE's substitute, and the substitute.
+    pub fn substitute_use(&self, expression: &Expr) -> Option<(Location, Expr)> {
+        self.substitute_uses
+            .borrow()
+            .get(&address(expression))
+            .filter(|(held, ..)| Rc::ptr_eq(held, expression))
+            .map(|(_, location, substitute)| (location.clone(), substitute.clone()))
+    }
+
+    pub fn add_synthetic_zero_arity(
+        &self,
+        expression: &Expr,
+        source: Expr,
+        header: Rc<Definition>,
+    ) {
+        self.synthetic_zero_arity
+            .borrow_mut()
+            .insert(address(expression), (expression.clone(), source, header));
+    }
+
+    pub fn synthetic_zero_arity(&self, expression: &Expr) -> Option<(Expr, Rc<Definition>)> {
+        self.synthetic_zero_arity
+            .borrow()
+            .get(&address(expression))
+            .and_then(|(held, source, header)| {
+                Rc::ptr_eq(held, expression).then(|| (source.clone(), header.clone()))
+            })
     }
 
     /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
@@ -182,6 +261,50 @@ impl Tables {
         self.substitutions
             .borrow()
             .contains_key(&address(expression))
+    }
+
+    pub fn set_instance_context(&self, definition: &Rc<Definition>, contexts: Vec<Expr>) {
+        self.instance_contexts.borrow_mut().insert(
+            Rc::as_ptr(definition) as usize,
+            (definition.clone(), contexts),
+        );
+    }
+
+    pub fn set_alias_source(&self, alias: &Rc<Definition>, source: &Rc<Definition>) {
+        self.alias_sources
+            .borrow_mut()
+            .insert(Rc::as_ptr(alias) as usize, (alias.clone(), source.clone()));
+    }
+
+    /// The definition a copy that subexpressions are resolved with stands for, or the
+    /// definition itself.
+    pub fn alias_source(&self, definition: &Rc<Definition>) -> Rc<Definition> {
+        self.alias_sources
+            .borrow()
+            .get(&(Rc::as_ptr(definition) as usize))
+            .map_or_else(|| definition.clone(), |(_, source)| source.clone())
+    }
+
+    pub fn instance_context(&self, definition: &Rc<Definition>) -> Vec<Expr> {
+        self.instance_contexts
+            .borrow()
+            .get(&(Rc::as_ptr(definition) as usize))
+            .map(|(_, contexts)| contexts.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_selection_origins(&self, expression: &Expr, origins: Vec<Rc<Definition>>) {
+        self.selection_origins
+            .borrow_mut()
+            .insert(address(expression), origins);
+    }
+
+    pub fn selection_origins(&self, expression: &Expr) -> Vec<Rc<Definition>> {
+        self.selection_origins
+            .borrow()
+            .get(&address(expression))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// `getSourceName`.
@@ -207,10 +330,18 @@ impl Tables {
         definition
     }
 
-    pub fn add_selection(&self, expression: &Expr) {
+    pub fn add_selection(&self, expression: &Expr, location: &Location, is_nop: bool) {
+        self.selected.borrow_mut().insert(
+            address(expression),
+            (expression.clone(), location.clone(), is_nop),
+        );
+    }
+
+    pub fn selection_location(&self, expression: &Expr) -> Option<Location> {
         self.selected
-            .borrow_mut()
-            .insert(address(expression), expression.clone());
+            .borrow()
+            .get(&address(expression))
+            .and_then(|(_, location, is_nop)| is_nop.then(|| location.clone()))
     }
 
     pub fn is_selection(&self, expression: &Expr) -> bool {
@@ -274,6 +405,9 @@ struct Unit<'a> {
     /// In a definition generated for a LET INSTANCE, or a subexpression analyzed where it is
     /// defined.
     is_generated: bool,
+    /// In a copy an INSTANCE in a LET makes of a definition of the instancee, whose names the
+    /// instancee's analysis resolved where the definition is written.
+    is_copy: bool,
     tables: Rc<Tables>,
     /// How many LETs enclose the unit's definitions (`curLevel`).
     let_level: usize,
@@ -1337,6 +1471,18 @@ fn get_symbol_arity(
     if is_key(name) {
         return Ok(Some(apply_arity(expression)));
     }
+    // The prime, which the parser reads alone or given other than one argument.
+    if &**name == "'" {
+        return Ok(Some(1));
+    }
+    // SANY's copy's body is the definition's own, whose names it resolved in the instancee
+    // (`Generator.processModuleDefinition`), not where the LET binds others.
+    if unit.is_copy
+        && expression.resolved.key.borrow().is_some()
+        && !expression.resolved.is_local.get()
+    {
+        return Ok(Some(apply_arity(expression)));
+    }
     let local = lookup_local(scope, name);
     if local.as_ref().is_some_and(|local| local.is_non_fact) {
         unit.error(
@@ -1771,6 +1917,7 @@ fn resolve_definitions(
             .iter()
             .any(|instance| instance.location == definition.location);
         let is_generated = unit.is_generated || definition.is_local || is_key(&definition.name);
+        let is_copy = unit.is_copy || is_key(&definition.name);
         let inner = if is_instanced {
             Unit {
                 is_generated: true,
@@ -1781,6 +1928,7 @@ fn resolve_definitions(
         } else if is_generated {
             Unit {
                 is_generated,
+                is_copy,
                 ..unit.clone()
             }
         } else {
@@ -3207,6 +3355,53 @@ fn check_substitutions(
         }
         Ok(())
     };
+    // `SubstInNode.constructSubst` first makes `c <- c` for each declaration the instancer
+    // resolves, the c of one without parameters an OpApplNode of the instancer's operator with no
+    // arguments at the INSTANCE, whose `match` reports one that takes some: `OpDefNode.match` a
+    // defined operator, `OpDeclNode.match` a declared one, before the explicit substitutions
+    // replace any. SANY takes the declarations in its Hashtable's order, which the front end
+    // doesn't follow for two such reports.
+    let mut mismatched: Vec<Name> = Vec::new();
+    let mut reports: Vec<String> = Vec::new();
+    for declaration in declarations
+        .iter()
+        .filter(|declaration| declaration.arity == 0)
+    {
+        let Some(binding) = find_binding(&declaration.name, &scope, unit) else {
+            continue;
+        };
+        if binding.arity == 0 {
+            continue;
+        }
+        let message = match binding.kind {
+            SymbolKind::Definition => format!(
+                "Wrong number of arguments (0) given to operator '{}', \nwhich requires {} arguments.",
+                declaration.name, binding.arity
+            ),
+            SymbolKind::Constant | SymbolKind::Variable => {
+                "Operator used with the wrong number of arguments.".to_owned()
+            }
+            _ => continue,
+        };
+        mismatched.push(declaration.name.clone());
+        reports.push(message);
+    }
+    if !reports.is_empty() {
+        let Some(range) = &instance.location.range else {
+            return Err(FrontError::NotYet(
+                "an INSTANCE without a place whose implicit substitution SANY rejects".to_owned(),
+            ));
+        };
+        if reports.len() > 1 {
+            return Err(FrontError::NotYet(
+                "implicit substitutions of an INSTANCE that SANY rejects in its Hashtable's order"
+                    .to_owned(),
+            ));
+        }
+        for message in reports {
+            unit.error(format_range(range), message);
+        }
+    }
     let mut substitutions: OrderedMap<Name, Expr> = OrderedMap::new();
     for substitution in &instance.substitutions {
         let name = &substitution.name;
@@ -3250,6 +3445,10 @@ fn check_substitutions(
             },
             instance.location.clone(),
         ));
+        if mismatched.contains(&declaration.name) {
+            substitutions.insert(declaration.name.clone(), expression);
+            continue;
+        }
         resolve_substitute(declaration, &expression, false)?;
         substitutions.insert(declaration.name.clone(), expression);
     }
@@ -3342,6 +3541,7 @@ pub fn resolve_substitutions(
             label_params: Rc::default(),
             labels: Rc::default(),
             is_generated: false,
+            is_copy: false,
             tables: unit.tables.clone(),
             let_level: 0,
             let_recursive: Rc::default(),
@@ -3508,6 +3708,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         label_params: Rc::default(),
         labels: Rc::default(),
         is_generated: false,
+        is_copy: false,
         tables: unit.tables.clone(),
         let_level: 0,
         let_recursive: let_recursive.clone(),

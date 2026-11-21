@@ -8,10 +8,10 @@
 use std::sync::Arc;
 
 use tla_values::store::{
-    EMPTY_SET, KIND_BOOL, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, Outcome, is_function_kind,
+    EMPTY_SET, KIND_BOOL, KIND_INFINITE_SET, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET,
+    KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
 };
-use tla_values::{Bail, Id};
+use tla_values::{Bail, Id, check_set_insertion};
 
 use super::sets::{is_in_named, not_in};
 use crate::machine::Machine;
@@ -23,6 +23,10 @@ const MAXIMUM_SUBSET_BASE: usize = 20;
 pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
 /// What enumerating a set of functions stops with where TLC can't enumerate its domain.
 pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
+/// Sizing a set TLC builds past `TLCGlobals.setBound` elements to size it, which it words apart
+/// in each operator that sizes it.
+pub(crate) const SIZED_PAST_SET_BOUND: &str =
+    "unsupported: sizing a set TLC builds past TLCGlobals.setBound elements";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 /// What printing a set of functions, records or tuples stops with where TLC's `toString`, which
@@ -43,12 +47,38 @@ pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send
 /// A filter's test of an element, with its names bound to it.
 pub(crate) type Test = Arc<dyn Fn(&mut Machine<'_>, Id) -> Outcome<bool> + Send + Sync>;
 
+/// What combining two sets stops with where TLC collects more elements than its bound, a limit the
+/// evaluator of failures evaluates again: it follows where TLC collects them and fails.
+pub(crate) const COLLECTED_PAST_BOUND: &str =
+    "a set TLC collects past its bound on a set's elements";
+
+/// `S \cup T`, `S \cap T` or `S \ T` of two sets TLC holds as set enumerations or intervals, which
+/// it builds at once: `cup`, `cap` and `diff` of `IntervalValue` and `SetEnumValue` collect the
+/// left set's elements, and those of the right set's they keep, in a `ValueVec`, which fails past
+/// `TLCGlobals.setBound` (`ensureCapacity`). A union whose left set is empty is the right set.
+pub(crate) fn collected(
+    machine: &Machine<'_>,
+    operator: Operator,
+    left: Id,
+    result: Id,
+) -> Outcome<Id> {
+    if machine.store.size_of(result) as usize > tla_values::SET_BOUND
+        && !(operator == Operator::Union && machine.store.size_of(left) == 0)
+    {
+        return Err(Bail(COLLECTED_PAST_BOUND));
+    }
+    Ok(result)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Operator {
     Union,
     Intersection,
     Difference,
 }
+
+/// The largest base of a power set whose subsets `UNION`'s `isFinite` asks in turn.
+const MAXIMUM_ASKED_SUBSET_BASE: u64 = 20;
 
 /// The interpreter's value of a set: a normalized set (TLC's SetEnumValue), or one of the sets
 /// TLC implements lazily.
@@ -57,6 +87,8 @@ pub(crate) enum Lazy {
     Set(Id),
     /// Nat, Int or STRING, which TLC tests for membership and can't enumerate.
     Infinite(&'static str),
+    /// AnySet.ANY: membership and finiteness are defined, but emptiness and comparison fail.
+    Any,
     /// Another set TLC can't enumerate, such as `{n \in Nat : p}` or `Seq(S)`, with the
     /// engine's test of membership in it.
     Tested(Test),
@@ -107,15 +139,33 @@ impl Lazy {
         Lazy::Kept(Box::new(self))
     }
 
+    // Whether TLC enumerates the set into a set enumeration it normalizes without a comparison
+    // that fails: a normalized set the store holds, or the power set, a set of functions or
+    // records, or a product of such sets, whose elements all compare.
+    fn is_comparable_enumeration(&self, machine: &Machine<'_>) -> bool {
+        match self {
+            Lazy::Set(id) => machine.store.kind_of(*id) == KIND_SET,
+            Lazy::Subset(base) => base.is_comparable_enumeration(machine),
+            Lazy::FunctionSet(domain, range) => {
+                domain.is_comparable_enumeration(machine)
+                    && range.is_comparable_enumeration(machine)
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets
+                .iter()
+                .all(|set| set.is_comparable_enumeration(machine)),
+            _ => false,
+        }
+    }
+
     fn is_enumerable(&self) -> bool {
-        !matches!(self, Lazy::Infinite(_) | Lazy::Tested(_))
+        !matches!(self, Lazy::Infinite(_) | Lazy::Any | Lazy::Tested(_))
     }
 
     /// Whether the set is or is built of a set TLC can't enumerate.
     pub(crate) fn is_infinite(&self) -> bool {
         match self {
             Lazy::Set(_) => false,
-            Lazy::Infinite(_) | Lazy::Tested(_) => true,
+            Lazy::Infinite(_) | Lazy::Any | Lazy::Tested(_) => true,
             Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => base.is_infinite(),
             Lazy::Enumeration(elements) => elements.iter().any(Lazy::is_infinite),
             Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
@@ -151,11 +201,12 @@ impl Lazy {
         match (left, right) {
             (Lazy::Set(left), Lazy::Set(right)) => {
                 let (left, right) = (Self::set(machine, left)?, Self::set(machine, right)?);
-                Ok(Lazy::Set(match operator {
+                let result = match operator {
                     Operator::Union => machine.store.union(left, right)?,
                     Operator::Intersection => machine.store.intersection(left, right)?,
                     Operator::Difference => machine.store.difference(left, right)?,
-                }))
+                };
+                Ok(Lazy::Set(collected(machine, operator, left, result)?))
             }
             (Lazy::Set(set), other) => Self::combine_reducible(machine, operator, set, other),
             (other, Lazy::Set(set)) if operator != Operator::Difference => {
@@ -187,6 +238,10 @@ impl Lazy {
                 kept.push(element);
             }
         }
+        // `cap` and `diff` collect what they keep, which fails past TLC's bound.
+        if kept.len() > tla_values::SET_BOUND {
+            return Err(Bail(COLLECTED_PAST_BOUND));
+        }
         Self::of(machine, &kept)
     }
 
@@ -217,13 +272,7 @@ impl Lazy {
         }
         let mut values = Vec::with_capacity(elements.len());
         for element in elements {
-            values.push(match element {
-                Lazy::Set(value) => *value,
-                _ => {
-                    let set = element.enumerate(machine)?;
-                    machine.store.set_of(&set)?
-                }
-            });
+            values.push(element.value(machine)?);
         }
         let mut sorted = vec![0];
         for index in 1..values.len() {
@@ -255,6 +304,19 @@ impl Lazy {
             .collect())
     }
 
+    /// The native value of this reference. An overridden ANY remains a value rather than an
+    /// attempted enumeration; ordinary lazy sets still normalize to their set enumeration.
+    pub(crate) fn value(&self, machine: &mut Machine<'_>) -> Outcome<Id> {
+        match self {
+            Lazy::Set(value) => Ok(*value),
+            Lazy::Any => Ok(machine.store.any()),
+            _ => {
+                let elements = self.enumerate(machine)?;
+                machine.store.set_of(&elements)
+            }
+        }
+    }
+
     /// The elements in `toFiniteSet`'s order, which a quantifier binds.
     pub(crate) fn enumerate(&self, machine: &mut Machine<'_>) -> Outcome<Vec<Id>> {
         self.elements(machine, false)
@@ -274,6 +336,7 @@ impl Lazy {
                 .store
                 .set_elements(Self::set(machine, *set)?)
                 .to_vec()),
+            Lazy::Any => Err(Bail("enumerated ANY")),
             Lazy::Infinite(_) | Lazy::Tested(_) => Err(Bail("enumerated an infinite set")),
             Lazy::Subset(base) => {
                 // SubsetValue sizes and lists its base, never streaming it.
@@ -344,6 +407,9 @@ impl Lazy {
                 let mut kept = Vec::new();
                 for element in base.elements(machine, is_streamed)? {
                     if test(machine, element)? {
+                        if !is_streamed {
+                            check_set_insertion(kept.len())?;
+                        }
                         kept.push(element);
                     }
                 }
@@ -384,13 +450,7 @@ impl Lazy {
                 let sorted = Self::sort_enumeration(machine, elements)?;
                 let mut values = Vec::with_capacity(sorted.len());
                 for element in sorted {
-                    values.push(match element {
-                        Lazy::Set(value) => value,
-                        _ => {
-                            let set = element.enumerate(machine)?;
-                            machine.store.set_of(&set)?
-                        }
-                    });
+                    values.push(element.value(machine)?);
                 }
                 Ok(values)
             }
@@ -466,6 +526,7 @@ impl Lazy {
     pub(crate) fn is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
         Ok(match self {
             Lazy::Set(set) => machine.store.size_of(Self::set(machine, *set)?) == 0,
+            Lazy::Any => return Err(Bail("isEmpty of ANY")),
             Lazy::Infinite(_) | Lazy::Subset(_) => false,
             Lazy::Enumeration(elements) => elements.is_empty(),
             Lazy::FunctionSet(domain, range) => {
@@ -491,7 +552,7 @@ impl Lazy {
             }
             Lazy::Kept(kept) => kept.is_empty(machine)?,
             Lazy::Tested(_) | Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
-                self.enumerate(machine)?.is_empty()
+                self.stream(machine)?.is_empty()
             }
         })
     }
@@ -511,6 +572,7 @@ impl Lazy {
         };
         match self {
             Lazy::Set(set) => Ok(u64::from(machine.store.size_of(Self::set(machine, *set)?))),
+            Lazy::Any => Err(Bail("size of ANY")),
             Lazy::Infinite(_) | Lazy::Tested(_) => {
                 Err(Bail("counted the elements of an infinite set"))
             }
@@ -544,11 +606,158 @@ impl Lazy {
             }
             Lazy::Kept(kept) => kept.size(machine),
             Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) | Lazy::Enumeration(_) => {
+                // A filter, a `\cup`, `\cap` or `\` or a UNION TLC keeps lazy is sized as its
+                // normalized set (`convertAndCache`), which `toSetEnum` builds in a ValueVec of
+                // each element it streams, which fails past `TLCGlobals.setBound` of them.
+                if !matches!(self, Lazy::Enumeration(_))
+                    && self.streamed_at_most(machine)? > tla_values::SET_BOUND as u128
+                    && self.stream(machine)?.len() > tla_values::SET_BOUND
+                {
+                    return Err(Bail(SIZED_PAST_SET_BOUND));
+                }
                 let elements = self.enumerate(machine)?;
                 let set = machine.store.set_of(&elements)?;
                 Ok(u64::from(machine.store.size_of(set)))
             }
         }
+    }
+
+    /// At least as many elements as TLC's enumeration of the set yields (`elements()`),
+    /// duplicates and all: what a `\cup` or a UNION it keeps lazy streams of each set in turn,
+    /// and what a filter, an intersection or a difference streams of the set it enumerates, at
+    /// most. Saturates for a set TLC can't enumerate.
+    pub(crate) fn streamed_at_most(&self, machine: &mut Machine<'_>) -> Outcome<u128> {
+        Ok(match self {
+            Lazy::Set(set) => u128::from(machine.store.size_of(Self::set(machine, *set)?)),
+            Lazy::Any | Lazy::Infinite(_) | Lazy::Tested(_) => u128::MAX,
+            Lazy::Subset(base) => {
+                let base = base.streamed_at_most(machine)?;
+                if base >= 127 { u128::MAX } else { 1 << base }
+            }
+            Lazy::FunctionSet(domain, range) => {
+                let (domain, range) = (
+                    domain.streamed_at_most(machine)?,
+                    range.streamed_at_most(machine)?,
+                );
+                (0..domain.min(128)).fold(1u128, |size, _| size.saturating_mul(range))
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => {
+                let mut size = 1u128;
+                for set in sets {
+                    size = size.saturating_mul(set.streamed_at_most(machine)?);
+                }
+                size
+            }
+            Lazy::Filtered(base, _) | Lazy::Kept(base) => base.streamed_at_most(machine)?,
+            Lazy::Operation(Operator::Union, left, right) => left
+                .streamed_at_most(machine)?
+                .saturating_add(right.streamed_at_most(machine)?),
+            // What an intersection or a difference enumerates, each element tested in the other.
+            Lazy::Operation(Operator::Intersection, left, right) if !left.is_enumerable() => {
+                right.streamed_at_most(machine)?
+            }
+            Lazy::Operation(_, left, _) => left.streamed_at_most(machine)?,
+            Lazy::Union(base) => match &**base {
+                Lazy::Enumeration(sets) => {
+                    let mut size = 0u128;
+                    for set in sets {
+                        size = size.saturating_add(set.streamed_at_most(machine)?);
+                    }
+                    size
+                }
+                _ if !base.is_enumerable() => u128::MAX,
+                _ => {
+                    let mut size = 0u128;
+                    for set in base.elements(machine, false)? {
+                        size = size.saturating_add(Lazy::Set(set).streamed_at_most(machine)?);
+                    }
+                    size
+                }
+            },
+            Lazy::Enumeration(elements) => elements.len() as u128,
+        })
+    }
+
+    /// `self = other` as TLC's `equals` of the receiver answers it without enumerating either
+    /// set: Nat and Int by their modules' `compareTo`, and two sets of functions, records or
+    /// tuples, or two power sets, by the sets they're built of (`SetOfFcnsValue.equals`,
+    /// `SetOfRcdsValue.equals`, `SetOfTuplesValue.equals`, `SubsetValue.equals`). None where TLC
+    /// would compare otherwise, convert a set to its normalized set, or where a part fails or the
+    /// engine can't tell, for the caller to compare as it would without this.
+    pub(crate) fn equals(&self, machine: &mut Machine<'_>, other: &Lazy) -> Option<bool> {
+        match (self, other) {
+            (Lazy::Set(set), Lazy::Set(other)) => {
+                let set = Self::set(machine, *set).ok()?;
+                let other = Self::set(machine, *other).ok()?;
+                machine.store.equals(set, other).ok()
+            }
+            // `Naturals.compareTo`, `Integers.compareTo`: Nat is Nat, Int is Int, and each is
+            // unequal to the other.
+            (Lazy::Infinite(name), Lazy::Infinite(other))
+                if matches!(*name, "Nat" | "Int") && matches!(*other, "Nat" | "Int") =>
+            {
+                Some(name == other)
+            }
+            (Lazy::Subset(base), Lazy::Subset(other_base)) => base.equals(machine, other_base),
+            (Lazy::FunctionSet(domain, range), Lazy::FunctionSet(other_domain, other_range)) => {
+                let is_unit = domain.is_empty(machine).ok()?;
+                let is_other_unit = other_domain.is_empty(machine).ok()?;
+                if is_unit || is_other_unit {
+                    return Some(is_unit == is_other_unit);
+                }
+                let is_empty = range.is_empty(machine).ok()?;
+                let is_other_empty = other_range.is_empty(machine).ok()?;
+                if is_empty || is_other_empty {
+                    return Some(is_empty == is_other_empty);
+                }
+                Some(domain.equals(machine, other_domain)? && range.equals(machine, other_range)?)
+            }
+            (Lazy::RecordSet(keys, sets), Lazy::RecordSet(other_keys, other_sets)) => {
+                if let Some(is_empty) = Self::equal_emptiness(machine, self, other)? {
+                    return Some(is_empty);
+                }
+                if keys.len() != other_keys.len() {
+                    return Some(false);
+                }
+                for (index, (set, other_set)) in sets.iter().zip(other_sets).enumerate() {
+                    if keys[index] != other_keys[index] || !set.equals(machine, other_set)? {
+                        return Some(false);
+                    }
+                }
+                Some(true)
+            }
+            (Lazy::Product(sets), Lazy::Product(other_sets)) => {
+                if let Some(is_empty) = Self::equal_emptiness(machine, self, other)? {
+                    return Some(is_empty);
+                }
+                if sets.len() != other_sets.len() {
+                    return Some(false);
+                }
+                for (set, other_set) in sets.iter().zip(other_sets) {
+                    if !set.equals(machine, other_set)? {
+                        return Some(false);
+                    }
+                }
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+
+    // `SetOfRcdsValue.equals` and `SetOfTuplesValue.equals` first ask whether either is empty:
+    // Some(Some(whether both are)) where one is, Some(None) where neither is.
+    fn equal_emptiness(
+        machine: &mut Machine<'_>,
+        set: &Lazy,
+        other: &Lazy,
+    ) -> Option<Option<bool>> {
+        if set.is_empty(machine).ok()? {
+            return Some(Some(other.is_empty(machine).ok()?));
+        }
+        if other.is_empty(machine).ok()? {
+            return Some(Some(false));
+        }
+        Some(None)
     }
 
     /// Membership as the interpreter tests it (`isElementOf`), failing where it fails.
@@ -561,6 +770,7 @@ impl Lazy {
             }
             // Seq(S) holds sequences of S's elements, which its reference doesn't keep.
             Lazy::Infinite(name) => is_in_named(machine, name, element),
+            Lazy::Any => Ok(true),
             Lazy::Tested(test) => test(machine, element),
             Lazy::Subset(base) => {
                 if kind != KIND_SET {
@@ -782,22 +992,74 @@ impl Lazy {
             Lazy::Enumeration(_) => Some(true),
             // Nat, Int and STRING (`UserValue.isFinite`), and Seq(S), whose S isn't held.
             Lazy::Infinite(name) => (*name != "Seq").then_some(false),
-            Lazy::Tested(_) | Lazy::Union(_) => return None,
+            Lazy::Any => Some(false),
+            Lazy::Tested(_) => return None,
+            // `UnionValue.isFinite`: each set S holds asked in S's order, which stops at the
+            // first that isn't finite. S of finite sets the store holds, or of Nat, Int or STRING
+            // alone, which TLC enumerates without comparing it with another; any other S may fail
+            // first, as TLC's sort of an infinite set with another does.
+            Lazy::Union(sets) => {
+                let elements: Vec<Id> = match &**sets {
+                    Lazy::Set(id) if machine.store.kind_of(*id) == KIND_SET => {
+                        machine.store.set_elements(*id).to_vec()
+                    }
+                    Lazy::Enumeration(parts) => match parts.as_slice() {
+                        [Lazy::Set(id)] => vec![*id],
+                        _ => return None,
+                    },
+                    // S the power set of a set whose elements all compare: TLC enumerates it
+                    // (`SubsetValue.elementsNormalized`) comparing nothing that may fail, each
+                    // subset finite. Its 2^n subsets are asked in turn, which TLC finishes
+                    // only for a small base.
+                    Lazy::Subset(base) => {
+                        let is_finite = base.is_comparable_enumeration(machine)
+                            && base
+                                .printed_size(machine)
+                                .is_ok_and(|size| size <= MAXIMUM_ASKED_SUBSET_BASE);
+                        return is_finite.then_some(Some(true));
+                    }
+                    _ => return None,
+                };
+                let kinds: Vec<u8> = elements
+                    .iter()
+                    .map(|&element| machine.store.kind_of(element))
+                    .collect();
+                match kinds.as_slice() {
+                    [KIND_INFINITE_SET] => Some(false),
+                    kinds if kinds.iter().all(|&kind| kind == KIND_SET) => Some(true),
+                    _ => return None,
+                }
+            }
             Lazy::Subset(base) | Lazy::Kept(base) => base.finiteness(machine)?,
             // `SetOfFcnsValue.isFinite`: the first of these that holds.
             Lazy::FunctionSet(domain, range) => {
                 let is_finite_domain = domain.finiteness(machine)?;
-                let is_empty_domain = Some(is_empty(domain, machine)?);
+                let is_empty_domain = if is_finite_domain == Some(false) {
+                    Some(false)
+                } else {
+                    Some(is_empty(domain, machine)?)
+                };
+                if all([is_finite_domain, is_empty_domain]) == Some(true) {
+                    return Some(Some(true));
+                }
                 let is_finite_range = range.finiteness(machine)?;
-                let is_empty_range = Some(is_empty(range, machine)?);
+                let is_empty_range = if is_finite_range == Some(false) {
+                    Some(false)
+                } else {
+                    Some(is_empty(range, machine)?)
+                };
+                if all([is_finite_range, is_empty_range]) == Some(true) {
+                    return Some(Some(true));
+                }
+                if all([is_finite_domain, is_finite_range]) == Some(true) {
+                    return Some(Some(true));
+                }
                 let is_range_of_one = if is_finite_range == Some(false) {
                     Some(false)
                 } else {
                     Some(range.printed_size(machine).ok()? == 1)
                 };
                 any([
-                    all([is_finite_domain, is_empty_domain]),
-                    all([is_finite_range, is_empty_range]),
                     all([is_finite_domain, is_finite_range]),
                     all([is_finite_range, is_range_of_one]),
                 ])
@@ -854,8 +1116,9 @@ impl Lazy {
                     Err(UNSURE_PRINT)
                 }
             }
+            Lazy::Enumeration(_) => self.size(machine),
             // `UserValue.size`: Nat, Int, STRING and Seq(S).
-            Lazy::Infinite(_) => Err(Bail(UNSIZED_PRINT)),
+            Lazy::Infinite(_) | Lazy::Any => Err(Bail(UNSIZED_PRINT)),
             Lazy::Subset(base) => match base.printed_size(machine)? {
                 size if size < 31 => Ok(1 << size),
                 _ => Err(UNSURE_PRINT),
@@ -868,7 +1131,7 @@ impl Lazy {
     }
 
     // A part's `isEmpty` (`Value.isEmpty`), which fails on any value but a set.
-    fn printed_is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+    pub(crate) fn printed_is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
         match self {
             Lazy::Set(id) => {
                 if machine.store.kind_of(*id) == KIND_SET {
@@ -884,7 +1147,9 @@ impl Lazy {
                     Err(UNSURE_PRINT)
                 }
             }
+            Lazy::Enumeration(elements) => Ok(elements.is_empty()),
             // Nat, Int, STRING and Seq(S) aren't empty (`UserValue.isEmpty`), nor is SUBSET S.
+            Lazy::Any => Err(Bail(UNSIZED_PRINT)),
             Lazy::Infinite(_) | Lazy::Subset(_) => Ok(false),
             Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(..) => {
                 self.is_empty(machine).map_err(|_| UNSURE_PRINT)

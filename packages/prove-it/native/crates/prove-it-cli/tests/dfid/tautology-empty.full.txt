@@ -1,0 +1,8 @@
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2253:1 @!@!@
+Temporal formula is a tautology (its negation is unsatisfiable).
+@!@!@ENDMSG 2253 @!@!@

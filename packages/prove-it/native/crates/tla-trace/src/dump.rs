@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use crate::alias::Alias;
 use crate::deflate::{crc32, deflate};
-use crate::print::{format_value, print_order};
+use crate::print::{format_units, print_order};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, Text, Value, elements, set_of, settle};
 use crate::{CounterExample, Unsupported};
@@ -79,15 +79,31 @@ impl Rebuilder<'_> {
         } else {
             None
         };
+        if aliases
+            .as_ref()
+            .is_some_and(|aliases| aliases.output.iter().any(|output| !output.is_empty()))
+        {
+            return unsupported("whose ALIAS output has not been retained by its caller");
+        }
+        self.dump_trace_using_aliases(counter_example, is_sharing_followed, aliases.as_deref())
+    }
+
+    /// Serializes the ALIAS values already evaluated for the worker's shared counterexample.
+    pub fn dump_trace_using_aliases(
+        &mut self,
+        counter_example: &CounterExample<'_>,
+        is_sharing_followed: bool,
+        aliases: Option<&[Alias]>,
+    ) -> Result<TraceDump, Unsupported> {
+        let ir = self.evaluator().ir;
+        if is_sharing_followed && aliases.is_some() {
+            return unsupported("of a model with an ALIAS");
+        }
         if let Some(reason) = self.evaluator().unshared.filter(|_| is_sharing_followed) {
             return unsupported(reason);
         }
-        let value = self.counter_example_value(
-            counter_example,
-            aliases.as_deref(),
-            true,
-            is_sharing_followed,
-        )?;
+        let value =
+            self.counter_example_value(counter_example, aliases, true, is_sharing_followed)?;
         let evaluator = self.evaluator();
         let variables: Vec<Box<[u16]>> = ir
             .tlc_order
@@ -251,6 +267,7 @@ impl Writer<'_> {
 
     fn value(&mut self, value: &Value) -> Result<(), Unsupported> {
         match value {
+            Value::Null => return Err(Unsupported("a null literal in a trace dump".into())),
             Value::Bool(boolean) => self.bytes.extend([BOOLVALUE, u8::from(*boolean)]),
             Value::Int(int) => {
                 self.bytes.push(INTVALUE);
@@ -275,7 +292,7 @@ impl Writer<'_> {
                 self.bytes.push(MODELVALUE);
                 self.short(index);
             }
-            Value::Interval(low, high) => {
+            Value::Interval(low, high, _) => {
                 self.bytes.push(INTERVALVALUE);
                 self.int(*low);
                 self.int(*high);
@@ -364,6 +381,7 @@ fn gzip(payload: &[u8]) -> Vec<u8> {
 
 fn json_value(value: &Value, out: &mut String) -> Result<(), Unsupported> {
     match value {
+        Value::Null => return Err(Unsupported("a null literal in a trace dump".into())),
         Value::Bool(boolean) => out.push_str(if *boolean { "true" } else { "false" }),
         Value::Int(int) => out.push_str(&int.to_string()),
         Value::Str(text) | Value::Model(text) => json_string(&text.units, out),
@@ -402,7 +420,7 @@ fn json_value(value: &Value, out: &mut String) -> Result<(), Unsupported> {
             for position in order {
                 let key = match &function.domain[position] {
                     Value::Str(text) => text.units.to_vec(),
-                    key => format_value(key).encode_utf16().collect(),
+                    key => format_units(key),
                 };
                 let mut field = String::new();
                 json_value(&function.range[position], &mut field)?;

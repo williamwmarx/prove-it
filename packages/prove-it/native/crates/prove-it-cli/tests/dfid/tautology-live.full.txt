@@ -1,0 +1,8 @@
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 1000:1 @!@!@
+Depth-First Iterative Deepening mode does not support checking liveness properties (https://github.com/tlaplus/tlaplus/issues/548).  Please check liveness properties in Breadth-First-Search mode.
+@!@!@ENDMSG 1000 @!@!@

@@ -118,6 +118,37 @@ fn is_literal(expression: &Expr) -> bool {
     )
 }
 
+/// `SymbolNodeValueLookupProvider.getLevelBound` of an expression read in a scope, whose
+/// bindings stand for TLC's `Context`.
+pub(crate) fn get_level_bound(
+    environment: &Environment,
+    expression: &Expr,
+    scope: Option<&Rc<crate::spec::Scope>>,
+) -> u8 {
+    LevelBound {
+        environment,
+        overridden: get_overridden_bodies(environment),
+        facts: get_fact_statements(environment),
+        standard: std::cell::OnceCell::new(),
+    }
+    .get_level(expression, scope, &mut Vec::new())
+}
+
+/// `getLevelBound` of a definition's body, and of a function definition's bounds, as
+/// `processConstantDefns` asks it.
+pub(crate) fn get_definition_level_bound(
+    environment: &Environment,
+    definition: &Rc<Definition>,
+) -> u8 {
+    LevelBound {
+        environment,
+        overridden: get_overridden_bodies(environment),
+        facts: get_fact_statements(environment),
+        standard: std::cell::OnceCell::new(),
+    }
+    .get_definition_level(definition)
+}
+
 /// TLC's startup decision for the model of `environment`.
 pub fn get_startup_model(environment: &Environment) -> StartupModel {
     let bound = LevelBound {
@@ -254,7 +285,12 @@ impl LevelBound<'_> {
     // `getLevelBoundAppl`: an action or a temporal operator bounds its level without its
     // operands; an operator TLC finds by name a variable's spelling gives level 1; an operator it
     // finds defined adds its body's level; an argument that is an operator is of level 0.
-    fn get_level(&self, expression: &Expr, expanding: &mut Vec<usize>) -> u8 {
+    fn get_level(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<crate::spec::Scope>>,
+        expanding: &mut Vec<usize>,
+    ) -> u8 {
         match &expression.kind {
             ExpressionKind::Number { .. }
             | ExpressionKind::Decimal { .. }
@@ -273,7 +309,7 @@ impl LevelBound<'_> {
             | ExpressionKind::Action { .. } => 2,
             ExpressionKind::Enabled(_) => 1,
             ExpressionKind::Identifier { name, .. } => {
-                self.get_name_level(expression, name, &[], expanding)
+                self.get_name_level(expression, name, &[], scope, expanding)
             }
             ExpressionKind::Apply { operator, args, .. } => {
                 if matches!(&**operator, "~>" | "-+->") {
@@ -282,13 +318,13 @@ impl LevelBound<'_> {
                 if &**operator == "\\cdot" {
                     return 2;
                 }
-                self.get_name_level(expression, operator, args, expanding)
+                self.get_name_level(expression, operator, args, scope, expanding)
             }
             // A LET's definitions all count, used or not.
             _ => expression
                 .children()
                 .iter()
-                .map(|child| self.get_level(child, expanding))
+                .map(|child| self.get_level(child, scope, expanding))
                 .max()
                 .unwrap_or(0),
         }
@@ -299,6 +335,7 @@ impl LevelBound<'_> {
         expression: &Expr,
         written: &Name,
         args: &[Expr],
+        scope: Option<&Rc<crate::spec::Scope>>,
         expanding: &mut Vec<usize>,
     ) -> u8 {
         // SANY makes an `OpArgNode` of an argument in the place of a parameter that takes
@@ -322,7 +359,7 @@ impl LevelBound<'_> {
                 if is_operator_place || self.is_operator_argument(argument) {
                     0
                 } else {
-                    self.get_level(argument, expanding)
+                    self.get_level(argument, scope, expanding)
                 }
             })
             .max()
@@ -333,7 +370,34 @@ impl LevelBound<'_> {
             return 1;
         }
         if expression.is_locally_resolved() {
-            return arguments;
+            // `lookup` finds the name in the context: an argument's `LazyValue` adds the level of
+            // its expression, and an operator argument's definition the level of its body; a
+            // value, or a name the context doesn't hold, adds none.
+            use crate::spec::{Binding, lookup_scope};
+            let Some((node, binding)) = expression
+                .reference()
+                .and_then(|name| lookup_scope(scope, &name))
+            else {
+                return arguments;
+            };
+            let (inner, inner_scope) = match binding {
+                Binding::Thunk { expression, scope } => (expression, scope.resolve(node)),
+                Binding::Closure {
+                    params,
+                    body,
+                    scope,
+                    ..
+                } if params.len() == args.len() => (body, scope.resolve(node)),
+                _ => return arguments,
+            };
+            let key = Rc::as_ptr(inner) as usize;
+            if expanding.contains(&key) {
+                return arguments;
+            }
+            expanding.push(key);
+            let level = self.get_level(inner, inner_scope.as_ref(), expanding);
+            expanding.pop();
+            return arguments.max(level);
         }
         let Some(name) = expression.reference() else {
             return arguments;
@@ -471,7 +535,7 @@ impl LevelBound<'_> {
         };
         sets.iter()
             .chain([&definition.body])
-            .map(|expression| self.get_level(expression, expanding))
+            .map(|expression| self.get_level(expression, None, expanding))
             .max()
             .unwrap_or(0)
     }

@@ -44,6 +44,40 @@ fn not_yet(reason: &str) -> FrontError {
     ))
 }
 
+const TOO_DEEP: &str = "a recursion too deep";
+
+// Whether the evaluation stopped at a recursion too deep, which evaluating the same expression
+// again only repeats: a recursive definition whose evaluation asks itself through each of these
+// retries would double its work at each level, and never finish.
+fn is_too_deep(reason: &str) -> bool {
+    reason.starts_with(TOO_DEEP)
+}
+
+thread_local! {
+    /// Whether a membership or a bound inside a filter's predicate stopped at a recursion too
+    /// deep, as `1 \in A(1500)` with
+    /// `A(n) == IF n = 0 THEN {1} ELSE {x \in {1, 2} : 1 \in A(n - 1)}`: TLC filters the set
+    /// enumeration at once at each level, so it evaluates `A(n - 1)` twice there, and either
+    /// overflows its stack or doesn't finish, where the engine, which keeps a recursive
+    /// operator's values, would answer (`take_membership_too_deep`).
+    static MEMBERSHIP_TOO_DEEP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a membership or a bound inside a filter's predicate stopped at a recursion too deep
+/// since the last call.
+pub(crate) fn take_membership_too_deep() -> bool {
+    MEMBERSHIP_TOO_DEEP.with(|flag| flag.replace(false))
+}
+
+// Whether `reason` is a recursion too deep, noting one met inside a filter's predicate.
+fn note_too_deep(reason: &str, filtering: usize) -> bool {
+    let is_too_deep = is_too_deep(reason);
+    if is_too_deep && filtering > 0 {
+        MEMBERSHIP_TOO_DEEP.with(|flag| flag.set(true));
+    }
+    is_too_deep
+}
+
 /// The name an operator's synonyms share, as `SANY_OPERATOR_SYNONYMS` lists them first.
 fn get_canonical_name(name: &str) -> &str {
     SANY_OPERATOR_SYNONYMS
@@ -80,6 +114,9 @@ fn get_elements(value: ConfigValue) -> Result<Vec<ConfigValue>> {
     }
 }
 
+/// The most elements of a set whose subsets the evaluator draws from, one at a time.
+const MAXIMUM_DRAWN_BASE: usize = 12;
+
 /// The longest text of a value the evaluator prints, which TLC's pretty-printer, 80 columns wide,
 /// leaves on one line.
 const MAXIMUM_PLAIN_TEXT: usize = 60;
@@ -107,13 +144,99 @@ enum Infinite {
     String,
 }
 
+/// The elements an evaluator takes for the draws of RandomElement it makes, in order, to compute
+/// an expression for each element TLC may draw.
+#[derive(Default)]
+pub struct Draws {
+    /// The position in its set of the element each draw takes; 0 past these.
+    pub choices: Vec<usize>,
+    /// How many elements the set each draw it made drew from has.
+    pub sizes: Vec<usize>,
+}
+
+/// Whether a name is the builtin that draws, of the standard module that defines it: the draws
+/// an evaluator given `Draws` follows.
+pub(crate) fn is_builtin_draw(environment: &Environment, name: &str, module: &str) -> bool {
+    environment
+        .builtins
+        .get(name)
+        .is_some_and(|builtin| &*builtin.name == name && builtin.intrinsic.is_none())
+        && environment.definitions.get(name).is_none_or(|definition| {
+            definition
+                .location
+                .range
+                .as_ref()
+                .is_some_and(|range| &*range.module == module)
+        })
+}
+
+/// How many combinations of the elements its draws may take `for_every_draw` evaluates an
+/// expression for, at most.
+const DRAW_COMBINATIONS: usize = 4096;
+
+/// Whether `accepts` takes what an expression gives for each combination of the elements its
+/// draws may take, in turn, up to `DRAW_COMBINATIONS`, with the sizes of the sets it drew from:
+/// a probe evaluator in `environment`, of `evaluator`'s order and version, computes it once for
+/// each.
+pub(crate) fn for_every_draw(
+    environment: &Environment,
+    evaluator: &Evaluator,
+    expression: &Expr,
+    mut accepts: impl FnMut(Result<ConfigValue>, &[usize]) -> bool,
+) -> bool {
+    let mut choices = Vec::new();
+    for _ in 0..DRAW_COMBINATIONS {
+        let probe = Evaluator::new(
+            environment,
+            ValueOrder {
+                ranks: evaluator.order.ranks,
+            },
+            evaluator.version,
+            false,
+        );
+        *probe.draws.borrow_mut() = Some(Draws {
+            choices: choices.clone(),
+            sizes: Vec::new(),
+        });
+        let value = probe.evaluate(expression, None);
+        let sizes = probe
+            .draws
+            .take()
+            .map(|draws| draws.sizes)
+            .unwrap_or_default();
+        if !accepts(value, &sizes) {
+            return false;
+        }
+        choices.resize(sizes.len(), 0);
+        let Some(last) = (0..sizes.len())
+            .rev()
+            .find(|&at| choices[at] + 1 < sizes[at])
+        else {
+            return true;
+        };
+        choices.truncate(last + 1);
+        choices[last] += 1;
+    }
+    false
+}
+
 pub struct Evaluator<'a> {
     pub environment: &'a Environment,
     pub order: ValueOrder<'a>,
     pub version: TlcVersion,
     /// Whether TLC has created its model checker, before which TLCGet reads none of its keys.
     pub is_started: bool,
+    /// Whether it computes TLCSet as TLC does as it processes the spec, before it has made its
+    /// checker or simulator (`TLCGetSet.TLCSet`), where it otherwise leaves TLCSet uncomputed.
+    pub computes_tlc_set: bool,
+    /// How many TLCSets it computed, where it computes them.
+    pub tlc_sets: Cell<usize>,
+    /// Where it computes RandomElement, the element of the set it draws each from, by the
+    /// position of the draw (`Draws`); otherwise it leaves RandomElement uncomputed.
+    pub draws: RefCell<Option<Draws>>,
     depth: Cell<usize>,
+    /// How many filters' predicates it is evaluating, one inside another.
+    filtering: Cell<usize>,
     /// Whether a value it couldn't compute was left to the engine's startup.
     is_deferring: Cell<bool>,
     /// The constant conjuncts of the specification, by name, whose values it left to the
@@ -123,6 +246,26 @@ pub struct Evaluator<'a> {
     /// computes an operator's argument where the body first uses it, and keeps the value
     /// (`LazyValue`).
     thunks: RefCell<HashMap<usize, (Rc<Scope>, ConfigValue)>>,
+    /// The value of each definition without parameters it computed without effect, by the
+    /// definition, which it keeps alive, with how much deeper than the definition the computation
+    /// nested and whether it computed TLCSet: TLC computes a constant definition once as it starts
+    /// (`processConstantDefns`), so a chain of definitions that each name the one before twice
+    /// takes a step a definition, not one for each path to it.
+    definitions: RefCell<HashMap<usize, KeptDefinition>>,
+    /// The value of each application of a definition with parameters it computed without effect,
+    /// by the definition and the values of its arguments, which it knew without computing anything:
+    /// as `definitions`, for a chain of operators that each apply the one before twice.
+    applications: RefCell<HashMap<(usize, String), KeptDefinition>>,
+    /// The deepest it nested since the definition it is computing began.
+    deepest: Cell<usize>,
+}
+
+/// A definition's value as `Evaluator::definitions` keeps it.
+struct KeptDefinition {
+    _definition: Rc<Definition>,
+    value: ConfigValue,
+    span: usize,
+    computes_tlc_set: bool,
 }
 
 impl<'a> Evaluator<'a> {
@@ -137,10 +280,17 @@ impl<'a> Evaluator<'a> {
             order,
             version,
             is_started,
+            computes_tlc_set: false,
+            tlc_sets: Cell::new(0),
+            draws: RefCell::new(None),
             depth: Cell::new(0),
+            filtering: Cell::new(0),
             is_deferring: Cell::new(false),
             deferred_conjuncts: RefCell::new(Vec::new()),
             thunks: RefCell::new(HashMap::new()),
+            definitions: RefCell::new(HashMap::new()),
+            applications: RefCell::new(HashMap::new()),
+            deepest: Cell::new(0),
         }
     }
 
@@ -192,6 +342,38 @@ impl Evaluator<'_> {
     /// `=` of two operands, `Value#equals` of the left one's value: an integer, a string or a
     /// boolean fails for a value of another kind but a model value, with both values' texts.
     fn equals_operands(&self, args: &[Expr], scope: Option<&Rc<Scope>>) -> Result<bool> {
+        // Where it computes the draws, two tuples written out of integers, strings or booleans,
+        // which TLC builds in turn, element by element, and compares element by element
+        // (`TupleValue.equals`), a pair of different lengths being unequal.
+        if self.draws.borrow().is_some()
+            && let (ExpressionKind::Tuple(left), ExpressionKind::Tuple(right)) =
+                (&args[0].kind, &args[1].kind)
+        {
+            let left = left
+                .iter()
+                .map(|element| self.evaluate(element, scope))
+                .collect::<Result<Vec<_>>>()?;
+            let right = right
+                .iter()
+                .map(|element| self.evaluate(element, scope))
+                .collect::<Result<Vec<_>>>()?;
+            if left.len() != right.len() {
+                return Ok(false);
+            }
+            for (left, right) in left.iter().zip(&right) {
+                match (left, right) {
+                    (ConfigValue::Number(_), ConfigValue::Number(_))
+                    | (ConfigValue::String(_), ConfigValue::String(_))
+                    | (ConfigValue::Boolean(_), ConfigValue::Boolean(_)) => {
+                        if left != right {
+                            return Ok(false);
+                        }
+                    }
+                    _ => return Err(not_yet("a tuple's elements TLC may not compare")),
+                }
+            }
+            return Ok(true);
+        }
         let left = self.evaluate(&args[0], scope)?;
         let right = self.evaluate(&args[1], scope)?;
         let failure = match (&left, &right) {
@@ -224,6 +406,34 @@ impl Evaluator<'_> {
         )))
     }
 
+    /// The element of `elements` the next draw takes (`Draws`), counting how many it drew from.
+    fn take_draw(&self, elements: Vec<ConfigValue>) -> Result<ConfigValue> {
+        let mut draws = self.draws.borrow_mut();
+        let draws = draws.as_mut().expect("draws");
+        let choice = draws.choices.get(draws.sizes.len()).copied().unwrap_or(0);
+        draws.sizes.push(elements.len());
+        elements
+            .get(choice)
+            .cloned()
+            .ok_or_else(|| not_yet("RandomElement of a set without the element drawn"))
+    }
+
+    /// The subsets of a set's elements, or those of `size` elements.
+    fn get_subsets(&self, base: &[ConfigValue], size: Option<usize>) -> Result<Vec<ConfigValue>> {
+        let mut subsets = Vec::new();
+        for mask in 0..(1usize << base.len()) {
+            if size.is_some_and(|size| mask.count_ones() as usize != size) {
+                continue;
+            }
+            let elements = (0..base.len())
+                .filter(|at| mask & (1 << at) != 0)
+                .map(|at| base[at].clone())
+                .collect();
+            subsets.push(self.create_set(elements)?);
+        }
+        Ok(subsets)
+    }
+
     fn create_set(&self, elements: Vec<ConfigValue>) -> Result<ConfigValue> {
         self.order.normalize(&ConfigValue::Set(elements))
     }
@@ -232,18 +442,9 @@ impl Evaluator<'_> {
     /// sorts them.
     fn get_sorted_fields<'b>(&self, fields: &'b [RecordField]) -> Result<Vec<&'b RecordField>> {
         let mut sorted: Vec<&RecordField> = fields.iter().collect();
-        let mut failure = None;
-        sorted.sort_by(|left, right| {
-            self.order
-                .compare_strings(&left.name, &right.name)
-                .unwrap_or_else(|error| {
-                    failure.get_or_insert(error);
-                    Ordering::Equal
-                })
-        });
-        if let Some(error) = failure {
-            return Err(error);
-        }
+        crate::values::try_sort_by(&mut sorted, &mut |left, right| {
+            self.order.compare_strings(&left.name, &right.name)
+        })?;
         if sorted.windows(2).any(|pair| pair[0].name == pair[1].name) {
             return Err(not_yet("a record with a repeated field"));
         }
@@ -337,7 +538,7 @@ impl Evaluator<'_> {
         if let Some(definition) = get_definition(name, environment) {
             return match &definition.kind {
                 DefinitionKind::Operator { params, .. } if params.is_empty() => {
-                    self.evaluate(&definition.body, None)
+                    self.evaluate_definition(definition)
                 }
                 _ => Err(not_yet("an operator or a function definition as a value")),
             };
@@ -350,6 +551,122 @@ impl Evaluator<'_> {
                 ConfigValue::Boolean(true),
             ]),
             _ => Err(not_yet("a builtin's value")),
+        }
+    }
+
+    /// The value of a definition without parameters, computed once where its computation has no
+    /// effect the evaluator counts or notes: a value it computed (never a failure), without
+    /// TLCSet, and without meeting a recursion too deep in a filter. Computing it again would
+    /// nest as deep below the use as it did, which counts that depth as reached, so a use gets
+    /// the kept value only where that stays short of `MAXIMUM_DEPTH`, as it did where it was
+    /// computed, and computes it again elsewhere, as without it.
+    fn evaluate_definition(&self, definition: &Rc<Definition>) -> Result<ConfigValue> {
+        let key = Rc::as_ptr(definition) as usize;
+        self.evaluate_kept(&self.definitions, key, definition, || {
+            self.evaluate(&definition.body, None)
+        })
+    }
+
+    /// `evaluate_definition`'s keeping, of the values `kept` holds by `key`, which `compute`
+    /// computes.
+    fn evaluate_kept<K: std::hash::Hash + Eq>(
+        &self,
+        kept: &RefCell<HashMap<K, KeptDefinition>>,
+        key: K,
+        definition: &Rc<Definition>,
+        compute: impl FnOnce() -> Result<ConfigValue>,
+    ) -> Result<ConfigValue> {
+        let depth = self.depth.get();
+        let is_short = |span: usize| depth + span + 1 < MAXIMUM_DEPTH;
+        if let Some(kept) = kept.borrow().get(&key)
+            && kept.computes_tlc_set == self.computes_tlc_set
+            && is_short(kept.span)
+        {
+            self.deepest.set(self.deepest.get().max(depth + kept.span));
+            return Ok(kept.value.clone());
+        }
+        let tlc_sets = self.tlc_sets.get();
+        let was_too_deep = MEMBERSHIP_TOO_DEEP.with(Cell::get);
+        let deepest = self.deepest.replace(depth);
+        let value = compute();
+        let span = self.deepest.get() - depth;
+        self.deepest.set(deepest.max(self.deepest.get()));
+        if let Ok(value) = &value
+            && is_short(span)
+            && self.tlc_sets.get() == tlc_sets
+            && !was_too_deep
+            && !MEMBERSHIP_TOO_DEEP.with(Cell::get)
+        {
+            kept.borrow_mut().insert(
+                key,
+                KeptDefinition {
+                    _definition: definition.clone(),
+                    value: value.clone(),
+                    span,
+                    computes_tlc_set: self.computes_tlc_set,
+                },
+            );
+        }
+        value
+    }
+
+    /// An operator's body, with each parameter bound to its argument, which it computes where the
+    /// body first uses it (`LazyValue`).
+    fn apply_closure(
+        &self,
+        params: &[OperatorParam],
+        body: &Expr,
+        closure_scope: Option<Rc<Scope>>,
+        args: &[Expr],
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<ConfigValue> {
+        let mut bound = closure_scope;
+        for (param, argument) in params.iter().zip(args) {
+            if param.arity > 0 {
+                return Err(not_yet("an operator argument"));
+            }
+            bound = Some(Rc::new(Scope {
+                name: param.name.clone(),
+                binding: Binding::Thunk {
+                    expression: argument.clone(),
+                    scope: ScopeOf::Other(scope.cloned()),
+                },
+                parent: bound,
+            }));
+        }
+        self.evaluate(body, bound.as_ref())
+    }
+
+    /// The value of an argument known without computing anything: a literal, or a name bound to
+    /// a value, to a thunk computed already or to a thunk of an argument so known.
+    fn get_known_argument(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        steps: usize,
+    ) -> Option<ConfigValue> {
+        match &expression.kind {
+            ExpressionKind::Number { value, .. } if value.fract() == 0.0 => {
+                to_integer(*value as i64).ok()
+            }
+            ExpressionKind::String { value } => Some(ConfigValue::String(value.to_string())),
+            ExpressionKind::Identifier { .. } if expression.is_locally_resolved() && steps > 0 => {
+                let name = expression.reference()?;
+                match lookup_scope(scope, &name)? {
+                    (_, Binding::Value(value) | Binding::Literal { value, .. }) => {
+                        Some(value.clone())
+                    }
+                    (node, Binding::Thunk { expression, scope }) => {
+                        let key = Rc::as_ptr(node) as usize;
+                        if let Some((_, value)) = self.thunks.borrow().get(&key) {
+                            return Some(value.clone());
+                        }
+                        self.get_known_argument(expression, scope.resolve(node).as_ref(), steps - 1)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -377,10 +694,33 @@ impl Evaluator<'_> {
 
     /// The builtin a name stands for, which the configuration may replace with another.
     fn get_builtin_name<'b>(&'b self, name: &'b str) -> &'b str {
-        self.environment
+        if self.environment.operator_objects.is_admitted
+            && let Some(method) = self.environment.operator_objects.method_aliases.get(name)
+        {
+            return &method.builtin.name;
+        }
+        let target = self
+            .environment
             .substitutions
             .get(name)
-            .map_or(name, |target| &**target)
+            .map_or(name, |target| &**target);
+        self.environment
+            .builtins
+            .get(target)
+            .map_or(target, |builtin| {
+                if builtin.intrinsic == Some(crate::environment::Intrinsic::StandardMethod) {
+                    return &builtin.name;
+                }
+                if builtin.intrinsic == Some(crate::environment::Intrinsic::DefnsBuiltin)
+                    && builtin.flags
+                        & (tla_ir::Builtin::EXTERNAL_CLASS | tla_ir::Builtin::DECLINED) as u32
+                        == 0
+                {
+                    &builtin.name
+                } else {
+                    target
+                }
+            })
     }
 
     /// `S.member(e)` of `e \in S`, which an integer, a string or a boolean S fails with both
@@ -392,7 +732,12 @@ impl Evaluator<'_> {
         scope: Option<&Rc<Scope>>,
     ) -> Result<bool> {
         let reason = match self.is_member(element, set, scope) {
-            Err(FrontError::NotYet(reason)) if self.get_infinite(set).is_none() => reason,
+            Err(FrontError::NotYet(reason))
+                if self.get_infinite(set).is_none()
+                    && !note_too_deep(&reason, self.filtering.get()) =>
+            {
+                reason
+            }
             is_member => return is_member,
         };
         let value = self.evaluate(set, scope)?;
@@ -441,6 +786,44 @@ impl Evaluator<'_> {
     /// Each binding of the bounds to their sets' elements, the last bound outermost, as
     /// `forEachBoundElement` visits them, and as `Tool.contexts` enumerates them for a quantifier
     /// or a set of the form {e : x \in S}.
+    /// `Tool.contexts` as `Liveness.astToLive` unrolls a temporal formula's quantifier over a
+    /// constant set: a bound TLC knows only by name, such as Nat, isn't enumerable.
+    pub fn get_temporal_bindings(
+        &self,
+        bounds: &[Bound],
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<Vec<Option<Rc<Scope>>>> {
+        if self.version == TlcVersion::Master
+            && let Some(first) = bounds
+                .iter()
+                .position(|bound| self.get_infinite(&bound.set).is_some())
+        {
+            // `contexts` evaluates and tests each bound in turn.
+            self.bind(&bounds[..first], scope, true)?;
+            if let Some(bound) = bounds.get(first)
+                && let Some(infinite) = self.get_infinite(&bound.set)
+            {
+                let range = describe_range(&bound.set);
+                return Err(FrontError::Evaluation(match infinite {
+                    Infinite::String => format!(
+                        "TLC encountered a non-enumerable quantifier bound\nSTRING.\n{range}"
+                    ),
+                    Infinite::Nat | Infinite::Int => {
+                        let text = if matches!(infinite, Infinite::Nat) {
+                            "Nat"
+                        } else {
+                            "Int"
+                        };
+                        format!(
+                            "TLC encountered the non-enumerable quantifier bound\n{text}\n{range}\nThe set {text} contains infinitely many elements. As a result, TLC cannot evaluate expressions that\nuniversally (\\A) or existentially (\\E) quantify over {text}, because this would require checking an\ninfinite number of cases. Note that TLC handles set membership like T \\subseteq {text} for any finite set T."
+                        )
+                    }
+                }));
+            }
+        }
+        self.get_bindings(bounds, scope)
+    }
+
     pub fn get_bindings(
         &self,
         bounds: &[Bound],
@@ -458,15 +841,16 @@ impl Evaluator<'_> {
         let mut names = Vec::new();
         let mut sets = Vec::new();
         for bound in bounds {
-            let BoundPattern::Name { name, .. } = &bound.pattern else {
-                return Err(not_yet("a tuple of bound names"));
-            };
-            names.push(name.clone());
+            names.push(match &bound.pattern {
+                BoundPattern::Name { name, .. } => Some(name.clone()),
+                _ if is_contexts => None,
+                _ => return Err(not_yet("a tuple of bound names")),
+            });
             sets.push(match self.get_set_elements(&bound.set, scope) {
                 // `Tool.contexts` fails on a bound that isn't a set with the value's text and the
                 // bound's, a numeral's as it is written.
                 Err(FrontError::NotYet(reason))
-                    if is_contexts && self.version == TlcVersion::Master =>
+                    if is_contexts && self.version == TlcVersion::Master && !note_too_deep(&reason, self.filtering.get()) =>
                 {
                     let value = self.evaluate(&bound.set, scope)?;
                     let text = match &bound.set.kind {
@@ -489,6 +873,13 @@ impl Evaluator<'_> {
                 elements => elements?,
             });
         }
+        if sets.iter().any(Vec::is_empty) {
+            return Ok(Vec::new());
+        }
+        let names = names
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| not_yet("a tuple of bound names"))?;
         let mut bindings = Vec::new();
         fn visit(
             index: usize,
@@ -530,6 +921,38 @@ impl Evaluator<'_> {
         };
         let arity = args.len();
         Ok(match (get_canonical_name(name), arity) {
+            // `TLCGetSet.TLCSet` with neither a checker nor a simulator: a number fails to set
+            // the simulator's registers (a NullPointerException), "exit", "pause" and a named
+            // register leave nothing to stop, prompt or set, a system property is set, and any
+            // other key is TLC_MODULE_ARGUMENT_ERROR. Java computes both arguments first.
+            ("TLCSet", 2) if self.computes_tlc_set => {
+                let (key, _) = (value(0)?, value(1)?);
+                self.tlc_sets.set(self.tlc_sets.get() + 1);
+                return match key {
+                    ConfigValue::String(key)
+                        if key == "exit" || key == "pause" || key.starts_with("s:") =>
+                    {
+                        Ok(ConfigValue::Boolean(true))
+                    }
+                    ConfigValue::String(key) if key.starts_with("-D") => {
+                        Err(not_yet("TLCSet of a system property"))
+                    }
+                    _ => Err(FrontError::Evaluation(
+                        "TLCSet as TLC starts, which fails there".to_owned(),
+                    )),
+                };
+            }
+            // `TLC.Assert`, whose arguments Java computes first, as TLC computes it as it starts:
+            // TRUE, or a failure.
+            ("Assert", 2) if self.computes_tlc_set => {
+                let (condition, _) = (value(0)?, value(1)?);
+                return match condition {
+                    ConfigValue::Boolean(true) => Ok(ConfigValue::Boolean(true)),
+                    _ => Err(FrontError::Evaluation(
+                        "Assert as TLC starts, which fails there".to_owned(),
+                    )),
+                };
+            }
             // TLCGetSet.TLCGetEval fails on the keys and registers TLC's model checker holds
             // before it exists, and reads the level of TLCState.Empty, the initial level.
             ("TLCGet", 1) if !self.is_started && self.version == TlcVersion::Master => {
@@ -704,9 +1127,10 @@ impl Evaluator<'_> {
         // A definition that recurses without end overflows TLC's stack, which TLC words in ways
         // the front end doesn't follow.
         if self.depth.get() >= MAXIMUM_DEPTH {
-            return Err(not_yet("a recursion too deep"));
+            return Err(not_yet(TOO_DEEP));
         }
         self.depth.set(self.depth.get() + 1);
+        self.deepest.set(self.deepest.get().max(self.depth.get()));
         let value = self.evaluate_expression(expression, scope);
         self.depth.set(self.depth.get() - 1);
         value
@@ -752,6 +1176,59 @@ impl Evaluator<'_> {
                 }
                 self.evaluate_global(&name)
             }
+            ExpressionKind::Apply { args, .. }
+                if self.draws.borrow().is_some()
+                    && args.len() == 1
+                    && !expression.is_locally_resolved()
+                    && expression.reference().as_deref() == Some("RandomElement")
+                    && is_builtin_draw(self.environment, "RandomElement", "TLC") =>
+            {
+                // `TLC.RandomElement` of a finite set: the element the draw takes. Of `SUBSET S`,
+                // `SubsetValue.randomElement` draws one of S's subsets, each of which the draws
+                // take in turn.
+                let elements = match &args[0].kind {
+                    ExpressionKind::Apply {
+                        operator,
+                        args: bases,
+                        ..
+                    } if &**operator == "SUBSET"
+                        && bases.len() == 1
+                        && !args[0].is_locally_resolved() =>
+                    {
+                        let base = get_elements(self.evaluate(&bases[0], scope)?)?;
+                        if base.len() > MAXIMUM_DRAWN_BASE {
+                            return Err(not_yet("a power set too large to draw from"));
+                        }
+                        self.get_subsets(&base, None)?
+                    }
+                    _ => get_elements(self.evaluate(&args[0], scope)?)?,
+                };
+                self.take_draw(elements)
+            }
+            // `Randomization.RandomSubset(k, S)` of a natural k at most the size of a finite set S
+            // (`EnumerableValue.getRandomSubset`): one of S's subsets of k elements, each of which
+            // the draws take in turn.
+            ExpressionKind::Apply { args, .. }
+                if self.draws.borrow().is_some()
+                    && args.len() == 2
+                    && !expression.is_locally_resolved()
+                    && expression.reference().as_deref() == Some("RandomSubset")
+                    && is_builtin_draw(self.environment, "RandomSubset", "Randomization") =>
+            {
+                let ConfigValue::Number(count) = self.evaluate(&args[0], scope)? else {
+                    return Err(not_yet("RandomSubset of a count that isn't a number"));
+                };
+                let base = get_elements(self.evaluate(&args[1], scope)?)?;
+                if count.fract() != 0.0
+                    || count < 0.0
+                    || count > base.len() as f64
+                    || base.len() > MAXIMUM_DRAWN_BASE
+                {
+                    return Err(not_yet("RandomSubset the evaluator doesn't draw"));
+                }
+                let elements = self.get_subsets(&base, Some(count as usize))?;
+                self.take_draw(elements)
+            }
             ExpressionKind::Apply { args, .. } => {
                 let name = expression.reference().unwrap_or_default();
                 let closure = if expression.is_locally_resolved() {
@@ -786,21 +1263,25 @@ impl Evaluator<'_> {
                 let Some((params, body, closure_scope)) = closure else {
                     return self.apply_operator(self.get_builtin_name(&name), args, scope);
                 };
-                let mut bound = closure_scope;
-                for (param, argument) in params.iter().zip(args) {
-                    if param.arity > 0 {
-                        return Err(not_yet("an operator argument"));
-                    }
-                    bound = Some(Rc::new(Scope {
-                        name: param.name.clone(),
-                        binding: Binding::Thunk {
-                            expression: argument.clone(),
-                            scope: ScopeOf::Other(scope.cloned()),
-                        },
-                        parent: bound,
-                    }));
+                // A definition applied to arguments whose values are known, again: its value
+                // is the same, where computing it had no effect (`evaluate_kept`). The draws a
+                // computation makes are its effects.
+                if !expression.is_locally_resolved()
+                    && self.draws.borrow().is_none()
+                    && params.len() == args.len()
+                    && params.iter().all(|param| param.arity == 0)
+                    && let Some(definition) = get_definition(&name, self.environment)
+                    && let Some(values) = args
+                        .iter()
+                        .map(|argument| self.get_known_argument(argument, scope, 64))
+                        .collect::<Option<Vec<_>>>()
+                {
+                    let key = (Rc::as_ptr(definition) as usize, format!("{values:?}"));
+                    return self.evaluate_kept(&self.applications, key, definition, || {
+                        self.apply_closure(&params, &body, closure_scope, args, scope)
+                    });
                 }
-                self.evaluate(&body, bound.as_ref())
+                self.apply_closure(&params, &body, closure_scope, args, scope)
             }
             ExpressionKind::Junction {
                 is_and, operands, ..
@@ -906,7 +1387,10 @@ impl Evaluator<'_> {
                 let mut kept = Vec::new();
                 // TLC keeps {x \in S : P} lazy where S isn't a set.
                 for binding in self.bind(std::slice::from_ref(bound), scope, false)? {
-                    if self.is_true(predicate, binding.as_ref())? {
+                    self.filtering.set(self.filtering.get() + 1);
+                    let is_kept = self.is_true(predicate, binding.as_ref());
+                    self.filtering.set(self.filtering.get() - 1);
+                    if is_kept? {
                         let Some(node) = &binding else {
                             continue;
                         };
@@ -929,6 +1413,29 @@ impl Evaluator<'_> {
                 self.create_set(elements)
             }
             ExpressionKind::Label { body, .. } => self.evaluate(body, scope),
+            // `Tool#evalAppl` fails on a temporal operator before it evaluates its operands.
+            ExpressionKind::Always(_)
+            | ExpressionKind::Eventually(_)
+            | ExpressionKind::Fairness { .. } => {
+                let operator = match &expression.kind {
+                    ExpressionKind::Always(_) => "[]A",
+                    ExpressionKind::Eventually(_) => "<>A",
+                    ExpressionKind::Fairness {
+                        is_strong: false, ..
+                    } => "WF",
+                    _ => "SF",
+                };
+                Err(FrontError::Evaluation(format!(
+                    "TLC encountered a temporal formula ({operator}) when evaluating a predicate or action.\n{}",
+                    describe_range(expression)
+                )))
+            }
+            // `Tool`'s OPCODE_fa computes the function first, whose failure is the application's.
+            // The evaluator holds no functions.
+            ExpressionKind::FunctionApplication { function, .. } => {
+                self.evaluate(function, scope)?;
+                Err(not_yet("a function's application"))
+            }
             _ => Err(not_yet("an expression")),
         }
     }

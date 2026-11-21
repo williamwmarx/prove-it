@@ -1,0 +1,7 @@
+exit 10
+Semantic processing of module J
+Semantic processing of module M
+Linting of module J
+Linting of module M
+Loading Any operator override from file:{directory}/J.class with signature: <Java Method: public static tlc2.value.impl.Value J.Any()>.
+Error: Assumption line 3, col 8 to line 3, col 13 of module M is false.

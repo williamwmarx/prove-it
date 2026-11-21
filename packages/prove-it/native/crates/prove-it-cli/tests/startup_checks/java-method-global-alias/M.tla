@@ -1,0 +1,5 @@
+---- MODULE M ----
+EXTENDS J
+CONSTANT H
+ASSUME H=42
+====

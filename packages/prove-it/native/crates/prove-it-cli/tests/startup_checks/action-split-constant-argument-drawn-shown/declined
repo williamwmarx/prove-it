@@ -1,0 +1,1 @@
+a substituted constant applied as the next-state action to an argument that prints or draws, which TLC evaluates once as it splits the action

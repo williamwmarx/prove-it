@@ -6,7 +6,9 @@
 //! it, `args`, options of TLC's command line to add, one a line, if any, and either `tlc.out`,
 //! TLC's exit code and output with `-fp 0 -noGenerateSpecTE` but the lines that depend on the time
 //! or the machine, with the directory's path as `{directory}`, or `declined`, the reason the
-//! binary gives for a spec it leaves to TLC. Each runs on one thread and on four.
+//! binary gives for a spec it leaves to TLC, with TLC's output beside it as `jar.out` where it
+//! was recorded. A `declined-4` holds a four-worker-only decline.
+//! Each runs on one thread and on four.
 
 use std::path::Path;
 use std::process::Command;
@@ -30,6 +32,18 @@ fn get_untimed_lines(text: &str, directory: &str) -> String {
         .filter(|line| !VARYING.iter().any(|varying| line.starts_with(varying)))
         .map(|line| format!("{}\n", line.replace(directory, "{directory}")))
         .collect()
+}
+
+fn copy_fixture_entry(source: &Path, destination: &Path) {
+    if source.is_dir() {
+        std::fs::create_dir_all(destination).expect("an auxiliary directory");
+        for entry in std::fs::read_dir(source).expect("auxiliary files") {
+            let entry = entry.expect("an auxiliary entry");
+            copy_fixture_entry(&entry.path(), &destination.join(entry.file_name()));
+        }
+    } else {
+        std::fs::copy(source, destination).expect("a copy");
+    }
 }
 
 #[test]
@@ -56,13 +70,24 @@ fn checks_models_at_startup_as_tlc() {
             if file.extension().is_some_and(|extension| extension == "cfg") {
                 spec = file.file_stem().map(|stem| stem.to_owned());
             }
-            if !["tlc.out", "declined", "args"].contains(&file.to_str().unwrap_or_default()) {
-                std::fs::copy(source.join(&file), directory.join(&file)).expect("a copy");
+            // TLC's output is kept only under the two names the module's doc gives.
+            assert!(
+                file.extension().is_none_or(|extension| extension != "out")
+                    || ["tlc.out", "jar.out"].contains(&file.to_str().unwrap_or_default()),
+                "{}: {} names no output the harness reads or leaves out",
+                name.to_string_lossy(),
+                file.display()
+            );
+            if !["tlc.out", "jar.out", "declined", "declined-4", "args"]
+                .contains(&file.to_str().unwrap_or_default())
+            {
+                copy_fixture_entry(&source.join(&file), &directory.join(&file));
             }
         }
         let spec = spec.expect("a configuration");
         let expected = std::fs::read_to_string(source.join("tlc.out")).ok();
         let declined = std::fs::read_to_string(source.join("declined")).ok();
+        let declined_four = std::fs::read_to_string(source.join("declined-4")).ok();
         let options = std::fs::read_to_string(source.join("args")).unwrap_or_default();
         for workers in ["1", "4"] {
             let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
@@ -79,20 +104,32 @@ fn checks_models_at_startup_as_tlc() {
                 get_untimed_lines(&String::from_utf8_lossy(&output.stdout), path)
             );
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let is_same = match (&expected, &declined) {
+            let expected = if workers == "4" && declined_four.is_some() {
+                None
+            } else {
+                expected.as_ref()
+            };
+            let declined = if workers == "4" {
+                declined_four.as_ref().or(declined.as_ref())
+            } else {
+                declined.as_ref()
+            };
+            let is_same = match (expected, declined) {
                 (Some(expected), None) => actual == *expected,
                 (None, Some(reason)) => {
                     stderr == format!("prove-it: not native yet: {reason}")
                         && output.status.code() == Some(1)
+                        && output.stdout.is_empty()
                 }
                 _ => panic!("{name:?} holds neither tlc.out nor declined"),
             };
             if !is_same {
+                let raw_stdout_bytes = output.stdout.len();
                 differences.push(format!(
-                    "{name:?} at {workers} workers:\n{actual}{stderr}\nexpected:\n{}",
+                    "{name:?} at {workers} workers ({raw_stdout_bytes} raw stdout bytes):\n{actual}{stderr}\nexpected:\n{}",
                     expected
-                        .as_deref()
-                        .or(declined.as_deref())
+                        .map(String::as_str)
+                        .or(declined.map(String::as_str))
                         .unwrap_or_default()
                 ));
             }

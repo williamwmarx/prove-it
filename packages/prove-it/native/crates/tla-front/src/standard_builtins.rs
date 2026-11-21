@@ -54,6 +54,11 @@ pub const STANDARD_DEPENDENCIES: &[(&str, &[&str])] = &[
 
 pub const USER_STANDARD_MODULES: &[&str] = &["Bags", "Json", "Randomization", "TLCExt"];
 
+/// The standard modules whose Java class TLC binds to the definitions of a file of the user's
+/// that replaces the module, by operator name (`SpecProcessor.processModuleOverrides`).
+pub const REPLACEABLE_TLC_MODULES: &[&str] =
+    &["Naturals", "Integers", "Sequences", "FiniteSets", "TLC"];
+
 pub const MASTER: &[StandardModule] = &[
     StandardModule {
         name: "Bags",
@@ -94,6 +99,9 @@ pub const MASTER: &[StandardModule] = &[
             StandardOperator { name: "\\div", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "%", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "..", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: ">=", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "-.", arity: 1, flags: 0, params: Some(&[0]), range: Some([22, 1, 22, 13]) },
         ],
@@ -123,9 +131,9 @@ pub const MASTER: &[StandardModule] = &[
             StandardOperator { name: "\\div", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
             StandardOperator { name: "%", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
             StandardOperator { name: "..", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
-            StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
-            StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
-            StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },
+            StandardOperator { name: "<", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
+            StandardOperator { name: ">", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
+            StandardOperator { name: "<=", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },
             StandardOperator { name: ">=", arity: 2, flags: 16, params: Some(&[0, 0]), range: Some([23, 1, 23, 19]) },
         ],
     },
@@ -244,6 +252,9 @@ pub const TLC_174: &[StandardModule] = &[
             StandardOperator { name: "\\div", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "%", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "..", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
+            StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: ">=", arity: 2, flags: 0, params: Some(&[0, 0]), range: None },
             StandardOperator { name: "-.", arity: 1, flags: 0, params: Some(&[0]), range: Some([22, 1, 22, 13]) },
         ],
@@ -273,9 +284,9 @@ pub const TLC_174: &[StandardModule] = &[
             StandardOperator { name: "\\div", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
             StandardOperator { name: "%", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
             StandardOperator { name: "..", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
-            StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
-            StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
-            StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },
+            StandardOperator { name: "<", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
+            StandardOperator { name: ">", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
+            StandardOperator { name: "<=", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },
             StandardOperator { name: ">=", arity: 2, flags: 16, params: Some(&[0, 0]), range: Some([23, 1, 23, 19]) },
         ],
     },

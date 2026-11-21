@@ -33,7 +33,7 @@ const IDENTITY: u32 = 0;
 
 /// A multiplicative hash of the integer keys of the remembered steps.
 #[derive(Default)]
-struct IntegerHasher(u64);
+pub(crate) struct IntegerHasher(u64);
 
 impl Hasher for IntegerHasher {
     fn finish(&self) -> u64 {
@@ -44,6 +44,14 @@ impl Hasher for IntegerHasher {
         for &byte in bytes {
             self.write_u64(u64::from(byte));
         }
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
     }
 
     fn write_u64(&mut self, value: u64) {
@@ -205,6 +213,10 @@ pub fn name_group(store: &Store, group: &[HashMap<Id, Id>]) -> NamedGroup {
         .collect()
 }
 
+/// Why the group can't be built of a function that maps a value that isn't a model value, or to
+/// one.
+pub const NOT_MODEL_VALUES: &str = "a symmetry function of values that aren't model values";
+
 /// The permutations a SYMMETRY definition's value lists (`Tool.getSymmetryPerms`), each as the
 /// model values it moves, each to its image. A value that isn't a set of functions of model values,
 /// which TLC reports, is the interpreter's to report.
@@ -223,9 +235,7 @@ pub fn get_permutations(store: &mut Store, value: Id) -> Outcome<Group> {
                 let key = store.get_key(function, position);
                 let image = store.get_range_value(function, position);
                 if !store.is_model_id(key) || !store.is_model_id(image) {
-                    return Err(Bail(
-                        "a symmetry function of values that aren't model values",
-                    ));
+                    return Err(Bail(NOT_MODEL_VALUES));
                 }
                 if key != image {
                     permutation.insert(key, image);

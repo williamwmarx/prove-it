@@ -139,12 +139,13 @@ const CASES: &[Case] = &[
         passing: Outcome::Checked(151, None),
         failing: Outcome::Checked(151, None),
     },
-    // The binary declines the option, which TLC writes the spec into.
+    // A directory that isn't there, which a passing check never writes into. The failing
+    // check's Assert fails evaluating Next, a run the binary declines with the directory missing.
     Case {
         name: "spec-directory",
         directory: ".",
         args: &["-teSpecOutDir", "out", "specs/M"],
-        passing: Outcome::Declined,
+        passing: Outcome::Checked(0, None),
         failing: Outcome::Declined,
     },
     // TLC writes specs/M_TTrace_<epoch>.tla, as Java's Path drops the empty name; the binary

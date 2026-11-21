@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -11,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { getSteadyLines } from "../../scripts/normalize-output";
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
@@ -45,6 +48,7 @@ interface ResolverCase {
   printed?: string[];
   // Or why the native check declines it.
   declined?: string;
+  transcript?: string;
 }
 
 const CASES: ResolverCase[] = [
@@ -212,8 +216,7 @@ const CASES: ResolverCase[] = [
     args: ["tlc2.TLC", "-config", "d", "Spec"],
     declined: "a configuration file the front end rejects",
   },
-  // TLC drops a -config's .cfg and reads X.tla's CONFIG section, which the native check doesn't, or names
-  // the file it doesn't find.
+  // TLC drops a -config's .cfg and reads X.tla's CONFIG section, or names the file it doesn't find.
   {
     name: "missing-module-configuration",
     files: { "Spec.tla": SPEC, "M.tla": MODULE },
@@ -233,8 +236,13 @@ const CASES: ResolverCase[] = [
     name: "module-configuration",
     files: { "Spec.tla": SPEC, "M.tla": MODULE, "Spec.tla.cfg": CONFIG },
     args: ["tlc2.TLC", "-config", "Spec.tla.cfg", "Spec"],
-    declined:
-      "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
+    printed: [
+      "Parsing file {root}/Spec.tla",
+      "Parsing file {root}/M.tla",
+      "Error: The configuration file did not specify the initial state predicate.",
+      "exit 151",
+    ],
+    transcript: "module-configuration.out",
   },
   // TLC reads the configuration before the spec.
   {
@@ -311,6 +319,15 @@ describe("the native check", () => {
       );
       expect(result.status).toBe(1);
       return;
+    }
+    if (resolverCase.transcript !== undefined) {
+      expect(result.stderr).toBe("");
+      expect([`exit ${result.status}`, ...getSteadyLines(result.stdout)].join("\n")).toBe(
+        readFileSync(
+          join(import.meta.dirname, "../fixtures/resolver-order", resolverCase.transcript),
+          "utf8",
+        ),
+      );
     }
     const printed = text
       .split("\n")

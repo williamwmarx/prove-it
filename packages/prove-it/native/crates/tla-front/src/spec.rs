@@ -8,7 +8,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::{FrontError, describe_range};
+use crate::errors::{FrontError, TAUTOLOGY, describe_range, format_range};
 use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
@@ -48,6 +48,7 @@ pub enum Binding {
     /// An operator `Closure`.
     Closure {
         name: Name,
+        is_recursive: bool,
         params: Vec<OperatorParam>,
         body: Expr,
         scope: ScopeOf,
@@ -96,19 +97,94 @@ pub fn get_level(
     facts: &DefinitionFacts,
     shadowed: &[Name],
 ) -> Level {
+    get_level_inner(
+        expression,
+        scope,
+        environment,
+        facts,
+        shadowed,
+        &LevelWalk::default(),
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LevelIdentity {
+    Binding(*const Scope),
+    Definition(*const Definition, *const Scope),
+}
+
+type LevelMemoKey = *const Definition;
+
+#[derive(Default)]
+struct LevelWalk {
+    active: std::cell::RefCell<Vec<LevelIdentity>>,
+    memo: std::cell::RefCell<std::collections::HashMap<LevelMemoKey, Level>>,
+    cycles: std::cell::Cell<u64>,
+}
+
+fn get_level_inner(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    shadowed: &[Name],
+    walk: &LevelWalk,
+) -> Level {
     let get_binding_level = |name: &str| {
         let (node, binding) = lookup_scope(scope, name)?;
         Some(match binding {
             Binding::Value(_) | Binding::Literal { .. } => Level::Constant,
-            Binding::Thunk { expression, scope } => get_level(
-                expression,
-                scope.resolve(node).as_ref(),
-                environment,
-                facts,
-                &[],
-            ),
-            Binding::Closure { body, scope, .. } => {
-                get_level(body, scope.resolve(node).as_ref(), environment, facts, &[])
+            Binding::Thunk { expression, scope } => {
+                let body_shadowed = Vec::new();
+                let identity = LevelIdentity::Binding(Rc::as_ptr(node));
+                if walk.active.borrow().contains(&identity) {
+                    walk.cycles.set(walk.cycles.get().saturating_add(1));
+                    // TLC binds an operator being visited to the constant IntValue.One. A
+                    // non-operator lazy argument has no such sentinel.
+                    if matches!(scope, ScopeOf::Own) {
+                        Level::Constant
+                    } else {
+                        Level::Temporal
+                    }
+                } else {
+                    walk.active.borrow_mut().push(identity);
+                    let level = get_level_inner(
+                        expression,
+                        scope.resolve(node).as_ref(),
+                        environment,
+                        facts,
+                        &body_shadowed,
+                        walk,
+                    );
+                    walk.active.borrow_mut().pop();
+                    level
+                }
+            }
+            Binding::Closure {
+                name, body, scope, ..
+            } => {
+                let body_shadowed: Vec<_> = shadowed
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(name.clone()))
+                    .collect();
+                let identity = LevelIdentity::Binding(Rc::as_ptr(node));
+                if walk.active.borrow().contains(&identity) {
+                    walk.cycles.set(walk.cycles.get().saturating_add(1));
+                    Level::Constant
+                } else {
+                    walk.active.borrow_mut().push(identity);
+                    let level = get_level_inner(
+                        body,
+                        scope.resolve(node).as_ref(),
+                        environment,
+                        facts,
+                        &body_shadowed,
+                        walk,
+                    );
+                    walk.active.borrow_mut().pop();
+                    level
+                }
             }
         })
     };
@@ -153,20 +229,86 @@ pub fn get_level(
         let tables = Tables::default();
         let _ = map_children(node, &tables, &mut |child, bound| {
             let child_level = if bound.is_empty() {
-                get_level(child, scope, environment, facts, shadowed)
+                get_level_inner(child, scope, environment, facts, shadowed, walk)
             } else {
                 let shadowed: Vec<Name> = shadowed.iter().chain(bound).cloned().collect();
-                get_level(child, scope, environment, facts, &shadowed)
+                get_level_inner(child, scope, environment, facts, &shadowed, walk)
             };
             level = level.max(child_level);
             Ok(child.clone())
         });
         level
     };
+    let user_operator_level = || {
+        let name = expression.reference()?;
+        if shadowed.contains(&name) {
+            return None;
+        }
+        let (params, body, closure_scope) = resolve_apply_operator(expression, scope, environment)?;
+        // TLC retains the caller context while visiting a global operator body. A local closure
+        // instead carries the lexical scope in which it was created.
+        let is_global =
+            !expression.is_locally_resolved() && get_definition(&name, environment).is_some();
+        let body_scope = if is_global {
+            scope
+        } else {
+            closure_scope.as_ref()
+        };
+        let formal_names: Vec<Name> = params.iter().map(|param| param.name.clone()).collect();
+        let mut body_shadowed = if is_global {
+            Vec::new()
+        } else {
+            shadowed.to_vec()
+        };
+        if !is_global && let Some((_, Binding::Closure { name, .. })) = lookup_scope(scope, &name) {
+            body_shadowed.push(name.clone());
+        }
+        body_shadowed.extend(formal_names.iter().cloned());
+        // The sentinel belongs to the resolved operator, not its possibly shared body. A
+        // local binding also identifies its lexical context; a global definition's caller
+        // context is part of its visit identity.
+        let (identity, memo_key) = if is_global {
+            let definition = get_definition(&name, environment)?;
+            let key = Rc::as_ptr(definition);
+            (
+                LevelIdentity::Definition(key, body_scope.map_or(std::ptr::null(), Rc::as_ptr)),
+                Some(key),
+            )
+        } else {
+            let (node, _) = lookup_scope(scope, &name)?;
+            (LevelIdentity::Binding(Rc::as_ptr(node)), None)
+        };
+        if walk.active.borrow().contains(&identity) {
+            walk.cycles.set(walk.cycles.get().saturating_add(1));
+            // The operator lookup is bound to IntValue.One, but ordinary arguments still
+            // contribute their bounds in the caller below.
+            return Some((params, Level::Constant));
+        }
+        let can_memo = closure_scope.is_none() && scope.is_none() && params.is_empty() && is_global;
+        if can_memo
+            && let Some(key) = memo_key
+            && let Some(&level) = walk.memo.borrow().get(&key)
+        {
+            return Some((params, level));
+        }
+        let cycles_before = walk.cycles.get();
+        walk.active.borrow_mut().push(identity);
+        let level = get_level_inner(&body, body_scope, environment, facts, &body_shadowed, walk);
+        walk.active.borrow_mut().pop();
+        if can_memo
+            && walk.cycles.get() == cycles_before
+            && let Some(key) = memo_key
+        {
+            walk.memo.borrow_mut().insert(key, level);
+        }
+        Some((params, level))
+    };
     match &expression.kind {
         ExpressionKind::Prime(_) | ExpressionKind::Unchanged(_) | ExpressionKind::Action { .. } => {
             Level::Action
         }
+        // `getLevelBound` sees an OpArgNode, rather than traversing its operator body.
+        ExpressionKind::Lambda { .. } | ExpressionKind::OperatorReference { .. } => Level::Constant,
         ExpressionKind::Enabled(_) => Level::Variable,
         ExpressionKind::Always(_)
         | ExpressionKind::Eventually(_)
@@ -174,20 +316,209 @@ pub fn get_level(
         ExpressionKind::UnboundedQuantifier {
             is_temporal: true, ..
         } => Level::Temporal,
-        ExpressionKind::Identifier { .. } | ExpressionKind::OperatorReference { .. } => {
-            get_name_level(expression)
+        ExpressionKind::Identifier { .. } => {
+            user_operator_level().map_or_else(|| get_name_level(expression), |(_, level)| level)
         }
-        ExpressionKind::Apply { operator, .. } => match &**operator {
+        ExpressionKind::Apply { operator, args, .. } => match &**operator {
             "~>" | "-+->" => Level::Temporal,
             "\\cdot" => Level::Action,
-            _ => get_name_level(expression).max(get_children_level(expression)),
+            _ => match user_operator_level() {
+                Some((params, mut level)) if params.len() == args.len() => {
+                    for (param, argument) in params.iter().zip(args) {
+                        if param.arity == 0 {
+                            level = level.max(get_level_inner(
+                                argument,
+                                scope,
+                                environment,
+                                facts,
+                                shadowed,
+                                walk,
+                            ));
+                        } else if is_operator_parameter_read(expression, scope, environment, param)
+                        {
+                            // `Specs.getLevel` takes SANY's level, which counts the level of an
+                            // operator argument that the body applies (`getLevelParams`), where
+                            // the body's walk reads the parameter as a constant.
+                            level = level.max(match &argument.kind {
+                                ExpressionKind::Lambda { .. } => get_children_level(argument),
+                                ExpressionKind::OperatorReference { .. } => {
+                                    get_name_level(argument)
+                                }
+                                _ => get_level_inner(
+                                    argument,
+                                    scope,
+                                    environment,
+                                    facts,
+                                    shadowed,
+                                    walk,
+                                ),
+                            });
+                        }
+                    }
+                    level
+                }
+                _ => get_name_level(expression).max(get_children_level(expression)),
+            },
         },
         _ => get_children_level(expression),
     }
 }
 
+/// Whether the body of the operator an application applies names one of its operator parameters
+/// where SANY counts it among the body's level parameters: not under a builtin whose operand has
+/// weight 0 (`BuiltInOperators`: ENABLED, ', UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the
+/// temporal quantifiers), whose level `OpApplNode.levelCheck` takes as the builtin's own.
+fn is_operator_parameter_read(
+    application: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    param: &OperatorParam,
+) -> bool {
+    let Some((_, body, _)) = resolve_apply_operator(application, scope, environment) else {
+        return true;
+    };
+    is_parameter_read_in(&body, &param.name, environment, &mut Vec::new())
+}
+
+// Whether `body` reads the operator parameter `name` where SANY counts it among its level
+// parameters. A parameter passed on whole to an operator another definition makes counts only
+// where that operator's own parameter does (`OpApplNode.levelCheck` takes the level parameters
+// of an argument through the operator's `getLevelParams`), as `Over(G)` with `Over(F(_)) ==
+// ENABLED F(2)` reads G under ENABLED alone; an operator a LET defines reads it where it is
+// itself read.
+fn is_parameter_read_in(
+    body: &Expr,
+    name: &Name,
+    environment: &Environment,
+    visiting: &mut Vec<(*const Expression, usize)>,
+) -> bool {
+    let mut locals: Vec<Rc<Definition>> = Vec::new();
+    let mut pending = vec![body.clone()];
+    while let Some(expression) = pending.pop() {
+        let reference = expression.reference();
+        if reference.as_ref() == Some(name) {
+            return true;
+        }
+        if matches!(
+            expression.kind,
+            ExpressionKind::Prime(_)
+                | ExpressionKind::Unchanged(_)
+                | ExpressionKind::Enabled(_)
+                | ExpressionKind::Always(_)
+                | ExpressionKind::Eventually(_)
+                | ExpressionKind::Action { .. }
+                | ExpressionKind::Fairness { .. }
+                | ExpressionKind::UnboundedQuantifier {
+                    is_temporal: true,
+                    ..
+                }
+        ) {
+            continue;
+        }
+        if let ExpressionKind::Let {
+            definitions, body, ..
+        } = &expression.kind
+        {
+            for definition in definitions {
+                match &definition.kind {
+                    DefinitionKind::Operator { .. } => locals.push(definition.clone()),
+                    DefinitionKind::Function { .. } => pending.push(definition.body.clone()),
+                }
+            }
+            pending.push(body.clone());
+            continue;
+        }
+        // An operator a LET of the body defines, read here.
+        let local = |reference: &Option<Name>| {
+            reference.as_ref().and_then(|reference| {
+                locals
+                    .iter()
+                    .rev()
+                    .find(|definition| &definition.name == reference)
+                    .cloned()
+            })
+        };
+        let reads_local = |definition: &Rc<Definition>, visiting: &mut Vec<_>| {
+            let key = (Rc::as_ptr(&definition.body), usize::MAX);
+            if visiting.contains(&key) {
+                return true;
+            }
+            visiting.push(key);
+            let is_read = is_parameter_read_in(&definition.body, name, environment, visiting);
+            visiting.pop();
+            is_read
+        };
+        let called = if expression.is_locally_resolved() {
+            local(&reference).map(|definition| {
+                let params = match &definition.kind {
+                    DefinitionKind::Operator { params, .. } => params.clone(),
+                    DefinitionKind::Function { .. } => Vec::new(),
+                };
+                (params, definition.body.clone(), Some(definition))
+            })
+        } else {
+            match resolve_apply_operator(&expression, None, environment) {
+                Some((params, inner, None)) => Some((params, inner, None)),
+                _ => None,
+            }
+        };
+        if let Some((_, _, Some(definition))) = &called
+            && reads_local(definition, visiting)
+        {
+            return true;
+        }
+        if let ExpressionKind::Apply { args, .. } = &expression.kind
+            && let Some((params, inner, _)) = called
+            && params.len() == args.len()
+        {
+            for (index, (param, argument)) in params.iter().zip(args).enumerate() {
+                let passed = if param.arity > 0
+                    && matches!(argument.kind, ExpressionKind::Identifier { .. })
+                {
+                    let reference = argument.reference();
+                    if reference.as_ref() == Some(name) {
+                        Some(true)
+                    } else if argument.is_locally_resolved()
+                        && let Some(definition) = local(&reference)
+                    {
+                        Some(reads_local(&definition, visiting))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                match passed {
+                    None => pending.push(argument.clone()),
+                    Some(false) => {}
+                    Some(true) => {
+                        let key = (Rc::as_ptr(&inner), index);
+                        if visiting.contains(&key) {
+                            return true;
+                        }
+                        visiting.push(key);
+                        let is_read =
+                            is_parameter_read_in(&inner, &param.name, environment, visiting);
+                        visiting.pop();
+                        if is_read {
+                            return true;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 /// What `expandTemporal` gives: a conjunct with the scope it reads and the name TLC gives it.
 pub struct Expanded {
+    /// Whether expansion passed through the sole configured property name.
+    pub is_property_fairness: bool,
+    /// Whether TLC wraps the conjunct in nonempty INSTANCE substitutions.
+    pub has_substitutions: bool,
     pub expression: Expr,
     pub scope: Option<Rc<Scope>>,
     pub name: Option<Name>,
@@ -196,8 +527,23 @@ pub struct Expanded {
 /// `getSpecification`: the initial predicate, the next-state action, the scope they read, and
 /// the temporal conjuncts of the specification.
 pub struct Specification {
+    /// The syntactic property provenance test of SpecProcessor warning 2258.
+    pub is_fairness_tautology: bool,
     pub init: Option<Expr>,
     pub next: Option<Expr>,
+    /// Whether Tool.getActions reaches a formal parameter where it casts its symbol to OpDefNode.
+    pub has_action_parameter_cast: bool,
+    /// Whether Tool.getActions reaches a variable where it casts its declaration to OpDefNode, in
+    /// a `[][A]_v` the engine doesn't see the scope of (`ActionSplitFailure::Variable`).
+    pub has_action_variable_cast: bool,
+    /// Whether the first failure Tool.getActions meets is a declared constant the configuration
+    /// substitutes a definition for, whose declaration it casts to OpDefNode
+    /// (`ActionSplitFailure::Constant`), which the engine declines where TLC fails so.
+    pub has_action_constant_cast: bool,
+    /// Why the front end can't tell whether the first failure Tool.getActions may meet, a
+    /// substituted constant applied to an argument TLC evaluates as it splits the action, fails
+    /// or shows (`ActionSplitFailure::UnknownArgument`).
+    pub action_unknown_argument: Option<&'static str>,
     pub scope: Option<Rc<Scope>>,
     pub temporals: Vec<Expanded>,
     /// What TLC finds of the subscript of each `[][Next]_v` of the specification, in order, which
@@ -223,12 +569,17 @@ pub fn create_identifier(name: &str) -> Expr {
     ))
 }
 
+const UNCERTIFIED_EMPTY_UNROLL: &str =
+    "a property's \\A emptiness is not certified for TLC's context";
+
 fn not_yet(reason: &str) -> FrontError {
     FrontError::NotYet(reason.to_owned())
 }
 
 /// What `expandTemporal` reads.
 pub struct Expansion<'a> {
+    /// The sole configured property, whose calls TLC tags in the specification.
+    pub fairness_property: Option<&'a str>,
     pub environment: &'a Environment,
     pub facts: &'a DefinitionFacts,
     pub version: TlcVersion,
@@ -242,6 +593,10 @@ pub struct Expansion<'a> {
     /// Whether it unrolled a property's \A, which it does with the substitutions of the INSTANCEs
     /// it went through bound, where TLC leaves them unbound and may take the \A whole.
     pub is_unrolled: std::cell::Cell<bool>,
+    /// Whether every enclosing unroll has pure domains with the same meaning in TLC's context.
+    pub unroll_is_independent: std::cell::Cell<bool>,
+    pub has_action_substitutions: std::cell::Cell<bool>,
+    label_probe: std::cell::Cell<bool>,
 }
 
 impl Expansion<'_> {
@@ -253,8 +608,437 @@ impl Expansion<'_> {
         self.environment.is_substituted(definition)
     }
 
+    fn unroll_domain_is_independent(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        bound: &[Name],
+        visiting: &mut Vec<*const Expression>,
+        is_substituted: bool,
+    ) -> bool {
+        if visiting.len() >= 256
+            || visiting.contains(&Rc::as_ptr(expression))
+            || (is_substituted && self.environment.tables.is_substitution(expression))
+        {
+            return false;
+        }
+        visiting.push(Rc::as_ptr(expression));
+        let result = (|| {
+            let name = expression.reference().unwrap_or_default();
+            if !bound.contains(&name) {
+                if !expression.is_locally_resolved()
+                    && get_definition(&name, self.environment).is_none()
+                    && !self.environment.constants.contains_key(name.as_ref())
+                    && !self
+                        .environment
+                        .operator_constants
+                        .contains_key(name.as_ref())
+                {
+                    let builtin = self
+                        .environment
+                        .substitutions
+                        .get(name.as_ref())
+                        .unwrap_or(&name);
+                    if self
+                        .environment
+                        .builtins
+                        .get(builtin.as_ref())
+                        .is_some_and(|builtin| {
+                            crate::dependencies::is_impure_builtin(
+                                builtin.name.as_ref(),
+                                self.environment,
+                            ) || builtin.flags
+                                & (tla_ir::Builtin::TABLE
+                                    | tla_ir::Builtin::DECLINED
+                                    | tla_ir::Builtin::EXTERNAL_CLASS
+                                    | 128) as u32
+                                != 0
+                        })
+                    {
+                        return false;
+                    }
+                }
+                match &expression.kind {
+                    ExpressionKind::Identifier { .. } => {
+                        let definition = get_definition(&name, self.environment);
+                        if (expression.is_locally_resolved() || definition.is_none())
+                            && let Some((node, binding)) = lookup_scope(scope, &name)
+                        {
+                            return match binding {
+                                Binding::Value(_) => true,
+                                Binding::Literal { expression, .. } => self
+                                    .unroll_domain_is_independent(
+                                        expression,
+                                        scope,
+                                        bound,
+                                        visiting,
+                                        is_substituted,
+                                    ),
+                                Binding::Thunk { expression, scope } => self
+                                    .unroll_domain_is_independent(
+                                        expression,
+                                        scope.resolve(node).as_ref(),
+                                        bound,
+                                        visiting,
+                                        is_substituted,
+                                    ),
+                                Binding::Closure { .. } => false,
+                            };
+                        }
+                        if let Some(definition) = definition {
+                            if self.environment.has_java_override_index
+                                || (is_substituted
+                                    && !self.unroll_definition_is_independent(definition, &name))
+                            {
+                                return false;
+                            }
+                            return self.unroll_domain_is_independent(
+                                &definition.body,
+                                None,
+                                bound,
+                                visiting,
+                                is_substituted,
+                            );
+                        }
+                        return self.environment.constants.contains_key(name.as_ref())
+                            || self.environment.builtins.contains_key(name.as_ref());
+                    }
+                    ExpressionKind::Apply { operator, args, .. } => {
+                        let definition = get_definition(&name, self.environment);
+                        if expression.is_locally_resolved() {
+                            let Some((
+                                node,
+                                Binding::Closure {
+                                    name: closure_name,
+                                    params,
+                                    body,
+                                    scope: closure_scope,
+                                    ..
+                                },
+                            )) = lookup_scope(scope, &name)
+                            else {
+                                return false;
+                            };
+                            if is_substituted && name != *operator && closure_name != operator {
+                                return false;
+                            }
+                            let names: Vec<_> = bound
+                                .iter()
+                                .cloned()
+                                .chain(params.iter().map(|param| param.name.clone()))
+                                .collect();
+                            if !self.unroll_domain_is_independent(
+                                body,
+                                closure_scope.resolve(node).as_ref(),
+                                &names,
+                                visiting,
+                                is_substituted,
+                            ) {
+                                return false;
+                            }
+                        } else if let Some(definition) = definition {
+                            if self.environment.has_java_override_index
+                                || (is_substituted
+                                    && (!self.unroll_definition_is_independent(definition, &name)
+                                        || (name != *operator
+                                            && self
+                                                .environment
+                                                .tables
+                                                .get_source_name(definition)
+                                                != *operator)))
+                            {
+                                return false;
+                            }
+                            let DefinitionKind::Operator { params, .. } = &definition.kind else {
+                                return false;
+                            };
+                            let names: Vec<_> = bound
+                                .iter()
+                                .cloned()
+                                .chain(params.iter().map(|param| param.name.clone()))
+                                .collect();
+                            if !self.unroll_domain_is_independent(
+                                &definition.body,
+                                None,
+                                &names,
+                                visiting,
+                                is_substituted,
+                            ) {
+                                return false;
+                            }
+                        } else if !self.environment.builtins.contains_key(operator.as_ref())
+                            && !(name == *operator
+                                && self
+                                    .environment
+                                    .operator_constants
+                                    .contains_key(name.as_ref()))
+                        {
+                            return false;
+                        }
+                        return args.iter().all(|arg| {
+                            self.unroll_domain_is_independent(
+                                arg,
+                                scope,
+                                bound,
+                                visiting,
+                                is_substituted,
+                            )
+                        });
+                    }
+                    ExpressionKind::OperatorReference { .. } => return false,
+                    _ => {}
+                }
+            }
+            let comprehension_bounds = match &expression.kind {
+                ExpressionKind::SetFilter { bound, .. } => Some(std::slice::from_ref(bound)),
+                ExpressionKind::SetMap { bounds, .. } => Some(bounds.as_slice()),
+                _ => None,
+            };
+            if let Some(bounds) = comprehension_bounds
+                && bounds.iter().all(|domain| {
+                    self.unroll_domain_is_independent(
+                        &domain.set,
+                        scope,
+                        bound,
+                        visiting,
+                        is_substituted,
+                    )
+                })
+                && self.evaluator.is_some_and(|evaluator| {
+                    evaluator
+                        .get_bindings(bounds, scope)
+                        .is_ok_and(|bindings| bindings.is_empty())
+                })
+            {
+                // An empty comprehension never evaluates its predicate or mapped value.
+                return true;
+            }
+            if let ExpressionKind::If {
+                condition,
+                consequent,
+                alternative,
+            } = &expression.kind
+            {
+                if !self.unroll_domain_is_independent(
+                    condition,
+                    scope,
+                    bound,
+                    visiting,
+                    is_substituted,
+                ) {
+                    return false;
+                }
+                let Some(evaluator) = self.evaluator else {
+                    return false;
+                };
+                return match evaluator.is_true(condition, scope) {
+                    Ok(true) => self.unroll_domain_is_independent(
+                        consequent,
+                        scope,
+                        bound,
+                        visiting,
+                        is_substituted,
+                    ),
+                    Ok(false) => self.unroll_domain_is_independent(
+                        alternative,
+                        scope,
+                        bound,
+                        visiting,
+                        is_substituted,
+                    ),
+                    Err(_) => false,
+                };
+            }
+            let mut independent = true;
+            let tables = Tables::default();
+            let _ = map_children(expression, &tables, &mut |child, names| {
+                let bound: Vec<_> = bound.iter().chain(names).cloned().collect();
+                independent &= self.unroll_domain_is_independent(
+                    child,
+                    scope,
+                    &bound,
+                    visiting,
+                    is_substituted,
+                );
+                Ok(child.clone())
+            });
+            independent
+        })();
+        visiting.pop();
+        result
+    }
+
+    fn unroll_definition_is_independent(&self, definition: &Rc<Definition>, name: &str) -> bool {
+        let source = self.environment.tables.get_source_name(definition);
+        if source.as_ref() == name {
+            return true;
+        }
+        !self
+            .environment
+            .constants
+            .keys()
+            .chain(self.environment.operator_constants.keys())
+            .chain(self.environment.substitutions.keys())
+            .any(|key| {
+                key.as_ref() != name
+                    && (key == &source
+                        || self
+                            .environment
+                            .definitions
+                            .get(key)
+                            .is_some_and(|original| {
+                                original.location == definition.location
+                                    && self.environment.tables.get_source_name(original) == source
+                            }))
+            })
+    }
+
     /// `expandTemporal`.
     pub fn expand(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        expanding: &[*const Definition],
+        is_substituted: bool,
+        name: Option<Name>,
+    ) -> Result<Vec<Expanded>> {
+        let had_action_substitutions = self.has_action_substitutions.get();
+        let local_substitution = expression.is_locally_resolved()
+            && expression.reference().is_some_and(|name| {
+                if !name.contains('!') && !name.contains(crate::resolve::KEY_SEPARATOR) {
+                    return false;
+                }
+                let Some((
+                    node,
+                    Binding::Closure {
+                        scope: ScopeOf::Own,
+                        ..
+                    },
+                )) = lookup_scope(scope, &name)
+                else {
+                    return false;
+                };
+                let mut current = Some(node);
+                while let Some(node) = current {
+                    // instantiateLocally binds SubstIn declarations as C#0, unlike its
+                    // copied operators, whose generated keys contain KEY_SEPARATOR.
+                    if node.name.contains('#') && !node.name.contains(crate::resolve::KEY_SEPARATOR)
+                    {
+                        return true;
+                    }
+                    current = node.parent.as_ref();
+                }
+                false
+            });
+        self.has_action_substitutions
+            .set(had_action_substitutions || is_substituted || local_substitution);
+        let independent = self.unroll_is_independent.get();
+        if self.is_property
+            && let ExpressionKind::Quantified {
+                quantifier: Quantifier::Forall,
+                bounds,
+                ..
+            } = &expression.kind
+        {
+            self.unroll_is_independent.set(
+                independent
+                    && bounds.iter().all(|bound| {
+                        self.unroll_domain_is_independent(
+                            &bound.set,
+                            scope,
+                            &[],
+                            &mut Vec::new(),
+                            is_substituted,
+                        )
+                    }),
+            );
+        }
+        let expanded = self.expand_inner(expression, scope, expanding, is_substituted, name);
+        self.unroll_is_independent.set(independent);
+        self.has_action_substitutions.set(had_action_substitutions);
+        let mut expanded = expanded?;
+        if self.is_specification
+            && let ExpressionKind::Identifier { name, .. } = &expression.kind
+            && self.fairness_property == Some(name.as_ref())
+            && ((!expression.is_locally_resolved()
+                && get_definition(
+                    &expression.reference().unwrap_or_default(),
+                    self.environment,
+                )
+                .is_some())
+                || lookup_scope(scope, &expression.reference().unwrap_or_default()).is_none())
+        {
+            for item in &mut expanded {
+                item.is_property_fairness = true;
+            }
+        }
+        Ok(expanded)
+    }
+
+    /// Recover a source zero-argument operator name without decomposing its substituted body.
+    fn synthetic_property_name(&self, expression: &Expr) -> Option<Name> {
+        let mut current = expression.clone();
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            let (source, header) = self.environment.tables.synthetic_zero_arity(&current)?;
+            let ExpressionKind::Identifier { name, .. } = &source.kind else {
+                return None;
+            };
+            let ExpressionKind::Apply { operator, args, .. } = &current.kind else {
+                return None;
+            };
+            let DefinitionKind::Operator {
+                params: original, ..
+            } = &header.kind
+            else {
+                return None;
+            };
+            if !original.is_empty()
+                || self.environment.has_java_override_index
+                || self
+                    .environment
+                    .java_overrides
+                    .iter()
+                    .any(|entry| entry.is_matched && entry.operator == name.as_ref())
+                || self.environment.substitutions.contains_key(operator)
+                || self.environment.constants.contains_key(operator)
+                || self
+                    .environment
+                    .configured_value_bindings
+                    .contains(operator)
+            {
+                return None;
+            }
+            let before = self.environment.pre_override_headers.get(operator)?;
+            let actual = get_definition(operator, self.environment)?;
+            if !Rc::ptr_eq(before, actual)
+                || actual.is_recursive
+                || !visited.insert(Rc::as_ptr(actual))
+            {
+                return None;
+            }
+            let DefinitionKind::Operator { params, .. } = &actual.kind else {
+                return None;
+            };
+            if params.len() != args.len() {
+                return None;
+            }
+            match &header.body.kind {
+                ExpressionKind::Identifier { .. } => current = actual.body.clone(),
+                ExpressionKind::Apply { operator, .. }
+                    if operator.as_ref() == "="
+                        && !header.body.is_locally_resolved()
+                        && !self.environment.substitutions.contains_key(operator)
+                        && matches!(&actual.body.kind, ExpressionKind::Apply { operator, .. } if operator.as_ref() == "=") =>
+                {
+                    return Some(name.clone());
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn expand_inner(
         &self,
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
@@ -282,7 +1066,27 @@ impl Expansion<'_> {
                 return Ok(expanded);
             }
             ExpressionKind::Label { body, .. } => {
-                return self.expand(body, scope, expanding, is_substituted, name);
+                if self.label_probe.get() {
+                    return self.expand(body, scope, expanding, is_substituted, name);
+                }
+                if self.is_property && self.environment.has_java_override_index {
+                    // The old transparent-label path already declines an unproved empty
+                    // unroll. Keeping the label must not bypass that boundary in liveness.
+                    let unrolled = self.is_unrolled.get();
+                    let independent = self.unroll_is_independent.get();
+                    let substitutions = self.has_action_substitutions.get();
+                    self.label_probe.set(true);
+                    let legacy = self.expand(body, scope, expanding, is_substituted, name.clone());
+                    self.label_probe.set(false);
+                    self.is_unrolled.set(unrolled);
+                    self.unroll_is_independent.set(independent);
+                    self.has_action_substitutions.set(substitutions);
+                    if let Err(FrontError::NotYet(reason)) = legacy
+                        && reason == UNCERTIFIED_EMPTY_UNROLL
+                    {
+                        return Err(not_yet(UNCERTIFIED_EMPTY_UNROLL));
+                    }
+                }
             }
             ExpressionKind::Let {
                 definitions,
@@ -317,7 +1121,50 @@ impl Expansion<'_> {
                     None
                 };
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
+                    let is_let_definition = matches!(scope, ScopeOf::Own);
+                    let name = if is_let_definition {
+                        Some(written.clone())
+                    } else {
+                        name
+                    };
                     let scope = scope.resolve(node);
+                    // `processConfigSpec` takes a LET's definition without parameters as the
+                    // `OpDefNode` it is, whose body it takes whole where `getLevelBound` finds it
+                    // of state level, the argument a parameter in it reads (`S(y) == LET D == y
+                    // IN Init /\ D`, `Spec == S(x = 1 /\ x)`) unsplit, worded at the body where
+                    // it comes to a definition (`S(G)`). A body that comes to another name is left
+                    // to the reading of such a name, and one the expansion doesn't split reads as
+                    // the expansion reads it.
+                    let read = read_through(expression, scope.as_ref());
+                    let is_definition = names_global_definition(&read, self.environment);
+                    if self.is_specification
+                        && !self.is_property
+                        && is_let_definition
+                        && (is_definition
+                            || !matches!(read.kind, ExpressionKind::Identifier { .. }))
+                        && self.level(expression, scope.as_ref()) == Level::Variable
+                    {
+                        let expanded = self.expand(
+                            expression,
+                            scope.as_ref(),
+                            expanding,
+                            is_substituted,
+                            name.clone(),
+                        );
+                        if let Ok(expanded) = expanded
+                            && expanded.len() == 1
+                            && !is_definition
+                        {
+                            return Ok(expanded);
+                        }
+                        return Ok(vec![Expanded {
+                            is_property_fairness: false,
+                            has_substitutions: self.has_action_substitutions.get(),
+                            expression: expression.clone(),
+                            scope,
+                            name,
+                        }]);
+                    }
                     return self.expand(
                         expression,
                         scope.as_ref(),
@@ -356,6 +1203,8 @@ impl Expansion<'_> {
                             == Level::Variable
                     {
                         return Ok(vec![Expanded {
+                            is_property_fairness: false,
+                            has_substitutions: self.has_action_substitutions.get(),
                             expression: definition.body.clone(),
                             scope: None,
                             name: Some(written.clone()),
@@ -366,17 +1215,24 @@ impl Expansion<'_> {
             }
             ExpressionKind::Apply { operator, args, .. }
                 if self.version != TlcVersion::V1_7_4
-                    && (self.is_property || self.level(expression, scope) == Level::Temporal) =>
+                    && (self.is_property || self.is_specification) =>
             {
                 let definition = if expression.is_locally_resolved() {
                     None
                 } else {
                     get_definition(operator, self.environment)
                 };
+                let recursive_local = (expression.is_locally_resolved() || definition.is_none())
+                    && lookup_scope(scope, &expression.reference().unwrap_or_default())
+                        .is_some_and(|(_, binding)| match binding {
+                            Binding::Closure { is_recursive, .. } => *is_recursive,
+                            _ => false,
+                        });
                 if let Some((params, body, closure_scope)) =
                     resolve_apply_operator(expression, scope, self.environment)
                     && params.len() == args.len()
                     && !definition.is_some_and(|definition| definition.is_recursive)
+                    && !recursive_local
                     && !is_substituted
                 {
                     let bound = bind_operator_arguments(
@@ -396,6 +1252,23 @@ impl Expansion<'_> {
                         Some(expression.reference().unwrap_or_else(|| operator.clone())),
                     );
                 }
+                // Within an INSTANCE's substitutions TLC splits the body of a definition the
+                // copy names without arguments (`processConfigSpec`), where the copy of a
+                // parameterized INSTANCE applies it to the instance's parameters, which the
+                // front end doesn't tell from arguments written there.
+                if self.is_specification
+                    && is_substituted
+                    && !args.is_empty()
+                    && definition.is_some_and(|definition| {
+                        self.facts
+                            .get_definition_level(definition, self.environment)
+                            == Level::Temporal
+                    })
+                {
+                    return Err(not_yet(
+                        "a temporal definition a parameterized INSTANCE's specification applies",
+                    ));
+                }
             }
             // TLC unrolls a property's \A over constant sets, and stops at a tautology.
             ExpressionKind::Quantified {
@@ -410,7 +1283,7 @@ impl Expansion<'_> {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                match evaluator.get_bindings(bounds, scope) {
+                match evaluator.get_temporal_bindings(bounds, scope) {
                     // `processConfigProps` leaves a \A whose sets fail with a TLCRuntimeException
                     // to the liveness checker, and an EvalException escapes TLC's startup.
                     Err(FrontError::Evaluation(message)) if !is_eval_exception(&message) => {}
@@ -427,20 +1300,77 @@ impl Expansion<'_> {
                         }
                         self.is_unrolled.set(true);
                         if expanded.is_empty() {
-                            return Err(not_yet("a property TLC finds a tautology"));
+                            if !self.unroll_is_independent.get() {
+                                return Err(not_yet(UNCERTIFIED_EMPTY_UNROLL));
+                            }
+                            return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
                         }
                         return Ok(expanded);
                     }
                 }
             }
+            // `processConfigProps` computes the sets of a property's \A whatever their level, and
+            // an EvalException escapes TLC's startup before a set that reads the state fails.
+            ExpressionKind::Quantified {
+                quantifier: Quantifier::Forall,
+                bounds,
+                ..
+            } if self.is_property
+                && let Some(evaluator) = self.evaluator
+                && let Err(FrontError::Evaluation(message)) =
+                    evaluator.get_temporal_bindings(bounds, scope)
+                && is_eval_exception(&message) =>
+            {
+                return Err(with_unexpected_exception(FrontError::Evaluation(message)));
+            }
             _ => {}
         }
+        let name = if self.is_property && is_substituted {
+            self.synthetic_property_name(expression).or(name)
+        } else {
+            name
+        };
         Ok(vec![Expanded {
+            is_property_fairness: false,
+            has_substitutions: self.has_action_substitutions.get(),
             expression: expression.clone(),
             scope: scope.cloned(),
             name,
         }])
     }
+}
+
+/// The expression an operator's parameter or a LET's definition without parameters reads, through
+/// any number of them, or the expression itself where it is no such name.
+fn read_through(expression: &Expr, scope: Option<&Rc<Scope>>) -> Expr {
+    let mut current = (expression.clone(), scope.cloned());
+    for _ in 0..64 {
+        if !matches!(current.0.kind, ExpressionKind::Identifier { .. }) {
+            break;
+        }
+        let Some(reference) = current.0.reference() else {
+            break;
+        };
+        match lookup_scope(current.1.as_ref(), &reference) {
+            Some((node, Binding::Thunk { expression, scope })) => {
+                current = (expression.clone(), scope.resolve(node));
+            }
+            Some((_, Binding::Literal { expression, .. })) => {
+                current = (expression.clone(), None);
+            }
+            _ => break,
+        }
+    }
+    current.0
+}
+
+/// Whether the expression names a definition of the environment, not a name a scope binds.
+fn names_global_definition(expression: &Expr, environment: &Environment) -> bool {
+    matches!(expression.kind, ExpressionKind::Identifier { .. })
+        && !expression.is_locally_resolved()
+        && expression
+            .reference()
+            .is_some_and(|reference| get_definition(&reference, environment).is_some())
 }
 
 /// `bindDefinitions`, for a LET, where each definition reads the scope that binds it.
@@ -456,6 +1386,7 @@ pub(crate) fn bind_definitions(
             }
             DefinitionKind::Operator { params, .. } if !params.is_empty() => Binding::Closure {
                 name: definition.name.clone(),
+                is_recursive: definition.is_recursive,
                 params: params.clone(),
                 body: definition.body.clone(),
                 scope: ScopeOf::Own,
@@ -613,6 +1544,7 @@ fn bind_operator_argument(
         ExpressionKind::Lambda { params, body, .. } => {
             return Ok(Binding::Closure {
                 name: Rc::from("LAMBDA"),
+                is_recursive: false,
                 params: params
                     .iter()
                     .map(|name| OperatorParam {
@@ -636,12 +1568,14 @@ fn bind_operator_argument(
                 node,
                 Binding::Closure {
                     name,
+                    is_recursive,
                     params,
                     body,
                     scope,
                 },
             )) => Ok(Binding::Closure {
                 name: name.clone(),
+                is_recursive: *is_recursive,
                 params: params.clone(),
                 body: body.clone(),
                 scope: ScopeOf::Other(scope.resolve(node)),
@@ -652,6 +1586,7 @@ fn bind_operator_argument(
     match get_definition(&name, environment).map(|definition| (definition, &definition.kind)) {
         Some((definition, DefinitionKind::Operator { params, .. })) => Ok(Binding::Closure {
             name: definition.name.clone(),
+            is_recursive: definition.is_recursive,
             params: params.clone(),
             body: definition.body.clone(),
             scope: ScopeOf::Other(None),
@@ -701,7 +1636,11 @@ fn get_config_operator<'a>(
     name: &str,
     environment: &'a Environment,
 ) -> Result<&'a Rc<Definition>> {
-    let Some(definition) = get_definition(name, environment) else {
+    let definition = environment
+        .config_opdef_header(name)
+        .map(crate::environment::ConfigOpDefHeader::definition)
+        .or_else(|| get_definition(name, environment));
+    let Some(definition) = definition else {
         return Err(FrontError::Config(format!(
             "The {kind} {name} specified in the configuration file\nis not defined in the specification."
         )));
@@ -731,6 +1670,97 @@ fn check_unsubstituted(name: &str, value: &ConfigValue, environment: &Environmen
     Ok(())
 }
 
+/// Whether `defns` keeps the OpDefNode of a 0-ary definition K the configuration substitutes
+/// for a declared constant (`CONSTANT J <- K`). `processConstantDefns` takes the modules in the
+/// order SANY finishes them, each one's constants (its own and those it extends) before its
+/// definitions. The first loop over constants to meet J computes K and sets the value on K
+/// (`opDef.setToolObject`) without putting it in `defns`; a loop over definitions that then meets
+/// K looks it up to that value, which is no OpDefNode, and puts nothing in `defns` either. The
+/// configuration's checks then take K as an operator and evaluate its body
+/// (`processConfigInvariants`, `processModelConstraints` and the rest), with no constant-level
+/// warning or TLC_CONFIG_ID_HAS_VALUE. Only where the loop over the definitions of K's module
+/// comes first does `defns` hold K's value: K of a module the root extends, where J is declared
+/// in a module SANY finishes after it. A K or a J the front end can't place in a module declines.
+fn is_computed_as_substitute(
+    name: &str,
+    definition: &Rc<Definition>,
+    environment: &Environment,
+) -> Result<bool> {
+    // A name that is itself a declared constant J is J's entry in `defns`, K's OpDefNode, which
+    // TLC evaluates as an operator wherever the configuration names J.
+    if !matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+        || environment.constants.contains_key(name)
+        || environment
+            .root_constants
+            .iter()
+            .any(|constant| &*constant.name == name)
+    {
+        return Ok(false);
+    }
+    let substituted: Vec<&Rc<Declaration>> = environment
+        .root_constants
+        .iter()
+        .filter(|constant| {
+            constant.arity == 0
+                && environment
+                    .substitutions
+                    .get(&constant.name)
+                    .and_then(|target| environment.definitions.get(target))
+                    .is_some_and(|target| Rc::ptr_eq(target, definition))
+        })
+        .collect();
+    if substituted.is_empty() {
+        return Ok(false);
+    }
+    let is_root = environment
+        .root_symbols
+        .get(name)
+        .is_some_and(|symbol| &*symbol.key == name);
+    if is_root {
+        return Ok(true);
+    }
+    let unplaced = || {
+        not_yet(
+            "a definition of another module the configuration names and substitutes for a \
+             constant, which the front end can't place in the modules' order",
+        )
+    };
+    // The module that defines K, and the first module that declares one of the J.
+    let place = |is_in: &dyn Fn(&Module) -> bool| -> Result<usize> {
+        let mut places = environment
+            .modules
+            .iter()
+            .enumerate()
+            .filter(|(_, module)| is_in(module))
+            .map(|(index, _)| index);
+        match (places.next(), places.next()) {
+            (Some(index), None) => Ok(index),
+            _ => Err(unplaced()),
+        }
+    };
+    let defined = place(&|module| {
+        module
+            .definitions
+            .iter()
+            .any(|candidate| Rc::ptr_eq(&candidate.body, &definition.body))
+    })?;
+    let declared = substituted
+        .iter()
+        .map(|constant| {
+            place(&|module| {
+                module
+                    .constants
+                    .iter()
+                    .any(|declared| declared.name == constant.name)
+            })
+        })
+        .collect::<Result<Vec<usize>>>()?;
+    Ok(declared
+        .into_iter()
+        .min()
+        .is_some_and(|first| first <= defined))
+}
+
 /// `getConstantValue`: the value TLC computed at startup for a constant definition, or none for
 /// a literal, which stays an operator, or a definition that fails to evaluate.
 fn get_constant_value(
@@ -745,7 +1775,13 @@ fn get_constant_value(
         definition.body.kind,
         ExpressionKind::Number { .. } | ExpressionKind::String { .. }
     );
-    if !facts.is_constant_level(definition, environment) || is_literal {
+    // `processConstantDefns` computes none that `getLevelBound` finds names a name spelled as a
+    // variable (`getVarLoc`), which the configuration's checks then take as an operator.
+    if !facts.is_constant_level(definition, environment)
+        || is_literal
+        || crate::startup::get_definition_level_bound(environment, definition) > 0
+        || is_computed_as_substitute(name, definition, environment)?
+    {
         return Ok(None);
     }
     let Some(evaluator) = evaluator else {
@@ -896,6 +1932,102 @@ fn is_constant_true(
     }
 }
 
+/// Whether the definition `name` selects has a module-scoped value, which TLC's selector doesn't
+/// read.
+fn is_scoped_selection(name: &str, environment: &Environment) -> bool {
+    let key = environment
+        .root_symbols
+        .get(name)
+        .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone());
+    environment.scoped_selected_values.contains_key(&key)
+}
+
+/// A definition K the configuration selects, whose module-scoped value `K = [M] v` the
+/// environment left out (`check_selected_scoped_values`). TLC's selector walks K's body as
+/// written, but `processConstantDefns` doesn't compute a K of constant level, as `lookup` gives v
+/// rather than K's node, so `defns` keeps the node. Where the front end would compute K at
+/// startup, the selector then reads what TLC reads only where the two agree:
+///
+/// - a numeral or string body, which `Tool.eval` reads as v (`getToolObject` of the literal), as
+///   INIT, whose `getInitStates` rejects the literal itself without evaluating it, or as an
+///   INVARIANT or a PROPERTY where v isn't a boolean, which TLC rejects as it does the literal,
+///   in words that show the literal's location, not its value;
+/// - a body whose evaluation fails, which TLC swallows at startup and keeps as the node too;
+/// - a pure body equal to TRUE as a (ACTION_)CONSTRAINT, which TLC accepts both as the value TRUE
+///   and as a node it evaluates to TRUE, or as a PROPERTY, whose body `get_config_predicate`
+///   then walks as `processConfigProps` does.
+///
+/// It declines another K of constant level: TLC's INIT or NEXT takes it as a predicate, not as
+/// a constant, its INVARIANT doesn't warn of a TRUE one, it doesn't report another value, and it
+/// shows the effects of evaluating it as it checks the states, not at startup. It declines any K
+/// of constant level whose value the environment kept, which the front end would read for K.
+fn check_scoped_selection(
+    kind: &str,
+    name: &str,
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    evaluator: Option<&Evaluator>,
+) -> Result<()> {
+    let key = environment
+        .root_symbols
+        .get(name)
+        .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone());
+    let Some(value) = environment.scoped_selected_values.get(&key) else {
+        return Ok(());
+    };
+    if !facts.is_constant_level(definition, environment) {
+        return Ok(());
+    }
+    let declined = || {
+        Err(not_yet(
+            "a module-scoped configuration value of a constant definition the configuration also selects",
+        ))
+    };
+    // The environment kept v for what else reads it, so the front end would read v for K too,
+    // but where `get_config_predicate` walks a PROPERTY's body.
+    let is_kept = environment.is_scoped_selection_kept;
+    if (is_kept && (kind != "property" || environment.is_scoped_selection_let_instanced))
+        || facts.is_impure_definition(definition, environment)
+    {
+        return declined();
+    }
+    if matches!(
+        definition.body.kind,
+        ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+    ) {
+        let is_read = match kind {
+            "initial predicate" => false,
+            "invariant" | "property" => matches!(value, ConfigValue::Boolean(_)),
+            _ => true,
+        };
+        // An unnamed INSTANCE's copy (`Name@Root#n`) has a SubstInNode body, whose location TLC
+        // shows where it rejects the literal.
+        return if !is_read && !key.contains('#') {
+            Ok(())
+        } else {
+            declined()
+        };
+    }
+    let Some(evaluator) = evaluator else {
+        return declined();
+    };
+    let evaluated = if is_kept {
+        evaluator.evaluate(&definition.body, None)
+    } else {
+        evaluator.evaluate(&create_identifier(name), None)
+    };
+    match evaluated {
+        Err(FrontError::Evaluation(_)) => Ok(()),
+        Ok(ConfigValue::Boolean(true))
+            if matches!(kind, "property" | "constraint" | "action constraint") =>
+        {
+            Ok(())
+        }
+        _ => declined(),
+    }
+}
+
 /// `getConfigDefinition`.
 fn get_config_definition(
     kind: &str,
@@ -903,9 +2035,37 @@ fn get_config_definition(
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: Option<&Evaluator>,
+    is_deferrable: bool,
 ) -> Result<()> {
-    let definition = get_config_operator(kind, name, environment)?;
-    if get_constant_value(name, definition, environment, facts, evaluator, true)?.is_some() {
+    let assigned = environment.configured_value_bindings.contains(name);
+    let definition = if assigned {
+        None
+    } else {
+        let definition = get_config_operator(kind, name, environment)?;
+        check_scoped_selection(kind, name, definition, environment, facts, evaluator)?;
+        // A constant next-state action TLC keeps as an operator names each step it takes by
+        // the body's expression (`TRUE line 4, col 6 to ...`), which the engine's actions don't.
+        if kind == "next state action"
+            && facts.is_constant_level(definition, environment)
+            && is_computed_as_substitute(name, definition, environment)?
+        {
+            return Err(not_yet(
+                "a constant next-state action the configuration substitutes for a constant",
+            ));
+        }
+        Some(definition)
+    };
+    if assigned
+        || get_constant_value(
+            name,
+            definition.expect("an operator"),
+            environment,
+            facts,
+            evaluator,
+            is_deferrable,
+        )?
+        .is_some()
+    {
         // TLC computes the constant definitions, and shows what they print, before it rejects
         // the name (`processConstantDefns`).
         let is_impure = environment.definitions.values().any(|definition| {
@@ -983,7 +2143,6 @@ fn find_next(
             let bound = bind_definitions(definitions, scope)?;
             return recurse(body, bound.as_ref(), substitution, found);
         }
-        ExpressionKind::Label { body, .. } => return recurse(body, scope, substitution, found),
         ExpressionKind::Junction {
             is_and: true,
             operands,
@@ -1082,6 +2241,21 @@ pub fn check_invariants(
             }
             error => error,
         };
+        // An invariant of TLC's command line (`-inv`), which TLC checks as it is, without the
+        // configuration's checks of a constant or of its level: the front end follows one that
+        // reads the state and is no action or temporal formula.
+        if is_command_line_invariant(name) {
+            let Some(definition) = get_definition(name, environment) else {
+                return Err(not_yet(
+                    "-inv of an expression the front end doesn't define",
+                ));
+            };
+            let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
+            if levels.data.level >= ACTION_LEVEL {
+                return Err(not_yet("-inv of an action or a temporal formula"));
+            }
+            continue;
+        }
         let Some(definition) =
             get_config_predicate("invariant", name, environment, facts, Some(evaluator))
                 .map_err(warned)?
@@ -1089,7 +2263,31 @@ pub fn check_invariants(
             constant_true.push(Rc::from(name.as_str()));
             continue;
         };
-        let levels = analyzer.analyze_definition(definition, &levels::Scope::default())?;
+        // `processConfigInvariants` reads the levels SANY gave the definition, where a declared
+        // constant the configuration substitutes a definition for is still the declaration.
+        let is_substituted = environment
+            .root_constants
+            .iter()
+            .any(|declaration| environment.substitutions.contains_key(&*declaration.name));
+        let substituted = analyzer.analyze_definition(definition, &levels::Scope::default());
+        let mut levels = match substituted {
+            Ok(levels) => levels,
+            Err(error) if !is_substituted => return Err(error),
+            // A substitute SANY's level check never sees, such as a temporal formula under
+            // ENABLED, which TLC meets only as it evaluates the invariant.
+            Err(_) => environment
+                .create_unsubstituted_level_analyzer()
+                .analyze_definition(definition, &levels::Scope::default())?,
+        };
+        if is_substituted {
+            let sany = environment
+                .create_unsubstituted_level_analyzer()
+                .analyze_definition(definition, &levels::Scope::default())?;
+            // An invariant TLC admits by SANY's level whose substitute is an action or a
+            // temporal formula, TLC evaluates as it is, of the state alone: it fails on a primed
+            // variable as on a temporal operator it reaches.
+            levels = sany;
+        }
         if levels.data.level >= ACTION_LEVEL {
             // SANY's level check can give a definition levels of parameters it doesn't have
             // (LevelNode.java, 590ff), which TLC notes.
@@ -1104,6 +2302,44 @@ pub fn check_invariants(
         }
     }
     Ok((!evaluator.is_deferring()).then_some(constant_true))
+}
+
+/// The LET definitions named so, of any definition's body, once each, and whether a LET's
+/// definition without parameters is a name of one.
+fn get_let_definitions(name: &str, environment: &Environment) -> (Vec<Rc<Definition>>, bool) {
+    let mut found: Vec<Rc<Definition>> = Vec::new();
+    let mut is_named = false;
+    let mut seen = crate::hash::FastSet::default();
+    let mut pending: Vec<Expr> = environment
+        .definitions
+        .values()
+        .map(|definition| definition.body.clone())
+        .collect();
+    while let Some(expression) = pending.pop() {
+        if !seen.insert(Rc::as_ptr(&expression) as usize) {
+            continue;
+        }
+        if let ExpressionKind::Let { definitions, .. } = &expression.kind {
+            for definition in definitions {
+                if &*definition.name == name
+                    && !found.iter().any(|other| Rc::ptr_eq(other, definition))
+                {
+                    found.push(definition.clone());
+                }
+                is_named |= matches!(&definition.body.kind,
+                    ExpressionKind::Identifier { name: named, .. } if &**named == name)
+                    && definition.body.is_locally_resolved();
+            }
+        }
+        pending.extend(expression.children());
+    }
+    (found, is_named)
+}
+
+/// Whether an invariant is one the checker added for TLC's command line (`-inv`, `-invlevel`),
+/// by the name TLC gives it (`TLCDebuggerExpression.process`).
+pub fn is_command_line_invariant(name: &str) -> bool {
+    name.starts_with("__DebuggerExpr__")
 }
 
 /// `getSpecification` (`search.ts`).
@@ -1139,12 +2375,32 @@ pub fn read_specification(
         let operator = |name: &Option<String>, description: &str| {
             name.as_deref()
                 .map(|name| {
-                    get_config_definition(description, name, environment, facts, evaluator)
+                    get_config_definition(description, name, environment, facts, evaluator, true)
                         .map(|()| create_identifier(name))
                 })
                 .transpose()
         };
+        // `processConfigSpec` takes the body of the definition NEXT names, which
+        // `Tool.getActions` splits.
+        let failure = config
+            .next
+            .as_deref()
+            .and_then(|name| get_definition(name, environment))
+            .filter(|definition| {
+                matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+            })
+            .and_then(|definition| {
+                action_split_failure(&definition.body, None, environment, evaluator, 0)
+            });
         return Ok(Specification {
+            has_action_parameter_cast: false,
+            has_action_variable_cast: false,
+            has_action_constant_cast: matches!(failure, Some(ActionSplitFailure::Constant)),
+            action_unknown_argument: match failure {
+                Some(ActionSplitFailure::UnknownArgument(reason)) => Some(reason),
+                _ => None,
+            },
+            is_fairness_tautology: false,
             init: operator(&config.init, "initial predicate")?,
             next: operator(&config.next, "next state action")?,
             scope: None,
@@ -1157,6 +2413,55 @@ pub fn read_specification(
             "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields."
                 .to_owned(),
         ));
+    }
+    if environment
+        .configured_value_bindings
+        .contains(specification.as_str())
+        && !get_definition(specification, environment).is_some_and(|definition| {
+            facts.is_constant_level(definition, environment)
+                && !matches!(
+                    definition.body.kind,
+                    ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+                )
+        })
+    {
+        if environment.definitions.values().any(|definition| {
+            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && facts.is_impure_definition(definition, environment)
+        }) {
+            return Err(not_yet(
+                "a configured SPECIFICATION value after a definition TLC computes with its effects",
+            ));
+        }
+        let value = if let Some(value) = environment
+            .constants
+            .get(specification.as_str())
+            .or_else(|| environment.operator_constants.get(specification.as_str()))
+        {
+            format_config_value(value, None, evaluator)?
+        } else if let Some(rows) = environment
+            .builtins
+            .get(specification.as_str())
+            .and_then(|builtin| builtin.table.as_ref())
+        {
+            let rows = rows
+                .iter()
+                .map(|(arguments, value)| {
+                    let values = arguments
+                        .iter()
+                        .chain(std::iter::once(value))
+                        .map(|value| format_config_value(value, None, evaluator))
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(format!("<{}>", values.join(", ")))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            format!("{{ {}}}", rows.join(", "))
+        } else {
+            return Err(not_yet("the initial value of the configured SPECIFICATION"));
+        };
+        return Err(FrontError::Config(format!(
+            "The value of {specification} is equal to {value}"
+        )));
     }
     let definition = get_config_operator("name", specification, environment)?;
     if let Some(value) = get_constant_value(
@@ -1173,6 +2478,7 @@ pub fn read_specification(
         )));
     }
     let expansion = Expansion {
+        fairness_property: (config.properties.len() == 1).then(|| config.properties[0].as_str()),
         environment,
         facts,
         version,
@@ -1180,14 +2486,155 @@ pub fn read_specification(
         is_specification: true,
         evaluator: None,
         is_unrolled: std::cell::Cell::new(false),
+        unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
+        has_action_substitutions: std::cell::Cell::new(false),
+        label_probe: std::cell::Cell::new(false),
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
+    let mut has_action_parameter_cast = false;
+    let mut has_action_variable_cast = false;
+    let mut has_action_constant_cast = false;
+    let mut action_unknown_argument = None;
     let mut temporals = Vec::new();
     let startup = crate::startup::get_startup_model(environment);
     // TLC prints the warnings of a subscript as it reads it, before an error in a later conjunct.
     let read = (|| -> Result<()> {
         for item in expansion.expand(&definition.body, None, &[], false, None)? {
+            let level = || {
+                get_level(
+                    &item.expression,
+                    item.scope.as_ref(),
+                    environment,
+                    facts,
+                    &[],
+                )
+            };
+            // `processConfigSpec` takes a conjunct that names a variable as the value it looks
+            // the name up to, its declaration, which it rejects by the declaration's location.
+            // A definition whose body is such a conjunct is a state predicate it takes whole.
+            // A LET around the conjunct binds other names only.
+            let mut relocated = None;
+            if let ExpressionKind::Identifier { name, .. } = &item.expression.kind {
+                let is_bound = item.expression.is_locally_resolved()
+                    || lookup_scope(item.scope.as_ref(), name).is_some();
+                let variable = environment
+                    .variable_index
+                    .get(&*item.expression.reference().unwrap_or_default())
+                    .and_then(|&index| environment.variable_locations[index].range.as_ref());
+                if !is_bound
+                    && !item.has_substitutions
+                    && let Some(range) = variable
+                {
+                    // The conjunct is the body of a definition without parameters, which TLC
+                    // takes whole, where `getSpecification` names it by that definition; one it
+                    // names by a definition with parameters or by where it is written TLC
+                    // reached by inlining the operator it applies (`getOpContext`) and looking
+                    // its parameter up to the argument (a `LazyValue`).
+                    let is_looked_up = match item.name.as_deref() {
+                        None => true,
+                        Some(written) if written.starts_with("line ") => true,
+                        Some(written) => match (
+                            lookup_scope(item.scope.as_ref(), written).map(|(_, binding)| binding),
+                            get_definition(written, environment).map(|definition| &definition.kind),
+                        ) {
+                            // A LET's definition, which the expansion names as it reads it.
+                            (Some(Binding::Closure { params, .. }), _) => !params.is_empty(),
+                            (
+                                Some(Binding::Thunk {
+                                    scope: ScopeOf::Own,
+                                    ..
+                                }),
+                                _,
+                            ) => false,
+                            (None, Some(DefinitionKind::Operator { params, .. })) => {
+                                !params.is_empty()
+                            }
+                            // A LET's definition the expansion read the conjunct in, whose
+                            // scope the conjunct's isn't (`S(y) == LET D == y IN Init /\ D`):
+                            // one with parameters TLC looks up as above, and one without it
+                            // takes whole, wording a failure of the conjunct at the body, the
+                            // parameter it looked up, which the expansion holds the argument
+                            // for. Where another LET's definition names it (`E == D`), the
+                            // expansion names the inner one, and TLC words it at the outer's
+                            // body, so that declines.
+                            _ => match get_let_definitions(written, environment) {
+                                (definitions, false) => match definitions.as_slice() {
+                                    [definition]
+                                        if matches!(&definition.kind,
+                                        DefinitionKind::Operator { params, .. } if !params.is_empty()) =>
+                                    {
+                                        true
+                                    }
+                                    [definition]
+                                        if matches!(&definition.kind,
+                                        DefinitionKind::Operator { params, .. } if params.is_empty())
+                                            && matches!(
+                                                definition.body.kind,
+                                                ExpressionKind::Identifier { .. }
+                                            )
+                                            && definition.body.is_locally_resolved() =>
+                                    {
+                                        relocated = Some(definition.body.location.clone());
+                                        false
+                                    }
+                                    _ => {
+                                        return Err(not_yet(
+                                            "a conjunct of the specification that names a variable through a definition the front end doesn't find",
+                                        ));
+                                    }
+                                },
+                                _ => {
+                                    return Err(not_yet(
+                                        "a conjunct of the specification that names a variable through a definition the front end doesn't find",
+                                    ));
+                                }
+                            },
+                        },
+                    };
+                    if is_looked_up {
+                        return Err(FrontError::Config(format!(
+                            "The operator {name}, which equals {},\ncannot be used as a spec",
+                            format_range(range)
+                        )));
+                    }
+                }
+                // An operator's parameter TLC looks up to its argument, which may be a variable
+                // it then rejects (`P(a) == a`, `Spec == Init /\ P(x) /\ ...`), and a conjunct
+                // an INSTANCE's substitutions may make one.
+                let names_definition = |expression: &Expr| {
+                    matches!(expression.kind, ExpressionKind::Identifier { .. })
+                        && !expression.is_locally_resolved()
+                        && environment
+                            .definitions
+                            .contains_key(&*expression.reference().unwrap_or_default())
+                };
+                // A LET's definition taken whole reads, through the parameters, an expression that
+                // is no name.
+                let may_name_variable = if is_bound {
+                    !matches!(
+                        lookup_scope(item.scope.as_ref(), name),
+                        Some((_, Binding::Thunk { expression, .. })) if names_definition(expression)
+                    ) && matches!(
+                        read_through(&item.expression, item.scope.as_ref()).kind,
+                        ExpressionKind::Identifier { .. }
+                    )
+                } else {
+                    item.has_substitutions && !names_definition(&item.expression)
+                };
+                if may_name_variable && level() == Level::Variable {
+                    return Err(not_yet(
+                        "a conjunct of the specification that may name a variable through a parameter or an INSTANCE",
+                    ));
+                }
+            }
+            let mut item = item;
+            if let Some(location) = relocated {
+                item.expression = Rc::new(Expression {
+                    location,
+                    ..(*item.expression).clone()
+                });
+            }
             let level = || {
                 get_level(
                     &item.expression,
@@ -1206,7 +2653,9 @@ pub fn read_specification(
                 }
                 ExpressionKind::UnboundedQuantifier {
                     is_temporal: true, ..
-                } => return Err(not_yet("temporal quantification in the specification")),
+                } => return Err(FrontError::Evaluation(
+                    "TLC does not support temporal existential, nor universal, quantification over state variables.".to_owned(),
+                )),
                 ExpressionKind::Always(inner) => match &inner.kind {
                     ExpressionKind::Action {
                         is_box: true,
@@ -1221,6 +2670,28 @@ pub fn read_specification(
                             is_overflowed: std::cell::Cell::default(),
                         };
                         subscripts.push(collector.check(subscript, item.scope.as_ref())?);
+                        if !item.has_substitutions {
+                            let failure =
+                                action_split_failure(
+                                    action,
+                                    item.scope.as_ref(),
+                                    environment,
+                                    evaluator,
+                                    0,
+                                );
+                            has_action_parameter_cast |=
+                                matches!(failure, Some(ActionSplitFailure::FormalParameter));
+                            // The engine declines a variable it finds TLC splits to as TLC builds
+                            // its `Tool`, but sees `A` only as the name of the scope the front end
+                            // binds around it, so the front end declines that.
+                            has_action_variable_cast |= item.scope.is_some()
+                                && matches!(failure, Some(ActionSplitFailure::Variable));
+                            has_action_constant_cast |=
+                                matches!(failure, Some(ActionSplitFailure::Constant));
+                            if let Some(ActionSplitFailure::UnknownArgument(reason)) = failure {
+                                action_unknown_argument.get_or_insert(reason);
+                            }
+                        }
                         next_actions.push((action.clone(), item.scope.clone()));
                         // TLC fails at the second next-state relation, reading nothing after it.
                         if next_actions.len() > 1 {
@@ -1228,7 +2699,13 @@ pub fn read_specification(
                         }
                         continue;
                     }
-                    _ if get_level(inner, item.scope.as_ref(), environment, facts, &[])
+                    _ if !matches!(
+                        inner.kind,
+                        ExpressionKind::Let { .. }
+                            | ExpressionKind::Label { .. }
+                            | ExpressionKind::Number { .. }
+                            | ExpressionKind::String { .. }
+                    ) && get_level(inner, item.scope.as_ref(), environment, facts, &[])
                         < Level::Action =>
                     {
                         // TLC accepts the spec and fails when it builds the tableau of the temporal
@@ -1246,7 +2723,8 @@ pub fn read_specification(
                 Level::Temporal => temporals.push(item),
                 Level::Action => {
                     return Err(FrontError::Config(format!(
-                        "TLC cannot handle the action-level conjunct of the specification {specification}"
+                        "TLC cannot handle this conjunct of the spec:\n{}",
+                        describe_range(&item.expression)
                     )));
                 }
                 // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
@@ -1299,7 +2777,16 @@ pub fn read_specification(
         reference.resolved.is_local.set(true);
         Rc::new(reference)
     };
+    let is_fairness_tautology = !temporals.is_empty()
+        && temporals.iter().all(|item| {
+            item.is_property_fairness && !matches!(item.expression.kind, ExpressionKind::Always(_))
+        });
     Ok(Specification {
+        has_action_parameter_cast,
+        has_action_variable_cast,
+        has_action_constant_cast,
+        action_unknown_argument,
+        is_fairness_tautology,
         init: (!init_conjuncts.is_empty()).then(|| {
             Rc::new(Expression::new(
                 ExpressionKind::Junction {
@@ -1316,6 +2803,902 @@ pub fn read_specification(
         temporals,
         subscripts: subscripts.clone(),
     })
+}
+
+fn action_argument_level(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+) -> Option<u8> {
+    let mut frames = Vec::new();
+    let mut current = scope;
+    while let Some(frame) = current {
+        frames.push(frame);
+        current = frame.parent.as_ref();
+    }
+    let mut syntactic = levels::Scope::default();
+    for frame in frames.into_iter().rev() {
+        let operator = match &frame.binding {
+            Binding::Thunk {
+                expression,
+                scope: ScopeOf::Own,
+            } => Some((Vec::new(), expression.clone())),
+            Binding::Closure {
+                params,
+                body,
+                scope: ScopeOf::Own,
+                ..
+            } => Some((params.clone(), body.clone())),
+            _ => None,
+        };
+        if let Some((params, body)) = operator {
+            let definition = Rc::new(crate::instances::operator_definition(
+                frame.name.clone(),
+                params,
+                body.clone(),
+                true,
+                &body.location,
+            ));
+            syntactic = syntactic.bind_definitions(&[definition]);
+        } else {
+            let arity = match &frame.binding {
+                Binding::Closure { params, .. } => params.len(),
+                _ => 0,
+            };
+            syntactic = syntactic.bind_parameters(&[OperatorParam {
+                name: frame.name.clone(),
+                arity,
+                location: None,
+            }]);
+        }
+    }
+    environment
+        .create_level_analyzer(&[])
+        .analyze(expression, &syntactic)
+        .ok()
+        .map(|data| data.level)
+}
+
+/// Why the front end declines a substituted constant applied as the next-state action to an
+/// argument it can't tell TLC evaluates without fail as it splits the action.
+pub(crate) const UNKNOWN_ARGUMENT: &str = "a substituted constant applied as the next-state action to an argument the front end can't tell TLC evaluates without fail as it splits the action";
+
+/// Why the front end declines a substituted constant applied as the next-state action to an
+/// argument that prints or draws, which TLC evaluates once as it splits the action, binding the
+/// value it then reads, or where it fails.
+pub(crate) const SHOWN_ARGUMENT: &str = "a substituted constant applied as the next-state action to an argument that prints or draws, which TLC evaluates once as it splits the action";
+
+enum ActionSplitFailure {
+    FormalParameter,
+    /// A variable, whose declaration `getActionsAppl` casts to OpDefNode.
+    Variable,
+    /// A declared constant the configuration substitutes a definition for, whose declaration
+    /// `getActionsAppl` casts to OpDefNode where it doesn't split the definition.
+    Constant,
+    /// A substituted constant applied to an argument whose evaluation as `getActionsAppl`
+    /// evaluates it the front end can't follow, with why: whether it fails, so that TLC casts,
+    /// or what it prints or draws there.
+    UnknownArgument(&'static str),
+    Other,
+}
+
+// `getActionsAppl` of a declared constant of the root module the configuration substitutes a
+// name for (`C <- Op`), or `None` for any other name. `processConstants` gives the constant what
+// `defns` holds for the name: a definition's OpDefNode, which TLC splits with the arguments bound
+// where they are all of constant level, inside a try; or a value, as of another constant or a
+// Java method. Where it doesn't split the definition, or the split fails, TLC casts the
+// constant's own declaration, an OpDeclNode, to OpDefNode: a ClassCastException only an
+// enclosing operator's application or \E catches.
+fn substituted_constant_split_failure(
+    expression: &Expr,
+    name: &Name,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    evaluator: Option<&Evaluator>,
+    depth: usize,
+) -> Option<Option<ActionSplitFailure>> {
+    if !environment
+        .root_constants
+        .iter()
+        .any(|declaration| declaration.name == *name)
+    {
+        return None;
+    }
+    let target = environment.substitutions.get(name)?;
+    let cast = Some(Some(ActionSplitFailure::Constant));
+    let definition = match get_definition(name, environment) {
+        Some(definition)
+            if !environment.builtins.contains_key(target)
+                && !environment.configured_value_bindings.contains(target) =>
+        {
+            definition
+        }
+        _ => return cast,
+    };
+    let args: &[Expr] = match &expression.kind {
+        ExpressionKind::Apply { args, .. } => args,
+        _ => &[],
+    };
+    let DefinitionKind::Operator { params, .. } = &definition.kind else {
+        // A function's definition has no formal parameters to bind an argument to.
+        return if args.is_empty() { Some(None) } else { cast };
+    };
+    if params.len() != args.len()
+        || args.iter().any(|arg| {
+            action_argument_level(arg, scope, environment)
+                .is_some_and(|level| level > levels::CONSTANT_LEVEL)
+        })
+    {
+        return cast;
+    }
+    // TLC evaluates each argument inside the try as it starts, so one that fails (`C(1 \div 0)`)
+    // is a cast too. One that prints or draws there doesn't fail: TLC binds what it drew or
+    // printed once to the parameter and splits the body. The engine shows that only where the
+    // argument is a draw that can't fail, the body never reads its parameter, and every other
+    // draw in the spec shows nothing of what it draws either (`count_hidden_draws`), so that
+    // the draw TLC makes as it starts, which moves on the generator the initial states and the
+    // assumptions draw from, shows nowhere; any other such argument declines (`SHOWN_ARGUMENT`).
+    // One the front end doesn't compute it takes for one that doesn't fail only where it is
+    // built of what can't fail (`C(Nat)`, `C(<<1>>[1])`, `is_unfailing_argument`); of another
+    // (`C(Len(1))`, `C(CHOOSE n \in Nat : n > 2)`) it can't tell whether TLC casts, and declines
+    // (`UNKNOWN_ARGUMENT`).
+    let is_unread_draw = |param: &OperatorParam, arg: &Expr| {
+        is_infallible_draw(arg, environment)
+            && !is_named_in(&definition.body, &param.name)
+            && count_all_draws(environment) == count_hidden_draws(environment)
+    };
+    if args.iter().any(|arg| {
+        evaluator.is_some_and(|evaluator| {
+            evaluator
+                .evaluate(arg, scope)
+                .is_err_and(|error| !matches!(error, FrontError::NotYet(_)))
+        })
+    }) {
+        return cast;
+    }
+    if params.iter().zip(args).any(|(param, arg)| {
+        !is_unread_draw(param, arg)
+            && crate::lower::reaches_in(arg, environment, &crate::lower::SHOWN_EFFECTS, None)
+    }) {
+        return Some(Some(ActionSplitFailure::UnknownArgument(SHOWN_ARGUMENT)));
+    }
+    if params.iter().zip(args).any(|(param, arg)| {
+        !is_unread_draw(param, arg)
+            && !is_unfailing_argument(arg, scope, environment, &[], &[], 0)
+            && evaluator.is_none_or(|evaluator| {
+                matches!(evaluator.evaluate(arg, scope), Err(FrontError::NotYet(_)))
+            })
+    }) {
+        return Some(Some(ActionSplitFailure::UnknownArgument(UNKNOWN_ARGUMENT)));
+    }
+    // An argument the front end binds no value to (a builtin's, as `C(Nat)`) the body reads as
+    // the expression; an operator's argument it can't bind leaves the body unknown, which it
+    // takes for one that splits, as the engine did before.
+    let bound = match bind_operator_arguments(params, args, None, scope, environment) {
+        Ok(bound) => bound,
+        Err(_) if params.iter().all(|param| param.arity == 0) => {
+            params
+                .iter()
+                .zip(args)
+                .fold(None, |parent, (param, argument)| {
+                    Some(Rc::new(Scope {
+                        name: param.name.clone(),
+                        binding: Binding::Thunk {
+                            expression: argument.clone(),
+                            scope: ScopeOf::Other(scope.cloned()),
+                        },
+                        parent,
+                    }))
+                })
+        }
+        Err(_) => return Some(None),
+    };
+    Some(
+        action_split_failure(
+            &definition.body,
+            bound.as_ref(),
+            environment,
+            evaluator,
+            depth + 1,
+        )
+        .map(|failure| match failure {
+            ActionSplitFailure::UnknownArgument(_) => failure,
+            _ => ActionSplitFailure::Constant,
+        }),
+    )
+}
+
+// Whether TLC evaluates an expression of constant level without fail, as it evaluates a
+// substituted constant's argument splitting the next-state action (`Tool.eval`):
+// - a literal integer or string, TRUE, FALSE, BOOLEAN, STRING, Nat or Int;
+// - a tuple, set enumeration, record, set of records, set of functions, product, SUBSET or Seq
+//   of such, which TLC builds without comparing or looking into the parts (`SubsetValue`,
+//   `SetOfFcnsValue` are lazy);
+// - `{x \in S : P}` and `[x \in S |-> e]` over Nat or Int, which aren't `Reducible`, so that
+//   TLC keeps them lazy and evaluates neither P nor e (`SetPredValue`, `FcnLambdaValue`), and the
+//   union of such a set with one of the others (`SetCupValue`);
+// - the length of a tuple of such, and a sum or difference of such lengths and literals;
+// - an element of a tuple of such at an index it writes within the tuple, a field of a record of
+//   such it writes, or the value at an integer it writes of a function of one bound variable over
+//   Nat or Int whose body is such or the variable;
+// - a LET of such, where a function the LET defines over such sets is lazy (`makeRecursive`)
+//   and another definition's body is such;
+// - a definition of no parameters whose body is such, and a bound parameter that holds a value or
+//   is such.
+// `bound` holds the names of function constructors' bound variables, and `lets` the definitions
+// of the LETs around.
+fn is_unfailing_argument(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    bound: &[Name],
+    lets: &[Rc<Definition>],
+    depth: usize,
+) -> bool {
+    if depth >= 64 {
+        return false;
+    }
+    let recurse = |expression: &Expr| {
+        is_unfailing_argument(expression, scope, environment, bound, lets, depth + 1)
+    };
+    let integer = |expression: &Expr| get_written_integer(expression, environment);
+    let standard = |expression: &Expr, modules: &[&str]| {
+        get_standard_builtin(expression, environment, modules)
+    };
+    let operands_of = |expression: &Expr| -> Vec<Expr> {
+        match &expression.kind {
+            ExpressionKind::Apply { args, .. } => args.clone(),
+            _ => Vec::new(),
+        }
+    };
+    // Nat or Int, which TLC doesn't hold as `Reducible`.
+    let is_infinite = |set: &Expr| {
+        operands_of(set).is_empty()
+            && standard(set, &["Naturals", "Integers"])
+                .is_some_and(|name| matches!(&*name, "Nat" | "Int"))
+    };
+    // A small integer, of a literal, a tuple's length, or a sum or difference of such.
+    fn is_small_integer(
+        expression: &Expr,
+        is_unfailing: &dyn Fn(&Expr) -> bool,
+        environment: &Environment,
+        depth: usize,
+    ) -> bool {
+        if depth >= 16 {
+            return false;
+        }
+        match &expression.kind {
+            ExpressionKind::Number { value, .. } => value.fract() == 0.0 && value.abs() < 1e6,
+            ExpressionKind::Apply { args, .. } => {
+                match (
+                    get_standard_builtin(
+                        expression,
+                        environment,
+                        &["Naturals", "Integers", "Sequences"],
+                    )
+                    .as_deref(),
+                    &args[..],
+                ) {
+                    (Some("+" | "-"), [left, right]) => {
+                        is_small_integer(left, is_unfailing, environment, depth + 1)
+                            && is_small_integer(right, is_unfailing, environment, depth + 1)
+                    }
+                    (Some("Len"), [tuple]) => {
+                        matches!(tuple.kind, ExpressionKind::Tuple(_)) && is_unfailing(tuple)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+    match &expression.kind {
+        ExpressionKind::Number { .. } => integer(expression).is_some(),
+        ExpressionKind::String { .. } => true,
+        ExpressionKind::Tuple(items)
+        | ExpressionKind::SetEnumeration(items)
+        | ExpressionKind::Product(items) => items.iter().all(recurse),
+        ExpressionKind::Record { fields, .. } => fields.iter().all(|field| recurse(&field.value)),
+        ExpressionKind::FunctionSet { domain, range } => recurse(domain) && recurse(range),
+        ExpressionKind::Label { body, .. } => recurse(body),
+        ExpressionKind::SetFilter { bound: each, .. } => is_infinite(&each.set),
+        ExpressionKind::FunctionConstruction { bounds, body } => {
+            let mut inner = bound.to_vec();
+            for each in bounds {
+                match &each.pattern {
+                    BoundPattern::Name { name, .. } => inner.push(name.clone()),
+                    BoundPattern::Tuple { .. } => return false,
+                }
+            }
+            bounds.iter().all(|each| recurse(&each.set))
+                && (bounds.iter().any(|each| is_infinite(&each.set))
+                    || is_unfailing_argument(body, scope, environment, &inner, lets, depth + 1))
+        }
+        ExpressionKind::Let {
+            definitions,
+            instances: None,
+            body,
+            ..
+        } => {
+            let mut inner = lets.to_vec();
+            inner.extend(definitions.iter().cloned());
+            is_unfailing_argument(body, scope, environment, bound, &inner, depth + 1)
+        }
+        ExpressionKind::FieldAccess { record, field } => match &record.kind {
+            ExpressionKind::Record {
+                is_set: false,
+                fields,
+            } => {
+                fields.iter().any(|each| each.name == *field)
+                    && fields.iter().all(|field| recurse(&field.value))
+            }
+            _ => false,
+        },
+        ExpressionKind::FunctionApplication { function, args } => {
+            let [index] = &args[..] else {
+                return false;
+            };
+            let Some(index) = integer(index) else {
+                return false;
+            };
+            // The function as written, through the LET definitions and the definitions of no
+            // parameters that name it.
+            let mut function = function.clone();
+            let mut defined = None;
+            for _ in 0..16 {
+                let ExpressionKind::Identifier { name, .. } = &function.kind else {
+                    break;
+                };
+                let definition = if function.is_locally_resolved() {
+                    lets.iter()
+                        .rev()
+                        .find(|definition| definition.name == *name)
+                        .cloned()
+                } else if !environment.builtins.contains_key(name)
+                    && !environment.substitutions.contains_key(name)
+                    && !environment.configured_value_bindings.contains(name)
+                {
+                    get_definition(name, environment).cloned()
+                } else {
+                    None
+                };
+                match definition.as_ref().map(|definition| &definition.kind) {
+                    Some(DefinitionKind::Operator { params, .. }) if params.is_empty() => {
+                        function = definition.as_ref().unwrap().body.clone();
+                    }
+                    Some(DefinitionKind::Function { bounds }) => {
+                        defined = Some((bounds.clone(), definition.as_ref().unwrap().body.clone()));
+                        break;
+                    }
+                    _ => return false,
+                }
+            }
+            let (bounds, body) = match (&function.kind, defined) {
+                (_, Some(defined)) => defined,
+                (ExpressionKind::Tuple(items), None) => {
+                    return index >= 1.0
+                        && index <= items.len() as f64
+                        && items.iter().all(recurse);
+                }
+                (ExpressionKind::FunctionConstruction { bounds, body }, None) => {
+                    (bounds.clone(), body.clone())
+                }
+                _ => return false,
+            };
+            let [
+                Bound {
+                    pattern: BoundPattern::Name { name, .. },
+                    set,
+                },
+            ] = &bounds[..]
+            else {
+                return false;
+            };
+            let is_in_domain = match standard(set, &["Naturals", "Integers"]).as_deref() {
+                Some("Nat") if is_infinite(set) => index >= 0.0,
+                Some("Int") if is_infinite(set) => true,
+                _ => get_written_integers(set, environment)
+                    .is_some_and(|values| values.contains(&index)),
+            };
+            let mut inner = bound.to_vec();
+            inner.push(name.clone());
+            is_in_domain
+                && is_unfailing_argument(&body, scope, environment, &inner, lets, depth + 1)
+        }
+        ExpressionKind::Identifier { name, .. } | ExpressionKind::Apply { operator: name, .. }
+            if expression.is_locally_resolved() =>
+        {
+            if matches!(expression.kind, ExpressionKind::Apply { .. }) {
+                return false;
+            }
+            if bound.contains(name) {
+                return true;
+            }
+            if let Some(definition) = lets
+                .iter()
+                .rev()
+                .find(|definition| definition.name == *name)
+            {
+                return match &definition.kind {
+                    DefinitionKind::Function { bounds } => {
+                        bounds.iter().all(|each| recurse(&each.set))
+                    }
+                    DefinitionKind::Operator { params, .. } => {
+                        params.is_empty() && recurse(&definition.body)
+                    }
+                };
+            }
+            match lookup_scope(scope, name) {
+                Some((_, Binding::Value(_) | Binding::Literal { .. })) => true,
+                Some((
+                    _,
+                    Binding::Thunk {
+                        expression,
+                        scope: ScopeOf::Other(outer),
+                    },
+                )) => is_unfailing_argument(
+                    expression,
+                    outer.as_ref(),
+                    environment,
+                    &[],
+                    &[],
+                    depth + 1,
+                ),
+                _ => false,
+            }
+        }
+        ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {
+            let operands = operands_of(expression);
+            if let Some(name) = standard(expression, &["Naturals", "Integers", "Sequences"]) {
+                return match (&*name, &operands[..]) {
+                    ("TRUE" | "FALSE" | "BOOLEAN" | "STRING" | "Nat" | "Int", []) => true,
+                    ("SUBSET" | "Seq", [set]) => recurse(set),
+                    ("\\cup", [left, right]) => {
+                        (is_infinite(left) || is_infinite(right)) && recurse(left) && recurse(right)
+                    }
+                    ("\\", [left, right]) => is_infinite(left) && recurse(right),
+                    ("..", [_, _]) => {
+                        get_written_integers(expression, environment).is_some()
+                            || operands
+                                .iter()
+                                .all(|operand| is_small_integer(operand, &recurse, environment, 0))
+                    }
+                    ("\\o", [left, right]) => {
+                        matches!(left.kind, ExpressionKind::Tuple(_))
+                            && matches!(right.kind, ExpressionKind::Tuple(_))
+                            && recurse(left)
+                            && recurse(right)
+                    }
+                    ("Head" | "Tail", [tuple]) => {
+                        matches!(&tuple.kind, ExpressionKind::Tuple(items) if !items.is_empty())
+                            && recurse(tuple)
+                    }
+                    ("Append", [tuple, item]) => {
+                        matches!(tuple.kind, ExpressionKind::Tuple(_))
+                            && recurse(tuple)
+                            && recurse(item)
+                    }
+                    ("+" | "-" | "Len", _) => {
+                        is_small_integer(expression, &recurse, environment, 0)
+                    }
+                    _ => false,
+                };
+            }
+            let Some(name) = expression.reference() else {
+                return false;
+            };
+            operands.is_empty()
+                && !environment.builtins.contains_key(&name)
+                && !environment.substitutions.contains_key(&name)
+                && !environment.configured_value_bindings.contains(&name)
+                && get_definition(&name, environment).is_some_and(|definition| {
+                    matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                        && is_unfailing_argument(&definition.body, None, environment, &[], &[], depth + 1)
+                })
+        }
+        _ => false,
+    }
+}
+
+// The name of the builtin an expression applies, where it is TLC's own or the standard module's
+// among `modules` that defines it, and not one the spec or the configuration redefines.
+fn get_standard_builtin(
+    expression: &Expr,
+    environment: &Environment,
+    modules: &[&str],
+) -> Option<Name> {
+    if expression.is_locally_resolved() {
+        return None;
+    }
+    let name = expression.reference()?;
+    let is_builtin = environment
+        .builtins
+        .get(&name)
+        .is_some_and(|builtin| builtin.name == name && builtin.table.is_none())
+        && !environment.substitutions.contains_key(&name)
+        && !environment.configured_value_bindings.contains(&name)
+        && environment.definitions.get(&name).is_none_or(|definition| {
+            definition
+                .location
+                .range
+                .as_ref()
+                .is_some_and(|range| modules.contains(&&*range.module))
+        });
+    is_builtin.then_some(name)
+}
+
+// The integer an expression writes, of a literal or a sum or difference of such, small enough
+// that TLC's arithmetic doesn't overflow.
+fn get_written_integer(expression: &Expr, environment: &Environment) -> Option<f64> {
+    match &expression.kind {
+        ExpressionKind::Number { value, .. } if value.fract() == 0.0 && value.abs() < 1e6 => {
+            Some(*value)
+        }
+        ExpressionKind::Apply { args, .. } => {
+            let name = get_standard_builtin(expression, environment, &["Naturals", "Integers"])?;
+            match (&*name, &args[..]) {
+                ("-.", [operand]) => Some(-get_written_integer(operand, environment)?),
+                ("+", [left, right]) => Some(
+                    get_written_integer(left, environment)?
+                        + get_written_integer(right, environment)?,
+                ),
+                ("-", [left, right]) => Some(
+                    get_written_integer(left, environment)?
+                        - get_written_integer(right, environment)?,
+                ),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+// The integers of a set an expression writes, of a set enumeration of written integers or an
+// interval of two, where TLC builds it without fail and draws from it as from any.
+fn get_written_integers(expression: &Expr, environment: &Environment) -> Option<Vec<f64>> {
+    let mut values = Vec::new();
+    match &expression.kind {
+        ExpressionKind::SetEnumeration(elements) => {
+            for element in elements {
+                let value = get_written_integer(element, environment)?;
+                if !values.contains(&value) {
+                    values.push(value);
+                }
+            }
+        }
+        ExpressionKind::Apply { args, .. } => {
+            let name = get_standard_builtin(expression, environment, &["Naturals", "Integers"])?;
+            let ("..", [low, high]) = (&*name, &args[..]) else {
+                return None;
+            };
+            let (low, high) = (
+                get_written_integer(low, environment)?,
+                get_written_integer(high, environment)?,
+            );
+            if high - low > 1e4 {
+                return None;
+            }
+            let mut value = low;
+            while value <= high {
+                values.push(value);
+                value += 1.0;
+            }
+        }
+        _ => return None,
+    }
+    Some(values)
+}
+
+// Whether an argument is a draw of TLC's or the Randomization module's that can't fail: an
+// element of a nonempty set of integers it writes (`get_written_integers`), as
+// `RandomElement({1, 2})` or `RandomElement(1..4)`; a subset of such a set, empty too, of a
+// size it writes, not negative (`RandomSubset(1, {1, 2})`, `RandomSubset(1, {})`):
+// `SubsetEnumerator` draws as many indices as it is asked for, more than the set has too, and
+// fails at none; such a draw's TLCEval, or its union with a set of integers it writes.
+fn is_infallible_draw(arg: &Expr, environment: &Environment) -> bool {
+    let ExpressionKind::Apply { args, .. } = &arg.kind else {
+        return false;
+    };
+    let module = match arg.reference().as_deref() {
+        Some("TLCEval" | "RandomElement") => "TLC",
+        Some("RandomSubset") => "Randomization",
+        _ => "",
+    };
+    match (
+        get_standard_builtin(arg, environment, &[module]).as_deref(),
+        &args[..],
+    ) {
+        (Some("TLCEval"), [inner]) => is_infallible_draw(inner, environment),
+        (Some("RandomElement"), [set]) => {
+            get_written_integers(set, environment).is_some_and(|values| !values.is_empty())
+                || matches!(&set.kind, ExpressionKind::Apply { args, .. }
+                    if args.len() == 1
+                        && get_standard_builtin(set, environment, &[]).as_deref() == Some("SUBSET")
+                        && get_written_integers(&args[0], environment).is_some())
+        }
+        (Some("RandomSubset"), [size, set]) => {
+            get_written_integer(size, environment).is_some_and(|size| size >= 0.0)
+                && get_written_integers(set, environment).is_some()
+        }
+        (Some("\\cup"), [left, right]) => {
+            (is_infallible_draw(left, environment)
+                && get_written_integers(right, environment).is_some())
+                || (get_written_integers(left, environment).is_some()
+                    && is_infallible_draw(right, environment))
+        }
+        _ => {
+            // A sum or difference of a draw of an integer and a written integer or another such
+            // draw.
+            let is_drawn_integer = |operand: &Expr| {
+                matches!(
+                    operand.reference().as_deref(),
+                    Some("RandomElement" | "TLCEval")
+                ) && is_infallible_draw(operand, environment)
+                    && !matches!(&operand.kind, ExpressionKind::Apply { args, .. }
+                    if args.first().is_some_and(|set| {
+                        get_standard_builtin(set, environment, &[]).as_deref() == Some("SUBSET")
+                    }))
+            };
+            match (
+                get_standard_builtin(arg, environment, &["Naturals", "Integers"]).as_deref(),
+                &args[..],
+            ) {
+                (Some("+" | "-"), [left, right]) => {
+                    (is_drawn_integer(left) || get_written_integer(left, environment).is_some())
+                        && (is_drawn_integer(right)
+                            || get_written_integer(right, environment).is_some())
+                        && (is_drawn_integer(left) || is_drawn_integer(right))
+                }
+                _ => false,
+            }
+        }
+    }
+}
+
+// How many of the applications of a builtin that draws the spec writes, counted as
+// `count_all_draws` counts them, show nothing of what they draw: those within an argument that
+// is an infallible draw (`is_infallible_draw`) of a substituted constant's application, whose
+// definition's body never names the parameter; and an element of a set it writes of one
+// integer (`RandomElement({0})`), which draws that integer whatever the generator gives.
+fn count_hidden_draws(environment: &Environment) -> usize {
+    let count = |root: &Expr| {
+        let mut count = 0;
+        let mut pending = vec![root.clone()];
+        while let Some(expression) = pending.pop() {
+            if let ExpressionKind::Apply { args, .. } = &expression.kind
+                && !expression.is_locally_resolved()
+                && let Some(name) = expression.reference()
+            {
+                if get_standard_builtin(&expression, environment, &["TLC"]).as_deref()
+                    == Some("RandomElement")
+                    && let [set] = &args[..]
+                    && matches!(set.kind, ExpressionKind::SetEnumeration(_))
+                    && get_written_integers(set, environment)
+                        .is_some_and(|values| values.len() == 1)
+                {
+                    count += 1;
+                    continue;
+                }
+                let params = environment
+                    .root_constants
+                    .iter()
+                    .any(|declaration| declaration.name == name)
+                    .then(|| environment.substitutions.get(&name))
+                    .flatten()
+                    .filter(|target| {
+                        !environment.builtins.contains_key(*target)
+                            && !environment.configured_value_bindings.contains(*target)
+                    })
+                    .and_then(|_| get_definition(&name, environment))
+                    .and_then(|definition| match &definition.kind {
+                        DefinitionKind::Operator { params, .. } if params.len() == args.len() => {
+                            Some((params.clone(), definition.body.clone()))
+                        }
+                        _ => None,
+                    });
+                if let Some((params, body)) = params {
+                    for (param, arg) in params.iter().zip(args) {
+                        if !is_named_in(&body, &param.name) && is_infallible_draw(arg, environment)
+                        {
+                            count += crate::lower::count_draws(arg);
+                        } else {
+                            pending.push(arg.clone());
+                        }
+                    }
+                    continue;
+                }
+            }
+            pending.extend(expression.children());
+        }
+        count
+    };
+    // A definition TLC computes as it starts, before it splits the next-state action
+    // (`processConstantDefns`), whose body is a draw that can't fail, so that TLC doesn't compute
+    // it again, draws before that draw.
+    let startup: std::collections::HashSet<usize> = environment
+        .startup_definitions
+        .iter()
+        .map(|definition| Rc::as_ptr(definition) as usize)
+        .collect();
+    let is_drawn_first = |definition: &Rc<Definition>| {
+        startup.contains(&(Rc::as_ptr(definition) as usize))
+            && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+            && crate::startup::get_definition_level_bound(environment, definition) == 0
+            && is_infallible_draw(&definition.body, environment)
+    };
+    let mut seen = std::collections::HashSet::new();
+    environment
+        .definitions
+        .values()
+        .chain(environment.pre_override_headers.values())
+        .filter(|definition| seen.insert(Rc::as_ptr(definition) as usize))
+        .map(|definition| {
+            if is_drawn_first(definition) {
+                return crate::lower::count_draws(&definition.body);
+            }
+            count(&definition.body)
+                + match &definition.kind {
+                    DefinitionKind::Function { bounds } => {
+                        bounds.iter().map(|bound| count(&bound.set)).sum()
+                    }
+                    DefinitionKind::Operator { .. } => 0,
+                }
+        })
+        .chain(
+            environment
+                .assumptions
+                .iter()
+                .map(|assumption| count(&assumption.expression)),
+        )
+        .sum()
+}
+
+// How many applications of a builtin that draws the spec writes anywhere: in each of its
+// definitions, read or not, and in its assumptions.
+fn count_all_draws(environment: &Environment) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    environment
+        .definitions
+        .values()
+        .chain(environment.pre_override_headers.values())
+        .filter(|definition| seen.insert(Rc::as_ptr(definition) as usize))
+        .map(|definition| {
+            crate::lower::count_draws(&definition.body)
+                + match &definition.kind {
+                    DefinitionKind::Function { bounds } => bounds
+                        .iter()
+                        .map(|bound| crate::lower::count_draws(&bound.set))
+                        .sum(),
+                    DefinitionKind::Operator { .. } => 0,
+                }
+        })
+        .chain(
+            environment
+                .assumptions
+                .iter()
+                .map(|assumption| crate::lower::count_draws(&assumption.expression)),
+        )
+        .sum()
+}
+
+// Whether an expression names `name` anywhere within it.
+fn is_named_in(expression: &Expr, name: &Name) -> bool {
+    let mut pending = vec![expression.clone()];
+    while let Some(expression) = pending.pop() {
+        if let ExpressionKind::Identifier { name: written, .. }
+        | ExpressionKind::Apply {
+            operator: written, ..
+        }
+        | ExpressionKind::OperatorReference {
+            operator: written, ..
+        } = &expression.kind
+            && (written == name || expression.reference().as_ref() == Some(name))
+        {
+            return true;
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
+fn action_split_failure(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    evaluator: Option<&Evaluator>,
+    depth: usize,
+) -> Option<ActionSplitFailure> {
+    if depth >= 256 || environment.tables.is_selection(expression) {
+        return None;
+    }
+    let recurse = |expression, scope| {
+        action_split_failure(expression, scope, environment, evaluator, depth + 1)
+    };
+    match &expression.kind {
+        ExpressionKind::Label { body, .. } => recurse(body, scope),
+        ExpressionKind::Let {
+            definitions, body, ..
+        } => {
+            let bound = bind_definitions(definitions, scope).ok()?;
+            recurse(body, bound.as_ref())
+        }
+        ExpressionKind::Junction {
+            is_and: false,
+            operands,
+            ..
+        } => operands.iter().find_map(|operand| recurse(operand, scope)),
+        ExpressionKind::Number { .. }
+        | ExpressionKind::Decimal { .. }
+        | ExpressionKind::String { .. } => Some(ActionSplitFailure::Other),
+        ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. } => {
+            let name = expression.reference().unwrap_or_default();
+            if !expression.is_locally_resolved()
+                && let Some(failure) = substituted_constant_split_failure(
+                    expression,
+                    &name,
+                    scope,
+                    environment,
+                    evaluator,
+                    depth,
+                )
+            {
+                return failure;
+            }
+            if !expression.is_locally_resolved() && get_definition(&name, environment).is_some() {
+                return None;
+            }
+            let Some((node, binding)) = lookup_scope(scope, &name) else {
+                return environment
+                    .variable_index
+                    .contains_key(name.as_ref())
+                    .then_some(ActionSplitFailure::Variable);
+            };
+            match binding {
+                Binding::Thunk {
+                    scope: ScopeOf::Own,
+                    ..
+                }
+                | Binding::Closure {
+                    scope: ScopeOf::Own,
+                    ..
+                } => None,
+                Binding::Value(_) | Binding::Literal { .. } | Binding::Thunk { .. } => {
+                    Some(ActionSplitFailure::FormalParameter)
+                }
+                Binding::Closure {
+                    params,
+                    body,
+                    scope: closure_scope,
+                    ..
+                } => {
+                    let ExpressionKind::Apply { args, .. } = &expression.kind else {
+                        return None;
+                    };
+                    if args.iter().any(|arg| {
+                        action_argument_level(arg, scope, environment)
+                            .is_some_and(|level| level > levels::CONSTANT_LEVEL)
+                    }) {
+                        return Some(ActionSplitFailure::FormalParameter);
+                    }
+                    let bound = bind_operator_arguments(
+                        params,
+                        args,
+                        closure_scope.resolve(node),
+                        scope,
+                        environment,
+                    )
+                    .ok()?;
+                    // A failure splitting the actual operator's body is caught, but its
+                    // fallback then casts the original formal symbol and fails again.
+                    recurse(body, bound.as_ref()).map(|failure| match failure {
+                        ActionSplitFailure::UnknownArgument(_) => failure,
+                        _ => ActionSplitFailure::FormalParameter,
+                    })
+                }
+            }
+        }
+        _ => None,
+    }
 }
 
 /// What `processConfigSpec` finds of the subscript of `[][Next]_v`: that it can't tell whether it
@@ -1472,6 +3855,9 @@ impl SubscriptCollector<'_, '_> {
         found: &mut Vec<Name>,
     ) -> std::result::Result<bool, Unfollowed> {
         let environment = self.environment;
+        if environment.tables.selection_location(expression).is_some() {
+            return Ok(true);
+        }
         match &expression.kind {
             ExpressionKind::Number { .. }
             | ExpressionKind::Decimal { .. }
@@ -1500,6 +3886,7 @@ impl SubscriptCollector<'_, '_> {
                         DefinitionKind::Operator { params, .. } if !params.is_empty() => {
                             Binding::Closure {
                                 name: definition.name.clone(),
+                                is_recursive: definition.is_recursive,
                                 params: params.clone(),
                                 body: definition.body.clone(),
                                 scope: ScopeOf::Own,
@@ -1702,6 +4089,7 @@ pub struct Property {
 /// `[][A]_v` in a property, which TLC checks of each step.
 pub struct ActionProperty {
     pub name: Name,
+    pub wrapper: Expr,
     pub action: Expr,
     pub subscript: Expr,
     pub scope: Option<Rc<Scope>>,
@@ -1729,11 +4117,40 @@ fn get_config_predicate<'a>(
     facts: &DefinitionFacts,
     evaluator: Option<&Evaluator>,
 ) -> Result<Option<&'a Rc<Definition>>> {
-    let (definition, value) = match environment.constants.get(name) {
-        Some(value) => (None, Some(value.clone())),
+    // A numeral or string K that only a PROPERTY selects, defined in a module the root extends,
+    // keeps a TRUE scoped value under K's key (`Name@Module`), not its name
+    // (`check_selected_scoped_values`): `processConfigProps` takes the literal as an implied
+    // initial predicate, which `Tool.eval` reads as the value (`getToolObject` of the literal).
+    let key = environment
+        .root_symbols
+        .get(name)
+        .map(|symbol| symbol.key.clone())
+        .filter(|key| **key != *name);
+    let kept_literal = key.as_ref().and_then(|key| {
+        let value = environment.constants.get(key)?;
+        let definition = environment.definitions.get(key)?;
+        (kind == "property"
+            && matches!(value, ConfigValue::Boolean(true))
+            && !environment.scoped_selected_values.contains_key(key)
+            && matches!(
+                definition.body.kind,
+                ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+            ))
+        .then(|| value.clone())
+    });
+    let (definition, value) = match environment.constants.get(name).cloned().or(kept_literal) {
+        Some(value) => (None, Some(value)),
         None => {
             let definition = get_config_operator(kind, name, environment)?;
-            let value = get_constant_value(name, definition, environment, facts, evaluator, true)?;
+            check_scoped_selection(kind, name, definition, environment, facts, evaluator)?;
+            // `processConfigProps` walks the body of a K whose scoped value `defns` doesn't
+            // hold, as it does a definition above constant level: it unrolls a \A and stops at
+            // one over the empty set (`EC.TLC_LIVE_FORMULA_TAUTOLOGY`).
+            let value = if kind == "property" && is_scoped_selection(name, environment) {
+                None
+            } else {
+                get_constant_value(name, definition, environment, facts, evaluator, true)?
+            };
             (Some(definition), value)
         }
     };
@@ -1773,6 +4190,35 @@ fn get_action_property_message(name: &str, conjunct: &Expr) -> String {
     )
 }
 
+/// The level SANY gives a definition, where the configuration substitutes a definition for a
+/// declared constant of the root module and that substitute changes the definition's level, or
+/// none where no substitute changes it.
+fn get_substituted_level_change(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+) -> Option<Result<u8>> {
+    let is_substituted = environment
+        .root_constants
+        .iter()
+        .any(|declaration| environment.substitutions.contains_key(&*declaration.name));
+    if !is_substituted {
+        return None;
+    }
+    let scope = levels::Scope::default();
+    let sany = environment
+        .create_unsubstituted_level_analyzer()
+        .analyze_definition(definition, &scope)
+        .map(|levels| levels.data.level);
+    let substituted = environment
+        .create_level_analyzer(&[])
+        .analyze_definition(definition, &scope)
+        .map(|levels| levels.data.level);
+    match (sany, substituted) {
+        (Ok(sany), Ok(substituted)) if sany == substituted => None,
+        (sany, _) => Some(sany),
+    }
+}
+
 pub fn get_properties(
     config: &crate::config::ModelConfig,
     environment: &Environment,
@@ -1780,8 +4226,19 @@ pub fn get_properties(
     version: TlcVersion,
     evaluator: Option<&Evaluator>,
 ) -> Result<Properties> {
+    let with_warnings = |error, properties: &Properties| {
+        if properties.state_level.is_empty() {
+            error
+        } else {
+            FrontError::Warned(
+                crate::model::get_search_warnings(&[], &[], &properties.state_level),
+                Box::new(error),
+            )
+        }
+    };
     let mut properties = Properties::default();
     let expansion = Expansion {
+        fairness_property: None,
         environment,
         facts,
         version,
@@ -1789,25 +4246,71 @@ pub fn get_properties(
         is_specification: false,
         evaluator,
         is_unrolled: std::cell::Cell::new(false),
+        unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
+        has_action_substitutions: std::cell::Cell::new(false),
+        label_probe: std::cell::Cell::new(false),
     };
     for name in &config.properties {
         let Some(definition) =
-            get_config_predicate("property", name, environment, facts, evaluator)?
+            get_config_predicate("property", name, environment, facts, evaluator)
+                .map_err(|error| with_warnings(error, &properties))?
         else {
             continue;
         };
+        // `processConfigProps` takes a function definition's constructor as an implied initial
+        // predicate, which TLC rejects as it checks the initial states.
+        if matches!(definition.kind, DefinitionKind::Function { .. }) {
+            return Err(not_yet(
+                "a function definition the configuration names as a PROPERTY",
+            ));
+        }
         let name: Name = Rc::from(name.as_str());
-        if get_level(&definition.body, None, environment, facts, &[]) == Level::Variable {
+        // `processConfig` warns about a state-level property by `OpDefNode.getLevel`, the level
+        // SANY gave the definition, where a declared constant the configuration substitutes a
+        // definition for is still the declaration. Only `processConfigProps`'s `getLevelBound`
+        // sees the substitute, so one that changes the property's level changes the error that
+        // follows, not the warning.
+        let is_state_level = match get_substituted_level_change(definition, environment) {
+            Some(Ok(sany_level)) => sany_level == levels::VARIABLE_LEVEL,
+            Some(Err(_)) => {
+                return Err(with_warnings(
+                    not_yet("a property SANY's level check rejects before its substitute"),
+                    &properties,
+                ));
+            }
+            None => get_level(&definition.body, None, environment, facts, &[]) == Level::Variable,
+        };
+        if is_state_level {
             properties.state_level.push(name.clone());
         }
-        for item in expansion.expand(&definition.body, None, &[], false, None)? {
+        let expanded = expansion
+            .expand(&definition.body, None, &[], false, None)
+            .map_err(|error| with_warnings(error, &properties))?;
+        for item in expanded {
             let level = |expression: &Expr| {
                 get_level(expression, item.scope.as_ref(), environment, facts, &[])
             };
             let conjunct = &item.expression;
             if let ExpressionKind::Identifier { name, .. } = &conjunct.kind
                 && level(conjunct) == Level::Constant
-                && is_constant_true(name, &item, "property", environment, evaluator)?
+                && is_constant_true(name, &item, "property", environment, evaluator)
+                    .map_err(|error| with_warnings(error, &properties))?
+            {
+                continue;
+            }
+            // A property `getLevelBound` takes for a state's, as it names a name spelled as a
+            // variable, which `processConstantDefns` didn't compute: `processConfigProps` takes
+            // each conjunct it unrolls to as a predicate of the initial states, which one of
+            // constant level the evaluator computes TRUE, without an effect (it computes none),
+            // holds in.
+            if level(conjunct) == Level::Constant
+                && crate::startup::get_definition_level_bound(environment, definition) > 0
+                && evaluator.is_some_and(|evaluator| {
+                    matches!(
+                        evaluator.evaluate(conjunct, item.scope.as_ref()),
+                        Ok(ConfigValue::Boolean(true))
+                    )
+                })
             {
                 continue;
             }
@@ -1821,15 +4324,40 @@ pub fn get_properties(
                 {
                     properties.action_properties.push(ActionProperty {
                         name: part_name,
+                        wrapper: body.clone(),
                         action: action.clone(),
                         subscript: subscript.clone(),
                         scope: item.scope,
                     });
                     continue;
                 }
-                if level(body) <= Level::Variable {
+                // `processConfigProps` takes the operand of [] as an invariant where
+                // `getLevelBound` finds it below action level. That bound gives an operator
+                // argument level 0, so that an operator that applies a temporal LAMBDA it is
+                // passed is an invariant, which TLC rejects as it evaluates it.
+                let level = match level(body) {
+                    Level::Temporal
+                        if crate::startup::get_level_bound(
+                            environment,
+                            body,
+                            item.scope.as_ref(),
+                        ) < 2 =>
+                    {
+                        Level::Variable
+                    }
+                    level => level,
+                };
+                if level <= Level::Variable {
                     // TLC names the invariant by the operator the property asserts always holds,
                     // when it applies the operator to no arguments.
+                    // SANY names a definition an INSTANCE copies by its path (`I!Inv`,
+                    // `I!J!Inv`), which `getName` gives.
+                    let instanced = match &body.kind {
+                        ExpressionKind::Identifier { name, .. } if name.contains('!') => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
                     let is_identifier = matches!(body.kind, ExpressionKind::Identifier { .. });
                     let reference = body.reference().unwrap_or_default();
                     let operator = (is_identifier && !body.is_locally_resolved())
@@ -1844,7 +4372,7 @@ pub fn get_properties(
                                     part_name
                                 }
                             },
-                            |operator| operator.name.clone(),
+                            |operator| instanced.unwrap_or_else(|| operator.name.clone()),
                         ),
                         expression: body.clone(),
                         scope: item.scope,
@@ -1859,9 +4387,10 @@ pub fn get_properties(
                     scope: item.scope,
                 }),
                 Level::Action => {
-                    return Err(FrontError::Config(get_action_property_message(
-                        &part_name, conjunct,
-                    )));
+                    return Err(with_warnings(
+                        FrontError::Config(get_action_property_message(&part_name, conjunct)),
+                        &properties,
+                    ));
                 }
                 Level::Temporal => properties.liveness.push(Property {
                     name: name.clone(),
@@ -1898,12 +4427,15 @@ pub fn check_search_config(
         get_config_operator("periodic", name, environment)?;
     }
     for (index, name) in config.possible.iter().enumerate() {
+        // TLC generates a module that defines the predicate's check twice, whose semantic
+        // analysis fails (`processConfigPossible`, `EC.TLC_PARSING_FAILED2`), after it has
+        // checked every name the configuration lists, which isn't followed.
         if config.possible[..index].contains(name) {
-            return Err(FrontError::Config(format!(
-                "_POSSIBLE lists {name} more than once"
-            )));
+            return Err(FrontError::NotYet(
+                "a _POSSIBLE predicate listed more than once".into(),
+            ));
         }
-        get_config_definition("possible", name, environment, facts, evaluator)?;
+        get_config_definition("possible", name, environment, facts, evaluator, true)?;
         if get_level(&create_identifier(name), None, environment, facts, &[]) == Level::Temporal {
             return Err(FrontError::Config(format!(
                 "The possible of {name} is equal to a temporal formula; only state- and action-level predicates are supported"
@@ -1912,6 +4444,14 @@ pub fn check_search_config(
     }
     if environment.variables.is_empty() {
         return Ok(());
+    }
+    if let Some(name) = &config.view {
+        // `getViewSpec` rejects a name `defns` holds a value for, a constant the configuration
+        // assigns or a definition TLC computed as it started, as it does an ALIAS.
+        // `TLCStateMut.setTool` reads the VIEW before the SYMMETRY. No startup check follows
+        // for a VIEW, so a constant definition the evaluator can't compute, which TLC computed
+        // and rejects (`V == PrintT("v")`, `V == RandomElement({1, 2})`), declines.
+        get_config_definition("view function", name, environment, facts, evaluator, false)?;
     }
     if let Some(name) = &config.symmetry {
         // `getSymmetryGroup` reads the definition by its name, without the substitutions.
@@ -1935,9 +4475,6 @@ pub fn check_search_config(
                 crate::errors::UNEXPECTED_EXCEPTION
             )));
         }
-    }
-    if let Some(name) = &config.view {
-        get_config_operator("view function", name, environment)?;
     }
     Ok(())
 }
@@ -1995,7 +4532,10 @@ pub fn get_constant_predicates(
     .concat()
     .into_iter()
     .filter_map(|(form, kind, name)| {
-        if environment.constants.contains_key(name.as_str()) {
+        // TLC checks an invariant of its command line in each state, as it is.
+        if environment.constants.contains_key(name.as_str())
+            || (kind == "invariant" && is_command_line_invariant(&name))
+        {
             return None;
         }
         let definition = get_definition(&name, environment)?;
@@ -2004,6 +4544,12 @@ pub fn get_constant_predicates(
             && !matches!(
                 definition.body.kind,
                 ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+            )
+            // `defns` keeps the operator, whose body the configuration's checks evaluate
+            // (`is_computed_as_substitute`, which declines a shape it can't tell first).
+            && !matches!(
+                is_computed_as_substitute(&name, definition, environment),
+                Ok(true)
             );
         is_evaluated.then(|| (form, kind, name, definition.clone()))
     })

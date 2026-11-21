@@ -126,3 +126,18 @@ fn ranges_an_application_subscript_over_its_arguments() {
         "f(1, 2) at columns 9 to 15"
     );
 }
+
+#[test]
+fn extracts_unterminated_modules_with_java_reader_line_endings() {
+    for ending in ["\n", "\r\n", "\r"] {
+        for trailing in ["", ending] {
+            let source = format!(
+                "---- MODULE A ----{ending}===={ending}---- MODULE B ----{ending}x == 1{trailing}"
+            );
+            assert_eq!(
+                extract_module(&source, "B").as_deref(),
+                Some("---- MODULE B ----\nx == 1\n")
+            );
+        }
+    }
+}

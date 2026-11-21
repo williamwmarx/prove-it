@@ -27,8 +27,9 @@ pub struct TraceDumps {
     is_trace_recorded: bool,
     /// That `.bin`, where the binary knows where TLC writes it.
     trace_file: Option<String>,
-    /// Whether TLC runs with -tool, which words a failing ALIAS's message in the dump.
-    is_tool: bool,
+    /// Whether the dumps are the postcondition of a trace module the root module extends, which
+    /// TLC adds to no EXTENDS of its own.
+    is_extended: bool,
 }
 
 /// A file a dump writes, and what TLC prints as it writes it.
@@ -68,8 +69,17 @@ impl TraceDumps {
                 .collect(),
             is_trace_recorded,
             trace_file: trace_file.filter(|_| is_trace_recorded),
-            is_tool: args.has("-tool"),
+            is_extended: false,
         }
+    }
+
+    /// The configuration's postcondition of a trace module the root module extends
+    /// (`EXTENDS _JsonTrace` with `POSTCONDITION _JsonTrace`), where the command line asks for
+    /// no dump: the same postcondition -dumpTrace adds, writing the file the configuration gives
+    /// the module's constant.
+    pub fn add_extended(&mut self, is_json: bool, path: String) {
+        self.dumps.push((is_json, path));
+        self.is_extended = true;
     }
 
     /// Leaves out the trace exploration spec's file, for a model whose spec the front end didn't
@@ -107,6 +117,7 @@ impl TraceDumps {
     pub fn get_root_extendees(&self) -> Vec<&'static str> {
         self.dumps
             .iter()
+            .filter(|_| !self.is_extended)
             .map(|dump| if dump.0 { JSON_MODULE } else { TRACE_MODULE })
             .chain(self.is_trace_recorded.then_some(TRACE_MODULE))
             .collect()
@@ -122,6 +133,7 @@ impl TraceDumps {
         rebuilder: &mut Rebuilder<'_>,
         counter_example: &CounterExample<'_>,
         is_initial: bool,
+        aliases: Option<&[tla_trace::Alias]>,
     ) -> Result<Vec<DumpedFile>, Unsupported> {
         if self.is_empty() {
             return Ok(Vec::new());
@@ -140,11 +152,10 @@ impl TraceDumps {
         }
         // A JSON dump is written byte for byte, so it follows TLC's sharing of values; the
         // binary trace files alone are matched by what TLC reads back from them.
-        let dumped = rebuilder.dump_trace(
+        let dumped = rebuilder.dump_trace_using_aliases(
             counter_example,
             self.dumps.iter().any(|dump| dump.0),
-            is_initial,
-            self.is_tool,
+            if is_initial { None } else { aliases },
         )?;
         let model_values: Vec<&str> = self.model_values.iter().map(String::as_str).collect();
         let mut files = Vec::new();
@@ -188,13 +199,6 @@ impl TraceDumps {
         }
         Ok(files)
     }
-}
-
-/// Whether the host can write each file.
-pub fn is_writable(host: &dyn Host, files: &[DumpedFile]) -> bool {
-    files
-        .iter()
-        .all(|file| host.can_write(Path::new(&file.path)))
 }
 
 /// Writes the files in their order, as the postconditions do, or says it couldn't.

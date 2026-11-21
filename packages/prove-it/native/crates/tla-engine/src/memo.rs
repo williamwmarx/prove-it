@@ -3,7 +3,12 @@
 //! many variables of the current state but no primed one. A table that hits too rarely turns
 //! itself off after [`PROBATION`] lookups, as the TypeScript tables do.
 
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
+
 use tla_values::Id;
+
+use crate::symmetry::IntegerHasher;
 
 /// An empty entry, which no id is: ids count up from 0 and stop well short of it.
 pub const EMPTY: Id = u32::MAX;
@@ -118,6 +123,20 @@ pub struct MemoTable {
     // The lookups of the current window since the table filled up, and their hits.
     full_lookups: u64,
     full_hits: u64,
+    // How many recursive calls nest below each entry whose evaluation made any, by its keys
+    // (`height_key`): TLC keeps no table and evaluates the expression again where it reads it, so
+    // its stack goes that much deeper there.
+    heights: HashMap<HeightKey, u32, BuildHasherDefault<IntegerHasher>>,
+}
+
+/// An entry's keys, padded to six with [`EMPTY`].
+type HeightKey = [Id; 6];
+
+#[inline(always)]
+fn height_key(keys: &[Id]) -> HeightKey {
+    let mut key = [EMPTY; 6];
+    key[..keys.len()].copy_from_slice(keys);
+    key
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -155,6 +174,7 @@ impl MemoTable {
             maximum: MAXIMUM_ENTRIES,
             full_lookups: 0,
             full_hits: 0,
+            heights: HashMap::default(),
         }
     }
 
@@ -298,6 +318,7 @@ impl MemoTable {
 
     fn turn_off(&mut self) {
         self.is_enabled = false;
+        self.heights = HashMap::default();
         self.direct = Vec::new();
         self.packed = Vec::new();
         self.wide = Vec::new();
@@ -335,6 +356,7 @@ impl MemoTable {
         self.wide.fill(EMPTY);
         self.size = 0;
         self.probes = 0;
+        self.heights.clear();
     }
 
     // Makes room for a new entry, or says the table takes no more.
@@ -354,6 +376,8 @@ impl MemoTable {
         if self.largest < bound {
             return;
         }
+        self.heights
+            .retain(|keys, _| keys.iter().all(|&key| key == EMPTY || key < bound));
         // What is kept is below the bound, which a later, lower bound may still have to forget.
         self.largest = bound.saturating_sub(1);
         if self.is_direct {
@@ -433,14 +457,36 @@ impl MemoTable {
         value
     }
 
-    /// Stores a value for the keys, unless the table is off or full.
-    pub fn set(&mut self, keys: &[Id], value: Id) {
+    /// Stores a value for the keys with how many recursive calls nested below its evaluation,
+    /// unless the table is off or full.
+    pub fn set_with_height(&mut self, keys: &[Id], value: Id, height: u32) {
+        if !self.set(keys, value) {
+            return;
+        }
+        if height > 0 {
+            self.heights.insert(height_key(keys), height);
+        } else if !self.heights.is_empty() {
+            self.heights.remove(&height_key(keys));
+        }
+    }
+
+    /// How many recursive calls nested below the evaluation of the value stored for the keys.
+    #[inline(always)]
+    pub fn height(&self, keys: &[Id]) -> u32 {
+        if self.heights.is_empty() {
+            return 0;
+        }
+        self.heights.get(&height_key(keys)).copied().unwrap_or(0)
+    }
+
+    /// Stores a value for the keys, unless the table is off or full, and says whether it did.
+    pub fn set(&mut self, keys: &[Id], value: Id) -> bool {
         self.largest = keys
             .iter()
             .fold(self.largest.max(value), |largest, &key| largest.max(key));
         if self.is_direct {
             if !self.has_room() {
-                return;
+                return false;
             }
             let key = keys[0];
             if key as usize >= self.direct.len() {
@@ -451,23 +497,24 @@ impl MemoTable {
                     self.size += 1;
                 }
                 self.direct[key as usize] = value;
-                return;
+                return true;
             }
         }
         if !self.claim() {
-            return;
+            return false;
         }
         if self.width <= 2 {
             let key = pack(keys);
             let slot = self.free_packed(key);
             self.packed[slot] = Packed { key, value };
-            return;
+            return true;
         }
         let stride = self.width + 1;
         let slot = self.free_wide(keys);
         let row = &mut self.wide[slot * stride..(slot + 1) * stride];
         row[0] = value;
         row[1..].copy_from_slice(keys);
+        true
     }
 }
 
@@ -484,6 +531,8 @@ pub struct EpochCache {
     epochs: [u64; EPOCH_ENTRIES],
     keys: [[Id; EPOCH_KEYS]; EPOCH_ENTRIES],
     values: [Id; EPOCH_ENTRIES],
+    // How many recursive calls nested below each entry's evaluation, as a table keeps them.
+    heights: [u32; EPOCH_ENTRIES],
     lookups: u64,
     hits: u64,
     is_enabled: bool,
@@ -495,6 +544,7 @@ impl Default for EpochCache {
             epochs: [0; EPOCH_ENTRIES],
             keys: [[0; EPOCH_KEYS]; EPOCH_ENTRIES],
             values: [EMPTY; EPOCH_ENTRIES],
+            heights: [0; EPOCH_ENTRIES],
             lookups: 0,
             hits: 0,
             is_enabled: true,
@@ -528,10 +578,23 @@ impl EpochCache {
         self.values[entry]
     }
 
-    pub fn set(&mut self, epoch: u64, entry: usize, keys: &[Id; EPOCH_KEYS], value: Id) {
+    pub fn set(
+        &mut self,
+        epoch: u64,
+        entry: usize,
+        keys: &[Id; EPOCH_KEYS],
+        value: Id,
+        height: u32,
+    ) {
         self.epochs[entry] = epoch;
         self.keys[entry] = *keys;
         self.values[entry] = value;
+        self.heights[entry] = height;
+    }
+
+    /// How many recursive calls nested below the evaluation of the entry `get` last found.
+    pub fn height(&self, entry: usize) -> u32 {
+        self.heights[entry]
     }
 }
 
@@ -552,6 +615,33 @@ mod tests {
                 let keys: Vec<Id> = (0..width as u32).map(|index| key * 7 + index).collect();
                 assert_eq!(table.get(&keys), key);
             }
+        }
+    }
+
+    #[test]
+    fn keeps_the_height_of_an_entry_until_it_forgets_it() {
+        for width in 1..=3 {
+            let mut table = MemoTable::kept(width);
+            let keys: Vec<Id> = (0..width as u32).map(|index| 10 + index).collect();
+            let low: Vec<Id> = (0..width as u32).map(|index| 2 + index).collect();
+            let other: Vec<Id> = (0..width as u32).map(|index| 20 + index).collect();
+            table.set_with_height(&keys, 5, 1500);
+            table.set_with_height(&low, 6, 700);
+            table.set_with_height(&other, 7, 0);
+            assert_eq!(table.height(&keys), 1500);
+            assert_eq!(table.height(&low), 700);
+            assert_eq!(table.height(&other), 0);
+            table.forget_from(100);
+            assert_eq!(table.height(&keys), 1500);
+            // An entry that reads a forgotten id goes with its height; the others keep theirs.
+            table.forget_from(10);
+            assert_eq!(table.get(&keys), EMPTY);
+            assert_eq!(table.height(&keys), 0);
+            assert_eq!(table.get(&low), 6);
+            assert_eq!(table.height(&low), 700);
+            // A value stored again for the keys keeps the height of its own evaluation.
+            table.set_with_height(&low, 6, 0);
+            assert_eq!(table.height(&low), 0);
         }
     }
 
@@ -783,7 +873,7 @@ mod tests {
         let mut cache = EpochCache::default();
         let keys = [3, 4, 0, 0];
         let entry = EpochCache::entry(&keys);
-        cache.set(7, entry, &keys, 42);
+        cache.set(7, entry, &keys, 42, 0);
         assert_eq!(cache.get(7, entry, &keys), 42);
         assert_eq!(cache.get(8, entry, &keys), EMPTY);
         assert_eq!(cache.get(7, entry, &[3, 5, 0, 0]), EMPTY);

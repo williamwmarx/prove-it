@@ -1,0 +1,25 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Evaluating an expression of the form Append(s, v) when s is not a sequence:
+{FALSE, TRUE}
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = TRUE
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 17 in M
+1. Line 6, column 14 to line 6, column 17 in M
+2. Line 3, column 9 to line 3, column 36 in M
+3. Line 3, column 16 to line 3, column 35 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

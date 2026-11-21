@@ -1,0 +1,10 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Randomization
+Semantic processing of module sos_third_nat
+Linting of module sos_third_nat
+Error: Evaluating assumption line 13, col 8 to line 13, col 11 of module sos_third_nat failed.
+The third argument of RandomSetOfSubsets should be a finite set, but instead it is:
+Nat

@@ -159,6 +159,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const read = (key: string) => {
     const [kind, ...rest] = key.split(":");
     const path = rest.join(":");
+    // Whether the caller gave classes at all: without loadClass, no name has one.
+    if (key === "class-space") return logged.loadClass === undefined ? "absent" : "unknown";
     return kind === "text"
       ? texts.get(path)
       : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,

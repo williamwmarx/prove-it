@@ -388,7 +388,10 @@ pub fn find_name_tokens(file: &SourceFile, start: usize, end: usize, names: &[Na
         if found.len() == names.len() {
             break;
         }
-        if token.kind == TokenKind::Identifier && token.text == names[found.len()] {
+        // The `>>` of an empty tuple, which SANY's generator takes for a name.
+        let is_name = token.kind == TokenKind::Identifier
+            || &*token.text == ">>" && index > 0 && &*file.tokens[index - 1].text == "<<";
+        if is_name && token.text == names[found.len()] {
             found.push(index);
         }
     }

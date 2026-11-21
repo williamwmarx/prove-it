@@ -1,0 +1,13 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 8, col 9 to line 8, col 48 of module M
+
+\land has both temporal formula and action as arguments.
+
+
+Error: Parsing or semantic analysis failed.

@@ -5,8 +5,8 @@
 
 use crate::store::Outcome;
 use crate::store::{
-    KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, TRUE, infinite_set_name, is_function_kind,
+    KIND_ANY, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET,
+    KIND_STRING, KIND_TUPLE, TRUE, infinite_set_name, is_function_kind,
 };
 use crate::{Bail, Id, Store};
 
@@ -28,9 +28,14 @@ pub fn is_printable_normalized(store: &Store, id: Id) -> bool {
 }
 
 fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
+    if is_ambiguous_empty(store, id) {
+        return false;
+    }
     let kind = store.kind_of(id);
     match kind {
-        KIND_BOOL | KIND_INT | KIND_STRING | KIND_MODEL | KIND_INFINITE_SET => return true,
+        KIND_BOOL | KIND_INT | KIND_STRING | KIND_MODEL | KIND_INFINITE_SET | KIND_ANY => {
+            return true;
+        }
         KIND_SET | KIND_TUPLE | KIND_FUNCTION => {}
         // TLC prints a function it keeps lazy as written.
         _ => return false,
@@ -87,6 +92,15 @@ fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
     }
 }
 
+/// What writing the empty sequence stops with where it may be TLC's empty record.
+pub const AMBIGUOUS_EMPTY: Bail =
+    Bail("unsupported: writing an empty sequence that may be TLC's empty record");
+
+// Whether the value is the empty sequence where the store may hold TLC's empty record as it.
+fn is_ambiguous_empty(store: &Store, id: Id) -> bool {
+    store.is_empty_tuple_ambiguous() && store.kind_of(id) == KIND_TUPLE && store.size_of(id) == 0
+}
+
 /// TLC's text of a value (`Value.toStringUnchecked`, `formatValue(v, true)` in `values.ts`), as
 /// ToString gives it: `TRUE`, `-3`, `"a\"b"`, a model value's name, `{1, 2}` in TLC's order,
 /// `<<1, 2>>`, `[f |-> 1]` for a function whose keys are all field names, and `(1 :> 2 @@ 3 :> 4)`
@@ -95,12 +109,23 @@ fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
 pub fn format_value(store: &Store, id: Id) -> Outcome<String> {
     let mut text = Vec::new();
     write_value(store, id, &mut text)?;
-    Ok(String::from_utf16_lossy(&text))
+    Ok(java_text(&text))
+}
+
+/// UTF-16 text as TLC's output writes it: its UTF-8 encoder (`PrintStream` over
+/// `System.out`) writes `?` for a surrogate that isn't half of a pair.
+pub fn java_text(units: &[u16]) -> String {
+    char::decode_utf16(units.iter().copied())
+        .map(|unit| unit.unwrap_or('?'))
+        .collect()
 }
 
 /// [`format_value`] appended to UTF-16 text, the store's form of a string. A function TLC keeps
 /// lazy, which TLC prints as written, isn't [`is_printable`], and fails.
 pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
+    if is_ambiguous_empty(store, id) {
+        return Err(AMBIGUOUS_EMPTY);
+    }
     let push = |out: &mut Vec<u16>, text: &str| out.extend(text.encode_utf16());
     let size = store.size_of(id);
     let join = |out: &mut Vec<u16>,
@@ -119,6 +144,7 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
         Ok(())
     };
     match store.kind_of(id) {
+        KIND_ANY => push(out, "ANY"),
         KIND_BOOL => push(out, if id == TRUE { "TRUE" } else { "FALSE" }),
         KIND_INT => push(out, &store.int_of(id).to_string()),
         KIND_MODEL => out.extend_from_slice(store.text_of(id)),
@@ -267,6 +293,9 @@ fn write_normalized(
     normalized: Normalized,
     out: &mut Vec<u16>,
 ) -> bool {
+    if is_ambiguous_empty(store, id) {
+        return false;
+    }
     let push = |out: &mut Vec<u16>, text: &str| out.extend(text.encode_utf16());
     let kind = store.kind_of(id);
     let size = store.size_of(id);

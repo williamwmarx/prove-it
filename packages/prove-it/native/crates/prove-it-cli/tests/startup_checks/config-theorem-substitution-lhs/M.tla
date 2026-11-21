@@ -1,0 +1,6 @@
+---- MODULE M ----
+EXTENDS TLC
+D == TRUE
+THEOREM T == TRUE
+ASSUME PrintT(1)
+====

@@ -1,0 +1,19 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Warning: The variable y was changed while it is specified as UNCHANGED at
+line 8, col 29 to line 8, col 29 of module M
+(Use the -nowarning option to disable this warning.)
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

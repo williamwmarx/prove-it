@@ -1,0 +1,22 @@
+exit 150
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 3
+
+line 2, col 8 to line 2, col 14 of module M
+
+Unexpected token found.
+
+
+line 2, col 8 to line 2, col 14 of module M
+
+Need name or step number here, not `N_IdentifierTuple'.
+
+
+line 2, col 20 to line 2, col 22 of module M
+
+Unknown operator: `Nat'.
+
+
+Error: Parsing or semantic analysis failed.

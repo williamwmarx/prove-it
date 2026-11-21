@@ -1,0 +1,30 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module CacheClosureError
+Linting of module TLCExt
+Linting of module CacheClosureError
+Computing initial states...
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcEval2(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+Attempted to access index 2 of tuple
+<<1>>
+which is out of bounds.
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in CacheClosureError
+1. Line 6, column 8 to line 6, column 31 in CacheClosureError
+2. Line 6, column 23 to line 6, column 30 in CacheClosureError
+3. Line 6, column 23 to line 6, column 27 in CacheClosureError
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

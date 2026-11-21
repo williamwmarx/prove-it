@@ -1,0 +1,31 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module FixFunction
+Semantic processing of module instance_function_call_stack
+Linting of module FixFunction
+Linting of module instance_function_call_stack
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
+but it produced the following error:
+Cannot cast tlc2.value.impl.BoolValue to tlc2.value.impl.IntValue
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 16 in instance_function_call_stack
+1. Line 6, column 14 to line 6, column 16 in instance_function_call_stack
+2. Line 4, column 1 to line 4, column 40 in instance_function_call_stack
+3. Line 5, column 6 to line 5, column 13 in FixFunction
+4. Line 5, column 6 to line 5, column 9 in FixFunction
+5. Line 4, column 20 to line 4, column 24 in FixFunction
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

@@ -1,0 +1,40 @@
+exit 0
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 17 to line 5, col 25 of module M
+(Use the -nowarning option to disable this warning.)
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 17 to line 5, col 25 of module M
+State 2: <Next line 5, col 9 to line 5, col 64 of module M>
+x = 1
+
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 64 of module M>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 64 of module M>
+x = 2
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 0.0
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).

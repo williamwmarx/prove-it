@@ -30,6 +30,9 @@ pub struct Machine {
 /// finds its modules in, the JVM's temporary directory and -metadir where the launch sets them, and
 /// the tla2tools.jar on the class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
+    /// The execution boundary's explicit reference choice, independent of class absence.
+    pub parent_runtime: tla_front::model::ParentRuntime,
+    pub java_profile: tla_front::model::JavaProfile,
     pub spec: &'a Path,
     /// The spec as TLC was given it, without `.tla`, which SANY names it by.
     pub main_file: &'a str,
@@ -42,6 +45,11 @@ pub struct Files<'a> {
     /// The modules of TLC's post conditions, which SANY parses with the spec
     /// (`ModelOptions::root_extendees`).
     pub root_extendees: &'a [&'a str],
+    /// Lines the model's lowering reads at the end of the root module, before its `====`: the
+    /// definitions of the command line's `-inv` invariants (`insert_before_module_end`).
+    pub appended: &'a str,
+    /// What -suppressMessages and -messagesAsErrors make of SANY's linter's warnings.
+    pub lint_codes: tla_front::report::LintCodes,
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
@@ -107,6 +115,15 @@ pub trait Host {
     /// that has it, by the path TLC's resolver makes for it, and its bytes; none where TLC can't
     /// read that file.
     fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)>;
+    /// Explicit supported reference-runtime choice, never an ambient JVM probe.
+    /// A generic host supplies no parent-runtime witness.
+    fn modeled_parent_runtime(&self, _is_java_launch: bool) -> tla_front::model::ParentRuntime {
+        tla_front::model::ParentRuntime::Unknown
+    }
+
+    fn class_origin(&self, _directories: &[&Path], _name: &str) -> tla_front::model::ClassOrigin {
+        tla_front::model::ClassOrigin::Unknown
+    }
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h>;
     /// An environment variable.
     fn get_variable(&self, name: &str) -> Option<String>;
@@ -137,6 +154,13 @@ pub trait Host {
     /// Says, before the check searches, a file it may write after it, so that a host that answers
     /// what it lacks once the check returns knows it before then.
     fn prepare_write(&self, _path: &Path) {}
+    /// Why Java's `FileInputStream`, or its `FileOutputStream` where `is_written`, can't open the
+    /// file, as its FileNotFoundException words it after the path, such as `No such file or
+    /// directory`; none where it can, or where the host doesn't know. A file opened to be written
+    /// is created, as Java creates it.
+    fn open_failure(&self, _path: &Path, _is_written: bool) -> Option<String> {
+        None
+    }
     /// Whether the host can write the file: TLC writes a JSON dump into the directories it makes
     /// and a `tlc` one into the directory that holds it, and fails where it can't.
     fn can_write(&self, path: &Path) -> bool {
@@ -218,6 +242,16 @@ impl SystemHost {
 }
 
 impl Host for SystemHost {
+    fn modeled_parent_runtime(&self, is_java_launch: bool) -> tla_front::model::ParentRuntime {
+        // Bare native invocation defines the supported modeled runtime. An explicit
+        // Java launch needs artifact/JDK/manifest attribution that this host lacks.
+        if is_java_launch {
+            tla_front::model::ParentRuntime::Unknown
+        } else {
+            tla_front::model::ParentRuntime::ModeledTlcMasterJdk21
+        }
+    }
+
     fn kind(&self, path: &Path) -> FileKind {
         match std::fs::metadata(path) {
             Ok(metadata) if metadata.is_dir() => FileKind::Directory,
@@ -256,6 +290,24 @@ impl Host for SystemHost {
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
         std::fs::read(path).ok()
+    }
+
+    // The JVM opens a directory and then refuses it (`fileOpen` in io_util_md.c); otherwise it
+    // words the system's error as the C library does, which Rust's error repeats before its code.
+    fn open_failure(&self, path: &Path, is_written: bool) -> Option<String> {
+        if std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+            return Some("Is a directory".into());
+        }
+        let opened = std::fs::OpenOptions::new()
+            .read(!is_written)
+            .write(is_written)
+            .create(is_written)
+            .truncate(is_written)
+            .open(path);
+        let code = opened.err()?.raw_os_error()?;
+        let text = std::io::Error::from_raw_os_error(code).to_string();
+        text.strip_suffix(&format!(" (os error {code})"))
+            .map(String::from)
     }
 
     fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
@@ -301,6 +353,18 @@ impl Host for SystemHost {
 
     fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
         resolve::load_class(self, directories, name)
+    }
+
+    fn class_origin(&self, directories: &[&Path], name: &str) -> tla_front::model::ClassOrigin {
+        use tla_front::model::ClassOrigin;
+        for directory in directories {
+            match std::fs::symlink_metadata(directory.join(format!("{name}.class"))) {
+                Ok(_) => return ClassOrigin::Present,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return ClassOrigin::Unknown,
+            }
+        }
+        ClassOrigin::Absent
     }
 
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {
@@ -363,4 +427,20 @@ fn get_memory_megabytes() -> u64 {
             line.split_whitespace().nth(1)?.parse::<u64>().ok()
         })
         .map_or(0, |kilobytes| kilobytes / 1024)
+}
+
+#[cfg(test)]
+mod parent_runtime_tests {
+    use super::{Host, SystemHost};
+    use tla_front::model::ParentRuntime;
+
+    #[test]
+    fn native_reference_choice_does_not_attribute_explicit_java_launches() {
+        let host = SystemHost::new(None);
+        assert_eq!(
+            host.modeled_parent_runtime(false),
+            ParentRuntime::ModeledTlcMasterJdk21
+        );
+        assert_eq!(host.modeled_parent_runtime(true), ParentRuntime::Unknown);
+    }
 }

@@ -426,7 +426,9 @@ TLC builds them:
 `Unsupported` covers:
 - an action with parameters, whose record holds them;
 - a step whose action the trace lacks;
-- a result that isn't a boolean;
+- a result that isn't a boolean whose body SANY's `toString` names otherwise than the
+  evaluator's `describe_node` (a numeral written as `007` or `\h1F`). Any other such result fails
+  as `Tool.isValid` does, with `EC.TLC_EXPECTED_VALUE` naming the body, a numeral by its image;
 - an error without TLC's message.
 
 The test checks Github1389Counting's postcondition on its ten-state counterexample, and on one a
@@ -543,10 +545,11 @@ Done:
   set with a source is followed through a membership (`is_member_followed`) where each set
   enumeration the failure passes through has no source or is one the replay records as TLC holds
   it unnormalized.
-- semantic_error1: TLC's own NullPointerException as it reports the failure is a TLC bug. The
-  binary prints Prove It's error, the one tlc/ts and tlc/rust print, and
-  `known-differences.json` lists it for tlc/native as for the others. function_syntax (TLC
-  overflows Java's default stack) is listed for tlc/native too.
+- semantic_error1: TLC fails printing the trace with its own NullPointerException, as
+  `Tool.getState` skips the successor it failed to fingerprint as it looks for it again; the
+  binary prints that exception for a union's failure on the successor of an initial state (see
+  `fallback.md`), so `known-differences.json` no longer lists it. function_syntax (TLC overflows
+  Java's default stack) is listed for tlc/native.
 - EWD998Chan: TLCGet's key is read through the parameter an INSTANCE of TLC binds it to.
   TLCSet("exit", TRUE) in an invariant stops the search once the state being expanded is done,
   with the states left on the queue (`ModelChecker.stop` finishes the queue). TLC's main thread,
@@ -558,7 +561,7 @@ Done:
 - Pre-PR review (each checked against TLC d8fb231 and tested in `prove-it-cli/tests/cli.rs`):
   - a POSTCONDITION or ALIAS TLC computes as it starts is declined (`is_precomputed`: constant
     level, reaching none of TLCGet, TLCSet, CounterExample or _Counts); a postcondition after an
-    initial state's violation is declined; -lncheck off is declined;
+    initial state's violation is declined; -lncheck off was declined (now native, cli.md);
   - a postcondition's failure nests its coded message under -tool; an EvalException in the
     next states exits by its code (255; 151 for an undefined identifier);
   - CounterExample's records order their fields as TLC interns RecordValue's names, after the

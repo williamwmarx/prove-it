@@ -1,14 +1,17 @@
 //! The expression kinds of `compileNode`, each as `compile.ts` compiles it.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use tla_ir::{Bound, NodeId, NodeKind, PathStep, Pattern, Update};
+use tla_ir::{Bound, NodeId, NodeKind, PathStep, Pattern, TextId, Update};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, KIND_SET, KIND_TUPLE, Outcome, TRUE, is_function_kind,
+    EMPTY_SET, EMPTY_TUPLE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE,
+    Outcome, TRUE, is_function_kind,
 };
-use tla_values::{Bail, Id};
+use tla_values::{Bail, Id, check_set_insertion};
 
+use super::builtins::{self, SimulationRun};
 use super::lazy::{self, Lazy, Reference};
 use super::lazy_function::{self, LambdaDefinition, is_lazy_domain};
 use super::predicate::{Predicate, Reject, Test};
@@ -18,7 +21,7 @@ use super::{
     lookup, member, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine};
+use crate::machine::{Eval, Machine, Printed, RuntimeWarning};
 
 /// A bound's names, at fresh slots: one name, or a tuple pattern's.
 pub(crate) struct Binder {
@@ -36,11 +39,30 @@ pub(crate) fn assign_bound(
     element: Id,
 ) -> Outcome<()> {
     if tuple && machine.store.is_built_as_function(element) {
-        return Err(Bail(
-            "unsupported: a tuple pattern bound to a tuple TLC may hold as a function",
-        ));
+        return Err(Bail("a tuple pattern with an ambiguous physical class"));
     }
     assign_converted(machine, slots, tuple, element)
+}
+
+/// Binds a bound's names as `Tool`'s OPCODE_sso does filtering a Reducible set: a tuple
+/// pattern's names to the elements of the TupleValue at their indices, ignoring those past them.
+pub(crate) fn assign_reduced(
+    machine: &mut Machine<'_>,
+    slots: &[u32],
+    tuple: bool,
+    element: Id,
+) -> Outcome<()> {
+    if tuple
+        && machine.store.kind_of(element) == KIND_TUPLE
+        && machine.store.size_of(element) as usize > slots.len()
+        && !machine.store.is_built_as_function(element)
+    {
+        for (index, &slot) in slots.iter().enumerate() {
+            machine.locals[slot as usize] = machine.store.get_range_value(element, index as u32);
+        }
+        return Ok(());
+    }
+    assign_bound(machine, slots, tuple, element)
 }
 
 /// Binds a bound's names to an element as TLC's CHOOSE, a set filter's membership and a
@@ -110,6 +132,23 @@ pub(crate) fn evaluate_set(
 // The ids a level of nested bounds binds, and the set each draws from.
 // A function built over the sets of its bounds.
 type Construct = Arc<dyn Fn(&mut Machine<'_>, &[Id]) -> Outcome<Id> + Send + Sync>;
+
+// Where an expression the compiler looks through is: the context its names are looked up in, or,
+// in a body it reaches through an application, the names bound to values there.
+struct Within<'c> {
+    context: Option<&'c Context>,
+    bound: Vec<TextId>,
+}
+
+fn bound_names(bounds: &[Bound]) -> Vec<TextId> {
+    bounds
+        .iter()
+        .flat_map(|bound| match &bound.pattern {
+            Pattern::Name(name) => vec![*name],
+            Pattern::Tuple(names) => names.clone(),
+        })
+        .collect()
+}
 
 struct Level {
     set: Compiled,
@@ -276,6 +315,9 @@ impl Compiler<'_> {
                         && other
                             .as_ref()
                             .is_none_or(|other| other.are_elements_enumerated);
+                // A CASE whose every arm is a boolean is one, as an IF is.
+                let is_boolean = bodies.iter().all(|body| body.is_boolean)
+                    && other.as_ref().is_none_or(|other| other.is_boolean);
                 let tests: Vec<Eval> = conditions
                     .iter()
                     .map(|condition| condition.eval.clone())
@@ -287,6 +329,7 @@ impl Compiler<'_> {
                     is_normalized,
                     is_enumerated,
                     are_elements_enumerated,
+                    is_boolean,
                     ..leaf(
                         eval(move |machine| {
                             for (test, value) in tests.iter().zip(&values) {
@@ -306,8 +349,10 @@ impl Compiler<'_> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(definitions, *body, context, true)?;
-                self.compile(*body, &inner)
+                let (inner, kept_once) =
+                    self.bind_let_definitions_kept(definitions, *body, context, true, true)?;
+                let compiled = self.compile(*body, &inner)?;
+                Self::keep_once(&kept_once, compiled)
             }
             NodeKind::Forall { bounds, body } => {
                 self.compile_quantifier(bounds, *body, true, context)
@@ -325,10 +370,21 @@ impl Compiler<'_> {
                 };
                 self.compile_choose(pattern, *set, *body, context)
             }
+            // TLC fails to evaluate a quantifier without a bound (`Tool`'s OPCODE_ue and
+            // OPCODE_uf), and a temporal one in a state (OPCODE_te and OPCODE_tf), only where it
+            // evaluates one.
+            NodeKind::UnboundedQuantifier { is_temporal, .. } => Ok(leaf(
+                if *is_temporal {
+                    eval(|_| Err(Bail("a temporal formula in a state")))
+                } else {
+                    eval(|_| Err(Bail("an unbounded quantifier")))
+                },
+                Footprint::default(),
+            )),
             NodeKind::SetEnumeration(elements) => {
                 let elements = elements
                     .iter()
-                    .map(|&element| self.compile(element, context))
+                    .map(|&element| self.compile(element, context).map(Compiled::held))
                     .collect::<Compiling<Vec<Compiled>>>()?;
                 // A state can't hold Nat, Int or STRING, which TLC can't fingerprint: the search
                 // looks for one as it does for a function TLC keeps lazy.
@@ -343,7 +399,7 @@ impl Compiler<'_> {
                 }
                 let elements = elements
                     .iter()
-                    .map(|&element| self.compile(element, context))
+                    .map(|&element| self.compile(element, context).map(Compiled::held))
                     .collect::<Compiling<Vec<Compiled>>>()?;
                 let evaluators: Vec<Eval> = elements
                     .iter()
@@ -362,7 +418,7 @@ impl Compiler<'_> {
                 for &(name, value) in fields {
                     let units = self.units(name);
                     let key = self.store.str(&units);
-                    compiled.push((key, self.compile(value, context)?));
+                    compiled.push((key, self.compile(value, context)?.held()));
                 }
                 // TLC evaluates the fields in the order written, and keeps them in its order of
                 // their names, which strings compare without fail.
@@ -413,13 +469,85 @@ impl Compiler<'_> {
                 })
             }
             NodeKind::FunctionApplication { function, args } => {
-                self.compile_function_application(*function, args, context)
+                // `RecordValue.apply` of a field, or `TupleValue.apply` of a position, written so,
+                // reads only that one.
+                let nulls = match args.as_slice() {
+                    [argument] => self.null_fields(*function).filter(|nulls| {
+                        let (record_field, tuple_position) = match self.node(*argument).1 {
+                            NodeKind::String(text) => (Some(*text), None),
+                            NodeKind::Number(number) => (None, Some(*number)),
+                            _ => (None, None),
+                        };
+                        let is_read = |(_, at): &(NodeId, Result<TextId, usize>)| match at {
+                            Ok(name) => record_field.is_some_and(|field| {
+                                self.ir.texts[field as usize] == self.ir.texts[*name as usize]
+                            }),
+                            Err(position) => tuple_position == Some(*position as i32),
+                        };
+                        let is_present = match self.node(*function).1 {
+                            NodeKind::Record(fields) => record_field.is_some_and(|field| {
+                                fields.iter().any(|(name, _)| {
+                                    self.ir.texts[*name as usize] == self.ir.texts[field as usize]
+                                })
+                            }),
+                            NodeKind::Tuple(elements) => tuple_position.is_some_and(|position| {
+                                (1..=elements.len() as i32).contains(&position)
+                            }),
+                            _ => false,
+                        };
+                        is_present && !nulls.iter().any(is_read)
+                    }),
+                    _ => None,
+                };
+                let nulls: Vec<NodeId> =
+                    nulls.into_iter().flatten().map(|(node, _)| node).collect();
+                self.with_null_substituted(&nulls, |compiler| {
+                    compiler.compile_function_application(*function, args, context)
+                })
             }
             NodeKind::FieldAccess { record, field } => {
-                let record = self.compile(*record, context)?;
+                if let Some(statistic) = self.compile_statistic(*record, *field, context)? {
+                    return Ok(statistic);
+                }
+                // `RecordValue.apply` of another field than those holding a null reads none of
+                // them.
+                let nulls: Vec<NodeId> = match self.node(*record).1 {
+                    NodeKind::Record(fields)
+                        if fields.iter().any(|(name, value)| {
+                            self.ir.texts[*name as usize] == self.ir.texts[*field as usize]
+                                && !self.is_uninitialized_literal(*value)
+                        }) =>
+                    {
+                        self.null_fields(*record)
+                            .into_iter()
+                            .flatten()
+                            .map(|(node, _)| node)
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let record = self
+                    .with_null_substituted(&nulls, |compiler| compiler.compile(*record, context))?;
                 let units = self.units(*field);
                 let key = self.store.str(&units);
                 let hint = Arc::new(AtomicU32::new(0));
+                // A field of a simulation's statistics or of its behavior that holds no empty
+                // record reads the value as TLC holds it; the behavior is one too.
+                let name = String::from_utf16_lossy(&units);
+                let record = match record.shape {
+                    Shape::SimulationRun(SimulationRun::Stats) if name == "behavior" => {
+                        return Ok(Compiled {
+                            shape: Shape::SimulationRun(SimulationRun::Behavior),
+                            ..leaf(SimulationRun::Behavior.guarded(), record.footprint)
+                        });
+                    }
+                    Shape::SimulationRun(SimulationRun::Stats | SimulationRun::Behavior)
+                        if name != "actions" =>
+                    {
+                        builtins::unguarded(record)
+                    }
+                    _ => record,
+                };
                 // FieldOfVar: r.f of a variable r, read straight from the register.
                 if let Shape::Current(variable) = record.shape {
                     return Ok(leaf(
@@ -599,10 +727,16 @@ impl Compiler<'_> {
         }
     }
 
+    // The levels of several bounds. With `is_null_empty`, a bound written as a set enumeration of
+    // one INSTANCE fact literal TLC did not initialize compiles as the empty set: `Tool.contexts`
+    // evaluates and enumerates every bound in turn, and the null that enumeration gives first
+    // ends the `ContextEnumerator` at once, as an empty bound's does, once every bound after it
+    // was evaluated as well.
     fn compile_levels(
         &mut self,
         bounds: &[Bound],
         context: &Context,
+        is_null_empty: bool,
     ) -> Compiling<(Vec<Level>, Vec<u32>, Context)> {
         let mut inner = context.clone();
         let mut levels = Vec::new();
@@ -610,7 +744,14 @@ impl Compiler<'_> {
         for (index, item) in bounds.iter().enumerate() {
             let is_shared =
                 index > 0 && self.node(item.set).0 == self.node(bounds[index - 1].set).0;
-            let set = self.compile(item.set, &inner)?;
+            let is_null = is_null_empty
+                && matches!(self.node(item.set).1, NodeKind::SetEnumeration(items)
+                    if items.len() == 1 && self.is_uninitialized_literal(items[0]));
+            let set = if is_null {
+                Self::compile_set_enumeration(&[])
+            } else {
+                self.compile(item.set, &inner)?
+            };
             let binder = self.bind_bound(&item.pattern, &inner);
             if !binder.tuple && set.interval.is_some() {
                 self.int_slots.insert(binder.slots[0]);
@@ -634,7 +775,7 @@ impl Compiler<'_> {
         is_forall: bool,
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context, true)?;
         // TLC enumerates each bound's set (`Tool.contexts`).
         for level in &mut levels {
             level.set = Self::listed(&level.set);
@@ -644,11 +785,39 @@ impl Compiler<'_> {
             .merge(&body.footprint.without_slots(&bound));
         // A body that prints is evaluated for each element in the order TLC enumerates the set
         // (`Tool.contexts`), until one decides the quantifier.
-        if body.is_printing() {
-            let [level] = &levels[..] else {
-                return unsupported("Print under a quantifier of several bounds");
-            };
+        // Of several bounds, TLC evaluates each bound's set, then the body for each binding, the
+        // first bound varying fastest (`ContextEnumerator`), until one decides the quantifier.
+        if body.is_printing()
+            && levels.len() > 1
+            && levels.iter().all(|level| level.set.infinite.is_none())
+        {
+            let (levels, body) = (Arc::new(levels), body.eval);
+            return Ok(Compiled {
+                is_costly: true,
+                is_boolean: true,
+                ..leaf(
+                    eval(move |machine| {
+                        let sets = evaluate_bound_sets(
+                            machine,
+                            &levels,
+                            "quantified over a non-set",
+                            true,
+                        )?;
+                        let is_undecided =
+                            for_each_binding(machine, &levels, &sets, |machine, _| {
+                                Ok((super::check_boolean(body(machine)?)? == TRUE) == is_forall)
+                            })?;
+                        Ok(bool_id(if is_undecided { is_forall } else { !is_forall }))
+                    }),
+                    footprint,
+                )
+            });
+        }
+        if body.is_printing()
+            && let [level] = &levels[..]
+        {
             let ordered = self.order(level.set.clone(), bounds[0].set, context, false)?;
+            let set = level.set.clone();
             let (slots, tuple, body) = (level.slots.clone(), level.tuple, body.eval);
             return Ok(Compiled {
                 is_costly: true,
@@ -656,7 +825,9 @@ impl Compiler<'_> {
                 ..leaf(
                     eval(move |machine| {
                         let id = (ordered.eval)(machine)?;
-                        for position in 0..ordered.size(machine, id)? {
+                        let size = ordered.size(machine, id)?;
+                        set.check_enumerated(machine, id, size)?;
+                        for position in 0..size {
                             let element = machine.store.element_at(id, position);
                             assign_bound(machine, &slots, tuple, element)?;
                             let value = super::check_boolean(body(machine)?)?;
@@ -744,12 +915,37 @@ impl Compiler<'_> {
         let footprint = set
             .footprint
             .merge(&body.footprint.without_slots(&binder.slots));
+        // CHOOSE over SUBSET S takes the subsets in their normalized order without building
+        // the power set (`SubsetValue.elementsNormalized`): by size, and each size in the order
+        // of S's elements, which the engine follows where it would build too many.
+        let subset_base = set
+            .subset_base
+            .as_ref()
+            .filter(|base| base.is_normalized && base.infinite.is_none() && !base.has_infinite_part)
+            .map(|base| base.eval.clone());
+        let bound = set.clone();
         let (set, body, slots, tuple) = (set.eval, body.eval, binder.slots, binder.tuple);
         Ok(Compiled {
             is_costly: true,
             ..leaf(
                 eval(move |machine| {
-                    let id = evaluate_set(machine, &set, "CHOOSE from a non-set")?;
+                    let id = match &subset_base {
+                        Some(base) => {
+                            let base = base(machine)?;
+                            let base = expect_set(machine, base, "expected a set")?;
+                            if machine.store.size_of(base) <= super::builtins::MAXIMUM_POWER_SET {
+                                super::builtins::power_set(machine, base)?
+                            } else {
+                                return choose_subset(machine, base, &slots, tuple, &body);
+                            }
+                        }
+                        None => {
+                            let id = evaluate_set(machine, &set, "CHOOSE from a non-set")?;
+                            let size = machine.store.size_of(id);
+                            bound.check_enumerated(machine, id, size)?;
+                            id
+                        }
+                    };
                     for index in 0..machine.store.size_of(id) {
                         let element = machine.store.element_at(id, index);
                         assign_converted(machine, &slots, tuple, element)?;
@@ -782,6 +978,9 @@ impl Compiler<'_> {
             .flatten();
         let filter = Arc::new(Filter {
             set: set.eval.clone(),
+            stream: (!set.is_reducible && set.interval.is_none())
+                .then(|| super::reference_of(&set))
+                .flatten(),
             slots: binder.slots,
             tuple: binder.tuple,
             predicate: predicate.build(),
@@ -806,6 +1005,9 @@ impl Compiler<'_> {
             });
         }
         let parts = Arc::clone(&filter);
+        // Whether TLC's set is Reducible, a set enumeration or an interval, which it filters at
+        // once (`Tool`'s OPCODE_sso).
+        let is_reduced = set.is_enumerated || set.interval.is_some() || set.is_reducible;
         // TLC filters a set it can't enumerate, such as SUBSET S, lazily, in the order of the set.
         let reference = if set.is_normalized {
             None
@@ -846,20 +1048,30 @@ impl Compiler<'_> {
             filter: Some(filter),
             ..leaf(
                 eval(move |machine| {
-                    let id = evaluate_set(machine, &parts.set, "filtered a non-set")?;
-                    let size = machine.store.size_of(id);
+                    let (input, elements) = parts.elements(machine)?;
+                    let size = elements.len();
                     let at = machine.stack.len();
-                    for index in 0..size {
-                        let element = machine.store.element_at(id, index);
+                    for element in elements {
                         if let Some(reject) = &parts.reject
                             && reject.rejects(machine, element)
                         {
                             continue;
                         }
-                        let kept = assign_bound(machine, &parts.slots, parts.tuple, element)
+                        let assign = if is_reduced {
+                            assign_reduced
+                        } else {
+                            assign_bound
+                        };
+                        let kept = assign(machine, &parts.slots, parts.tuple, element)
                             .and_then(|()| (parts.predicate)(machine));
                         match kept {
-                            Ok(true) => machine.stack.push(element),
+                            Ok(true) => {
+                                if let Err(bail) = check_set_insertion(machine.stack.len() - at) {
+                                    machine.stack.truncate(at);
+                                    return Err(bail);
+                                }
+                                machine.stack.push(element);
+                            }
                             Ok(false) => {}
                             Err(bail) => {
                                 machine.stack.truncate(at);
@@ -868,11 +1080,11 @@ impl Compiler<'_> {
                         }
                     }
                     let kept = machine.stack.split_off(at);
-                    Ok(if kept.len() == size as usize {
-                        id
-                    } else {
-                        machine.store.set_of_sorted(&kept)
-                    })
+                    match input {
+                        Some(set) if kept.len() == size => Ok(set),
+                        Some(_) => Ok(machine.store.set_of_sorted(&kept)),
+                        None => machine.store.set_of(&kept),
+                    }
                 }),
                 footprint,
             )
@@ -885,7 +1097,7 @@ impl Compiler<'_> {
         bounds: &[Bound],
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context, true)?;
         // TLC enumerates each bound's set into the set it builds (`Tool.evalImpl`'s
         // OPCODE_soa).
         for level in &mut levels {
@@ -925,17 +1137,29 @@ impl Compiler<'_> {
         body: NodeId,
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (mut levels, bound, inner) = self.compile_levels(bounds, context)?;
+        // An application's function TLC keeps lazy whatever its domain where its body has an
+        // effect, evaluating the body only at the key applied (`is_applied_lazily`).
+        let is_effect_kept_lazy = self.applied_construction.is_some_and(|applied| {
+            matches!(self.node(applied).1, NodeKind::FunctionConstruction { body: applied, .. }
+                if *applied == body)
+        });
+        let (mut levels, bound, inner) = self.compile_levels(bounds, context, false)?;
+        // A function over a set TLC doesn't reduce, such as S \X T or SUBSET S, TLC keeps lazy
+        // wherever it evaluates it (OPCODE_fc).
+        let is_kept_lazy = levels.iter().any(|level| level.set.is_irreducible);
         // TLC enumerates each bound's set (`Tool.contexts`).
         for level in &mut levels {
             level.set = Self::listed(&level.set);
         }
+        let body_node = self.node(body).0;
+        let body_id = body;
         let body = self.compile(body, &inner)?;
         let footprint = Footprint::merge_all(levels.iter().map(|level| &level.set.footprint))
             .merge(&body.footprint.without_slots(&bound));
         let body_footprint = body.footprint.clone();
-        let body = body.eval;
-        let body_for_lambda = body.clone();
+        let body_for_lambda = body.eval.clone();
+        let body_eval = body.eval;
+        let body = eval(move |machine| machine.constructed_function_body(&body_eval));
         let levels_for_lambda: Vec<(Compiled, Vec<u32>, bool)> = levels
             .iter()
             .map(|level| (level.set.clone(), level.slots.clone(), level.tuple))
@@ -982,9 +1206,21 @@ impl Compiler<'_> {
         };
         // TLC keeps a function lazy where it can't enumerate a bound's set
         // (`FcnLambdaValue`), as it can't Nat.
-        let is_lambda_possible = levels_for_lambda
-            .iter()
-            .any(|(set, ..)| set.may_be_infinite());
+        // So it does over a value that isn't a set, such as `[e \in <<1, 2>> |-> e]`, which isn't
+        // Reducible (OPCODE_fc builds the function at once only over Reducible domains): one
+        // written as such a value is held as it is, as the domain of a function kept lazy.
+        let has_non_set_bound = bounds.iter().any(|bound| self.is_non_set_value(bound.set));
+        let is_lambda_possible = has_non_set_bound
+            || levels_for_lambda
+                .iter()
+                .any(|(set, ..)| set.may_be_infinite());
+        // Whether the body may have an effect, which a key outside the domain shows
+        // (`OUTSIDE_WITH_EFFECTS`): known of the constructor an application keeps lazy for its
+        // effects, and looked for only where TLC may keep the function lazy otherwise, as the
+        // walk through the definitions the body names costs.
+        let has_effect = is_effect_kept_lazy
+            || (is_kept_lazy || is_lambda_possible)
+                && self.may_have_effect_in(body_id, &inner, &mut HashSet::new());
         // A domain TLC only tests, such as `{n \in Nat : n < k}` or `Seq(S)`, is tested as the
         // engine tests membership in it.
         let domains: Vec<Reference> = levels_for_lambda
@@ -1000,6 +1236,10 @@ impl Compiler<'_> {
                     }
                     (Some(name), None, _) => Arc::new(move |_| Ok(Lazy::Infinite(name))),
                     (None, _, Some(reference)) => Arc::clone(reference),
+                    (None, _, None) if has_non_set_bound => {
+                        let set = set.eval.clone();
+                        return Arc::new(move |machine| Ok(Lazy::Set(set(machine)?)));
+                    }
                     (None, _, None) => {
                         let set = set.eval.clone();
                         return Arc::new(move |machine| {
@@ -1031,29 +1271,70 @@ impl Compiler<'_> {
                 })
             })
             .collect();
+        // The domains are tested when the function is applied, as TLC tests them
+        // (`FcnLambdaValue.apply`), with what they read as it was when the function was built.
+        let read = Footprint::merge_all(levels_for_lambda.iter().map(|(set, ..)| &set.footprint))
+            .merge(&body_footprint);
+        let definition = Arc::new(LambdaDefinition {
+            levels: levels_for_lambda
+                .iter()
+                .map(|(_, slots, tuple)| (slots.clone(), *tuple))
+                .collect(),
+            body: body_for_lambda,
+            captured: read
+                .slots
+                .iter()
+                .copied()
+                .filter(|slot| !bound.contains(slot) && *slot != super::WARNING_SLOT)
+                .collect(),
+            vars: read.vars.clone(),
+            primes: read.primes.clone(),
+            has_effect,
+        });
+        // `Tool`'s OPCODE_fc builds a function over Reducible sets at once, unless it evaluates
+        // it with KeepLazy, as the function of an application, which keeps it a FcnLambdaValue
+        // that `FcnLambdaValue.apply` evaluates only at the keys it is applied to, with the
+        // application's control. Where this constructor is the function an application evaluates
+        // (`Machine::function_value`), the engine builds it too, and where that fails at a key with
+        // no effect, keeps it lazy instead, which no cache keeps: TLC evaluates a definition anew
+        // where it isn't applied, as `processConstantDefns` kept no value of it. Elsewhere TLC
+        // builds it at once, as the body of a function applied with Clear is evaluated. One TLC
+        // keeps lazy wherever it is (`is_kept_lazy`) the engine builds too, and keeps lazy where
+        // that fails at a key with no effect.
+        let construct = {
+            let definition = Arc::clone(&definition);
+            let construct = Arc::clone(&construct);
+            Arc::new(
+                move |machine: &mut Machine<'_>, sets: &[Id], is_applied: bool| {
+                    if !is_applied && !is_kept_lazy {
+                        return construct(machine, sets);
+                    }
+                    if is_applied && is_effect_kept_lazy {
+                        let domains = sets.iter().map(|&set| Lazy::Set(set)).collect();
+                        let function = lazy_function::build(machine, &definition, domains)?;
+                        machine.kept_lazy_function = function;
+                        return Ok(function);
+                    }
+                    let (output, effects) = (machine.output.len(), machine.effects());
+                    match construct(machine, sets) {
+                        Err(_)
+                            if machine.output.len() == output && machine.effects() == effects =>
+                        {
+                            let domains = sets.iter().map(|&set| Lazy::Set(set)).collect();
+                            let function = lazy_function::build(machine, &definition, domains)?;
+                            machine.kept_lazy_function = function;
+                            Ok(function)
+                        }
+                        result => result,
+                    }
+                },
+            )
+        };
+        self.is_lambda_built |= is_effect_kept_lazy;
         let evaluate = if is_lambda_possible {
             self.is_lambda_built = true;
-            // The domains are tested when the function is applied, as TLC tests them
-            // (`FcnLambdaValue.apply`), with what they read as it was when the function was built.
-            let read =
-                Footprint::merge_all(levels_for_lambda.iter().map(|(set, ..)| &set.footprint))
-                    .merge(&body_footprint);
-            let definition = Arc::new(LambdaDefinition {
-                levels: levels_for_lambda
-                    .into_iter()
-                    .map(|(_, slots, tuple)| (slots, tuple))
-                    .collect(),
-                body: body_for_lambda,
-                captured: read
-                    .slots
-                    .iter()
-                    .copied()
-                    .filter(|slot| !bound.contains(slot))
-                    .collect(),
-                vars: read.vars.clone(),
-                primes: read.primes.clone(),
-            });
             eval(move |machine| {
+                let is_applied = machine.take_applied_construction(body_node);
                 let mut lazy: Vec<Lazy> = Vec::with_capacity(domains.len());
                 for (domain, level) in domains.iter().zip(levels.iter()) {
                     let set = match lazy.last() {
@@ -1066,8 +1347,12 @@ impl Compiler<'_> {
                 // `toFcnRcd` builds over its domain's enumeration, and a \cup, \cap or \ prints
                 // as its enumeration too, so over one it enumerates the engine builds that one.
                 for set in &lazy {
-                    if is_lazy_domain(set)
-                        && !(matches!(set, Lazy::Operation(..)) && set.enumerate(machine).is_ok())
+                    let is_non_set =
+                        matches!(set, Lazy::Set(id) if machine.store.kind_of(*id) != KIND_SET);
+                    if is_non_set
+                        || (is_lazy_domain(set)
+                            && !(matches!(set, Lazy::Operation(..))
+                                && set.enumerate(machine).is_ok()))
                     {
                         return lazy_function::build(machine, &definition, lazy);
                     }
@@ -1083,13 +1368,15 @@ impl Compiler<'_> {
                         }
                     });
                 }
-                construct(machine, &sets)
+                construct(machine, &sets, is_applied)
             })
         } else {
             let levels = Arc::clone(&levels);
             eval(move |machine| {
-                let sets = evaluate_bound_sets(machine, &levels, "a function over a non-set")?;
-                construct(machine, &sets)
+                let is_applied = machine.take_applied_construction(body_node);
+                let sets =
+                    evaluate_bound_sets(machine, &levels, "a function over a non-set", false)?;
+                construct(machine, &sets, is_applied)
             })
         };
         Ok(Compiled {
@@ -1099,6 +1386,270 @@ impl Compiler<'_> {
     }
 
     // --- functions ---
+
+    // The bodies of the function constructors whose value an application's function may be,
+    // which TLC evaluates there with KeepLazy (`Tool`'s OPCODE_fa): the constructor itself, a
+    // branch of an IF or a CASE whose tests evaluate no definition, a definition without
+    // parameters or one whose arguments are values, a parameter's or a LET's argument, a
+    // function a LET defines, and the value at a key of a constructor itself applied to values,
+    // which `FcnLambdaValue.apply` evaluates with that application's control. Nothing evaluates
+    // one of these constructors before the one applied: a test or an argument that may is no
+    // way through. An EXCEPT of one, with values for its keys and values, is one too.
+    pub(super) fn get_applied_constructions(
+        &self,
+        function: NodeId,
+        context: &Context,
+    ) -> Option<Arc<[NodeId]>> {
+        let mut constructions = Vec::new();
+        let within = Within {
+            context: Some(context),
+            bound: Vec::new(),
+        };
+        self.collect_applied_constructions(function, &within, &mut constructions, 0);
+        (!constructions.is_empty())
+            .then(|| constructions.into_iter().map(|(body, _)| body).collect())
+    }
+
+    fn collect_applied_constructions(
+        &self,
+        node: NodeId,
+        within: &Within<'_>,
+        constructions: &mut Vec<(NodeId, Vec<TextId>)>,
+        depth: u32,
+    ) {
+        if depth > 8 || constructions.len() > 32 {
+            return;
+        }
+        let depth = depth + 1;
+        match self.node(node).1 {
+            NodeKind::FunctionConstruction {
+                is_recursive: false,
+                bounds,
+                body,
+            } => constructions.push((self.node(*body).0, bound_names(bounds))),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } if self.is_plain(*condition, within) => {
+                self.collect_applied_constructions(*consequent, within, constructions, depth);
+                self.collect_applied_constructions(*alternative, within, constructions, depth);
+            }
+            NodeKind::Case { arms, other }
+                if arms.iter().all(|&(guard, _)| self.is_plain(guard, within)) =>
+            {
+                for &(_, arm) in arms {
+                    self.collect_applied_constructions(arm, within, constructions, depth);
+                }
+                if let Some(other) = other {
+                    self.collect_applied_constructions(*other, within, constructions, depth);
+                }
+            }
+            NodeKind::Label { body, .. } => {
+                self.collect_applied_constructions(*body, within, constructions, depth)
+            }
+            // `FcnLambdaValue.takeExcept` keeps it lazy.
+            NodeKind::Except { function, updates }
+                if updates.iter().all(|update| {
+                    self.is_plain(update.value, within)
+                        && update.path.iter().all(|step| match step {
+                            PathStep::Field(_) => true,
+                            PathStep::Index(args) => {
+                                args.iter().all(|&argument| self.is_plain(argument, within))
+                            }
+                        })
+                }) =>
+            {
+                self.collect_applied_constructions(*function, within, constructions, depth)
+            }
+            // The value at a key of a constructor applied to values: its body's, where its bound
+            // names are values and other names global.
+            NodeKind::FunctionApplication { function, args }
+                if args.iter().all(|&argument| self.is_plain(argument, within)) =>
+            {
+                let mut applied = Vec::new();
+                self.collect_applied_constructions(*function, within, &mut applied, depth);
+                for (body, bound) in applied {
+                    let within = Within {
+                        context: None,
+                        bound,
+                    };
+                    self.collect_applied_constructions(body, &within, constructions, depth);
+                }
+            }
+            NodeKind::Identifier(name) if name.is_local => {
+                let Some(found) = within
+                    .context
+                    .and_then(|context| lookup(&context.scope, name.text))
+                else {
+                    return;
+                };
+                match &found.binding {
+                    Binding::Argument(argument) => {
+                        let context = super::argument_context(argument);
+                        let within = Within {
+                            context: Some(&context),
+                            bound: Vec::new(),
+                        };
+                        self.collect_applied_constructions(
+                            argument.expression,
+                            &within,
+                            constructions,
+                            depth,
+                        )
+                    }
+                    Binding::Value {
+                        lazy: Some(lazy), ..
+                    } => self.collect_function_definition(lazy.definition, constructions),
+                    _ => {}
+                }
+            }
+            NodeKind::Identifier(name) => {
+                self.collect_definition(name, &[], within, constructions, depth)
+            }
+            NodeKind::Apply { name, args } if !name.is_local => {
+                self.collect_definition(name, args, within, constructions, depth)
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_function_definition(
+        &self,
+        node: NodeId,
+        constructions: &mut Vec<(NodeId, Vec<TextId>)>,
+    ) {
+        let definition = self.definition(node);
+        if let tla_ir::DefinitionForm::Function(bounds) = &definition.form
+            && definition.flags
+                & (tla_ir::Definition::RECURSIVE
+                    | tla_ir::Definition::SELF_REFERENTIAL
+                    | tla_ir::Definition::SUBSTITUTED)
+                == 0
+        {
+            constructions.push((self.node(definition.body).0, bound_names(bounds)));
+        }
+    }
+
+    fn collect_definition(
+        &self,
+        name: &tla_ir::Name,
+        args: &[NodeId],
+        within: &Within<'_>,
+        constructions: &mut Vec<(NodeId, Vec<TextId>)>,
+        depth: u32,
+    ) {
+        let tla_ir::Resolution::Definition(index) = name.resolution else {
+            return;
+        };
+        let node = self.ir.definitions[index as usize];
+        let definition = self.definition(node);
+        if definition.flags
+            & (tla_ir::Definition::RECURSIVE
+                | tla_ir::Definition::SELF_REFERENTIAL
+                | tla_ir::Definition::SUBSTITUTED)
+            != 0
+            || !args.iter().all(|&argument| self.is_value(argument, within))
+        {
+            return;
+        }
+        match &definition.form {
+            tla_ir::DefinitionForm::Function(_) if args.is_empty() => {
+                self.collect_function_definition(node, constructions)
+            }
+            // Its body's names are its parameters, bound to values, or global.
+            tla_ir::DefinitionForm::Operator(params) if params.len() == args.len() => {
+                let within = Within {
+                    context: None,
+                    bound: params
+                        .iter()
+                        .filter(|param| param.arity == 0)
+                        .map(|param| param.name)
+                        .collect(),
+                };
+                self.collect_applied_constructions(definition.body, &within, constructions, depth)
+            }
+            _ => {}
+        }
+    }
+
+    // A literal, or a name bound to a value: a variable, a constant, a builtin's, or a bound name.
+    fn is_value(&self, node: NodeId, within: &Within<'_>) -> bool {
+        match self.node(node).1 {
+            NodeKind::Number(_) | NodeKind::String(_) => true,
+            NodeKind::Identifier(name) if name.is_local => match within.context {
+                Some(context) => lookup(&context.scope, name.text)
+                    .is_some_and(|found| matches!(found.binding, Binding::Slot(_))),
+                None => within.bound.contains(&name.text),
+            },
+            NodeKind::Identifier(name) => matches!(
+                name.resolution,
+                tla_ir::Resolution::Variable(_)
+                    | tla_ir::Resolution::Constant(_)
+                    | tla_ir::Resolution::Builtin(_)
+            ),
+            _ => false,
+        }
+    }
+
+    // A domain that evaluates no definition, no constructor and no name but a value, and reads
+    // no register, the time or a draw: the same set however often it is evaluated.
+    pub(super) fn is_fixed_domain(&self, node: NodeId, context: &Context) -> bool {
+        let within = Within {
+            context: Some(context),
+            bound: Vec::new(),
+        };
+        self.is_plain(node, &within) && self.reads_nothing_changing(node)
+    }
+
+    fn reads_nothing_changing(&self, node: NodeId) -> bool {
+        let kind = self.node(node).1;
+        if let NodeKind::Identifier(name) | NodeKind::Apply { name, .. } = kind
+            && let tla_ir::Resolution::Builtin(index) = name.resolution
+            && !matches!(
+                self.builtin_name(index),
+                "Nat"
+                    | "Int"
+                    | "BOOLEAN"
+                    | "STRING"
+                    | ".."
+                    | "SUBSET"
+                    | "UNION"
+                    | "\\cup"
+                    | "\\cap"
+                    | "\\"
+                    | "+"
+                    | "-"
+                    | "*"
+                    | "-."
+                    | "Seq"
+            )
+        {
+            return false;
+        }
+        kind.children()
+            .into_iter()
+            .all(|child| self.reads_nothing_changing(child))
+    }
+
+    // An expression that evaluates no definition, no constructor, and no name but a value.
+    fn is_plain(&self, node: NodeId, within: &Within<'_>) -> bool {
+        match self.node(node).1 {
+            NodeKind::Number(_) | NodeKind::String(_) => true,
+            NodeKind::Identifier(_) => self.is_value(node, within),
+            NodeKind::Apply { name, args } if !name.is_local => {
+                matches!(name.resolution, tla_ir::Resolution::Builtin(_))
+                    && args.iter().all(|&argument| self.is_plain(argument, within))
+            }
+            NodeKind::SetEnumeration(elements) | NodeKind::Tuple(elements) => elements
+                .iter()
+                .all(|&element| self.is_plain(element, within)),
+            NodeKind::Record(fields) => fields
+                .iter()
+                .all(|&(_, value)| self.is_plain(value, within)),
+            _ => false,
+        }
+    }
 
     fn compile_function_application(
         &mut self,
@@ -1114,6 +1665,11 @@ impl Compiler<'_> {
             && let Some(element) = recursive.element
             && (applied_args.len() == 1 || applied_args.len() == recursive.arity)
         {
+            if recursive.converted.is_some() {
+                return unsupported(
+                    "a recursive function TLC keeps lazy, of a function constructor",
+                );
+            }
             let applied_args = applied_args
                 .iter()
                 .map(|&argument| self.compile(argument, context))
@@ -1165,6 +1721,7 @@ impl Compiler<'_> {
             let footprint = Footprint::merge_all(args.iter().map(|argument| &argument.footprint))
                 .merge(&recursive.footprint());
             let (runtime, slot) = (recursive.runtime, recursive.slot);
+            let converted = recursive.converted;
             let evaluators: Vec<Eval> = args.into_iter().map(|argument| argument.eval).collect();
             return Ok(leaf(
                 eval(move |machine| {
@@ -1172,12 +1729,68 @@ impl Compiler<'_> {
                         [argument] => argument(machine)?,
                         evaluators => evaluate_tuple(machine, evaluators)?,
                     };
+                    // One TLC keeps lazy as it starts it applies as the function it converted
+                    // to, once it converted it (`FcnLambdaValue.apply`'s `fcnRcd`), and before
+                    // that evaluates its body anew, which prints only as TLC starts.
+                    if let Some(once) = converted {
+                        let function = machine.onces[once];
+                        if function != crate::memo::EMPTY {
+                            return lazy_function::apply(machine, function, value);
+                        }
+                        if !machine.is_starting {
+                            return Err(Bail(super::KEPT_LAZY_AFTER_STARTUP));
+                        }
+                    }
                     call_recursive_function(machine, runtime, slot, value)
                 }),
                 footprint,
             ));
         }
-        let function = self.compile(function, context)?;
+        // `Tool.evalAppl` evaluates the function of an application with `EvalControl.KeepLazy`,
+        // so TestRandomSetOfSubsets's function constructor stays a `FcnLambdaValue`, which
+        // draws once, for the key applied.
+        if self.is_test_draws(function)
+            && let NodeKind::Apply { name, args: drawn } = self.node(function).1
+            && let tla_ir::Resolution::Builtin(index) = name.resolution
+            && let [key] = args
+        {
+            let operands: Vec<(NodeId, Context)> =
+                drawn.iter().map(|&node| (node, context.clone())).collect();
+            return self.compile_test_random_set_of_subsets(index, &operands, context, Some(*key));
+        }
+        let construction = self.get_applied_constructions(function, context);
+        let within = Within {
+            context: Some(context),
+            bound: Vec::new(),
+        };
+        let is_applied_to_values = args
+            .iter()
+            .all(|&argument| self.is_plain(argument, &within));
+        let applied = self.applied_lazily(function, context);
+        let outer = std::mem::replace(&mut self.applied_construction, applied);
+        let function_node = function;
+        let function = self.compile(function, context);
+        self.applied_construction = outer;
+        let mut function = function?;
+        let evaluate_function = function.eval.clone();
+        // An argument or a LET definition holding a function constructor whose records TLC may
+        // print as written, read here with KeepLazy: the value read is noted, which a later print
+        // of it declines (`push_prints`).
+        let notes_records = matches!(self.node(function_node).1,
+            NodeKind::Identifier(name) if name.is_local)
+            && self.names_argument_with_written_records(function_node, context, 0);
+        function.eval = eval(move |machine| {
+            let value = machine.function_value(
+                &evaluate_function,
+                construction.as_ref(),
+                is_applied_to_values,
+            )?;
+            if notes_records && machine.last_kept_lazy_record != value {
+                machine.last_kept_lazy_record = value;
+                machine.kept_lazy_records.insert(value);
+            }
+            Ok(value)
+        });
         let args = args
             .iter()
             .map(|&argument| self.compile(argument, context))
@@ -1187,15 +1800,28 @@ impl Compiler<'_> {
                 .into_iter()
                 .chain(args.iter().map(|argument| &argument.footprint)),
         );
-        if let [argument] = &args[..] {
+        // TLC fails on a value that isn't a function, and on a tuple or a record of several
+        // arguments, before it evaluates the argument (`Tool`'s OPCODE_fa), which shows where the
+        // argument prints. The store doesn't tell a record from a function TLC built of strings.
+        let is_printing = args.iter().any(Compiled::is_printing);
+        if let [argument] = &args[..]
+            && !is_printing
+        {
             return Ok(super::fused::apply(&function, argument, footprint));
         }
+        let is_several = args.len() > 1;
         let evaluators: Vec<Eval> = args.iter().map(|argument| argument.eval.clone()).collect();
         let function = function.eval;
         Ok(leaf(
             eval(move |machine| {
-                let key = evaluate_tuple(machine, &evaluators)?;
                 let value = function(machine)?;
+                if is_printing {
+                    check_applied(machine, value, is_several)?;
+                }
+                let key = match &evaluators[..] {
+                    [argument] => argument(machine)?,
+                    evaluators => evaluate_tuple(machine, evaluators)?,
+                };
                 lazy_function::apply(machine, value, key)
             }),
             footprint,
@@ -1208,6 +1834,8 @@ impl Compiler<'_> {
         updates: &[Update],
         context: &Context,
     ) -> Compiling<Compiled> {
+        let warning = self.ir.model.is_warning_enabled.then_some(function);
+        self.is_warning |= warning.is_some();
         let function = self.compile(function, context)?;
         let at = self.at;
         let mut compiled = Vec::new();
@@ -1258,6 +1886,11 @@ impl Compiler<'_> {
                 .collect::<Vec<_>>()
                 .iter(),
         );
+        let footprint = if warning.is_some() {
+            footprint.merge(&Footprint::slot(super::WARNING_SLOT))
+        } else {
+            footprint
+        };
         let base = function.eval.clone();
         let evaluate = if compiled.iter().all(|(path, ..)| path.len() == 1) {
             // Each update names one key, as [f EXCEPT ![k] = v] and [r EXCEPT !.a = v] do.
@@ -1272,13 +1905,13 @@ impl Compiler<'_> {
                 })
                 .collect();
             if flat.len() > 1 {
-                except_many(base, flat)
+                except_many(base, flat, warning)
             } else if let (Shape::Current(variable), [(key, value, None)]) =
                 (function.shape, &flat[..])
             {
-                super::fused::except_var_at(variable, key.clone(), value.clone())
+                super::fused::except_var_at(variable, key.clone(), value.clone(), warning)
             } else {
-                except_flat(base, flat)
+                except_flat(base, flat, warning)
             }
         } else {
             let updates: Vec<(Vec<Eval>, u32, Eval)> = compiled
@@ -1291,8 +1924,18 @@ impl Compiler<'_> {
                     )
                 })
                 .collect();
-            except_nested(base, updates)
+            except_nested(base, updates, warning)
         };
+        // TLC takes an EXCEPT of a FcnLambdaValue as another, so that of a function the engine
+        // keeps lazy where building it failed is one no cache keeps either.
+        let evaluate = eval(move |machine| {
+            let kept = machine.kept_lazy_function;
+            let value = evaluate(machine)?;
+            if machine.kept_lazy_function != kept {
+                machine.kept_lazy_function = value;
+            }
+            Ok(value)
+        });
         Ok(Compiled {
             is_costly: true,
             ..leaf(evaluate, footprint)
@@ -1319,6 +1962,18 @@ impl Compiler<'_> {
                 None => element.eval.clone(),
             })
             .collect();
+        let held = evaluators.clone();
+        let reference = Arc::new(move |machine: &mut Machine<'_>| {
+            let at = push_all(machine, &held)?;
+            let values = machine.stack.split_off(at);
+            if values.iter().any(|value| machine.store.holds_any(*value)) {
+                Ok(Lazy::Enumeration(
+                    values.into_iter().map(Lazy::Set).collect(),
+                ))
+            } else {
+                Ok(Lazy::Set(machine.store.set_of(&values)?))
+            }
+        });
         let are_elements_in_order = elements.iter().all(|element| element.is_in_order);
         // TLC holds an element it keeps lazy as built, which a UNION of the set streams.
         let element_references = (!are_elements_in_order
@@ -1343,6 +1998,8 @@ impl Compiler<'_> {
         .flatten();
         Compiled {
             is_costly: true,
+            reference: Some(reference),
+            is_reference_exact: true,
             is_enumerated: true,
             are_elements_enumerated: elements.iter().all(|element| element.is_enumerated),
             is_in_order: true,
@@ -1359,7 +2016,13 @@ impl Compiler<'_> {
                 eval(move |machine| {
                     let at = push_all(machine, &evaluators)?;
                     let values = machine.stack.split_off(at);
-                    machine.store.set_of(&values)
+                    machine.store.set_of(&values).map_err(|error| {
+                        if values.iter().any(|value| machine.store.holds_any(*value)) {
+                            Bail("unsupported: eagerly normalizing a set containing ANY")
+                        } else {
+                            error
+                        }
+                    })
                 }),
                 Footprint::merge_all(elements.iter().map(|element| &element.footprint)),
             )
@@ -1385,17 +2048,27 @@ pub(crate) fn field_of(
 }
 
 // `Tool.contexts`: the set of each bound once, in the order written, and the set `a, b \in S`
-// shares once for both, before any name is bound.
+// shares once for both, before any name is bound. A quantifier and a set map take each in
+// normalized order (`is_normalized`), where a function's constructor walks its domain as built
+// (`FcnLambdaValue`).
 fn evaluate_bound_sets(
     machine: &mut Machine<'_>,
     levels: &[Level],
     reason: &'static str,
+    is_normalized: bool,
 ) -> Outcome<Vec<Id>> {
     let mut sets: Vec<Id> = Vec::with_capacity(levels.len());
     for level in levels {
         let set = match sets.last() {
             Some(&last) if level.is_shared => last,
-            _ => evaluate_set(machine, &level.set.eval, reason)?,
+            _ => {
+                let set = evaluate_set(machine, &level.set.eval, reason)?;
+                if is_normalized {
+                    let size = machine.store.size_of(set);
+                    level.set.check_enumerated(machine, set, size)?;
+                }
+                set
+            }
         };
         sets.push(set);
     }
@@ -1442,6 +2115,30 @@ fn for_each_binding(
     }
 }
 
+// Fails where TLC fails applying a value before it evaluates the argument: one that isn't a
+// function, or, of several arguments, a tuple, or a function of strings, which may be a record.
+fn check_applied(machine: &mut Machine<'_>, function: Id, is_several: bool) -> Outcome<()> {
+    let kind = machine.store.kind_of(function);
+    if kind == KIND_LAZY_FUNCTION {
+        return Ok(());
+    }
+    if !is_function_kind(kind) {
+        return Err(Bail("applied a non-function"));
+    }
+    if is_several
+        && (kind == KIND_TUPLE
+            || (0..machine.store.size_of(function)).all(|index| {
+                let key = machine.store.get_key(function, index);
+                machine.store.kind_of(key) == KIND_STRING
+            }))
+    {
+        return Err(Bail(
+            "unsupported: a tuple or a record of several arguments that print",
+        ));
+    }
+    Ok(())
+}
+
 fn quantify(
     machine: &mut Machine<'_>,
     levels: &[Level],
@@ -1451,7 +2148,9 @@ fn quantify(
 ) -> Outcome<bool> {
     if let [level] = levels {
         let set = evaluate_set(machine, &level.set.eval, "quantified over a non-set")?;
-        for index in 0..machine.store.size_of(set) {
+        let size = machine.store.size_of(set);
+        level.set.check_enumerated(machine, set, size)?;
+        for index in 0..size {
             let element = machine.store.element_at(set, index);
             if let Some(reject) = reject
                 && reject.rejects(machine, element)
@@ -1468,7 +2167,7 @@ fn quantify(
         }
         return Ok(is_forall);
     }
-    let sets = evaluate_bound_sets(machine, levels, "quantified over a non-set")?;
+    let sets = evaluate_bound_sets(machine, levels, "quantified over a non-set", true)?;
     let is_undecided = for_each_binding(machine, levels, &sets, |machine, _| {
         Ok(body(machine)? == is_forall)
     })?;
@@ -1477,9 +2176,11 @@ fn quantify(
 
 // Pushes the images on the stack, above whatever evaluating them pushes and pops.
 fn map_images(machine: &mut Machine<'_>, levels: &[Level], body: &Eval) -> Outcome<()> {
-    let sets = evaluate_bound_sets(machine, levels, "mapped a non-set")?;
+    let sets = evaluate_bound_sets(machine, levels, "mapped a non-set", true)?;
+    let at = machine.stack.len();
     for_each_binding(machine, levels, &sets, |machine, _| {
         let image = body(machine)?;
+        check_set_insertion(machine.stack.len() - at)?;
         machine.stack.push(image);
         Ok(true)
     })?;
@@ -1501,38 +2202,36 @@ fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outc
     kept
 }
 
-fn find_position(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<u32> {
-    if !is_function_kind(machine.store.kind_of(function)) {
-        return Err(Bail("EXCEPT on a non-function"));
-    }
-    match machine.store.find_key(function, key)? {
-        -1 => Err(Bail("EXCEPT outside the domain")),
-        position => Ok(position as u32),
-    }
-}
-
 // Several updates write one new function: each key's position is the same in every intermediate
 // function, and @ reads the value an earlier update gave the key, if any.
-fn except_many(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
+fn except_many(
+    base: Eval,
+    updates: Vec<(Eval, Eval, Option<u32>)>,
+    warning: Option<NodeId>,
+) -> Eval {
     eval(move |machine| {
         let function = base(machine)?;
         if lazy_function::is_lazy(machine, function) {
-            return except_each(machine, function, &updates);
-        }
-        if !is_function_kind(machine.store.kind_of(function)) {
-            return Err(Bail("EXCEPT on a non-function"));
+            return except_each(machine, function, &updates, warning);
         }
         let mut positions = Vec::with_capacity(updates.len());
         let mut values = Vec::with_capacity(updates.len());
-        for (index, (key, value, at_slot)) in updates.iter().enumerate() {
+        for (key, value, at_slot) in &updates {
             let key = key(machine)?;
+            if !is_function_kind(machine.store.kind_of(function)) {
+                return Err(Bail("EXCEPT on a non-function"));
+            }
             let position = match machine.store.find_key(function, key)? {
-                -1 => return Err(Bail("EXCEPT outside the domain")),
+                -1 => {
+                    check_missing_except_key(machine, function, key)?;
+                    except_warning(machine, warning)?;
+                    continue;
+                }
                 position => position as u32,
             };
             if let Some(at_slot) = at_slot {
                 let mut old = machine.store.get_range_value(function, position);
-                for earlier in 0..index {
+                for earlier in 0..positions.len() {
                     if positions[earlier] == position {
                         old = values[earlier];
                     }
@@ -1546,10 +2245,14 @@ fn except_many(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
     })
 }
 
-fn except_flat(base: Eval, updates: Vec<(Eval, Eval, Option<u32>)>) -> Eval {
+fn except_flat(
+    base: Eval,
+    updates: Vec<(Eval, Eval, Option<u32>)>,
+    warning: Option<NodeId>,
+) -> Eval {
     eval(move |machine| {
         let function = base(machine)?;
-        except_each(machine, function, &updates)
+        except_each(machine, function, &updates, warning)
     })
 }
 
@@ -1557,12 +2260,17 @@ fn except_each(
     machine: &mut Machine<'_>,
     function: Id,
     updates: &[(Eval, Eval, Option<u32>)],
+    warning: Option<NodeId>,
 ) -> Outcome<Id> {
     let mut result = function;
     for (key, value, at_slot) in updates {
         let key = key(machine)?;
+        let Some(old) = select_except(machine, result, key)? else {
+            except_warning(machine, warning)?;
+            continue;
+        };
         if let Some(at_slot) = at_slot {
-            machine.locals[*at_slot as usize] = get_at(machine, result, key)?;
+            machine.locals[*at_slot as usize] = old;
         }
         let value = value(machine)?;
         result = lazy_function::except(machine, result, key, value)?;
@@ -1570,21 +2278,77 @@ fn except_each(
     Ok(result)
 }
 
-// @: the value a function gives the key an EXCEPT updates.
-fn get_at(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
+// `Value.select`: unlike apply, an absent key is not an error.
+pub(super) fn select_except(
+    machine: &mut Machine<'_>,
+    function: Id,
+    key: Id,
+) -> Outcome<Option<Id>> {
     if lazy_function::is_lazy(machine, function) {
-        return lazy_function::apply(machine, function, key);
+        if !lazy_function::is_in_domain(machine, function, key)? {
+            return Ok(None);
+        }
+        return lazy_function::apply(machine, function, key).map(Some);
     }
-    let position = find_position(machine, function, key)?;
-    Ok(machine.store.get_range_value(function, position))
+    if !is_function_kind(machine.store.kind_of(function)) {
+        return Err(Bail("EXCEPT on a non-function"));
+    }
+    match machine.store.find_key(function, key)? {
+        -1 => {
+            check_missing_except_key(machine, function, key)?;
+            Ok(None)
+        }
+        position => Ok(Some(
+            machine.store.get_range_value(function, position as u32),
+        )),
+    }
+}
+
+/// What an EXCEPT stops with at a key of a class the record's or the tuple's keys can't be, which
+/// TLC's `select` fails on (or warns of, in `takeExcept`), for the evaluator of failures to word.
+pub(crate) const EXCEPT_INCOMPATIBLE_KEY: &str = "EXCEPT with an incompatible key";
+
+// A missing id does not prove `select` returned null: TLC first checks the key's class,
+// and FcnRcdValue's linear search compares keys with equals rather than their interned ids.
+fn check_missing_except_key(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<()> {
+    let store = &mut machine.store;
+    if store.kind_of(function) == KIND_TUPLE && store.kind_of(key) != KIND_INT
+        || store.is_record(function) && store.kind_of(key) != KIND_STRING
+    {
+        return Err(Bail(EXCEPT_INCOMPATIBLE_KEY));
+    }
+    for index in 0..store.size_of(function) {
+        let domain = store.get_key(function, index);
+        store.equals(domain, key)?;
+    }
+    Ok(())
+}
+
+pub(super) fn except_warning(machine: &mut Machine<'_>, warning: Option<NodeId>) -> Outcome<()> {
+    if let Some(node) = warning {
+        if machine.guarding_function_body_warnings {
+            return Err(Bail(super::LAZY_FUNCTION_WARNING));
+        }
+        if machine.guarding_atom_warnings {
+            return Err(Bail(super::ATOM_WARNING));
+        }
+        machine
+            .output
+            .push(Printed::Warning(RuntimeWarning::Except { node }));
+    }
+    Ok(())
 }
 
 // Each update walks its path down, keeping each key and the function it indexes, then writes the
 // new values back up.
-fn except_nested(base: Eval, updates: Vec<(Vec<Eval>, u32, Eval)>) -> Eval {
+fn except_nested(
+    base: Eval,
+    updates: Vec<(Vec<Eval>, u32, Eval)>,
+    warning: Option<NodeId>,
+) -> Eval {
     eval(move |machine| {
         let mut result = base(machine)?;
-        for (steps, at_slot, value) in &updates {
+        'updates: for (steps, at_slot, value) in &updates {
             let mut keys = Vec::with_capacity(steps.len());
             for step in steps {
                 keys.push(step(machine)?);
@@ -1593,7 +2357,11 @@ fn except_nested(base: Eval, updates: Vec<(Vec<Eval>, u32, Eval)>) -> Eval {
             let mut current = result;
             for &key in &keys {
                 functions.push(current);
-                current = get_at(machine, current, key)?;
+                let Some(selected) = select_except(machine, current, key)? else {
+                    except_warning(machine, warning)?;
+                    continue 'updates;
+                };
+                current = selected;
             }
             machine.locals[*at_slot as usize] = current;
             let mut value = value(machine)?;
@@ -1604,4 +2372,38 @@ fn except_nested(base: Eval, updates: Vec<(Vec<Eval>, u32, Eval)>) -> Eval {
         }
         Ok(result)
     })
+}
+
+// `CHOOSE s \in SUBSET S : P` over the k-element subsets of S for each k from 0 in turn, each
+// size's in the lexicographic order of the positions of their elements in S, the normalized
+// order TLC enumerates a power set in (`SubsetValue.elementsNormalized`).
+fn choose_subset(
+    machine: &mut Machine<'_>,
+    base: Id,
+    slots: &[u32],
+    tuple: bool,
+    body: &Eval,
+) -> Outcome<Id> {
+    let elements = machine.store.set_elements(base).to_vec();
+    let n = elements.len();
+    for k in 0..=n {
+        let mut indices: Vec<usize> = (0..k).collect();
+        loop {
+            let subset: Vec<Id> = indices.iter().map(|&index| elements[index]).collect();
+            let subset = machine.store.set_of_sorted(&subset);
+            assign_converted(machine, slots, tuple, subset)?;
+            if body(machine)? == TRUE {
+                return Ok(subset);
+            }
+            // The next positions: the last that can move on moves, and those after it follow.
+            let Some(last) = (0..k).rev().find(|&i| indices[i] < n - k + i) else {
+                break;
+            };
+            indices[last] += 1;
+            for i in last + 1..k {
+                indices[i] = indices[i - 1] + 1;
+            }
+        }
+    }
+    Err(Bail("CHOOSE found no element"))
 }

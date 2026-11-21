@@ -2666,7 +2666,8 @@ pub fn front(request: &FrontRequest) -> Front;
 ```
 
 SANY's output is buffered as events rather than printed as it goes: the front end takes
-milliseconds, and the binary buffers its output until the first progress line anyway (8.4).
+milliseconds, and the binary holds its output for the first two seconds of a run anyway
+(`prove-it-check/src/transaction.rs`).
 `NotYet` shrinks milestone by milestone, as the binary's own `not native yet` does. The names may
 change as the milestones land; the shape won't.
 
@@ -2747,8 +2748,12 @@ The milestones' as-built notes are in [design/front.md](design/front.md).
 - Done since: suite/etest12 and etest13, and StringDeserialize, print what TLC prints. AssertError
   assumptions go to the trace evaluator (`design/cli.md`), but each corpus model with them is
   blocked elsewhere, as noted there. qlearning/Counter needs TLCDefer and TLCGet("config") in the
-  replay, and at best differs as known, since TLC's record holds its install path.
-- The replay doesn't read or write Json files. It evaluates their arguments, then gives up, since it can't rank the strings a file holds as TLC does.
+  replay. A model that may print TLCGet("config") declines ("printing TLC's install, where its
+  jar is"), since TLC's record holds its install path (design/fallback.md, "Declines to win back").
+- Done since: the replay reads Json files and words the failures of `JsonDeserialize` and
+  `ndJsonDeserialize` as Gson does, and writes the files of `JsonSerialize` and
+  `ndJsonSerialize` where TLC does before it fails (design/fallback.md, "JSON files", which lists
+  what still declines).
 
 **engine-wasm (pushed at 58710d0, no PR).**
 - `prove-it-host` holds what both bindings hand JavaScript.

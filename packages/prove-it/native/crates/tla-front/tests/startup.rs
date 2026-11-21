@@ -27,6 +27,8 @@ fn create_extending(extends: &str, definitions: &str, config: &str) -> Environme
     )
     .expect("a configuration");
     create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source: &source,
         load_module: &|name| match name {
             "N" => Some(MODULE_N.to_owned()),
@@ -141,6 +143,8 @@ fn attempts_a_substitute_for_a_constant_at_any_level_without_its_defns_entry() {
         )
         .expect("a configuration");
         create_environment(&EnvironmentOptions {
+            linked_extendees: &[],
+            origin: None,
             source: &source,
             load_module: &|_| None,
             config: &config,
@@ -270,6 +274,8 @@ fn walks_a_standard_operator_without_a_java_method() {
         let config =
             parse_config("INIT Init\nNEXT Next\n", TlcVersion::Master).expect("a configuration");
         let environment = create_environment(&EnvironmentOptions {
+            linked_extendees: &[],
+            origin: None,
             source: &source,
             load_module: &|_| None,
             config: &config,
@@ -299,6 +305,8 @@ fn attempts_a_function_substituted_for_a_constant() {
     )
     .expect("a configuration");
     let environment = create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &|_| None,
         config: &config,
@@ -325,6 +333,8 @@ fn leaves_a_substitute_the_configuration_gives_a_value() {
     )
     .expect("a configuration");
     let environment = create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &|_| None,
         config: &config,

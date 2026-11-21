@@ -1,0 +1,16 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 3, col 8 to line 3, col 16 of module M
+
+Unknown operator: `Undefined'.
+
+
+Error: Parsing or semantic analysis failed.

@@ -15,20 +15,27 @@ use std::time::Duration;
 
 use crate::clock::Instant;
 
-use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
+use tla_ir::{Index, Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
 use tla_values::fingerprint::{
     Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
 };
 use tla_values::random::JavaRandom;
-use tla_values::store::{FALSE, KIND_SET, NO_VALUE, Outcome, ShapeJoin, TRUE};
+use tla_values::store::{
+    FALSE, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, NO_VALUE,
+    Outcome, ShapeJoin, TRUE,
+};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
-use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
+use crate::compile::builtins::{PROBED_REGISTER_FAILS, PROBED_REGISTER_SET};
+use crate::compile::{
+    CompileError, Compiler, DISTINCT_SLOT, ENUMERATED_INT, ENUMERATED_NAT, ENUMERATED_SEQ,
+    ENUMERATED_STRING, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options, SymmetryElements,
+};
 use crate::context::{
-    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
-    holds_all, holds_all_changed,
+    Atom, EngineContext, Startup, StartupDefinition, StartupSymmetry, count_possible,
+    first_failing_changed, holds_all,
 };
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{
@@ -36,7 +43,7 @@ use crate::machine::{
 };
 use crate::memo::{EMPTY, MAXIMUM_ENTRIES};
 use crate::symmetry::{
-    Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
+    Canonicalizer, Group, NOT_MODEL_VALUES, NamedGroup, close_group, get_permutations, name_group,
 };
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
@@ -50,9 +57,24 @@ const LIVENESS_RATIO: f64 = 0.2;
 // The search stops where a check part way through it finds a counterexample.
 const PERIODIC_LASSO: &str = "a counterexample part way through the search";
 
+/// The caller's computation of a constant definition TLC computes as it starts
+/// (`processConstantDefns`), by its index in the IR's definitions, where the engine fails on it:
+/// its value, a boolean, where TLC computes it there without an effect or a warning, which every
+/// use then reads; `None` where it doesn't, or the caller can't tell.
+#[derive(Clone)]
+pub struct Adopter(pub Arc<dyn Fn(Index) -> Option<bool> + Send + Sync>);
+
+impl std::fmt::Debug for Adopter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Adopter")
+    }
+}
+
 /// What the caller asks of a search besides the model.
 #[derive(Clone, Debug)]
 pub struct Settings {
+    /// Maximum depth for TLC's depth-first iterative-deepening search.
+    pub dfid: Option<u32>,
     pub compile: Options,
     /// PROVE_IT_STOP_AT: the state before whose expansion the search stops.
     pub stop_at: Option<usize>,
@@ -107,6 +129,9 @@ pub struct Settings {
     pub large_region_advice: Option<Advice>,
     /// Where the Json module's operators read and write their files.
     pub json_files: JsonFiles,
+    /// Computes a constant definition TLC computes as it starts where the engine fails on it
+    /// (`Adopter`).
+    pub adopter: Option<Adopter>,
 }
 
 /// See [`Settings::large_region_advice`].
@@ -208,6 +233,7 @@ const THREAD_WORK: Duration = Duration::from_millis(2);
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
+            dfid: None,
             compile: Options::default(),
             stop_at: None,
             is_fingerprint_verified: false,
@@ -227,6 +253,7 @@ impl Default for Settings {
             is_continued: false,
             large_region_advice: None,
             json_files: JsonFiles::System,
+            adopter: None,
         }
     }
 }
@@ -246,6 +273,7 @@ fn dump(machine: &Machine<'_>, reporter: &mut dyn Reporter, states: &[Id], width
 }
 
 pub trait Reporter {
+    fn dfid_level(&mut self, _level: u32, _generated: u64, _distinct: u64) {}
     fn initial_states_started(&mut self);
     fn initial_states_progress(&mut self, count: u64);
     fn initial_states(&mut self, generated: u64, distinct: u64);
@@ -273,6 +301,8 @@ pub trait Reporter {
     /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
     /// were. The interpreter printed it already where it handed the search over.
     fn startup_print(&mut self, _store: &Store, _prints: &Prints) {}
+    /// TLC_EXCEPT_APPLIED_TO_UNKNOWN_FIELD, identifying the EXCEPT base expression.
+    fn warning(&mut self, _warning: &crate::RuntimeWarning) {}
     /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
@@ -284,12 +314,67 @@ pub trait Reporter {
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
+    /// Whether TLC computes the startup definition at this position of the IR's, a PrintT of an
+    /// expression without effects the engine can't compute (`Compiler::is_pure_print`), which the
+    /// reporter then words (`Prints::unworded`): the warnings TLC prints as it computes the
+    /// argument, before its print, where it does. A reporter that can't tell says it doesn't.
+    fn computes_startup_print(&mut self, _position: usize) -> Option<Vec<tla_ir::RuntimeWarning>> {
+        None
+    }
+    /// What TLC has as it computes the startup definition at this position of the model's, which
+    /// the engine doesn't compile and leaves to the reporter (`StartupDefinition::left`),
+    /// after the definitions before it, of which the engine printed `printed` times and left TLC's
+    /// generator in the state `random`: as many prints as it makes, which the reporter words
+    /// (`Prints::unworded`), and the generator's state after it. Where it computes it without a
+    /// warning, a failure or a register's write; `None` declines the model.
+    /// Whether TLC, computing the register probe at this position of the IR's
+    /// (`tla_ir::Startup::register_probes`) as it starts, fails on it before any effect, where the
+    /// engine stopped at a limit of its own before any: then TLC swallows the failure and computes
+    /// the definition again at each use, as the engine does. A reporter that can't tell says it
+    /// doesn't.
+    fn fails_register_probe(&mut self, _position: usize) -> bool {
+        false
+    }
+    fn computes_left_startup(
+        &mut self,
+        _position: usize,
+        _printed: usize,
+        _random: u64,
+    ) -> Option<LeftStartup> {
+        None
+    }
     /// Confirms that TLC fails as it starts on each startup definition the engine found failing
     /// before any effect, which it swallows as TLC does and evaluates again at each use, whether or
     /// not anything reads it: the engine may fail where TLC doesn't. The engine asks before it
     /// reports anything of the startup, whatever follows; `Err` declines the model. A reporter that
-    /// can't confirm a failure declines it.
-    fn confirm_startup(&mut self, failed: &[bool]) -> Result<(), String> {
+    /// can't confirm a failure declines it. It also confirms that TLC computes each startup
+    /// definition marked `unworded`, a print the engine couldn't compute (`Prints::unworded`).
+    /// `limited` marks each warning-only definition the engine failed at a limit of its own
+    /// before any warning, which TLC computes or fails on, and which the reporter confirms TLC
+    /// does without a warning or a print. `unwarned` marks each warning-only definition the
+    /// engine failed on otherwise before any warning, which the reporter confirms TLC doesn't
+    /// warn or print on as it starts, where it can tell. TLC makes as many prints of a definition it fails on as
+    /// the engine made before it stopped only where it fails where the engine stopped, which the
+    /// reporter confirms. `effects` holds how many prints each startup
+    /// definition made as the engine evaluated it, and whether it drew: the engine may stop at
+    /// a value TLC keeps lazy, and prints, before it fails (`IntervalValue`, `SetOfSeqValue`), so
+    /// the reporter confirms TLC prints and draws as much before each failure it confirms.
+    fn confirm_startup(
+        &mut self,
+        failed: &[bool],
+        unworded: &[bool],
+        limited: &[bool],
+        _unwarned: &[bool],
+        _effects: &[(usize, bool)],
+    ) -> Result<(), String> {
+        if limited.contains(&true) {
+            return Err(
+                "a warning-only startup definition at a limit of the engine's, which nothing confirms TLC computes quietly".into(),
+            );
+        }
+        if unworded.contains(&true) {
+            return Err("a startup print the engine can't compute, which nothing words".into());
+        }
         if failed.contains(&true) {
             return Err(
                 "a startup definition that fails, which nothing confirms TLC fails on".into(),
@@ -301,6 +386,12 @@ pub trait Reporter {
     /// evaluate (AssertError, which compares TLC's message for a failure), after those before it
     /// held, and reports what it prints. `Err` declines the model.
     fn check_assumption(&mut self, _position: u32) -> Result<Delegated, String> {
+        Err(DELEGATED_ASSUMPTION.into())
+    }
+    /// Computes the AssertError application at this node, which the engine can't evaluate and
+    /// whose value is the same wherever TLC evaluates it, as TLC does after the startup's
+    /// definitions. `Err` declines the model.
+    fn check_constant(&mut self, _node: u32) -> Result<bool, String> {
         Err(DELEGATED_ASSUMPTION.into())
     }
     /// Whether the caller wants the search to end, as when nothing more it prints can be right.
@@ -325,6 +416,8 @@ pub trait Reporter {
 /// A violation a search under `-continue` goes on past, with what rebuilding its trace as TLC
 /// prints it takes, as a [`Violation`] holds it.
 pub struct ContinuedTrace<'s> {
+    pub is_dfid: bool,
+    pub holds_collapsed: bool,
     pub kind: Continued,
     /// The states from an initial state to the one that violates, ids of `store`.
     pub states: Vec<Vec<Id>>,
@@ -351,6 +444,20 @@ pub enum Continued {
 
 /// Why the engine leaves an assumption to its caller.
 pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
+
+/// Why the engine stops at a startup definition it doesn't compile, left to a reporter that
+/// doesn't compute it as TLC does (`Reporter::computes_left_startup`), which `start` reports as
+/// why the compiler didn't compile it.
+const LEFT_STARTUP: &str = "unsupported: a startup definition the engine doesn't compile, which the trace evaluator doesn't compute as TLC starts";
+
+/// What TLC has as it computes a startup definition the engine left to its reporter
+/// (`Reporter::computes_left_startup`).
+pub struct LeftStartup {
+    /// How many prints it makes.
+    pub prints: usize,
+    /// The state it leaves TLC's generator in.
+    pub random: u64,
+}
 
 /// What the caller found of an assumption the engine left to it.
 pub struct Delegated {
@@ -443,14 +550,20 @@ pub enum SearchOutcome {
     /// reporting anything.
     Declined(String),
     /// The assumption TLC reports by this name is false (2104).
-    AssumptionViolated { name: String },
+    AssumptionViolated {
+        name: String,
+    },
     /// A constant definition the configuration names has a value TLC rejects, with TLC's
     /// configuration error, after the startup reported what the constant definitions printed.
-    ConfigError { message: String },
-    /// TLC's startup threw a RuntimeException with this message, which TLC reports as an
-    /// exception it didn't expect, after the startup reported what the constant definitions
-    /// printed.
-    StartupException { message: String },
+    ConfigError {
+        message: String,
+    },
+    /// TLC's startup threw an exception, this its class and message as TLC reports them after
+    /// `UNEXPECTED_HEAD`, which TLC reports as an exception it didn't expect, after the startup
+    /// reported what the constant definitions printed.
+    StartupException {
+        message: String,
+    },
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
@@ -459,6 +572,34 @@ pub enum SearchOutcome {
         /// Whether each startup definition failed as TLC started, where the engine evaluates it
         /// again at each use.
         failed_startup: Vec<bool>,
+    },
+    DfidViolation(Box<Violation>),
+    DfidNextFailure(Box<Violation>),
+    DfidInvariantFailure(Box<Violation>),
+    DfidInitialInvariantFailure(Box<Violation>),
+    /// DFID failed to evaluate the model as it computed the initial states, with no state to
+    /// show (`DFIDModelChecker.modelCheckImpl` reports it as an exception it didn't expect).
+    DfidInitialFailure(Box<Violation>),
+    DfidActionFailure(Box<Violation>),
+    DfidInitialIncomplete {
+        state: Vec<Id>,
+        store: Box<Store>,
+        holds_collapsed: bool,
+    },
+    DfidIncomplete {
+        states: Vec<Vec<Id>>,
+        store: Box<Store>,
+        action: u32,
+        holds_collapsed: bool,
+        generated: u64,
+        distinct: u64,
+    },
+    DfidUnsupported {
+        multiple_workers: bool,
+    },
+    DfidLimited {
+        generated: u64,
+        distinct: u64,
     },
     Complete {
         counts: Box<Counts>,
@@ -581,6 +722,15 @@ pub enum ViolationKind {
         accepted: Option<Box<AcceptedTrace>>,
         atom: Option<DeadlockAtom>,
     },
+    /// A simulated behavior violates the temporal properties (`LiveCheck1.printErrorTrace`): the
+    /// trace's states up to its counterexample's, the cycle from `loop_start` on, which steps back
+    /// by the action at `back` in the model's actions, the behavior's next step, or stutters; and
+    /// the positions of the properties TLC names.
+    SimulatedLasso {
+        loop_start: usize,
+        back: Option<u32>,
+        violated: Vec<usize>,
+    },
     /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
     /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
     /// state alone, which stutters.
@@ -619,9 +769,18 @@ pub enum ErrorSite {
     /// Evaluating the action constraint at this position of the model's action constraints on the
     /// trace's last step, to a successor of the state before it that isn't counted as found.
     ActionConstraint(u32),
+    /// Evaluating the constraint at this position of the model's constraints on the trace's last
+    /// state, a successor of the state before it that isn't counted as found.
+    Constraint(u32),
+    /// Evaluating the action property at this position of the model's action properties on the
+    /// trace's last step, to a successor of the state before it.
+    ActionProperty(u32),
     /// Evaluating the constraint at this position of the model's constraints on an initial state,
     /// the violation's one state.
     InitialConstraint(u32),
+    /// Evaluating the VIEW as TLC fingerprints an initial state the constraints kept, the
+    /// violation's one state.
+    InitialView,
     /// Evaluating the invariant at this position of the model's invariants on an initial state,
     /// the violation's one state.
     InitialInvariant(u32),
@@ -658,18 +817,89 @@ const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
 // A successor the next-state relation leaves a variable of unassigned in, which TLC reports.
 const INCOMPLETE_SUCCESSOR: &str = "a successor that isn't complete";
 
+/// Why the engine stops at a predicate the configuration names that TLC takes for a state's, as
+/// it names a name spelled as a variable, where computing it as a constant reads otherwise than
+/// TLC's check in each state (`tla_ir::StartupPredicate::is_state_level`).
+const STATE_LEVEL_PREDICATE: &str = "unsupported: a predicate TLC takes for a state's, naming a \
+    name spelled as a variable, whose value as a constant TLC would read otherwise";
+
 pub(crate) fn is_engine_limit(reason: &str) -> bool {
     !TLC_FAILURES.contains(&reason)
 }
+
+/// Whether a search that stops for this reason where it evaluates the model notes a failure at
+/// the site it evaluated, which the native checker's evaluator of failures evaluates again as TLC
+/// does: a failure TLC reports, or a limit at a value TLC can't enumerate or count where the
+/// engine can't either. TLC keeps some of those values lazy and may never enumerate them, and
+/// fails in some of them before or otherwise than the engine does, so its evaluator words TLC's
+/// error where TLC fails at the site, and finds none, which declines the model, where TLC doesn't.
+pub(crate) fn is_noted_failure(reason: &str) -> bool {
+    !is_engine_limit(reason) || is_replayed_limit(reason)
+}
+
+/// Whether the search stopped at a value TLC can't enumerate or count where the engine can't
+/// either, and noted the failure for the evaluator of failures to find as TLC does.
+pub fn is_replayed_limit(reason: &str) -> bool {
+    REPLAYED_LIMITS.contains(&reason)
+}
+
+// The engine's limits at values TLC can't enumerate or count, which TLC may fail at as well.
+const REPLAYED_LIMITS: &[&str] = &[
+    ENUMERATED_INT,
+    ENUMERATED_NAT,
+    ENUMERATED_STRING,
+    ENUMERATED_SEQ,
+    "counted the elements of an infinite set",
+    "a lazy set too large to count",
+    crate::compile::lazy::COLLECTED_PAST_BOUND,
+    "an interval too large to build",
+    "a power set too large to build",
+    "enumerated an infinite set",
+    "an enumerated infinite set",
+    "enumerated a product of an infinite set",
+    "enumerated an operation on infinite sets",
+    "enumerated a union with an infinite set",
+    "enumerated [D -> R] with R infinite",
+    "Warshall of a non-pair",
+    "IsFiniteSet of a set TLC may fail to tell finite",
+    SEQ_COMPARED,
+    crate::compile::builtins::TLC_EVAL_OF_LAZY_FUNCTION,
+    tla_values::json::JSON_OF_UNBUILT.0,
+    RECORD_COMPARED,
+    crate::machine::TOO_DEEP,
+    crate::compile::EXCEPT_INCOMPATIBLE_KEY,
+    tla_values::store::LAZY_FUNCTION.0,
+    crate::compile::IS_A_BAG_OF_LAZY_FUNCTION,
+];
+
+/// What comparing a function the store holds as a record with one it doesn't stops with. The
+/// store knows a value by its domain, not by the class TLC built it as, and TLC fails only where
+/// the receiver of `equals` or `compareTo` is a `RecordValue` and the other value isn't one
+/// (`RecordValue.equals`, `RecordValue.compareTo`), which the evaluator of failures knows.
+pub(crate) const RECORD_COMPARED: &str = "record compared with a function";
+
+/// What comparing Seq(S) with a value that is neither another Seq(S') nor a model value stops
+/// with, where `UserValue.compareTo` fails, for the evaluator of failures to word.
+pub(crate) const SEQ_COMPARED: &str = "compared Seq(S) with a non-overridden value";
 
 // The reasons a search stops for that are failures TLC reports evaluating the model. Every other
 // reason is the engine's own limit, for the interpreter to take over from, so a model the engine
 // can't follow never reports a failure TLC doesn't. Enumerating an infinite set is among the
 // limits: the engine enumerates some sets TLC keeps lazy. So is comparing a record with a
-// function, which fails in TLC only where it built the value as a record.
+// function, which fails in TLC only where it built the value as a record, and which the evaluator
+// of failures evaluates again.
 const TLC_FAILURES: &[&str] = &[
+    "a temporal formula in a state",
+    "enumerated ANY",
+    tla_values::fingerprint::ANY_FINGERPRINT.0,
+    tla_values::store::ANY_COMPARISON.0,
+    "isEmpty of ANY",
+    "size of ANY",
     "@@ of non-functions",
     "BagCardinality of a non-bag",
+    "BagOfAll of a literal",
+    crate::compile::TEXT_SERIALIZED,
+    "SortSeq of a literal",
     "CHOOSE found no element",
     "CHOOSE from a non-set",
     "DOMAIN of a non-function",
@@ -678,10 +908,28 @@ const TLC_FAILURES: &[&str] = &[
     "IsFiniteSet of a non-set",
     "PickSuccessor of a successor TLC fingerprints incomplete",
     "RandomElement of the empty set",
+    "RandomElement of a value that isn't a finite set",
+    "RandomSetOfSubsets of an average that isn't a natural number",
+    "RandomSubset of a count that isn't a natural number",
+    "RandomSetOfSubsets of an average larger than the base cardinality",
+    "RandomSubsetSet of a count that isn't a natural number",
+    "RandomSubsetSet of a probability that isn't a string",
+    "RandomSubsetSet of a string that isn't a probability",
+    "RandomSubsetSet of a value that isn't a finite set",
+    "RandomSubsetSet of a count greater than the number of subsets",
     "SortSeq of a non-sequence",
     "SubBag of a non-bag",
     "SubSeq of a non-sequence",
     "SubSeq outside the sequence's domain",
+    crate::compile::builtins::ASSERT_ERROR_MESSAGE,
+    crate::compile::builtins::TO_TRACE_OF_NON_COUNTER_EXAMPLE,
+    crate::compile::builtins::DEFINITION_NOT_EVALUATED,
+    "TLCGet of a key that isn't a natural number",
+    "TLCGet of a register TLC hasn't set",
+    crate::compile::builtins::TLC_GET_UNKNOWN_KEY,
+    crate::compile::builtins::TLC_GET_UNDEFINED_IN_SIMULATION,
+    crate::compile::builtins::TLC_CACHE_OF_LITERAL,
+    "TLCSet of a key that isn't a natural number",
     "TLCModelValue of a value that isn't a string",
     "Tail of an empty sequence",
     "a CASE condition that isn't a boolean",
@@ -709,24 +957,30 @@ const TLC_FAILURES: &[&str] = &[
     "a product of a non-set",
     "a record set of a non-set",
     "a set with too many elements for TLC 1.7.4",
+    tla_values::SET_BOUND_EXCEEDED.0,
     INCOMPLETE_SUCCESSOR,
-    "a symmetry function of values that aren't model values",
+    NOT_MODEL_VALUES,
     "a symmetry that isn't a set of functions",
     "a symmetry value that isn't a function",
     "a tuple pattern that doesn't match",
+    "a tuple pattern with an ambiguous physical class",
     "action composition",
     "an IF condition that isn't a boolean",
     "an action quantified over a non-set",
     "an assertion failed",
     "an initial state that isn't complete",
     "an operator's table applied outside its rows",
+    "an operator's table applied to the wrong number of arguments",
     "an unbounded CHOOSE",
+    "an unbounded quantifier",
     "applied a function outside its domain",
     "applied a non-function",
     "applied a recursive function outside its domain",
     "concatenation of a string and a sequence",
     "differently typed model values",
+    "typed model value",
     "division by zero",
+    "a Json conversion of an unsupported physical input class",
     "drew from a value that isn't a set",
     "enumerated a filter of an infinite set",
     "enumerated a non-set",
@@ -756,6 +1010,13 @@ const TLC_FAILURES: &[&str] = &[
     "zero to the power of zero",
     crate::compile::lazy::SUBSET_OVERFLOW,
     crate::compile::NON_SET_OPERAND,
+    crate::compile::builtins::JSON_FILE_NOT_STRING,
+    crate::compile::builtins::JSON_FILE_UNREAD,
+    crate::compile::builtins::JSON_FILE_UNWRITTEN,
+    crate::compile::builtins::ND_JSON_SERIALIZE_NOT_SEQUENCE,
+    crate::compile::builtins::JSON_SERIALIZE_NOT_SEQUENCE,
+    tla_values::json::JSON_UNPARSED.0,
+    tla_values::json::JSON_UNCONVERTED.0,
 ];
 
 /// The counts of a search that stopped, as TLC reports them.
@@ -768,6 +1029,22 @@ pub struct StopCounts {
     /// After an invariant that fails to evaluate, the expansions' out-degrees, the one TLC was
     /// running among them with the new states it had found, as TLC prints them.
     pub out_degrees: [u64; OUT_DEGREE_BUCKETS],
+    /// Whether the stop came as the search expanded the one state it had, its one initial state
+    /// or the end of a chain from it, before it found a new successor: where TLC's other workers
+    /// had no state to take (`StateQueue.sDequeue`) and no step left to take, so the counts don't
+    /// depend on how its workers interleave.
+    pub is_lone_expansion: bool,
+    /// Whether, with several workers, TLC's others may reach the stop otherwise: the search
+    /// stopped not in a lone expansion and with states left on its queue, which TLC's other
+    /// workers take and expand as they race the stop (`StateQueue.sDequeue`), or with a state
+    /// on the trace that another state of its parent's level also steps to, where the worker
+    /// that adds it first, whichever, is its parent in TLC's trace.
+    pub is_raced: bool,
+    /// Under -dfid, whether the failure came at a level before the last: TLC replays the
+    /// expansion on the next level with the call stack kept (`DFIDModelChecker.modelCheckImpl`),
+    /// which prints the nested expressions and counts what the replay generates. At level
+    /// `DFIDMax` the loop ends first.
+    pub is_dfid_replayed: bool,
 }
 
 // What a search found stopping it, before it hands over the store: the state found that is the
@@ -785,11 +1062,14 @@ struct Found {
     counts: StopCounts,
 }
 
-const EXIT_UNFOLLOWED: &str = "unsupported: TLCSet(\"exit\", TRUE) outside an invariant";
 const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
 /// Where an atom sets or reads TLC's registers, the search answers the atoms as TLC evaluates
 /// them, which it follows only so far.
 const ONLINE_DECLINED: &str = "the liveness checker declined as the search went";
+const EXIT_RACED: &str =
+    "unsupported: TLCSet(\"exit\", TRUE) outside an invariant with several workers";
+const EXIT_AT_STARTUP: &str =
+    "unsupported: TLCSet(\"exit\", TRUE) as TLC starts or computes the initial states";
 const ONLINE_INITIAL: &str = "TLC's registers in atoms of the initial states";
 const ONLINE_LATE: &str = "a late node where the atoms use TLC's registers";
 const ONLINE_ACCEPTED: &str = "an accepting node where the atoms use TLC's registers";
@@ -1158,6 +1438,11 @@ trait Reached {
     fn index(&self, slot: usize) -> u32;
     // The states from an initial state to the one found at this index, for a trace.
     fn path(&self, index: usize) -> Vec<Vec<Id>>;
+    // The index of the parent of the state found at this index, -1 for an initial state, where
+    // the search keeps it.
+    fn parent(&self, _index: usize) -> Option<i32> {
+        None
+    }
     // Whether an invariant that fails of a new state, false or failing to evaluate, waits to stop
     // the search until it is known that no other thread found another state with its key first.
     fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
@@ -1168,6 +1453,10 @@ trait Reached {
 impl Reached for States {
     fn key_width(&self) -> Option<usize> {
         self.key_width
+    }
+
+    fn parent(&self, index: usize) -> Option<i32> {
+        self.parents.get(index).copied()
     }
 
     fn order(&self) -> &[usize] {
@@ -1207,10 +1496,22 @@ impl Reached for States {
 // The search's state besides the machine, which the walks' continuations update.
 struct Search<'r, T, E = Dense> {
     states: T,
+    dfid_statuses: Option<crate::dfid::Statuses>,
+    dfid_successors: Vec<(u64, (usize, Vec<Id>))>,
+    dfid_all_done: bool,
+    dfid_all_nonleaf: bool,
+    dfid_leaf: bool,
+    dfid_batch_size: usize,
+    // The DFID level the search runs: the depth it generates states to.
+    dfid_level: u32,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
+    // Whether the spec reads the counts TLCGet gives of the search but the distinct states
+    // (`Search::set_counts`).
+    is_counted: bool,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
+    is_dfid: bool,
     // Under `-continue`, the values the startup definitions computed, once a trace needs them,
     // and then those the constant CHOOSEs computed.
     startup: Option<Vec<Id>>,
@@ -1221,6 +1522,19 @@ struct Search<'r, T, E = Dense> {
     level: u64,
     successors: u64,
     new_states: u64,
+    // How many of the first expansions, one after the other, each took one step to a new state:
+    // the search so far is a chain from its one initial state.
+    chain_expansions: usize,
+    // The first state of the level being expanded.
+    level_first: usize,
+    // With several workers, the states a state other than their parent, of their parent's
+    // level, also stepped to; or None where a level was expanded on several threads, which
+    // don't say.
+    contested: Option<HashSet<usize>>,
+    is_contest_tracked: bool,
+    // With several workers, whether the search notes where TLC's workers may race to print
+    // (`Machine::is_print_raced`).
+    is_print_race_tracked: bool,
     expanding: usize,
     current: Vec<Id>,
     successor: Vec<Id>,
@@ -1276,9 +1590,18 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         let width = states.order().len().max(1);
         Search {
             states,
+            dfid_statuses: None,
+            dfid_successors: Vec::new(),
+            dfid_all_done: true,
+            dfid_all_nonleaf: true,
+            dfid_leaf: false,
+            dfid_batch_size: 0,
+            dfid_level: 0,
             reporter,
             is_distinct_read,
+            is_counted: false,
             is_continued: false,
+            is_dfid: false,
             startup: None,
             chosen: Vec::new(),
             generated: 0,
@@ -1287,6 +1610,11 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             level: 1,
             successors: 0,
             new_states: 0,
+            chain_expansions: 0,
+            level_first: 0,
+            contested: Some(HashSet::new()),
+            is_contest_tracked: false,
+            is_print_race_tracked: false,
             expanding: 0,
             current: Vec::with_capacity(width),
             successor: Vec::with_capacity(width),
@@ -1335,6 +1663,40 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         Ok(())
     }
 
+    // The counts of TLC's model checker where the spec reads them, as its one worker updates
+    // them (`ModelChecker.DoInitFunctor.addElement`, `Worker.addElement`): the states generated,
+    // the initial ones among them, the distinct states (`theFPSet.size`), those left on the queue
+    // (`theStateQueue.size`), and the level of the last state written to the trace, never less
+    // than 1 (`TLCTrace.getLevelForReporting`). A state is written as its fingerprint is put,
+    // before its checks; an initial state is queued then too, a successor once checked.
+    fn set_counts(
+        &self,
+        machine: &mut Machine<'_>,
+        distinct: usize,
+        queued: usize,
+        written_level: u64,
+    ) -> Outcome<()> {
+        if !self.is_counted {
+            return Ok(());
+        }
+        self.set_distinct(machine, distinct)?;
+        for (slot, count) in [
+            (crate::compile::GENERATED_SLOT, self.generated),
+            (crate::compile::INITIAL_SLOT, self.initial_generated),
+            (crate::compile::QUEUE_SLOT, queued as u64),
+            (
+                crate::compile::DIAMETER_SLOT,
+                self.depth.max(written_level).max(1),
+            ),
+        ] {
+            let id = machine
+                .store
+                .int(i64::try_from(count).map_err(|_| Bail("integer overflow"))?)?;
+            machine.set_slot(slot, id);
+        }
+        Ok(())
+    }
+
     // The fingerprint of the key of the state that is current, which is the successor when the
     // search visits one: from the fingerprint of the state being expanded when the key is the
     // state. TLC fingerprints the view of the representative when it has both.
@@ -1345,12 +1707,17 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         is_successor: bool,
     ) -> Outcome<u64> {
         // Where the key is a VIEW, the state itself isn't fingerprinted, which would refuse it;
-        // every state the search keeps is one the transfer encoding can write.
-        if (self.is_lambda_built || context.view.is_some())
-            && machine
-                .current()
-                .iter()
-                .any(|&value| machine.store.holds_lazy_function(value))
+        // every state the search keeps is one the transfer encoding can write. A function the
+        // engine keeps lazy where TLC applies it may reach any state.
+        if machine
+            .current()
+            .iter()
+            .any(|&value| machine.store.is_kept_lazy(value))
+            || (self.is_lambda_built || context.view.is_some())
+                && machine
+                    .current()
+                    .iter()
+                    .any(|&value| machine.store.holds_lazy_function(value))
         {
             return Err(LAZY_FUNCTION_HELD);
         }
@@ -1409,6 +1776,8 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         self.generated += 1;
         self.initial_generated += 1;
+        let count = self.states.count();
+        self.set_counts(machine, count, count, 1)?;
         let mut is_in_model = true;
         for (position, constraint) in context.constraints.iter().enumerate() {
             match crate::context::holds(machine, &constraint.eval) {
@@ -1429,14 +1798,28 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         let found = if is_in_model {
             // TLC reports a VIEW that fails on an initial state as it fingerprints the state
-            // (DoInitFunctor.addElement), which no site here stands for.
-            let fingerprint = self.compute_key(machine, context, false).map_err(|bail| {
-                if is_engine_limit(bail.0) {
-                    bail
-                } else {
-                    Bail(INITIAL_VIEW_FAILED)
+            // (DoInitFunctor.addElement), after the constraints held. Under SYMMETRY it evaluates
+            // the VIEW of the state's least permutation, which the replay doesn't build.
+            let fingerprint = match self.compute_key(machine, context, false) {
+                Ok(fingerprint) => fingerprint,
+                Err(bail)
+                    if is_engine_limit(bail.0)
+                        || (context.view.is_none()
+                            && bail == tla_values::fingerprint::ANY_FINGERPRINT) =>
+                {
+                    return Err(bail);
                 }
-            })?;
+                Err(bail) if self.canonicalizer.is_none() && context.view.is_some() => {
+                    let distinct = self.states.count() as u64;
+                    return Err(self.note_initial_error(
+                        machine,
+                        ErrorSite::InitialView,
+                        distinct,
+                        bail,
+                    ));
+                }
+                Err(_) => return Err(Bail(INITIAL_VIEW_FAILED)),
+            };
             let key = self
                 .states
                 .key_width()
@@ -1448,6 +1831,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if !matches!(found, Some((_, Ok(_)))) {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
+                self.set_counts(machine, count + 1, count + 1, 1)?;
             }
             let mut failing = None;
             // Under -continue, the invariant whose conjuncts the loop skips once one of them
@@ -1602,7 +1986,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             self.startup = Some(startup_values(machine, context)?);
             self.chosen = chosen_values(machine, context);
         }
+        if machine
+            .output
+            .iter()
+            .any(|event| matches!(event, Printed::Warning(_)))
+        {
+            self.flush(machine);
+        }
         self.reporter.continued(ContinuedTrace {
+            is_dfid: self.is_dfid,
+            holds_collapsed: machine.program.holds_collapsed(),
             kind,
             states,
             store: &machine.store,
@@ -1632,10 +2025,45 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
     }
 
-    // Where TLCSet("exit", TRUE) ran outside an invariant, TLC's progress then isn't followed.
-    fn check_exit_followed(&self, machine: &Machine<'_>) -> Outcome<()> {
+    // Whether the search expands the one state its queue held and has found no new successor
+    // yet, where every state before was the one successor of the state before it: its one
+    // initial state, or the end of a chain from it. TLC enqueues each new successor once it
+    // checked it (`Worker.addElement`), where another worker may take it, but here each worker
+    // that enqueued a state had no other step to take, so none but this one has a state to
+    // expand or a step to count.
+    fn is_lone_expansion(&self) -> bool {
+        self.expanding == self.chain_expansions && self.states.count() == self.expanding + 1
+    }
+
+    // Whether a state on the trace to the state `last` names is one another state of its
+    // parent's level also stepped to, or the search doesn't know.
+    fn is_trace_contested(&self, last: usize) -> bool {
+        let Some(contested) = &self.contested else {
+            return true;
+        };
+        let mut state = last as i32;
+        while state >= 0 {
+            if contested.contains(&(state as usize)) {
+                return true;
+            }
+            let Some(parent) = self.states.parent(state as usize) else {
+                return true;
+            };
+            state = parent;
+        }
+        false
+    }
+
+    // Where TLCSet("exit", TRUE) ran as the worker expands a state, it finishes the state, every
+    // successor counted and checked, then finds the queue finished (`ModelChecker.stop`).
+    // TLC's other workers race the stop, each finishing the state it expands, which one thread
+    // doesn't follow.
+    fn check_exit_followed(&mut self, machine: &Machine<'_>) -> Outcome<()> {
         if machine.registers.is_exit && !self.is_exit_followed {
-            return Err(Bail(EXIT_UNFOLLOWED));
+            if machine.program.workers > 1 {
+                return Err(Bail(EXIT_RACED));
+            }
+            self.is_exit_followed = true;
         }
         Ok(())
     }
@@ -1653,7 +2081,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 Ok(true) => {}
                 Ok(false) => return Ok(false),
                 Err(bail) => {
-                    if self.violation.is_none() && !self.is_continued && !is_engine_limit(bail.0) {
+                    if self.violation.is_none() && !self.is_continued && is_noted_failure(bail.0) {
                         self.violation = Some(Found {
                             kind: ViolationKind::Error {
                                 site: ErrorSite::ActionConstraint(position as u32),
@@ -1665,6 +2093,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             replayed: None,
                             counts: StopCounts {
                                 depth: self.depth.max(1),
+                                is_lone_expansion: self.is_lone_expansion(),
                                 ..self.stop_counts(false)
                             },
                         });
@@ -1714,17 +2143,41 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         self.successors += 1;
         self.generated += 1;
+        let count = self.states.count();
+        self.set_counts(machine, count, count.saturating_sub(self.expanding + 1), 1)?;
         self.successor.clear();
         self.successor.extend_from_slice(machine.next());
         let successor_epoch = machine.next_epoch();
         self.swap_successor(machine, successor_epoch, self.next_level_id);
-        // The state being expanded is in the model, so each constraint held of it.
-        let is_state_in_model = holds_all_changed(
+        // The state being expanded is in the model, so each constraint held of it. TLC reports
+        // one that fails to evaluate as it does an action constraint (`Worker.addElement`).
+        let is_state_in_model = first_failing_changed(
             machine,
             &context.constraints,
             &self.successor,
             &self.current,
         )
+        .map(|failing| failing.is_none())
+        .map_err(|(position, bail)| {
+            if self.violation.is_none() && !self.is_continued && !is_engine_limit(bail.0) {
+                self.violation = Some(Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::Constraint(context.constraint_owners[position]),
+                    },
+                    parent: Some(self.expanding),
+                    last: Some(self.successor.clone()),
+                    fingerprint: None,
+                    random: None,
+                    replayed: None,
+                    counts: StopCounts {
+                        depth: self.depth.max(1),
+                        is_lone_expansion: self.is_lone_expansion(),
+                        ..self.stop_counts(false)
+                    },
+                });
+            }
+            bail
+        })
         .and_then(|is_state_in_model| {
             if is_state_in_model {
                 count_possible(machine, &context.possible, false, &mut self.possible)?;
@@ -1777,14 +2230,48 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             }
             _ => None,
         };
+        if let (Some(statuses), Some(fp)) =
+            (&mut self.dfid_statuses, fingerprint.filter(|_| is_in_model))
+        {
+            let status = statuses.insert(fp);
+            self.dfid_all_done &= crate::dfid::Statuses::is_done(status);
+            self.dfid_all_nonleaf &= !statuses.leaf(status);
+            if !statuses.completed(status) {
+                let index = match found.expect("in-model fingerprint") {
+                    Ok(slot) => self.states.index(slot) as usize,
+                    Err(_) => self.states.count(),
+                };
+                self.dfid_successors
+                    .push((fp, (index, self.successor.clone())));
+            }
+        }
         let is_new = matches!(found, Some(Err(_)));
         if is_new {
-            self.set_distinct(machine, self.states.count() + 1)?;
+            let count = self.states.count();
+            self.set_distinct(machine, count + 1)?;
+            self.set_counts(
+                machine,
+                count + 1,
+                count.saturating_sub(self.expanding + 1),
+                self.level + 1,
+            )?;
+        }
+        if let (true, Some(Ok(slot)), Some(contested)) =
+            (self.is_contest_tracked, found, &mut self.contested)
+        {
+            let index = self.states.index(slot) as usize;
+            if let Some(parent) = self.states.parent(index)
+                && parent >= 0
+                && parent as usize != self.expanding
+                && parent as usize >= self.level_first
+            {
+                contested.insert(index);
+            }
         }
         self.check_exit_followed(machine)?;
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
-            let failing = if self.is_continued {
+            let failing = if self.is_continued || self.dfid_statuses.is_some() {
                 crate::context::first_failing(machine, &context.invariants)
             } else {
                 first_failing_changed(machine, &context.invariants, &self.successor, &self.current)
@@ -1804,6 +2291,20 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     let kind = Continued::Invariant(context.invariant_owners[failing]);
                     let random = Some(machine.random.state());
                     self.report_continued(machine, context, kind, states, random)?;
+                    if self.is_dfid {
+                        if let (Some(Err(slot)), Some(fingerprint)) = (found, fingerprint) {
+                            self.states.add(
+                                &self.successor,
+                                &self.key,
+                                fingerprint,
+                                slot,
+                                self.expanding as i32,
+                            );
+                            self.new_states += 1;
+                            self.depth = self.level + 1;
+                        }
+                        return Ok(());
+                    }
                     None
                 }
                 Ok(Some(failing)) => {
@@ -1819,7 +2320,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     Some(Bail("an invariant violated"))
                 }
                 Err((failing, bail)) => {
-                    if !is_engine_limit(bail.0) {
+                    if is_noted_failure(bail.0) {
                         self.violation = Some(Found {
                             kind: ViolationKind::Error {
                                 site: ErrorSite::Invariant(
@@ -1866,9 +2367,45 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             self.record_step(machine, found);
         }
         for (position, (action, unchanged)) in context.action_properties.iter().enumerate() {
-            if !crate::context::holds(machine, action)?
-                && !crate::context::holds(machine, unchanged)?
+            let checked = crate::context::holds(machine, action).and_then(|holds| {
+                if holds {
+                    Ok(true)
+                } else {
+                    crate::context::holds(machine, unchanged)
+                }
+            });
+            if self.is_dfid && checked.as_ref().is_err_and(|bail| !is_engine_limit(bail.0)) {
+                self.violation = Some(Found {
+                    kind: ViolationKind::ActionProperty(position),
+                    parent: Some(self.expanding),
+                    last: Some(self.successor.clone()),
+                    fingerprint: fingerprint.filter(|_| is_new),
+                    random: None,
+                    replayed: None,
+                    counts: self.stop_counts(is_new),
+                });
+            } else if !self.is_continued
+                && checked.as_ref().is_err_and(|bail| !is_engine_limit(bail.0))
             {
+                // TLC reports an action property that fails to evaluate as it does an invariant,
+                // with the successor it put in its set of fingerprints (`doNextCheckImplied`,
+                // `doNextEvalFailed`).
+                self.violation = Some(Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::ActionProperty(position as u32),
+                    },
+                    parent: Some(self.expanding),
+                    last: Some(self.successor.clone()),
+                    fingerprint: fingerprint.filter(|_| is_new),
+                    random: None,
+                    replayed: None,
+                    counts: StopCounts {
+                        is_lone_expansion: self.is_lone_expansion(),
+                        ..self.stop_counts(is_new)
+                    },
+                });
+            }
+            if !checked? {
                 // TLC reports the first action property a step violates, and stops or, under
                 // -continue, goes on (Worker.doNextCheckImplied).
                 if self.is_continued {
@@ -1911,6 +2448,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             );
             self.new_states += 1;
             self.depth = self.level + 1;
+            machine.is_print_raced |= self.is_print_race_tracked;
         }
         Ok(())
     }
@@ -1960,10 +2498,23 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         machine.reset_assigned();
         self.new_states = 0;
         self.successors = 0;
+        self.dfid_successors.clear();
+        self.dfid_all_done = true;
+        self.dfid_all_nonleaf = true;
         self.expansion_epoch = machine.next_epoch();
         self.level_id = machine.store.int(self.level as i64)?;
         self.next_level_id = machine.store.int(self.level as i64 + 1)?;
+        // TLC's main thread finds the initial states and enqueues them all before its workers
+        // start (`ModelChecker.doInit`). A worker that takes a state while the queue holds
+        // another, or once it enqueued a successor (`Worker.addElement`), runs alongside another
+        // that takes that state. Where the queue held no other state and the worker enqueued none
+        // yet, every state found before was expanded, so no other worker has a state to expand.
+        machine.is_print_raced =
+            self.is_print_race_tracked && self.states.count() > self.expanding + 1;
+        machine.is_worker_evaluating = self.is_print_race_tracked;
         self.set_expanded_current(machine);
+        let count = self.states.count();
+        self.set_counts(machine, count, count.saturating_sub(self.expanding + 1), 1)?;
         machine.seed_random(fingerprint);
         machine.set_slot(NEXT_LEVEL_SLOT, self.next_level_id);
         if self.states.key_width().is_none() {
@@ -1975,37 +2526,70 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 &mut self.parent,
             )?;
         }
-        match actions {
-            None => {
-                let next = context.next.as_ref().expect("a next-state relation");
-                let walked = next(machine, &mut |machine: &mut Machine<'_>| {
-                    self.visit_successor(machine, context)
+        if self.dfid_statuses.is_some() {
+            let mut take_action = |position: u32, action: &Step| -> Outcome<()> {
+                self.action = position;
+                machine.next.fill(UNASSIGNED);
+                machine.reset_assigned();
+                let mut next = Vec::new();
+                let walked = action(machine, &mut |machine: &mut Machine<'_>| {
+                    next.push(machine.next().to_vec());
+                    Ok(())
                 });
-                self.check_pending(machine, context)?;
                 walked.map_err(|bail| self.note_next_error(bail))?;
-            }
-            Some(actions) => {
-                if is_live_checked {
-                    let mut checked = Vec::new();
-                    let next = context.next.as_ref().expect("a next-state relation");
-                    next(machine, &mut |machine: &mut Machine<'_>| {
-                        checked.push(machine.next().to_vec());
-                        Ok(())
-                    })?;
-                    self.checked = Some(checked);
+                self.dfid_batch_size = next.len();
+                self.generated += next.len() as u64;
+                for state in next {
+                    machine.set_next(&state);
+                    if state.contains(&UNASSIGNED) {
+                        self.successor = state;
+                        return Err(Bail(INCOMPLETE_SUCCESSOR));
+                    }
+                    self.generated -= 1;
+                    self.visit_successor(machine, context)?;
                 }
+                Ok(())
+            };
+            if let Some(actions) = actions {
                 for (position, action) in actions.iter().enumerate() {
-                    self.action = position as u32;
-                    let walked = action(machine, &mut |machine: &mut Machine<'_>| {
+                    take_action(position as u32, action)?;
+                }
+            } else {
+                take_action(0, context.next.as_ref().expect("a next-state relation"))?;
+            }
+        } else {
+            match actions {
+                None => {
+                    let next = context.next.as_ref().expect("a next-state relation");
+                    let walked = next(machine, &mut |machine: &mut Machine<'_>| {
                         self.visit_successor(machine, context)
                     });
                     self.check_pending(machine, context)?;
                     walked.map_err(|bail| self.note_next_error(bail))?;
                 }
-                if let Some(checked) = self.checked.take()
-                    && checked.len() as u64 != self.successors
-                {
-                    return Err(Bail(OTHER_STEPS));
+                Some(actions) => {
+                    if is_live_checked {
+                        let mut checked = Vec::new();
+                        let next = context.next.as_ref().expect("a next-state relation");
+                        next(machine, &mut |machine: &mut Machine<'_>| {
+                            checked.push(machine.next().to_vec());
+                            Ok(())
+                        })?;
+                        self.checked = Some(checked);
+                    }
+                    for (position, action) in actions.iter().enumerate() {
+                        self.action = position as u32;
+                        let walked = action(machine, &mut |machine: &mut Machine<'_>| {
+                            self.visit_successor(machine, context)
+                        });
+                        self.check_pending(machine, context)?;
+                        walked.map_err(|bail| self.note_next_error(bail))?;
+                    }
+                    if let Some(checked) = self.checked.take()
+                        && checked.len() as u64 != self.successors
+                    {
+                        return Err(Bail(OTHER_STEPS));
+                    }
                 }
             }
         }
@@ -2031,6 +2615,11 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
             });
             return Err(Bail("deadlock"));
         }
+        if let Some(statuses) = &mut self.dfid_statuses
+            && (self.dfid_all_done || (self.dfid_leaf && self.dfid_all_nonleaf))
+        {
+            statuses.done(fingerprint);
+        }
         Ok(())
     }
 }
@@ -2047,7 +2636,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         distinct: u64,
         bail: Bail,
     ) -> Bail {
-        if self.violation.is_none() && !is_engine_limit(bail.0) {
+        if self.violation.is_none() && is_noted_failure(bail.0) {
             self.violation = Some(Found {
                 kind: ViolationKind::Error { site },
                 parent: None,
@@ -2068,7 +2657,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
     }
 
     fn note_next_error(&mut self, bail: Bail) -> Bail {
-        if self.violation.is_none() && !is_engine_limit(bail.0) {
+        if self.violation.is_none() && is_noted_failure(bail.0) {
             let count = self.states.count() as u64;
             self.violation = Some(Found {
                 kind: ViolationKind::Error {
@@ -2228,9 +2817,14 @@ struct Worker<'p> {
 
 impl Worker<'_> {
     // Lays the worker's overlay on the store, with the values the store's machine computed once.
-    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints, onces: &[Id]) {
+    fn attach(
+        &mut self,
+        store: &Arc<Store>,
+        fingerprints: &SharedFingerprints,
+        (onces, deep_onces): (&[Id], &[(Id, u32)]),
+    ) {
         self.machine.forget_from(self.bound);
-        self.machine.adopt_onces(onces);
+        self.machine.adopt_onces(onces, deep_onces);
         self.fingerprints
             .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
@@ -2523,7 +3117,7 @@ impl Search<'_, States> {
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
-        let onces = &machine.onces;
+        let onces = (&machine.onces[..], &machine.deep_onces[..]);
         let counts: Vec<Padded<ThreadCounts>> = workers
             .iter()
             .map(|_| Padded(ThreadCounts::default()))
@@ -2561,16 +3155,20 @@ impl Search<'_, States> {
                 .max(1),
             );
         };
+        // Each worker writes files for the check this thread runs ([`tla_values::written`]).
+        let journal = tla_values::written::current();
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .zip(&counts)
                 .map(|(worker, counts)| {
-                    let (shared, store, fingerprints, signal) =
-                        (&shared, &store, &fingerprints, &signal);
+                    let (shared, store, fingerprints, signal, journal) =
+                        (&shared, &store, &fingerprints, &signal, &journal);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
+                            let _entered =
+                                journal.as_ref().map(tla_values::written::Journal::enter);
                             let _finishing = Finishing(signal);
                             worker.attach(store, fingerprints, onces);
                             expand_claimed(worker, shared, counts, signal)
@@ -2866,10 +3464,24 @@ impl Search<'_, States> {
         for worker in workers.iter_mut() {
             let overlay = &worker.machine.store;
             for (own, &computed) in machine.onces.iter_mut().zip(&worker.machine.onces) {
-                if *own == EMPTY && computed != EMPTY {
+                if *own == EMPTY && computed != EMPTY && computed != crate::machine::RETRIED_ONCE {
                     *own = machine
                         .store
                         .import(overlay, computed, &mut worker.imported);
+                }
+            }
+            for (own, &(computed, height)) in machine
+                .deep_onces
+                .iter_mut()
+                .zip(&worker.machine.deep_onces)
+            {
+                if own.0 == EMPTY && computed != EMPTY {
+                    *own = (
+                        machine
+                            .store
+                            .import(overlay, computed, &mut worker.imported),
+                        height,
+                    );
                 }
             }
         }
@@ -2910,25 +3522,40 @@ pub(crate) fn describe(error: CompileError) -> String {
 // symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
 // the assumptions, and the assumption it found false.
 struct Started {
-    printed: Vec<Prints>,
+    printed: Vec<Printed>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
     /// Whether each startup predicate evaluated to TRUE, up to the one whose value TLC rejects.
     holding: Vec<bool>,
     group: Option<Group>,
-    assumed: Vec<Prints>,
+    assumed: Vec<Printed>,
     violated: Option<String>,
     /// The assumption that failed to evaluate, by its position, and why.
     failed: Option<(u32, Bail)>,
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
     /// The message of the RuntimeException the symmetry threw, which ends the startup.
-    exception: Option<&'static str>,
+    exception: Option<String>,
     /// The assumption the engine left to its caller, by its position.
     // The assumption left to the caller, and why the engine didn't evaluate it.
     delegated: Option<(u32, Bail)>,
     /// Whether each startup definition failed, which the engine evaluates again at each use.
     failed_startup: Vec<bool>,
+    /// Whether each startup definition printed what only the trace evaluator words
+    /// (`Prints::unworded`), which the reporter confirms TLC computes.
+    unworded_startup: Vec<bool>,
+    /// Whether each startup definition is warning-only and failed at a limit of the engine's
+    /// before any effect or warning, which the reporter confirms TLC computes or fails on
+    /// without a warning or a print.
+    limited_startup: Vec<bool>,
+    /// Whether each startup definition is warning-only and failed before any warning other than
+    /// at a limit of the engine's, which TLC may compute, and warn as it does: the reporter
+    /// confirms it warns and prints nothing there.
+    unwarned_startup: Vec<bool>,
+    /// What each startup definition printed and whether it drew as the engine evaluated it,
+    /// which, of one that failed, the reporter confirms TLC prints and draws too before it fails
+    /// (`Reporter::confirm_startup`).
+    startup_effects: Vec<(usize, bool)>,
 }
 
 // The startup as the engine ran it, which gives what it found only once the reporter has confirmed
@@ -2945,12 +3572,29 @@ mod unconfirmed {
         }
 
         pub(super) fn confirm(self, reporter: &mut dyn Reporter) -> Result<Started, String> {
-            reporter.confirm_startup(&self.0.failed_startup)?;
+            reporter.confirm_startup(
+                &self.0.failed_startup,
+                &self.0.unworded_startup,
+                &self.0.limited_startup,
+                &self.0.unwarned_startup,
+                &self.0.startup_effects,
+            )?;
             Ok(self.0)
         }
     }
 }
 use unconfirmed::Unconfirmed;
+
+/// Why the engine declines a substitute it stops at its depth bound as it starts, where TLC may
+/// overflow its stack, which ends its startup (EC.SYSTEM_STACK_OVERFLOW).
+const TOO_DEEP_SUBSTITUTE: &str =
+    "unsupported: a substitute whose recursion may overflow TLC's stack as it starts";
+
+/// How many nested recursive calls a substitute may make as TLC starts before the engine declines
+/// it. TLC overflows at 64 calls of an operator whose body reaches the next call through 20
+/// operators and at 55 through 24, so a body of about 26 or more is still answered where TLC
+/// overflows (fallback.md).
+const SUBSTITUTE_RECURSION: u32 = 50;
 
 // TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
 // until one is false. What they print is kept until all of it is evaluated, so a model the engine
@@ -2963,46 +3607,276 @@ fn run_startup(
     machine: &mut Machine<'_>,
     startup: &Startup,
     settings: &Settings,
+    skip_assumptions: bool,
+    reporter: &mut dyn Reporter,
+    refused: &mut Option<usize>,
 ) -> Outcome<Unconfirmed> {
     let is_native = settings.is_violation_reported;
     let take = |machine: &mut Machine<'_>| {
         std::mem::take(&mut machine.output)
             .into_iter()
-            .filter_map(|printed| match printed {
-                Printed::Values(values) => Some(values),
-                Printed::InitialStates(_) => None,
-            })
+            .filter(|printed| !matches!(printed, Printed::InitialStates(_)))
             .collect::<Vec<_>>()
     };
     // The front end rejects a substitute TLC checks and finds failing (`processConstantDefns`), so
     // one that fails here is one the native checker leaves to fail where it is used, as TLC does.
+    // TLC swallows only the EvalException or TLCRuntimeException a substitute throws there: a
+    // recursion that overflows its stack escapes as a StackOverflowError, which ends the startup
+    // (EC.SYSTEM_STACK_OVERFLOW), where the engine stops at its depth bound.
+    machine.is_processing_constants = true;
     for evaluate in &startup.substitutes {
         let result = evaluate(machine);
         if !is_native {
+            machine.is_processing_constants = false;
             result?;
+        } else if let Err(Bail(crate::machine::TOO_DEEP)) = result {
+            machine.is_processing_constants = false;
+            return Err(Bail(TOO_DEEP_SUBSTITUTE));
+        }
+    }
+    // A substitute of constant level prints and draws nothing (the front end declines one that
+    // does), and the engine computes it where it is read, as it did before it looked for a
+    // recursion too deep here: what else it finds here it keeps nothing of.
+    // How deep TLC's stack lets a recursion that ends go depends on its body, not on how many
+    // calls nest: under a 2 MB thread stack `S(n) == IF n = 0 THEN 0 ELSE S(n - 1) + 1`
+    // evaluates at 900 calls and overflows at 1,000, `F[i \in Nat]` of the same shape overflows
+    // at 800, and one whose body reaches the next call through eight operators overflows at 150.
+    // The engine declines a substitute that nests deeper than SUBSTITUTE_RECURSION calls.
+    for evaluate in &startup.recursive_substitutes {
+        let output_at = machine.output.len();
+        let result = machine.within_recursion(SUBSTITUTE_RECURSION, |machine| evaluate(machine));
+        machine.output.truncate(output_at);
+        if let Err(Bail(crate::machine::TOO_DEEP)) = result {
+            machine.is_processing_constants = false;
+            return Err(Bail(TOO_DEEP_SUBSTITUTE));
         }
     }
     // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
     // an operator, which evaluates it again, with its effects, at every use. The engine keeps no
-    // value of one that fails before any effect, and evaluates it again at each use, where it
-    // reads no state, so fails again there before any effect.
+    // value of one that fails before it sets any register, and evaluates it again at each use,
+    // where it reads no state, so prints and draws as it did here and fails again.
     let mut failed_startup = Vec::with_capacity(startup.definitions.len());
-    for (evaluate, is_retried) in &startup.definitions {
-        let is_retried = *is_retried && settings.is_failed_startup_retried;
-        match evaluate_retried(machine, evaluate, is_retried) {
-            Ok(value) => failed_startup.push(value == NO_VALUE),
+    let mut unworded_startup = Vec::with_capacity(startup.definitions.len());
+    let mut limited_startup = Vec::with_capacity(startup.definitions.len());
+    let mut unwarned_startup = Vec::with_capacity(startup.definitions.len());
+    let mut startup_effects = Vec::with_capacity(startup.definitions.len());
+    // Whether computing each had no effect at all, a register's write too.
+    let mut startup_without_effects = Vec::with_capacity(startup.definitions.len());
+    let mut startup_values = Vec::with_capacity(startup.definitions.len());
+    let mut failed_dependents = Vec::new();
+    for (position, definition) in startup.definitions.iter().enumerate() {
+        evaluate_dependents(
+            machine,
+            startup,
+            position,
+            &failed_startup,
+            &startup_without_effects,
+            &mut failed_dependents,
+        )?;
+        // One the engine doesn't compile, which only the first assumption reads: the reporter's
+        // evaluator computes it as TLC does here, after the definitions before it, and gives as
+        // many prints as TLC makes, which it words (`Prints::unworded`), and the state it leaves
+        // TLC's generator in. Its value nothing the engine evaluates reads.
+        if definition.left.is_some() {
+            let before = machine.effects();
+            let printed = machine
+                .output
+                .iter()
+                .filter(|event| matches!(event, Printed::Values(_)))
+                .count();
+            let Some(left) = is_native
+                .then(|| reporter.computes_left_startup(position, printed, before.1))
+                .flatten()
+            else {
+                *refused = Some(position);
+                return Err(Bail(LEFT_STARTUP));
+            };
+            machine.output.extend(
+                (0..left.prints).map(|_| Printed::Values(crate::machine::Prints::unworded())),
+            );
+            machine.random = JavaRandom::from_state(left.random);
+            unworded_startup.push(false);
+            unwarned_startup.push(false);
+            failed_startup.push(false);
+            limited_startup.push(false);
+            startup_without_effects.push(machine.effects() == before);
+            startup_effects.push((left.prints, left.random != before.1));
+            startup_values.push(TRUE);
+            continue;
+        }
+        let is_retried = definition.is_retried && settings.is_failed_startup_retried;
+        let output_at = machine.output.len();
+        let before = machine.effects();
+        let result = evaluate_retried(
+            machine,
+            definition,
+            is_retried,
+            Some(&mut || reporter.computes_startup_print(position)),
+        );
+        // A predicate TLC doesn't compute as it starts (`tla_ir::StartupPredicate::is_state_level`)
+        // whose computation here had an effect, which TLC has only as it checks it in a state.
+        if machine.effects() != before
+            && startup
+                .predicates
+                .iter()
+                .any(|(.., predicate, _, is_state_level)| {
+                    *is_state_level && *predicate == Some(position)
+                })
+        {
+            return Err(Bail(STATE_LEVEL_PREDICATE));
+        }
+        let warned = machine.output[output_at..]
+            .iter()
+            .any(|event| matches!(event, Printed::Warning(_)));
+        unworded_startup.push(
+            machine.output[output_at..]
+                .iter()
+                .any(|event| matches!(event, Printed::Values(prints) if prints.is_unworded())),
+        );
+        let mut is_limited = false;
+        let value = match result {
+            Ok(value) => value,
+            Err(bail)
+                if definition.is_warning_only
+                    && (!is_engine_limit(bail.0)
+                        || bail.0 == crate::compile::LAZY_FUNCTION_WARNING)
+                    && machine.effects() == before =>
+            {
+                NO_VALUE
+            }
+            // A limit of the engine's, as Cardinality(Nat), before any effect or warning: TLC
+            // swallows what the definition throws there (`processConstantDefns`), or computes it
+            // and keeps its value, and the engine evaluates it again at each use, where it meets
+            // its limit again, either way. TLC may warn or print as it computes it, or warn
+            // before it fails, which the reporter's evaluator rules out
+            // (`Reporter::confirm_startup`).
+            Err(bail)
+                if definition.is_warning_only
+                    && is_engine_limit(bail.0)
+                    && !warned
+                    && machine.effects() == before =>
+            {
+                is_limited = true;
+                NO_VALUE
+            }
+            // A number the engine doesn't know, where TLC computes the definition and goes on.
+            Err(bail) if bail.0 == crate::compile::builtins::UNNUMBERED_MODEL_VALUE => {
+                return Err(bail);
+            }
             Err(_) => {
                 return Err(Bail(
                     "unsupported: a definition TLC computes at startup that fails there",
                 ));
             }
+        };
+        // A warning-only definition the engine failed on before any warning may be one TLC
+        // computes, warning as it does (`[<<1>> EXCEPT ![2] = 3]` after a membership in a lazy
+        // union the engine can't compare): the reporter's evaluator confirms TLC warns nothing
+        // there.
+        unwarned_startup
+            .push(value == NO_VALUE && definition.is_warning_only && !warned && !is_limited);
+        failed_startup.push(
+            value == NO_VALUE
+                && !definition.is_kept_lazy
+                && (!definition.is_warning_only || warned),
+        );
+        limited_startup.push(is_limited);
+        startup_without_effects.push(machine.effects() == before);
+        startup_effects.push((
+            machine.output[output_at..]
+                .iter()
+                .filter(|event| matches!(event, Printed::Values(_)))
+                .count(),
+            machine.random.state() != before.1,
+        ));
+        // TLC keeps no value of one that failed (`processConstantDefns`): every use evaluates it
+        // again, though one before computed it (`Machine::constant_once`).
+        if value == NO_VALUE
+            && let Some(once) = definition.once
+        {
+            machine.onces[once] = crate::machine::RETRIED_ONCE;
         }
+        startup_values.push(value);
     }
+    evaluate_dependents(
+        machine,
+        startup,
+        startup.definitions.len(),
+        &failed_startup,
+        &startup_without_effects,
+        &mut failed_dependents,
+    )?;
+    probe_registers(machine, startup, reporter)?;
+    machine.is_processing_constants = false;
+    machine.startup_values = Some(startup_values);
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
     let mut holding = Vec::with_capacity(startup.predicates.len());
-    for (evaluate, form, kind, name) in &startup.predicates {
+    for (evaluate, form, kind, name, position, index, is_state_level) in &startup.predicates {
+        // A dependent that failed as TLC computed it, printing or drawing, is kept as an operator,
+        // which `processConfigInvariants` and its kin take without evaluating it again, so without
+        // the prints of the failed definition it names, which the engine doesn't follow.
+        if failed_dependents.contains(index) && *form != PredicateForm::Conjunct {
+            return Err(Bail(
+                "unsupported: a definition TLC computes at startup that fails there, named in the configuration",
+            ));
+        }
+        // `processConfigInvariants` and its kin read the value `processConstantDefns` kept: of a
+        // definition that failed there, the OpDefNode, which they take as an action without
+        // evaluating it again, so without its prints.
+        if let Some(position) = *position
+            && failed_startup[position]
+            && *form != PredicateForm::Conjunct
+        {
+            // TLC's report of a failure in the initial predicate or the next-state relation such
+            // a definition prints in heads its call stack with the conjunct that printed, which
+            // the evaluator of failures doesn't place.
+            if matches!(
+                form,
+                PredicateForm::Definition | PredicateForm::Specification
+            ) && startup_effects[position] != (0, false)
+            {
+                return Err(Bail(
+                    "unsupported: a definition TLC computes at startup that prints or draws and fails there, named as the initial predicate, the next-state relation or the specification",
+                ));
+            }
+            holding.push(false);
+            continue;
+        }
+        // One `getLevelBound` takes for a state's TLC doesn't compute, but checks in each state:
+        // as the engine computes it, a failure, which TLC swallows where it computes one, and
+        // TRUE, which TLC skips but for an invariant, it warns of, read the same, without an
+        // effect TLC would have in each state (`tla_ir::StartupPredicate::is_state_level`).
+        if *is_state_level {
+            // A startup definition the engine computed, TLC not: without an effect, its value
+            // reads as any other's.
+            if let Some(position) = *position
+                && (failed_startup[position] || !startup_without_effects[position])
+            {
+                return Err(Bail(STATE_LEVEL_PREDICATE));
+            }
+            let before = machine.effects();
+            let result = evaluate(machine);
+            if machine.effects() != before {
+                return Err(Bail(STATE_LEVEL_PREDICATE));
+            }
+            match result {
+                Ok(value) if value == TRUE && kind != "invariant" => holding.push(true),
+                Err(bail) if !is_engine_limit(bail.0) => holding.push(false),
+                Err(bail) if bail.0 != crate::machine::TOO_DEEP => return Err(bail),
+                _ => return Err(Bail(STATE_LEVEL_PREDICATE)),
+            }
+            continue;
+        }
         let value = match evaluate(machine) {
             Ok(value) => value,
+            // A recursion past the engine's depth, which TLC computes or overflows on: it
+            // swallows the StackOverflowError as it computes its constants (a `Throwable`) and
+            // keeps the definition as an operator, which the engine evaluates where it is used,
+            // and stops at again, where the evaluator of failures finds whether it ends.
+            Err(Bail(crate::machine::TOO_DEEP)) if *form != PredicateForm::Conjunct => {
+                holding.push(false);
+                continue;
+            }
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
             // TLC takes a conjunct of the specification it fails to compute as part of the
             // initial predicate.
@@ -3060,12 +3934,17 @@ fn run_startup(
             exception: None,
             delegated: None,
             failed_startup,
+            unworded_startup,
+            limited_startup,
+            unwarned_startup,
+            startup_effects,
         }));
     }
-    if let Some(symmetry) = &startup.symmetry
-        && let Some(failure) = symmetry.failure
-    {
-        (symmetry.definition)(machine)?;
+    let symmetry = match &startup.symmetry {
+        Some(symmetry) => symmetry_group(machine, symmetry)?,
+        None => Ok((None, Vec::new())),
+    };
+    if let Err(failure) = symmetry {
         return Ok(Unconfirmed::new(Started {
             printed: take(machine),
             small_sets: Vec::new(),
@@ -3075,17 +3954,71 @@ fn run_startup(
             violated: None,
             failed: None,
             config_error: None,
-            exception: Some(failure),
+            exception: Some(failure.to_owned()),
             delegated: None,
             failed_startup,
+            unworded_startup,
+            limited_startup,
+            unwarned_startup,
+            startup_effects,
         }));
     }
-    let (group, small_sets) = match &startup.symmetry {
-        Some(symmetry) => symmetry_group(machine, symmetry)?,
-        None => (None, Vec::new()),
+    let Ok((group, small_sets)) = symmetry else {
+        unreachable!("a symmetry that failed has been reported")
     };
+    // `Tool.getActions` follows `TLCStateMut.setTool`, which builds the group.
+    if startup.is_next_declaration {
+        return Err(Bail(crate::context::NEXT_DECLARATION));
+    }
+    if startup.is_next_application_cast {
+        return Err(Bail(crate::context::NEXT_APPLICATION_CAST));
+    }
+    if let Some(failure) = &startup.next_failure {
+        return Ok(Unconfirmed::new(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            holding,
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: None,
+            exception: Some(failure.clone()),
+            delegated: None,
+            failed_startup,
+            unworded_startup,
+            limited_startup,
+            unwarned_startup,
+            startup_effects,
+        }));
+    }
     let printed = take(machine);
-    let assumed = check_assumptions(machine, startup, 0, is_native)?;
+    let assumed = if skip_assumptions {
+        Assumed {
+            violated: None,
+            failed: None,
+            delegated: None,
+        }
+    } else {
+        // TLC checks the assumptions once its model checker is built, before it finds a state:
+        // TLCGet("distinct") is 0 and TLCGet("diameter") the level of its empty trace, 1
+        // (`ModelChecker.modelCheck`, `TLCTrace.getLevelForReporting`). A simulation has no
+        // model checker, and its main thread reads the diameter as 0, which the simulation set.
+        let zero = machine.store.int(0)?;
+        let one = machine.store.int(1)?;
+        machine.set_slot(DISTINCT_SLOT, zero);
+        if !machine.simulation.is_simulated {
+            machine.set_slot(crate::compile::DIAMETER_SLOT, one);
+        }
+        for slot in [
+            crate::compile::GENERATED_SLOT,
+            crate::compile::QUEUE_SLOT,
+            crate::compile::INITIAL_SLOT,
+        ] {
+            machine.set_slot(slot, zero);
+        }
+        check_assumptions(machine, startup, 0, is_native)?
+    };
     Ok(Unconfirmed::new(Started {
         printed,
         small_sets,
@@ -3098,7 +4031,176 @@ fn run_startup(
         exception: None,
         delegated: assumed.delegated,
         failed_startup,
+        unworded_startup,
+        limited_startup,
+        unwarned_startup,
+        startup_effects,
     }))
+}
+
+// `processConstantDefns` computes each constant definition that reaches TLCSet as TLC starts,
+// before it has a checker, where TLCSet of a number throws, and the front end counts it
+// state-level, so that the engine computes it at each use instead: alike where TLC fails there
+// before any effect, which it swallows and computes the definition at each use too, or completes
+// without one, keeping a value the engine computes the same at each use
+// (`tla_ir::Startup::register_probes`). The engine computes each as TLC does there, stopping at
+// its TLCSet (`PROBED_REGISTER_FAILS` for a key TLC throws on), and keeps nothing of it: one that
+// had an effect or a warning first, met a limit of the engine's, or completed to a value TLC may
+// hold lazy and convert with effects (`evalConstantDefn`'s `deepNormalize`) declines. One that met
+// a limit of the engine's before any effect, as comparing a record with a tuple or building
+// `0..2147483647`, answers where the reporter's evaluator, computing it as TLC does there, fails
+// on it before any effect with TLC's own error (`Reporter::fails_register_probe`): TLC swallows
+// that failure too and computes the definition again at each use.
+fn probe_registers(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+    reporter: &mut dyn Reporter,
+) -> Outcome<()> {
+    for (position, probe) in startup.register_probes.iter().enumerate() {
+        let Ok(evaluate) = probe else {
+            return Err(Bail(PROBED_REGISTER_SET));
+        };
+        let before = machine.effects();
+        let output_at = machine.output.len();
+        machine.is_probing_registers = true;
+        machine.has_probed_unset_register = false;
+        let result = evaluate(machine);
+        machine.is_probing_registers = false;
+        // One the first assumption alone reads, once, after a startup with no other effect, that
+        // completed without reaching a TLCSet, to a value TLC keeps without converting it with
+        // effects: TLC computes it as it starts with the prints and draws the engine made here, and
+        // the assumption reads the value it kept; the engine computes it again at the assumption,
+        // from the same generator, which shows the same prints and draws in the same place. So the
+        // engine keeps nothing of this computation.
+        if startup.is_probe_assumed_once
+            && machine.effects().2 == before.2
+            && !machine.has_probed_unset_register
+            && result.is_ok_and(|value| {
+                matches!(
+                    machine.store.kind_of(value),
+                    KIND_BOOL | KIND_INT | KIND_STRING
+                )
+            })
+        {
+            machine.random = JavaRandom::from_state(before.1);
+            machine.output.truncate(output_at);
+            continue;
+        }
+        let is_quiet = machine.effects() == before && machine.output.len() == output_at;
+        // A computation that went past a TLCSet that set nothing and completed TLC keeps, where
+        // the engine sets the register at each use.
+        let is_alike = is_quiet
+            && match result {
+                Ok(value) => {
+                    !machine.has_probed_unset_register
+                        && matches!(
+                            machine.store.kind_of(value),
+                            KIND_BOOL | KIND_INT | KIND_STRING
+                        )
+                }
+                Err(Bail(reason)) => {
+                    reason == PROBED_REGISTER_FAILS
+                        || !is_engine_limit(reason)
+                        || reason != PROBED_REGISTER_SET && reporter.fails_register_probe(position)
+                }
+            };
+        if !is_alike {
+            return Err(Bail(PROBED_REGISTER_SET));
+        }
+    }
+    Ok(())
+}
+
+// The dependents of the startup definitions TLC computes after `position` of them
+// (`Startup::dependents`), each where one it names failed: TLC evaluates that one again inside
+// it, which prints and draws again as it did and fails again, which TLC swallows. One that
+// computes, which TLC keeps, has nothing of the failed one, or computed it this time, which the
+// engine, keeping that one's value, doesn't follow; nor one that fails at a limit of the engine's
+// or after it set a register, which TLC's checker doesn't hold.
+//
+// A failed one that failed before any effect fails again so inside it, where TLC evaluates it
+// at all: TLC then computes the dependent without an effect, or fails on it without one, and
+// evaluates it again at each use, which shows nothing the engine, evaluating it at each use, or
+// holding the value it computes, doesn't. The configuration names such a dependent as TLC kept it
+// (`processConfigInvariants`), which the engine reads by evaluating it once more: so only where
+// the configuration names it is one that fails evaluated here, and declined where it printed or
+// drew.
+fn evaluate_dependents(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+    position: usize,
+    failed_startup: &[bool],
+    startup_without_effects: &[bool],
+    failed_dependents: &mut Vec<Index>,
+) -> Outcome<()> {
+    const FAILED_AGAIN: Bail =
+        Bail("unsupported: a definition TLC computes at startup that fails there");
+    for dependent in &startup.dependents {
+        let is_configured = startup
+            .predicates
+            .iter()
+            .any(|(.., index, _)| *index == dependent.index);
+        if dependent.position != position
+            || !dependent.named.iter().any(|&named| {
+                failed_startup.get(named) == Some(&true)
+                    && (is_configured || startup_without_effects.get(named) != Some(&true))
+            })
+        {
+            continue;
+        }
+        let Ok(evaluate) = &dependent.evaluate else {
+            return Err(FAILED_AGAIN);
+        };
+        let before = machine.effects();
+        // A startup definition that failed, looked up again for a later module (`lookup` finds
+        // no value of it), fails again with the prints it had: one that draws or sets a register
+        // again, which the trace's evaluator doesn't follow, or computes this time, which TLC
+        // keeps from then on, the engine doesn't follow.
+        if dependent.is_repeat {
+            match evaluate(machine) {
+                Err(Bail(reason))
+                    if !is_engine_limit(reason)
+                        && machine.effects().1 == before.1
+                        && machine.effects().2 == before.2 => {}
+                _ => return Err(FAILED_AGAIN),
+            }
+            continue;
+        }
+        match evaluate(machine) {
+            Ok(_) if machine.effects() == before => {}
+            // A failure before any effect that TLC may not have there, past which it goes on to
+            // evaluate the failed definition again with its prints, which the engine doesn't
+            // follow: TLC builds a union, an intersection or a difference with an operand that
+            // isn't a set (`SetCupValue`), a filter of a value that isn't Reducible
+            // (`SetPredValue`), a product, a set of records or of functions, UNION and SUBSET
+            // lazily, which the engine checks or enumerates at once, as `<<1 \cup 1..3>> = <<D>>`
+            // and `<<{x \in 1 : TRUE}>> = <<D>>` evaluate D; it holds a set enumeration
+            // unnormalized, which the engine sorts, comparing its elements. One past an effect
+            // failed inside a failed definition, which TLC fails in after the same effects.
+            Err(Bail(reason))
+                if machine.effects() == before
+                    && (UNSURE_FAILURES.contains(&reason)
+                        || UNSURE_COMPARISONS.contains(&reason)
+                        || LAZY_OPERAND_FAILURES.contains(&reason)) =>
+            {
+                return Err(FAILED_AGAIN);
+            }
+            Err(Bail(reason)) if !is_engine_limit(reason) && machine.effects().2 == before.2 => {
+                // Where neither it nor a failed one it names printed or drew, the configuration's
+                // reading of it, which the engine evaluates once more, shows nothing TLC's doesn't.
+                let has_effects = machine.effects() != before
+                    || dependent.named.iter().any(|&named| {
+                        failed_startup.get(named) == Some(&true)
+                            && startup_without_effects.get(named) != Some(&true)
+                    });
+                if has_effects {
+                    failed_dependents.push(dependent.index);
+                }
+            }
+            _ => return Err(FAILED_AGAIN),
+        }
+    }
+    Ok(())
 }
 
 struct Assumed {
@@ -3132,9 +4234,13 @@ fn check_assumptions(
             // is one that enumerates a set the engine takes for one TLC can't enumerate, which
             // TLC fails at only where it enumerates such a set itself: it compares two sets of
             // functions over Nat by their parts, and enumerates `Nat \cap S` by S. So is a set
-            // operation on a value that isn't a set, which TLC may never test for an element.
+            // operation on a value that isn't a set, which TLC may never test for an element, and
+            // a comparison TLC may never make (`UNSURE_COMPARISONS`).
             Err(bail)
-                if is_native && (is_engine_limit(bail.0) || UNSURE_FAILURES.contains(&bail.0)) =>
+                if is_native
+                    && (is_engine_limit(bail.0)
+                        || UNSURE_FAILURES.contains(&bail.0)
+                        || UNSURE_COMPARISONS.contains(&bail.0)) =>
             {
                 assumed.delegated = Some((position as u32, bail));
                 break;
@@ -3149,22 +4255,86 @@ fn check_assumptions(
     Ok(assumed)
 }
 
+// The symmetry's group, if any, and the names of the sets TLC warns hold fewer than two elements.
+type SymmetryGroup = (Option<Group>, Vec<String>);
+
 // The group of the SYMMETRY definition's value as `Tool.getSymmetryPerms` builds it, none where
 // it has no permutation but the identity, and the sets it permutes that TLC warns hold fewer than
 // two elements: all of them where there are as many as permutations, or else each set TLC checks
-// that holds no model value the group moves.
+// that holds no model value the group moves. Or the exception TLC throws first: on a value that
+// isn't a set of function records, and, where it builds the group of fewer than two permutations,
+// on the capacity `MVPerms.permutationSubgroup` gives its set of them.
 fn symmetry_group(
     machine: &mut Machine<'_>,
     symmetry: &StartupSymmetry,
-) -> Outcome<(Option<Group>, Vec<String>)> {
+) -> Outcome<Result<SymmetryGroup, &'static str>> {
     let value = (symmetry.definition)(machine)?;
-    let permutations = get_permutations(&mut machine.store, value)?;
+    if let Some(failure) = symmetry.failure {
+        return Ok(Err(failure));
+    }
+    let store = &machine.store;
+    if store.kind_of(value) != KIND_SET {
+        return Err(Bail("a symmetry that isn't a set of functions"));
+    }
+    let count = store.size_of(value);
+    // An empty set TLC may hold otherwise than as a set enumeration, as `2..1`, which TLC rejects
+    // as no set of functions, where it counts the arguments of one it holds so.
+    if count == 0 && !symmetry.is_enumerated {
+        return Err(Bail(
+            "an empty symmetry TLC may not hold as a set enumeration",
+        ));
+    }
+    if count > 0 && symmetry.elements == SymmetryElements::Other {
+        return Ok(Err(crate::context::NOT_FUNCTION_RECORDS));
+    }
+    // Where the engine doesn't know how TLC holds the elements, it takes only functions of model
+    // values, as TLC's function records are, and no empty function, which TLC may hold as the
+    // empty tuple or record.
+    let mut permutations = None;
+    let is_function_records = matches!(
+        symmetry.elements,
+        SymmetryElements::FunctionRecords | SymmetryElements::DomainArrays
+    );
+    if !is_function_records {
+        if (0..count).any(|index| {
+            let element = store.element_at(value, index);
+            matches!(store.kind_of(element), KIND_FUNCTION | KIND_TUPLE)
+                && store.size_of(element) == 0
+        }) {
+            return Err(Bail(
+                "an empty symmetry function TLC may hold as a tuple or a record",
+            ));
+        }
+        permutations = Some(get_permutations(&mut machine.store, value)?);
+    }
     let names = |sets: Vec<&(String, Option<Eval>)>| {
         sets.into_iter().map(|(name, _)| name.clone()).collect()
     };
-    if symmetry.permuted_sets.len() >= permutations.len() {
-        return Ok((None, names(symmetry.permuted_sets.iter().collect())));
+    let permuted = symmetry.permuted_sets.len();
+    if permuted >= count as usize && permuted > 0 {
+        return Ok(Ok((None, names(symmetry.permuted_sets.iter().collect()))));
     }
+    if count <= 1 {
+        // The simulator's tool fails so too, in frames of its own.
+        if !symmetry.is_enumerated || machine.simulation.is_simulated {
+            return Err(Bail(
+                "a symmetry of fewer than two functions TLC may not enumerate",
+            ));
+        }
+        return Ok(Err(crate::context::FEW_PERMUTATIONS));
+    }
+    let permutations = match permutations {
+        Some(permutations) => permutations,
+        None => match get_permutations(&mut machine.store, value) {
+            // `MVPerms.permutationSubgroup` reads each function's domain array, which an
+            // interval's function hasn't, so only where every function holds one does TLC fail
+            // with its own message on a pair that isn't of model values.
+            Err(Bail(NOT_MODEL_VALUES)) if symmetry.elements == SymmetryElements::DomainArrays => {
+                return Ok(Err(crate::context::NOT_MODEL_VALUES));
+            }
+            permutations => permutations?,
+        },
+    };
     let group = close_group(permutations);
     let moved: HashSet<Id> = group
         .iter()
@@ -3182,7 +4352,7 @@ fn symmetry_group(
             small.push(set);
         }
     }
-    Ok(((!group.is_empty()).then_some(group), names(small)))
+    Ok(Ok(((!group.is_empty()).then_some(group), names(small))))
 }
 
 // The values the startup definitions computed, which reading them again gives without effects,
@@ -3191,30 +4361,150 @@ pub(crate) fn startup_values(
     machine: &mut Machine<'_>,
     context: &EngineContext,
 ) -> Outcome<Vec<Id>> {
-    context
+    if let Some(values) = &machine.startup_values {
+        return Ok(values.clone());
+    }
+    let output_at = machine.output.len();
+    machine.is_processing_constants = true;
+    machine.is_starting = true;
+    let values = context
         .startup
         .definitions
         .iter()
-        .map(|(evaluate, is_retried)| evaluate_retried(machine, evaluate, *is_retried))
-        .collect()
+        .map(|definition| {
+            let value = evaluate_retried(machine, definition, definition.is_retried, None)?;
+            if value == NO_VALUE
+                && let Some(once) = definition.once
+            {
+                machine.onces[once] = crate::machine::RETRIED_ONCE;
+            }
+            Ok(value)
+        })
+        .collect();
+    machine.is_processing_constants = false;
+    machine.is_starting = false;
+    let output = machine.output.split_off(output_at);
+    machine.output.extend(
+        output
+            .into_iter()
+            .filter(|event| !matches!(event, Printed::Warning(_))),
+    );
+    values
 }
 
 // The failures TLC may not have where the engine has them: it enumerates some sets TLC tests an
 // element of part by part, as `Nat \cap S` by S, and it tests a set operation's operand for a set
 // where TLC may never test it for an element.
 const UNSURE_FAILURES: &[&str] = &[
+    "a tuple pattern with an ambiguous physical class",
     crate::compile::lazy::INFINITE_DOMAIN,
     crate::compile::INFINITE_BOUND,
     crate::compile::NON_SET_OPERAND,
+    // The store compares a typed model value with any other value, which TLC doesn't where it
+    // compares within a value it keeps lazy (`UserValue.equals` puts any model value first).
+    "typed model value",
+];
+
+// The failures at an operand of a set TLC builds lazily, without looking at it, which the
+// engine checks or enumerates as it builds the set (`SetPredValue`, `SetOfTuplesValue`,
+// `SetOfRcdsValue`, `SetOfFcnsValue`, `FcnLambdaValue`, `UnionValue`, `SubsetValue`).
+const LAZY_OPERAND_FAILURES: &[&str] = &[
+    "filtered a non-set",
+    "enumerated a non-set",
+    "a product of a non-set",
+    "a record set of a non-set",
+    "a function over a non-set",
+    "a function set of non-sets",
+    "a function set over a non-set domain",
+    "expected a set",
+];
+
+// The store sorts every set it builds, where TLC holds a set enumeration as built, searches it
+// element by element, and streams a lazy set's elements, so TLC may never compare the two values
+// the engine can't: `1 \in {IF x = 1 THEN 1 ELSE "a" : x \in 1..2}` holds, and
+// `"a" \in UNION {1..2, {"a"}}` asks the smaller set first.
+const UNSURE_COMPARISONS: &[&str] = &[
+    "values TLC can't compare",
+    "equality of values TLC can't compare",
 ];
 
 // A startup definition's value, or NO_VALUE for one TLC evaluates again at each use that fails as
-// TLC reports before any effect: printing, drawing or setting a register.
-fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool) -> Outcome<Id> {
+// TLC reports, before it sets any register.
+// A failure that is the engine's own limit, as enumerating Int, says nothing of whether TLC fails,
+// or how. The engine retries such a definition where its failure is reported as one the reporter
+// confirms (`Reporter::confirm_startup`): the trace evaluator evaluates it as TLC does, and declines
+// where it computes, or fails without TLC's message or after an effect. A definition kept only for
+// its warnings isn't confirmed where it doesn't warn, so its engine limit stays a decline.
+fn evaluate_retried(
+    machine: &mut Machine<'_>,
+    definition: &StartupDefinition,
+    is_retried: bool,
+    computes_print: Option<&mut dyn FnMut() -> Option<Vec<tla_ir::RuntimeWarning>>>,
+) -> Outcome<Id> {
     let before = machine.effects();
-    match evaluate(machine) {
+    let output_at = machine.output.len();
+    let result = match (definition.evaluate)(machine) {
+        // A function TLC keeps lazy over a value that isn't a set: the trace's evaluator can't
+        // take it as computed, so the engine leaves it to be evaluated again at each use, as one
+        // that stopped building it.
+        Ok(value) if value != NO_VALUE && machine.store.is_lazy_over_non_set(value) => {
+            Err(tla_values::store::NON_SET_LAZY_FUNCTION)
+        }
+        result => result,
+    };
+    // `TLC.PrintT` prints its argument and gives TRUE. Where the engine stops computing the
+    // argument before any effect or print, at a limit of its own or at a failure of a
+    // value it computes where TLC keeps it lazy, and the reporter's evaluator, which holds
+    // the values TLC keeps lazy as TLC does, computes it (`Reporter::computes_startup_print`),
+    // that evaluator words the print, and confirms it computes it again in the startup
+    // (`Reporter::confirm_startup`). The warnings TLC prints as it computes the argument
+    // (an EXCEPT of a field the value lacks) are the evaluator's, which computes all of it,
+    // in place of those the engine printed before it stopped.
+    let is_print_computed = result.is_err()
+        && is_retried
+        && definition.is_pure_print
+        && machine.effects() == before
+        && machine.output[output_at..]
+            .iter()
+            .all(|event| matches!(event, Printed::Warning(_)));
+    if let Some(once) = definition.once
+        && is_print_computed
+        && let Some(warnings) = computes_print.and_then(|computes| computes())
+    {
+        machine.output.truncate(output_at);
+        machine
+            .output
+            .extend(warnings.into_iter().map(Printed::Warning));
+        machine
+            .output
+            .push(Printed::Values(crate::machine::Prints::unworded()));
+        // Every use reads the value TLC computed.
+        machine.onces[once] = TRUE;
+        return Ok(TRUE);
+    }
+    match result {
+        // A print or a draw before the failure TLC has again at each use, where it evaluates the
+        // definition again, in the same order, from the same generator the engine draws from;
+        // but a register it sets as it processes the spec is none of its checker's, and another
+        // constant definition that names it has them again as TLC starts.
         Err(Bail(reason))
-            if is_retried && !is_engine_limit(reason) && machine.effects() == before =>
+            if is_retried
+                && (!is_engine_limit(reason)
+                    || definition.has_failing_set_print
+                    || !definition.is_warning_only)
+                && (machine.effects() == before
+                    || machine.effects().2 == before.2 && !definition.is_named_at_startup) =>
+        {
+            Ok(NO_VALUE)
+        }
+        Err(Bail(reason))
+            if is_retried
+                && definition.is_direct_infinite_operation
+                && matches!(
+                    reason,
+                    ENUMERATED_INT | ENUMERATED_NAT | ENUMERATED_STRING | ENUMERATED_SEQ
+                )
+                && machine.effects() == before =>
         {
             Ok(NO_VALUE)
         }
@@ -3253,15 +4543,41 @@ pub(crate) fn start(
     context: &EngineContext,
     settings: &Settings,
     reporter: &mut dyn Reporter,
+    dfid_rejection: Option<bool>,
 ) -> Result<Option<Group>, Box<SearchOutcome>> {
+    // The caller computes each AssertError the engine leaves to it before the startup, which
+    // may read it.
+    for (node, value) in &machine.program.delegated {
+        if value.get().is_none() {
+            let holds = reporter
+                .check_constant(*node)
+                .map_err(|reason| Box::new(SearchOutcome::Declined(reason)))?;
+            let _ = value.set(holds);
+        }
+    }
     // TLCGet("level") is 0 while TLC starts.
+    let mut refused = None;
     let startup = machine.store.int(0).and_then(|zero| {
         machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(machine, &context.startup, settings)
+        machine.is_starting = true;
+        let started = run_startup(
+            machine,
+            &context.startup,
+            settings,
+            dfid_rejection.is_some(),
+            reporter,
+            &mut refused,
+        );
+        machine.is_starting = false;
+        started
     });
     // Nothing of the startup is reported before the reporter confirms each failure it swallowed.
+    // A definition left to the reporter that it doesn't compute declines as the engine's
+    // compiler did.
     let startup = match startup {
-        Err(Bail(reason)) => Err(reason.to_owned()),
+        Err(Bail(reason)) => Err(refused
+            .and_then(|position| context.startup.definitions[position].left.clone())
+            .unwrap_or_else(|| reason.to_owned())),
         Ok(unconfirmed) => unconfirmed.confirm(reporter),
     };
     let group = match startup {
@@ -3273,10 +4589,14 @@ pub(crate) fn start(
             return Err(Box::new(SearchOutcome::Declined(reason.into())));
         }
         Ok(started) => {
-            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            let report = |reporter: &mut dyn Reporter, printed: &[Printed]| {
+                for output in printed {
+                    match output {
+                        Printed::Values(values) => reporter.startup_print(&machine.store, values),
+                        Printed::Warning(warning) => reporter.warning(warning),
+                        Printed::InitialStates(_) => {}
+                    }
+                }
             };
             report(reporter, &started.printed);
             reporter.startup_predicates(&started.holding);
@@ -3284,14 +4604,17 @@ pub(crate) fn start(
                 return Err(Box::new(SearchOutcome::ConfigError { message }));
             }
             if let Some(message) = started.exception {
-                return Err(Box::new(SearchOutcome::StartupException {
-                    message: message.to_owned(),
-                }));
+                return Err(Box::new(SearchOutcome::StartupException { message }));
             }
             if !started.small_sets.is_empty() {
                 reporter.symmetry_sets_too_small(&started.small_sets);
             }
             reporter.startup_done();
+            if let Some(multiple_workers) = dfid_rejection {
+                return Err(Box::new(SearchOutcome::DfidUnsupported {
+                    multiple_workers,
+                }));
+            }
             report(reporter, &started.assumed);
             let mut assumed = Assumed {
                 violated: started.violated,
@@ -3344,14 +4667,15 @@ pub(crate) fn start(
                 };
                 let printed = std::mem::take(&mut machine.output)
                     .into_iter()
-                    .filter_map(|printed| match printed {
-                        Printed::Values(values) => Some(values),
-                        Printed::InitialStates(_) => None,
-                    })
+                    .filter(|printed| !matches!(printed, Printed::InitialStates(_)))
                     .collect::<Vec<_>>();
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
+                for output in &printed {
+                    match output {
+                        Printed::Values(values) => reporter.startup_print(&machine.store, values),
+                        Printed::Warning(warning) => reporter.warning(warning),
+                        Printed::InitialStates(_) => {}
+                    }
+                }
             }
             if let Some(name) = assumed.violated {
                 return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
@@ -3395,6 +4719,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
     compiler.json_files = settings.json_files.clone();
+    compiler.adopter = settings.adopter.clone();
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -3408,14 +4733,49 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     if compiler.is_cached && settings.is_live_checked {
         return SearchOutcome::Declined("unsupported: TLCCache with a liveness check".into());
     }
+    let dfid_will_search =
+        settings.dfid.is_some() && settings.workers == 1 && !model.is_recording_graph;
+    if dfid_will_search && !context.possible.is_empty() {
+        return SearchOutcome::Declined("DFID with _POSSIBLE predicates".into());
+    }
+    if dfid_will_search && (compiler.is_diameter_read || compiler.is_distinct_read) {
+        return SearchOutcome::Declined("DFID with TLCGet of diameter or distinct".into());
+    }
+    if dfid_will_search
+        && ir.builtins.iter().any(|builtin| {
+            let name = &*ir.texts[builtin.name as usize];
+            name.starts_with("Json")
+                || name.starts_with("ndJson")
+                || matches!(
+                    name,
+                    "TLCSet"
+                        | "TLCGetAndSet"
+                        | "RandomElement"
+                        | "RandomSubset"
+                        | "RandomSetOfSubsets"
+                        | "RandomSubsetSet"
+                        | "TestRandomSetOfSubsets"
+                )
+        })
+    {
+        return SearchOutcome::Declined(
+            "DFID with random draws, register writes, or JSON files".into(),
+        );
+    }
     let is_distinct_read = compiler.is_distinct_read;
+    let is_count_read = compiler.is_count_read;
+    let is_cached = compiler.is_cached || compiler.is_tlc_cache_used;
+    let is_ranking = compiler.is_ranking;
     let is_printing = compiler.is_printing;
+    let is_warning = compiler.is_warning;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
     // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
     // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
     let is_picking = compiler.is_picking;
-    let is_pipelined = !is_printing
+    let is_pipelined = settings.dfid.is_none()
+        && !is_warning
+        && !is_printing
         && !is_lambda_built
         && !compiler.is_cached
         && !is_distinct_read
@@ -3432,6 +4792,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
     // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
+        && !is_warning
         && !compiler.is_ranking
         && !is_picking
         && !compiler.is_printing
@@ -3455,6 +4816,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // it in the order it first evaluates each expression), or anything prints, draws or reads or
     // sets TLC's registers: a helper machine has none of the search's registers or generator.
     let atom_threads = if compiler.is_ranking
+        || is_warning
         || compiler.is_printing
         || is_lambda_built
         || compiler.is_tlc_cache_used
@@ -3470,7 +4832,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut machine = Machine::new(&program, store);
     let memo_entries = settings.test_memo_entries.unwrap_or(MAXIMUM_ENTRIES);
     machine.limit_memo(memo_entries);
-    let group = match start(&mut machine, &context, settings, reporter) {
+    let dfid_rejection = settings.dfid.and({
+        if settings.workers != 1 {
+            Some(true)
+        } else if model.is_recording_graph {
+            Some(false)
+        } else {
+            None
+        }
+    });
+    let group = match start(&mut machine, &context, settings, reporter, dfid_rejection) {
         Ok(group) => group,
         Err(outcome) => return *outcome,
     };
@@ -3504,8 +4875,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         keys: Vec::new(),
         parents: Vec::new(),
         fingerprints: Vec::new(),
+        // With several workers the search tells the states another state also steps to by
+        // their index (`Search::contested`).
         set: FingerprintSet::new(
-            settings.is_fingerprint_verified || model.is_recording_graph,
+            settings.is_fingerprint_verified
+                || model.is_recording_graph
+                || settings.dfid.is_some()
+                || settings.workers > 1,
             settings.large_region_advice,
         ),
         order,
@@ -3520,6 +4896,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         program.polynomial(),
     );
     search.is_continued = settings.is_continued;
+    search.is_dfid = settings.dfid.is_some();
+    search.is_contest_tracked = settings.workers > 1;
+    search.is_counted = is_count_read;
+    search.is_print_race_tracked = settings.workers > 1 && settings.dfid.is_none();
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
@@ -3582,6 +4962,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut checkpoint_generated = 0u64;
     let mut checkpoint_possible = search.possible.clone();
     let mut initial_states = (0, 0);
+    let mut dfid_initial_count = 0usize;
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
     // The answers to the liveness checker's atoms about the first `count` states and the steps of
@@ -3652,7 +5033,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 levels: levels.as_deref(),
             },
         };
-        answer_atoms(
+        // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
+        // successors (`Worker.doNextCheckLiveness`), as another worker expands one of those: what
+        // the atoms print comes in an order that changes from run to run, but for a graph of the
+        // one initial state, whose atoms TLC's main thread evaluates (`ModelChecker.doInit`).
+        let outer = (machine.is_print_raced, machine.is_worker_evaluating);
+        machine.is_print_raced = settings.workers > 1 && count > 1;
+        machine.is_worker_evaluating = settings.workers > 1;
+        let answered = answer_atoms(
             machine,
             &live,
             &context.atoms,
@@ -3666,7 +5054,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .filter(|_| atom_threads > 1)
                 .map(|_| Machine::new(&program, Store::new()))
                 .collect::<Vec<_>>(),
-        )
+        );
+        (machine.is_print_raced, machine.is_worker_evaluating) = outer;
+        answered
     };
     // The most threads a level was shared between.
     let mut threads_used = 1;
@@ -3702,6 +5092,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         let zero = machine.store.int(0)?;
         machine.set_slot(LEVEL_SLOT, zero);
         search.set_distinct(&mut machine, 0)?;
+        search.set_counts(&mut machine, 0, 0, 1)?;
+        // TLC stops before it computes the initial states, at a time of its threads' choosing.
+        if machine.registers.is_exit {
+            return Err(Bail(EXIT_AT_STARTUP));
+        }
+        machine.is_pause_prompted =
+            settings.dfid.is_none() && settings.workers == 1 && settings.is_violation_reported;
         search.reporter.initial_states_started();
         // An action atom answered from the steps needs the shapes of what the walks assign.
         if context.atoms.iter().any(|atom| {
@@ -3715,18 +5112,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
         machine.is_before_initial_state = true;
-        (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+        if settings.dfid.is_some() {
+            let mut initial = Vec::new();
+            (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+                machine.is_before_initial_state = false;
+                initial.push(machine.current().to_vec());
+                Ok(())
+            })?;
             machine.is_before_initial_state = false;
-            search.visit_initial(machine, &context)
-        })?;
-        machine.is_before_initial_state = false;
+            dfid_initial_count = initial.len();
+            for state in initial {
+                let epoch = machine.next_epoch();
+                machine.set_current(&state, epoch);
+                search.visit_initial(&mut machine, &context)?;
+            }
+        } else {
+            (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+                machine.is_before_initial_state = false;
+                search.visit_initial(machine, &context)
+            })?;
+            machine.is_before_initial_state = false;
+        }
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
-        // TLC stops before it expands a state, at a time of its threads' choosing.
-        if machine.registers.is_exit {
-            return Err(Bail(
-                "unsupported: TLCSet(\"exit\", TRUE) as TLC starts or computes the initial states",
-            ));
+        // Where TLCSet("exit", TRUE) ran as TLC computed the initial states, it computes them all,
+        // then its workers find the queue finished before they expand one (`ModelChecker.stop`).
+        let is_exit_initial = machine.registers.is_exit;
+        if is_exit_initial && machine.program.workers > 1 {
+            return Err(Bail(EXIT_RACED));
         }
         // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
         // atom fails to evaluate. It then replays the initial states with its call stack, checking
@@ -3822,6 +5235,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 )?;
             }
         }
+        if settings.dfid.is_some() && context.next.is_none() {
+            search.expanding = search.states.count();
+            return Ok(());
+        }
         if context.next.is_none() && search.states.count() > 0 {
             search.violation = Some(Found {
                 kind: ViolationKind::NoNextState,
@@ -3833,6 +5250,252 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 counts: StopCounts::default(),
             });
             return Err(Bail(NO_NEXT_STATE));
+        }
+
+        if let Some(limit) = settings.dfid {
+            if (is_printing && initial_states.0 > 1)
+                || is_distinct_read
+                || is_picking
+                || model.is_recording_graph
+                || (settings.is_continued && initial_states.0 > 1)
+                || settings.is_dumped
+                || settings.state_log.is_some()
+                || !context.possible.is_empty()
+            {
+                return Err(Bail(
+                    "DFID with effects, liveness, continuation, or output files",
+                ));
+            }
+            let initial: Vec<(u64, (usize, Vec<Id>))> = search
+                .states
+                .fingerprints
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(index, fingerprint)| {
+                    (
+                        fingerprint,
+                        (index, search.states.state(index as u32).to_vec()),
+                    )
+                })
+                .collect();
+            // If every initial state has one self-loop, their independently seeded choice
+            // changes no observable event or count. Verify that property while expanding them.
+            let independent_initials = initial.len() > 1
+                && !is_printing
+                && !is_cached
+                && !is_ranking
+                && !is_lambda_built
+                && !is_symmetric
+                && context.view.is_none()
+                && !settings.is_continued
+                && context.action_properties.is_empty()
+                && !ir.builtins.iter().any(|builtin| {
+                    let name = &*ir.texts[builtin.name as usize];
+                    builtin.flags & tla_ir::Builtin::EXTERNAL_CLASS != 0
+                        || name.starts_with("Json")
+                        || name.starts_with("ndJson")
+                        || matches!(
+                            name,
+                            "TLCGet"
+                                | "TLCSet"
+                                | "TLCGetAndSet"
+                                | "TLCGetOrDefault"
+                                | "RandomElement"
+                                | "RandomSubset"
+                                | "RandomSetOfSubsets"
+                                | "RandomSubsetSet"
+                                | "TestRandomSetOfSubsets"
+                        )
+                });
+            let mut statuses = crate::dfid::Statuses::new();
+            for (fingerprint, _) in &initial {
+                statuses.insert(*fingerprint);
+            }
+            let mut terminated = false;
+            for limit_now in 2..=limit {
+                if terminated {
+                    search.expanding = search.states.count();
+                    return Ok(());
+                }
+                search.dfid_level = limit_now;
+                search.reporter.dfid_level(
+                    limit_now,
+                    search.generated,
+                    search.states.count() as u64,
+                );
+                // The caller may stop the search as a level starts, before it allocates or
+                // searches anything of that level.
+                if search.reporter.is_cancelled() {
+                    return Err(Bail(CANCELLED));
+                }
+                let result = crate::dfid::run_level(
+                    &mut statuses,
+                    &initial,
+                    limit_now,
+                    independent_initials,
+                    |path, depth, leaf, statuses| {
+                        let (index, state) = path.last().expect("DFID path");
+                        for (position, (state, _)) in path.iter().enumerate() {
+                            search.states.parents[*state] = position
+                                .checked_sub(1)
+                                .map_or(-1, |parent| path[parent].0 as i32);
+                        }
+                        let index = *index;
+                        search.expanding = index;
+                        search.level = u64::from(depth);
+                        search.current.clear();
+                        search.current.extend_from_slice(state);
+                        let fingerprint = search.states.fingerprints[index];
+                        search.dfid_leaf = leaf;
+                        search.dfid_statuses =
+                            Some(std::mem::replace(statuses, crate::dfid::Statuses::new()));
+                        let expanded = search.expand(
+                            &mut machine,
+                            &context,
+                            fingerprint,
+                            context.actions.as_deref(),
+                            false,
+                            model.check_deadlock,
+                        );
+                        *statuses = search.dfid_statuses.take().expect("DFID statuses");
+                        if independent_initials
+                            && (expanded.is_err()
+                                || depth != 1
+                                || search.successors != 1
+                                || search.dfid_successors.as_slice()
+                                    != [(fingerprint, (index, state.clone()))])
+                        {
+                            search.violation = None;
+                            return Err(Bail("DFID initial-state order can affect the search"));
+                        }
+                        if expanded
+                            .as_ref()
+                            .is_err_and(|bail| bail.0 == INCOMPLETE_SUCCESSOR)
+                            && !is_printing
+                            && !is_symmetric
+                            && context.view.is_none()
+                        {
+                            return Err(Bail("a DFID incomplete successor"));
+                        }
+                        // An invariant or an action property TLC's `doNext` evaluates catches
+                        // an `Exception`, which a StackOverflowError isn't: the recursion the
+                        // engine stopped at its depth escapes to its catch of any `Throwable`,
+                        // which reports `EC.SYSTEM_STACK_OVERFLOW` instead.
+                        let is_too_deep = expanded
+                            .as_ref()
+                            .is_err_and(|bail| bail.0 == crate::machine::TOO_DEEP);
+                        if expanded.is_err()
+                            && !is_too_deep
+                            && !is_printing
+                            && !is_symmetric
+                            && context.view.is_none()
+                            && !settings.is_continued
+                            && !is_cached
+                            && model.alias.is_none()
+                            && context
+                                .actions
+                                .as_ref()
+                                .is_none_or(|actions| actions.len() == 1)
+                            && search.dfid_batch_size == 1
+                            && search
+                                .violation
+                                .as_ref()
+                                .is_some_and(|found| found.fingerprint.is_some())
+                            && matches!(
+                                search.violation.as_ref().map(|v| &v.kind),
+                                Some(ViolationKind::ActionProperty(_))
+                            )
+                        {
+                            return Err(Bail("a DFID action evaluation failure"));
+                        }
+                        if expanded.is_err()
+                            && !is_too_deep
+                            && !is_printing
+                            && !is_symmetric
+                            && context.view.is_none()
+                            && !settings.is_continued
+                            && !is_cached
+                            && model.alias.is_none()
+                            && context
+                                .actions
+                                .as_ref()
+                                .is_none_or(|actions| actions.len() == 1)
+                            && context.action_properties.is_empty()
+                            && search
+                                .violation
+                                .as_ref()
+                                .is_some_and(|found| found.fingerprint.is_some())
+                            && search.dfid_batch_size == 1
+                            && matches!(
+                                search.violation.as_ref().map(|v| &v.kind),
+                                Some(ViolationKind::Error {
+                                    site: ErrorSite::Invariant(_)
+                                })
+                            )
+                        {
+                            return Err(Bail("a DFID invariant evaluation failure"));
+                        }
+                        if expanded.is_err()
+                            && !is_printing
+                            && !is_symmetric
+                            && context.view.is_none()
+                            && !settings.is_continued
+                            && !is_cached
+                            && model.alias.is_none()
+                            && context
+                                .actions
+                                .as_ref()
+                                .is_none_or(|actions| actions.len() == 1)
+                            && matches!(
+                                search.violation.as_ref().map(|v| &v.kind),
+                                Some(ViolationKind::Error {
+                                    site: ErrorSite::Next
+                                })
+                            )
+                        {
+                            return Err(Bail("a DFID next-state failure"));
+                        }
+                        if expanded.is_err() {
+                            let supported = !is_printing
+                                && !is_symmetric
+                                && context.view.is_none()
+                                && matches!(
+                                    search.violation.as_ref().map(|v| &v.kind),
+                                    Some(
+                                        ViolationKind::Invariant(_)
+                                            | ViolationKind::Deadlock { .. }
+                                            | ViolationKind::ActionProperty(_)
+                                    )
+                                );
+                            if !supported {
+                                search.violation = None;
+                            }
+                            return Err(Bail(if supported {
+                                "a DFID violation"
+                            } else {
+                                "a DFID violation or evaluation error"
+                            }));
+                        }
+                        if is_printing && search.successors > 1 {
+                            return Err(Bail("DFID effects while generating several successors"));
+                        }
+                        search.flush(&mut machine);
+                        Ok((
+                            std::mem::take(&mut search.dfid_successors),
+                            search.dfid_all_nonleaf,
+                        ))
+                    },
+                );
+                match result {
+                    crate::dfid::LevelResult::Finished { more } => terminated = !more,
+                    crate::dfid::LevelResult::Ambiguous => {
+                        return Err(Bail("DFID worker chooses among multiple states"));
+                    }
+                    crate::dfid::LevelResult::Stopped(error) => return Err(error),
+                }
+            }
+            return Err(Bail("DFID depth limit reached before reporting completion"));
         }
 
         // --- next states ---
@@ -3892,10 +5555,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 Err(Bail(PERIODIC_LASSO))
             };
         search.expanding = 0;
+        if is_exit_initial {
+            if search.graph.is_some() || online.is_some() {
+                return Err(Bail(
+                    "unsupported: TLCSet(\"exit\", TRUE) with temporal properties",
+                ));
+            }
+            return Ok(());
+        }
         while search.expanding < search.states.count() {
             let expanding = search.expanding;
             if expanding == level_end {
                 search.level += 1;
+                search.level_first = expanding;
                 level_end = search.states.count();
                 let states = level_end - expanding;
                 let (previous_start, previous_at, previous_threads) = level_start;
@@ -3951,6 +5623,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             })
                             .collect();
                     }
+                    search.contested = None;
                     let level = Level {
                         start: expanding,
                         end: level_end,
@@ -4042,6 +5715,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_live_checked,
                 model.check_deadlock,
             );
+            // What TLC evaluates once its workers ended, on its main thread, prints in order.
+            machine.is_print_raced = false;
+            machine.is_worker_evaluating = false;
             if let Err(bail) = expanded {
                 if let Some(Found {
                     kind:
@@ -4065,6 +5741,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 graph.diameters.push(search.depth.max(1) as u32);
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
+            if search.chain_expansions == expanding
+                && search.successors == 1
+                && search.new_states == 1
+            {
+                search.chain_expansions += 1;
+            }
             search.flush(&mut machine);
             search.check_exit_followed(&machine)?;
             if let Some(online) = &mut online {
@@ -4177,6 +5859,151 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }
     };
     let outcome = match result {
+        Err(_)
+            if settings.dfid.is_some()
+                && !is_past_initial
+                && dfid_initial_count == 1
+                && !is_printing
+                && !is_cached
+                && !is_distinct_read
+                && !is_symmetric
+                && context.view.is_none()
+                && model.alias.is_none()
+                && !model.is_recording_graph
+                && model.postconditions.is_empty()
+                && context.possible.is_empty()
+                && !settings.is_dumped
+                && settings.state_log.is_none()
+                && !settings.is_continued
+                && search.violation.as_ref().is_some_and(|found| {
+                    matches!(
+                        found.kind,
+                        ViolationKind::Error {
+                            site: ErrorSite::InitialInvariant(_)
+                        }
+                    ) && found.counts.generated == 1
+                        && found.counts.distinct == 1
+                }) =>
+        {
+            let found = search
+                .violation
+                .take()
+                .expect("DFID initial invariant failure");
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidInitialInvariantFailure(violation),
+                None => SearchOutcome::Declined("DFID initial invariant failure state".into()),
+            }
+        }
+        Err(bail) if bail.0 == "a DFID action evaluation failure" => {
+            let mut found = search.violation.take().expect("DFID action failure");
+            found.counts.is_dfid_replayed =
+                settings.dfid.is_some_and(|max| search.dfid_level < max);
+            // The replay generates the successor again.
+            if found.counts.is_dfid_replayed {
+                found.counts.generated += 1;
+            }
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidActionFailure(violation),
+                None => SearchOutcome::Declined("DFID action failure trace".into()),
+            }
+        }
+        Err(bail)
+            if settings.dfid.is_some()
+                && !is_past_initial
+                && bail.0 == "an initial state that isn't complete"
+                && !is_printing
+                && !is_distinct_read =>
+        {
+            SearchOutcome::DfidInitialIncomplete {
+                state: machine.current().to_vec(),
+                holds_collapsed: machine.program.holds_collapsed(),
+                store: Box::new(std::mem::replace(&mut machine.store, Store::new())),
+            }
+        }
+        Err(bail) if bail.0 == "a DFID invariant evaluation failure" => {
+            let mut found = search.violation.take().expect("DFID invariant failure");
+            found.counts.is_dfid_replayed =
+                settings.dfid.is_some_and(|max| search.dfid_level < max);
+            if found.counts.is_dfid_replayed {
+                found.counts.generated += 1;
+            }
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidInvariantFailure(violation),
+                None => SearchOutcome::Declined("DFID invariant failure trace".into()),
+            }
+        }
+        Err(bail) if bail.0 == "a DFID next-state failure" => {
+            let mut found = search.violation.take().expect("DFID failure");
+            found.counts.is_dfid_replayed =
+                settings.dfid.is_some_and(|max| search.dfid_level < max);
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidNextFailure(violation),
+                None => SearchOutcome::Declined("DFID next-state failure trace".into()),
+            }
+        }
+        Err(bail) if bail.0 == "a DFID incomplete successor" => {
+            let mut states = search.states.path(search.expanding);
+            states.push(search.successor.clone());
+            SearchOutcome::DfidIncomplete {
+                states,
+                store: Box::new(std::mem::replace(&mut machine.store, Store::new())),
+                action: search.action,
+                holds_collapsed: machine.program.holds_collapsed(),
+                generated: search.generated,
+                distinct: search.states.count() as u64,
+            }
+        }
+        Err(bail) if bail.0 == "a DFID violation" => {
+            let found = search.violation.take().expect("DFID violation");
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidViolation(violation),
+                None => SearchOutcome::Declined("DFID violation trace".into()),
+            }
+        }
+        Err(bail) if bail.0 == "DFID depth limit reached before reporting completion" => {
+            SearchOutcome::DfidLimited {
+                generated: search.generated,
+                distinct: search.states.count() as u64,
+            }
+        }
+        Err(bail)
+            if settings.dfid.is_some()
+                && !is_past_initial
+                && !is_printing
+                && !is_distinct_read
+                && !settings.is_continued
+                && is_noted_failure(bail.0)
+                && search.violation.is_none() =>
+        {
+            let found = Found {
+                kind: ViolationKind::Error {
+                    site: ErrorSite::Init,
+                },
+                parent: None,
+                last: None,
+                fingerprint: None,
+                random: None,
+                replayed: None,
+                counts: StopCounts::default(),
+            };
+            match to_violation(found, &mut machine, &context, &mut search, true) {
+                Some(violation) => SearchOutcome::DfidInitialFailure(violation),
+                None => SearchOutcome::Declined(format!("DFID initial state failure: {}", bail.0)),
+            }
+        }
+        Err(bail) if settings.dfid.is_some() && !is_past_initial && is_printing => {
+            SearchOutcome::Declined(format!("DFID initial failure with printing: {}", bail.0))
+        }
+        Err(bail)
+            if settings.dfid.is_some()
+                && !is_past_initial
+                && !matches!(
+                    search.violation.as_ref().map(|found| &found.kind),
+                    Some(ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_))
+                ) =>
+        {
+            SearchOutcome::Declined(format!("DFID initial state failure: {}", bail.0))
+        }
         Err(bail) if bail.0 == OTHER_STEPS => SearchOutcome::Invariant(OTHER_STEPS.into()),
         Err(bail) if bail.0 == CANCELLED => SearchOutcome::Declined(CANCELLED.into()),
         // The interpreter prints the counterexample with the counts so far, as TLC does.
@@ -4462,7 +6289,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         })
                         .filter_map(|printed| match printed {
                             Printed::Values(values) => Some(values.clone()),
-                            Printed::InitialStates(_) => None,
+                            Printed::InitialStates(_) | Printed::Warning(_) => None,
                         })
                         .collect();
                     let checkpoint = (liveness.verdict != Verdict::Holds
@@ -4568,7 +6395,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
         }
         Err(bail) if !is_past_initial => {
-            if search.violation.is_none() && !is_engine_limit(bail.0) {
+            if search.violation.is_none() && is_noted_failure(bail.0) {
                 let count = search.states.count() as u64;
                 search.violation = Some(Found {
                     kind: ViolationKind::Error {
@@ -4603,13 +6430,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             || matches!(
                                 found.kind,
                                 ViolationKind::Error {
-                                    site: ErrorSite::InitialConstraint(_)
+                                    site: ErrorSite::InitialConstraint(_) | ErrorSite::InitialView
                                 }
                             ));
+                    // TLC checks the constraints of an initial state and fingerprints it before
+                    // it adds it to the behavior graphs (`DoInitFunctor.addElement`), so a
+                    // failure before the first state it adds evaluates no atom.
                     match &online {
                         Some(online) => !online.asks_initial_states() || is_before_states,
                         None => {
-                            search.graph.is_none()
+                            is_before_states
+                                || search.graph.is_none()
                                 || matches!(
                                     found.kind,
                                     ViolationKind::Error {
@@ -4632,7 +6463,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 checkpoint: None,
                 collisions,
                 violation: violation.and_then(|found| {
-                    to_violation(found, &mut machine, &context, &mut search, is_printing)
+                    to_violation(
+                        found,
+                        &mut machine,
+                        &context,
+                        &mut search,
+                        is_printing || is_warning,
+                    )
                 }),
             }
         }
@@ -4729,6 +6566,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // reported as main reports it where main does: with nothing held past the initial
             // states, as a stop in the first expansion.
             let mut found = found;
+            if let Some(stop) = &mut found
+                && let Some(parent) = stop.parent
+            {
+                let is_lone = search.expanding == search.chain_expansions
+                    && search.states.count() == search.expanding + 1;
+                // A worker that printed as another may have prints as the worker that stops
+                // reports the stop, as does one that evaluates the atoms of a state it expanded
+                // once it enqueued the successors another worker stops in
+                // (`Worker.doNextCheckLiveness`).
+                let is_print_raced = machine.worker_prints.is_raced
+                    || (settings.workers > 1
+                        && context.is_live_printing
+                        && search.states.count() > 1);
+                stop.counts.is_raced = is_print_raced
+                    || !is_lone && (stop.counts.queued > 0 || search.is_trace_contested(parent));
+            }
             if let Some(stop) = &found
                 && online.is_none()
                 && !(matches!(
@@ -4785,7 +6638,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 Some(Found {
                     kind:
                         ViolationKind::Error {
-                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_),
+                            site:
+                                ErrorSite::Next
+                                | ErrorSite::ActionConstraint(_)
+                                | ErrorSite::Constraint(_),
                         },
                     ..
                 }) if online.is_some()
@@ -4815,7 +6671,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     let is_next_failure = matches!(
                         found.kind,
                         ViolationKind::Error {
-                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_)
+                            site: ErrorSite::Next
+                                | ErrorSite::ActionConstraint(_)
+                                | ErrorSite::Constraint(_)
                         }
                     );
                     if is_deadlock || is_next_failure {
@@ -4931,7 +6789,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             if matches!(
                                 found.kind,
                                 ViolationKind::Error {
-                                    site: ErrorSite::ActionConstraint(_)
+                                    site: ErrorSite::ActionConstraint(_) | ErrorSite::Constraint(_)
                                 }
                             ) {
                                 return None;
@@ -4994,7 +6852,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 search.flush(&mut machine);
             }
             let mut violation = found.and_then(|found| {
-                to_violation(found, &mut machine, &context, &mut search, is_printing)
+                to_violation(
+                    found,
+                    &mut machine,
+                    &context,
+                    &mut search,
+                    is_printing || is_warning,
+                )
             });
             if let Some(violation) = &mut violation {
                 violation.added = stop_added;
@@ -5317,7 +7181,7 @@ fn to_violation(
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &mut Search<'_, States>,
-    is_printing: bool,
+    has_output_effects: bool,
 ) -> Option<Box<Violation>> {
     let path = found
         .parent
@@ -5333,7 +7197,7 @@ fn to_violation(
     // finds them, as TLC does.
     let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
     let unlabelled = vec![None; states.len().saturating_sub(1)];
-    let labels = if path.is_empty() || is_reduced || is_printing {
+    let labels = if path.is_empty() || is_reduced || has_output_effects {
         unlabelled
     } else {
         label_path(
@@ -5366,7 +7230,7 @@ fn to_violation(
         ) && states.is_empty();
     let fingerprints = match found.kind {
         ViolationKind::Error {
-            site: ErrorSite::Invariant(_),
+            site: ErrorSite::Invariant(_) | ErrorSite::ActionProperty(_),
         } => {
             let mut fingerprints = search.states.fingerprints.clone();
             fingerprints.extend(found.fingerprint);
@@ -5718,6 +7582,9 @@ fn to_atom_failure(
             queued: distinct - state as u64 - 1,
             depth: u64::from(graph.diameters[state]),
             out_degrees,
+            is_lone_expansion: false,
+            is_raced: false,
+            is_dfid_replayed: false,
         },
     })
 }
@@ -5879,6 +7746,7 @@ pub(crate) fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed
     match printed {
         Printed::Values(values) => reporter.print(store, values),
         Printed::InitialStates(count) => reporter.initial_states_progress(*count),
+        Printed::Warning(warning) => reporter.warning(warning),
     }
 }
 
@@ -6060,7 +7928,7 @@ fn place_held_prints(
         };
         added.extend(printed.iter().filter_map(|printed| match printed {
             Printed::Values(values) => Some(values.clone()),
-            Printed::InitialStates(_) => None,
+            Printed::InitialStates(_) | Printed::Warning(_) => None,
         }));
     }
     for out in order {
@@ -6391,7 +8259,7 @@ fn expand_reals(
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
-fn to_terms(terms: &[LiveTerm]) -> Vec<Term> {
+pub(crate) fn to_terms(terms: &[LiveTerm]) -> Vec<Term> {
     terms
         .iter()
         .map(|&term| match term {
@@ -6472,9 +8340,16 @@ mod tests {
         assert!(!is_engine_limit("a mistyped membership in Nat"));
         // suite/test202's assumption, which TLC evaluates without enumerating Nat.
         assert!(is_engine_limit("enumerated Nat"));
+        assert!(!is_engine_limit(
+            "a Json conversion of an unsupported physical input class"
+        ));
+        assert!(is_engine_limit(
+            "a Json conversion whose physical input class was not retained"
+        ));
         // TLC fails only where a value it built as a record meets a function, which the store,
         // knowing a value by its domain, can't tell from a function over strings.
-        assert!(is_engine_limit("record compared with a function"));
+        assert!(is_engine_limit(RECORD_COMPARED));
+        assert!(is_replayed_limit(RECORD_COMPARED));
         // TLC fails where it holds a function over an interval, which the evaluator knows.
         assert!(!is_engine_limit(tla_values::store::INTERVAL_KEYS.0));
         assert!(!is_engine_limit(tla_values::store::RECORD_KEYS.0));

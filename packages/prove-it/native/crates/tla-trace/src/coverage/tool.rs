@@ -153,9 +153,9 @@ impl Ctx {
 // --- the cost models of values ---
 
 enum WeakValue {
-    Set(Weak<Vec<Value>>),
+    Set(Weak<crate::value::Set>),
     Function(Weak<Function>),
-    Lazy(Weak<Lazy>),
+    Lazy(Weak<crate::value::LazySet>),
 }
 
 /// TLC's `Value.cm` of the values `Tool` built, by the address of their allocation, with a weak
@@ -682,7 +682,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                 for arg in args.iter().flatten() {
                     sets.push(self.eval_value(*arg, c, s0, s1, control, cm)?);
                 }
-                let value = Value::Lazy(Rc::new(Lazy::Product(sets)));
+                let value = Value::lazy(Lazy::Product(sets));
                 self.tagged(value, cm)
             }
             Code::ConjList | Code::DisjList => {
@@ -818,7 +818,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
             Code::SetOfFcns => {
                 let domain = self.eval_value(arg(0), c, s0, s1, control, cm)?;
                 let range = self.eval_value(arg(1), c, s0, s1, control, cm)?;
-                let value = Value::Lazy(Rc::new(Lazy::FunctionSet(domain, range)));
+                let value = Value::lazy(Lazy::FunctionSet(domain, range));
                 self.tagged(value, cm)
             }
             Code::SubsetOf => {
@@ -856,7 +856,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
             )?)),
             Code::Subset => {
                 let base = self.eval_value(arg(0), c, s0, s1, control, cm)?;
-                let value = Value::Lazy(Rc::new(Lazy::Subset(base)));
+                let value = Value::lazy(Lazy::Subset(base));
                 self.tagged(value, cm)
             }
             Code::Union => {
@@ -1008,6 +1008,19 @@ impl<'a, 'ir> Tool<'a, 'ir> {
 
     // `UnionValue.union`.
     fn union(&mut self, sets: &Value) -> R<CVal> {
+        let class_is_known = crate::value::set_dispatch_is_known(sets)
+            && match sets {
+                Value::Set(inner) => inner.iter().all(crate::value::set_dispatch_is_known),
+                _ => true,
+            };
+        let result = self.union_contents(sets)?;
+        Ok(match result {
+            CVal::V(value) if !class_is_known => CVal::V(value.without_set_provenance()),
+            other => other,
+        })
+    }
+
+    fn union_contents(&mut self, sets: &Value) -> R<CVal> {
         if let Value::Set(elements) = sets
             && elements
                 .iter()
@@ -1026,7 +1039,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
         if self.tags.get(sets) != NO_CM {
             return no("a UNION TLC keeps lazy (UnionValue)");
         }
-        Ok(CVal::V(Value::Lazy(Rc::new(Lazy::Union(sets.clone())))))
+        Ok(CVal::V(Value::lazy(Lazy::Union(sets.clone()))))
     }
 
     fn domain(&mut self, function: &CVal) -> R<Value> {
@@ -1040,16 +1053,45 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                 }
                 Ok(lambda.params[0].2.clone())
             }
-            CVal::V(Value::Function(function)) => Ok(match function.interval {
-                Some((low, high)) => Value::Interval(low, high),
-                None => Value::Set(Rc::new(function.domain.clone())),
-            }),
+            CVal::V(Value::Function(function)) => {
+                let result = match function.interval {
+                    Some((low, high)) => Value::interval(low, high),
+                    None => Value::set(function.domain.clone()),
+                };
+                Ok(
+                    if matches!(
+                        function.java_class.get(),
+                        Some(Class::Plain | Class::Tuple | Class::Record)
+                    ) {
+                        result
+                    } else {
+                        result.without_set_provenance()
+                    },
+                )
+            }
             CVal::V(_) => no("DOMAIN of a value TLC can't take it of"),
         }
     }
 
     // `S \ T`, `S \cap T`, `S \cup T`: a set enumeration or an interval combines eagerly.
     fn set_operation(&mut self, code: Code, left: Value, right: Value, cm: Cm) -> R<Value> {
+        let class_is_known = crate::value::set_dispatch_is_known(&left)
+            && crate::value::set_dispatch_is_known(&right);
+        let result = self.set_operation_contents(code, left, right, cm)?;
+        Ok(if class_is_known {
+            result
+        } else {
+            result.without_set_provenance()
+        })
+    }
+
+    fn set_operation_contents(
+        &mut self,
+        code: Code,
+        left: Value,
+        right: Value,
+        cm: Cm,
+    ) -> R<Value> {
         let reducible = |value: &Value| matches!(value, Value::Set(_) | Value::Interval(..));
         if reducible(&left) {
             return self.reduce(code, &left, &right);
@@ -1060,11 +1102,11 @@ impl<'a, 'ir> Tool<'a, 'ir> {
         if self.tags.get(&left) != NO_CM || self.tags.get(&right) != NO_CM {
             return no("a set operation TLC keeps lazy of a set with a cost model");
         }
-        let value = Value::Lazy(Rc::new(match code {
+        let value = Value::lazy(match code {
             Code::Setdiff => Lazy::Diff(left, right),
             Code::Cap => Lazy::Cap(left, right),
             _ => Lazy::Cup(left, right),
-        }));
+        });
         if code == Code::Cup {
             self.tags.tag(&value, cm);
         }
@@ -1093,14 +1135,14 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                 if matches!(set, Value::Set(_)) && own.is_empty() {
                     return Ok(other.clone());
                 }
-                if let Value::Interval(low, high) = set
-                    && let Value::Interval(other_low, other_high) = other
+                if let Value::Interval(low, high, _) = set
+                    && let Value::Interval(other_low, other_high, _) = other
                     && low <= high
                     && other_low <= other_high
                     && i64::from(*other_low) <= i64::from(*high) + 1
                     && i64::from(*low) <= i64::from(*other_high) + 1
                 {
-                    return Ok(Value::Interval(*low.min(other_low), *high.max(other_high)));
+                    return Ok(Value::interval(*low.min(other_low), *high.max(other_high)));
                 }
                 if !matches!(other, Value::Set(_) | Value::Interval(..)) {
                     return no("a union TLC keeps lazy (SetCupValue)");
@@ -1184,7 +1226,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
         }
         let size = keys.len() as u64;
         let function = match domain {
-            Value::Interval(low, _) => Value::over_interval(*low, values, Class::Plain),
+            Value::Interval(low, _, _) => Value::over_interval(*low, values, Class::Plain),
             _ => sorted_function(keys, values, Class::Plain)?,
         };
         self.model.add_secondary(lambda.cm, size);
@@ -1239,11 +1281,11 @@ impl<'a, 'ir> Tool<'a, 'ir> {
         let cm = self.tags.get(set);
         match set {
             Value::Set(elements) => Ok(Enumeration::SetEnum {
-                elements: Rc::clone(elements),
+                elements: Rc::clone(&elements.elements),
                 index: 0,
                 cm,
             }),
-            Value::Interval(low, high) => Ok(Enumeration::Interval {
+            Value::Interval(low, high, _) => Ok(Enumeration::Interval {
                 low: *low,
                 high: *high,
                 index: i64::from(*low),
@@ -1264,7 +1306,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                 if is_normalized {
                     // `EnumerableValue.elements(NORMALIZED)` converts to a set enumeration,
                     // but SUBSET's own enumeration is normalized.
-                    if let Lazy::Subset(_) = &**lazy {
+                    if let Lazy::Subset(_) = &***lazy {
                         return self.lazy_elements(set, lazy, cm);
                     }
                     let enumerated = self.set_enum_of(set)?;
@@ -1314,7 +1356,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                     });
                 }
                 let interval = match domain {
-                    Value::Interval(low, high) => Some((*low, *high)),
+                    Value::Interval(low, high, _) => Some((*low, *high)),
                     _ => None,
                 };
                 let keys = match domain {
@@ -1487,7 +1529,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                     .iter()
                     .map(|&index| elements[index].clone())
                     .collect();
-                let result = Value::Set(Rc::new(subset));
+                let result = Value::set(subset);
                 self.tags.tag(&result, *cm);
                 // The next subset of this size, or the first of the next size.
                 let mut position = size;
@@ -1558,12 +1600,21 @@ impl<'a, 'ir> Tool<'a, 'ir> {
     /// `toSetEnum` of a set, which counts the elements of a lazy set into its cost model.
     pub(crate) fn set_enum_of(&mut self, set: &Value) -> R<Value> {
         match set {
-            Value::Set(_) => Ok(set.clone()),
-            Value::Interval(..) => Ok(Value::Set(elements(set)?)),
+            Value::Set(set) => Ok(Value::set_from_rc(
+                Rc::clone(&set.elements),
+                Some(crate::value::SetClass::Enumeration),
+            )),
+            Value::Interval(..) => Ok(Value::set_from_rc(
+                elements(set)?,
+                Some(crate::value::SetClass::Enumeration),
+            )),
             Value::Lazy(lazy) => {
                 let cm = self.tags.get(set);
                 if cm == NO_CM && !self.has_tagged_parts(lazy) {
-                    return Ok(Value::Set(elements(set)?));
+                    return Ok(Value::set_from_rc(
+                        elements(set)?,
+                        Some(crate::value::SetClass::Enumeration),
+                    ));
                 }
                 let mut enumeration = self.lazy_elements(set, lazy, cm)?;
                 let mut all = Vec::new();
@@ -1687,7 +1738,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
         let Value::Lazy(lazy) = set else {
             return Ok(is_member(element, set)?);
         };
-        match &**lazy {
+        match &***lazy {
             // `SubsetValue.member` enumerates the value.
             Lazy::Subset(base)
                 if matches!(
@@ -1733,7 +1784,7 @@ impl<'a, 'ir> Tool<'a, 'ir> {
                     self.count_to_fcn_rcd(element);
                 }
                 let own_domain = match function.interval {
-                    Some((low, high)) => Value::Interval(low, high),
+                    Some((low, high)) => Value::interval(low, high),
                     None => self.set_of(function.domain.clone())?,
                 };
                 if !self.tlc_equals(domain, &own_domain)? {
@@ -1844,14 +1895,15 @@ impl<'a, 'ir> Tool<'a, 'ir> {
 
     // `Enumerable.isSubsetEq`.
     fn is_subseteq(&mut self, left: &Value, right: &Value) -> R<bool> {
-        if let (Value::Interval(low, high), Value::Interval(other_low, other_high)) = (left, right)
+        if let (Value::Interval(low, high, _), Value::Interval(other_low, other_high, _)) =
+            (left, right)
             && other_low <= low
             && other_high >= high
         {
             return Ok(true);
         }
         if let Value::Lazy(lazy) = left
-            && matches!(&**lazy, Lazy::Subset(_))
+            && matches!(&***lazy, Lazy::Subset(_))
         {
             return no("SUBSET S \\subseteq T");
         }
@@ -3034,10 +3086,10 @@ fn record_set(fields: Vec<(Rc<crate::value::Text>, Value)>) -> R<Value> {
     for (position, (index, _)) in sorted.iter().enumerate() {
         written[*index] = position as u32;
     }
-    Ok(Value::Lazy(Rc::new(Lazy::RecordSet(
+    Ok(Value::lazy(Lazy::RecordSet(
         sorted.into_iter().map(|(_, field)| field).collect(),
         written,
-    ))))
+    )))
 }
 
 // `select` of a path of keys: the value there, or none where a key is missing.
@@ -3071,9 +3123,16 @@ fn replace_path(value: &Value, path: &[Value], new: Value) -> R<Value> {
         domain: function.domain.clone(),
         range,
         class: std::cell::Cell::new(function.class.get()),
+        java_class: std::cell::Cell::new(match function.java_class.get() {
+            Some(Class::Lambda) => None,
+            other => other,
+        }),
+        is_counter_example: std::cell::Cell::new(Some(false)),
+        is_eager_record: std::cell::Cell::new(false),
         written: RefCell::new(function.written.borrow().clone()),
         search: std::cell::Cell::new(function.search.get()),
         interval: function.interval,
+        is_domain_interval: std::cell::Cell::new(false),
     })))
 }
 

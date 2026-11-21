@@ -1,0 +1,26 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 15 to line 5, col 23 of module M
+(Use the -nowarning option to disable this warning.)
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 15 to line 5, col 23 of module M
+Error: Temporal property P was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+x = 0
+
+State 2: Stuttering
+Warning: The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 6, col 1 to line 6, col 26 of module M. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).
+3 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

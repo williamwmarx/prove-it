@@ -35,19 +35,28 @@ const VARIABLE_LEVEL_FLAGS: u32 = 32;
 const ACTION_LEVEL_FLAGS: u32 = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS: u32 = ACTION_LEVEL_FLAGS | 128;
 
-const PURITY_MASK: u32 = IMPURE | REPEATED_EFFECT | STREAMED;
+const WARNINGS: u32 = 256;
+
+const PURITY_MASK: u32 = IMPURE | REPEATED_EFFECT | STREAMED | WARNINGS;
 const READ_MASK: u32 = NONCONSTANT | READS_IMPURE;
 
 const BUILTIN_STATE_LEVEL: u32 = 1;
 const BUILTIN_LEVEL_CONSTANT: u32 = 2;
 
-const IMPURE_BUILTINS: [&str; 10] = [
+const IMPURE_BUILTINS: [&str; 15] = [
+    "_Track",
     "Print",
     "PrintT",
     "Assert",
     "AssertEq",
     "JavaTime",
     "RandomElement",
+    // Randomization's RandomSubset draws from TLC's generator, so a constant definition that
+    // calls it has the value TLC drew as it started, not one drawn again in a state.
+    "RandomSubset",
+    "RandomSubsetSet",
+    "RandomSetOfSubsets",
+    "TestRandomSetOfSubsets",
     "TLCGet",
     "TLCGetOrDefault",
     "TLCGetAndSet",
@@ -111,13 +120,21 @@ fn applied(expression: &Expression) -> Option<Name> {
 }
 
 fn builtin_flags(environment: &Environment, name: &str) -> u32 {
-    environment
+    let flags = environment
         .builtins
         .get(name)
-        .map_or(0, |builtin| builtin.flags)
+        .map_or(0, |builtin| builtin.flags);
+    // TLCExt's Java TLCGetOrDefault has no minimum level, so `getLevelBound` counts it constant
+    // and `processConstantDefns` computes a definition that reads it as TLC starts, when it reads
+    // no register yet and gives the default.
+    if name == "TLCGetOrDefault" && flags & tla_ir::Builtin::TABLE as u32 == 0 {
+        flags & !BUILTIN_STATE_LEVEL
+    } else {
+        flags
+    }
 }
 
-fn is_impure_builtin(name: &str, environment: &Environment) -> bool {
+pub(crate) fn is_impure_builtin(name: &str, environment: &Environment) -> bool {
     IMPURE_BUILTINS.contains(&name) || builtin_flags(environment, name) & BUILTIN_STATE_LEVEL != 0
 }
 
@@ -154,6 +171,9 @@ fn collect_local_facts(
         .collect();
     while let Some((node, is_level_counted)) = pending.pop() {
         let kind = &node.kind;
+        if matches!(kind, ExpressionKind::Except { .. }) {
+            row[0] |= WARNINGS;
+        }
         let operator = applied(&node);
         let is_nonconstant_kind = is_action_kind(kind)
             || is_temporal_kind(kind)
@@ -185,8 +205,11 @@ fn collect_local_facts(
             let definition = environment.definitions.get(&target).cloned();
             let is_overridden = environment.constants.contains_key(&name);
             let variable_index = environment.variable_index.get(&name).copied();
+            // `getLevelBoundAppl` looks the operator up first: a name the configuration
+            // substitutes a definition for, as `TLCSet <- [TLC] Foo` or `TLCGet <- G`, has the
+            // level of that definition's body, not the level of the Java method it replaces.
             if variable_index.is_some()
-                || builtin_flags(environment, &name) & BUILTIN_STATE_LEVEL != 0
+                || builtin_flags(environment, &target) & BUILTIN_STATE_LEVEL != 0
             {
                 row[0] |= NONCONSTANT;
             }
@@ -483,6 +506,15 @@ impl DefinitionFacts {
         environment: &Environment,
     ) -> bool {
         self.get_row(definition, environment)[0] & IMPURE != 0
+    }
+
+    /// Whether evaluating the definition can reach an EXCEPT warning.
+    pub fn may_warn_definition(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+    ) -> bool {
+        self.get_row(definition, environment)[0] & WARNINGS != 0
     }
 
     /// `isConstantLevel`.

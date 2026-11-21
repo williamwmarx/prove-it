@@ -1,0 +1,24 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.IllegalArgumentException
+java.lang.IllegalArgumentException
+	at util.Set.<init>(Set.java:89)
+	at util.Set.<init>(Set.java:103)
+	at tlc2.value.impl.MVPerms.permutationSubgroup(MVPerms.java:21)
+	at tlc2.tool.impl.Tool.getSymmetryPerms(Tool.java:3877)
+	at tlc2.tool.TLCStateMut.setTool(TLCStateMut.java:77)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:222)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:202)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:187)
+	at tlc2.tool.impl.FastTool.<init>(FastTool.java:62)
+	at tlc2.TLC.process(TLC.java:1400)
+	at tlc2.TLC.main(TLC.java:364)
+

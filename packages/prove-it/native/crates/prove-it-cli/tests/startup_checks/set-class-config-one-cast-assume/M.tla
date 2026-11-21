@@ -1,0 +1,5 @@
+---- MODULE M ----
+EXTENDS Integers,TLC
+CONSTANT C
+ASSUME C+1
+====

@@ -10,8 +10,8 @@ use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
-    Continued, ContinuedTrace, Delegated, ErrorSite, HostFiles, JsonFiles, MINIMUM_SHARED_LEVEL,
-    Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+    Continued, ContinuedTrace, Delegated, ErrorSite, HostFiles, JsonFiles, LeftStartup,
+    MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, is_printable_normalized, write_value};
@@ -19,7 +19,7 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::coverage;
-use crate::dump_trace::{TraceDumps, is_writable, write};
+use crate::dump_trace::{TraceDumps, write};
 use crate::failure::{
     ErrorStop, deadlock_atom_stack, print_assumption_failure, print_call_stack, print_failure,
 };
@@ -39,8 +39,8 @@ use crate::te_spec::{self, TraceSpec};
 use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedState, PrintedTrace, TraceChecks,
-    check_postconditions, format_print, format_texts, format_variables, rebuild_accepted,
-    rebuild_continued, rebuild_trace,
+    check_postconditions, format_texts, format_variables, get_diff_text, print_possible_counts,
+    rebuild_accepted, rebuild_continued, rebuild_trace,
 };
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
@@ -48,6 +48,7 @@ use tla_front::config::{ModelConfig, parse_config};
 use tla_front::errors::{FrontError, UNEXPECTED_EXCEPTION};
 use tla_front::model::StartupMessage;
 use tla_front::tlc_messages::CodedError;
+use tla_front::tlc_messages::STACK_OVERFLOW_MESSAGE;
 use tla_trace::{Rebuilder, Site, Unsupported, pretty_print};
 use tla_trace::{Stats, Verdict as PostconditionVerdict};
 
@@ -61,8 +62,14 @@ const NO_NEXT_ACTION: i32 = 75;
 const SPEC_PARSE_ERROR: i32 = 150;
 const CONFIG_PARSE_ERROR: i32 = 151;
 
+/// The most levels of DFID stacks the binary answers for: about 15 MB of TLC's heap, which any
+/// JVM it runs on has.
+const DFID_STACKS_MODELLED: u64 = 100_000;
+
 /// The exit code of a run that needs something the binary doesn't do natively yet.
 const NOT_NATIVE: i32 = 1;
+// The engine's reason for an initial state some variable lacks a value in.
+const INCOMPLETE_INITIAL_STATE: &str = "an initial state that isn't complete";
 // How much of the -dump file's text the relay holds before it sends it to be written.
 const DUMP_PART_BYTES: usize = 1 << 20;
 
@@ -78,12 +85,42 @@ const XML_EXPORTER_PROPERTIES: [&str; 2] = [
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
 /// returns the exit code.
 pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
+    crate::transaction::run(output, |staged| run_in_place(args, staged))
+}
+
+fn run_in_place(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
         return crate::tlapm::run(&args[1..], output);
     }
     let Some(mut launch) = get_java_launch(args, output.host.platform()) else {
         return check_specs(args, &Java::default(), false, output);
     };
+    // The JVM takes more options from these variables. A system property set there is one TLC
+    // reads as it would from the command line, which the binary models only there.
+    for variable in crate::front::JVM_OPTION_VARIABLES {
+        let Some(options) = output.host.get_variable(variable) else {
+            continue;
+        };
+        for option in options.split_whitespace() {
+            let Some(property) = option.strip_prefix("-D") else {
+                continue;
+            };
+            let name = property.split_once('=').map_or(property, |(name, _)| name);
+            if crate::args::MODELLED_PROPERTIES.contains(&name) {
+                return not_native(
+                    output,
+                    &format!("the system property {name} {variable} sets"),
+                );
+            }
+            if crate::args::is_unmodelled_property(name) {
+                launch
+                    .java
+                    .unmodelled_property
+                    .get_or_insert_with(|| name.into());
+            }
+            launch.java.properties.push(name.into());
+        }
+    }
     // Without -Dtla-ts.tlc, the jar on the class path picks the TLC to reproduce.
     let jar = launch
         .java
@@ -128,7 +165,68 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     }
 }
 
+/// What TLC prints for -help and -h (`TLC.printUsage`), as the jar of the TLC Prove It reproduces
+/// prints it.
+const TLC_USAGE: &str = include_str!("tlc_usage.txt");
+
+/// Whether the spec may build a value TLC keeps lazy, which prints otherwise under -terse
+/// (`TLCGlobals.expand`): a power set, a set of functions, of records or of tuples, a recursive
+/// function or one defined as `f[x \in S] == e`, a function a constant definition builds, which
+/// TLC may hold as written, or a set TLC
+/// doesn't enumerate, which keeps a union, an intersection, a difference, a filter or a function
+/// over it lazy (`Tool.evalAppl`, whose operations are eager only on a Reducible set).
+fn may_build_lazy_value(ir: &tla_ir::Ir) -> bool {
+    use tla_ir::{NodeKind, Resolution};
+    const UNENUMERATED: [&str; 8] = [
+        "SUBSET", "Nat", "Int", "Real", "STRING", "Seq", "kSubset", "Any",
+    ];
+    let is_set_enumeration = |node: tla_ir::NodeId| {
+        matches!(
+            ir.nodes.arena[node as usize].kind,
+            NodeKind::SetEnumeration(_)
+        )
+    };
+    let is_lazy_builtin = |name: &tla_ir::Name| match name.resolution {
+        Resolution::Builtin(index) => {
+            let builtin = &ir.builtins[index as usize];
+            builtin.flags & tla_ir::Builtin::LAZY != 0
+                || UNENUMERATED.contains(&&*ir.texts[builtin.name as usize])
+        }
+        _ => false,
+    };
+    let is_lazy_node = ir.nodes.arena.iter().any(|node| match &node.kind {
+        NodeKind::FunctionSet { .. } | NodeKind::RecordSet(_) | NodeKind::Product(_) => true,
+        NodeKind::FunctionConstruction { is_recursive, .. } => *is_recursive,
+        NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => is_lazy_builtin(name),
+        // UNION is a set enumeration only of a set enumeration of set enumerations
+        // (`UnionValue.union`).
+        NodeKind::Apply { name, args } if &*ir.texts[name.text as usize] == "UNION" => {
+            !matches!(args[..], [set] if matches!(&ir.nodes.arena[set as usize].kind,
+                NodeKind::SetEnumeration(sets) if sets.iter().all(|&set| is_set_enumeration(set))))
+        }
+        NodeKind::Apply { name, .. } => is_lazy_builtin(name),
+        _ => false,
+    });
+    is_lazy_node
+        || ir.definitions.iter().any(|&definition| {
+            matches!(&ir.nodes.arena[definition as usize].kind,
+            NodeKind::Definition(definition)
+                if match &definition.form {
+                    tla_ir::DefinitionForm::Function(_) => true,
+                    tla_ir::DefinitionForm::Operator(params) => params.is_empty()
+                        && matches!(ir.nodes.arena[definition.body as usize].kind,
+                            NodeKind::FunctionConstruction { .. }),
+                })
+        })
+}
+
+/// Whether the command line gives -userFile, whose file TLC creates as it reads the option.
+fn is_before_user_file(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "-userFile")
+}
+
 pub(crate) fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
+    crate::transaction::mark_declined(what);
     let _ = writeln!(output.err, "prove-it: not native yet: {what}");
     NOT_NATIVE
 }
@@ -141,10 +239,59 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     let parsed = match Parsed::parse(args, is_tlc) {
         Ok(parsed) => parsed,
         Err(Stop::NotNative(what)) => return not_native(output, &what),
+        // TLC creates the file of a -userFile as it reads the option, before it reads a later
+        // one it rejects, which the binary doesn't follow.
+        Err(Stop::Error { .. } | Stop::Usage) if is_before_user_file(args) => {
+            return not_native(output, "-userFile before an option TLC stops at");
+        }
+        // A class path beyond the jar may hold the -dump class's writer.
+        Err(Stop::Error { message, .. })
+            if message.starts_with("Trying to instantiate a custom IStateWriter")
+                && java.origin_profile(
+                    java.class_path
+                        .as_deref()
+                        .and_then(|path| get_tools_jar(path, output.host.platform())),
+                ) == tla_front::model::JavaProfile::Opaque =>
+        {
+            return not_native(output, "-dump class, with a class path beyond the jar");
+        }
         Err(Stop::Error { message, is_tool }) => {
             return print_command_line_error(&mut Printer::new(is_tool, true, output), &message);
         }
+        // TLC prints the usage text alone, with no message code even under -tool.
+        Err(Stop::Usage) => {
+            let _ = output.out.write_all(TLC_USAGE.as_bytes());
+            return 1;
+        }
     };
+    // `new FileWriter(file)`, which creates the file or empties it; TLC reports one it can't
+    // create as it reads the option, before the other options' checks after the last
+    // (`handleParameters`), which the binary has made.
+    for (option, values) in &parsed.options {
+        if option != "-userFile" {
+            continue;
+        }
+        let path = Path::new(&values[0]);
+        if output.host.write_file(path, b"", false) {
+            continue;
+        }
+        if !crate::host::is_directory_there(output.host, path) {
+            let is_tool = parsed.has("-tool");
+            return print_command_line_error(
+                &mut Printer::new(is_tool, true, output),
+                "Error: Failed to create user output log file.",
+            );
+        }
+        return not_native(output, "-userFile into a file it can't create");
+    }
+    // With -cleanup TLC deletes the `states` directory where it runs (TLC.java:1274), which the
+    // binary doesn't.
+    if parsed.has("-cleanup")
+        && output.host.kind(&output.host.current_dir().join("states"))
+            != crate::host::FileKind::Absent
+    {
+        return not_native(output, "-cleanup with a states directory to delete");
+    }
     // TLC takes Spec.cfg for a module of that name.
     if is_tlc && parsed.positionals.iter().any(|path| path.ends_with(".cfg")) {
         return not_native(output, "a module named as a configuration file");
@@ -187,6 +334,9 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             paths.push((found, given));
         }
     }
+    if paths.len() > 1 && parsed.is_fpmem_absolute() {
+        return not_native(output, "-fpmem's notice with several specifications");
+    }
     if paths.len() > 1 && !output.host.is_checking_several() {
         return not_native(
             output,
@@ -195,26 +345,52 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     }
     let platform = output.host.platform();
     let mut exit_codes = Vec::new();
-    for (index, (path, given)) in paths.iter().enumerate() {
-        let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);
-        if index > 0 {
-            printer.line("");
-        }
-        // TLC checks one spec, so Prove It names each of several it checks.
-        if paths.len() > 1 {
-            let name = platform.file_name(path).to_string();
-            let stem = name.strip_suffix(".tla").unwrap_or(&name);
-            printer.line(&format!("Checking {name} with {stem}.cfg"));
-        }
-        // TLC names the trace exploration spec's directory by the path it was given, not where it
-        // found the spec, which may be a library directory.
-        let main_file = given.strip_suffix(".tla").unwrap_or(given);
-        let exit_code = check_spec(path, main_file, &parsed, java, &mut printer);
-        // The other specs are checked as after any spec the binary declines.
-        exit_codes.push(match printer.trace_spec_decline.take() {
-            Some(reason) => report_not_native(&mut printer, &reason),
-            None => exit_code,
+    let mut printed = false;
+    for (path, given) in &paths {
+        let (code, _, is_printed) = crate::transaction::run_scoped(output, |staged| {
+            let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), staged);
+            printer.suppressed = parsed.get_codes("-suppressMessages");
+            printer.as_errors = parsed.get_codes("-messagesAsErrors");
+            printer.is_diff_trace = parsed.has("-difftrace");
+            printer.user_file = parsed.get("-userFile").map(|file| file[0].clone().into());
+            if printed {
+                printer.line("");
+            }
+            for _ in 0..parsed.count_fpmem_absolute() {
+                printer.line(
+                    "Using -fpmem with an abolute memory value has been deprecated. Please \
+                     allocate memory for the TLC process via the JVM mechanisms and use -fpmem \
+                     to set the fraction to be used for fingerprint storage.",
+                );
+            }
+            // TLC checks one spec, so Prove It names each of several it checks.
+            if paths.len() > 1 {
+                let name = platform.file_name(path).to_string();
+                let stem = name.strip_suffix(".tla").unwrap_or(&name);
+                printer.line(&format!("Checking {name} with {stem}.cfg"));
+            }
+            let main_file = given.strip_suffix(".tla").unwrap_or(given);
+            let exit_code = check_spec(path, main_file, &parsed, java, is_tlc, &mut printer);
+            // A run with an error TLC may have checked `_TLCTrace`'s postcondition on, which fails
+            // to write its file, other than the report of a safety violation's trace.
+            if exit_code != SUCCESS && printer.unplaced_trace_file.take().is_some() {
+                printer.trace_spec_decline.get_or_insert_with(|| {
+                    "-teSpecOutDir into a directory that isn't there".into()
+                });
+            }
+            // TLC evaluates the ALIAS as it prints a state (`Tool.evalAlias`): of a trace, as it
+            // simulates or as it dumps, never in a run that finds no error.
+            let alias_decline = printer
+                .alias_decline
+                .take()
+                .filter(|_| exit_code != SUCCESS || parsed.has("-simulate") || parsed.has("-dump"));
+            match printer.trace_spec_decline.take().or(alias_decline) {
+                Some(reason) => report_not_native(&mut printer, &reason),
+                None => exit_code,
+            }
         });
+        printed |= is_printed;
+        exit_codes.push(code);
     }
     exit_codes
         .into_iter()
@@ -261,14 +437,16 @@ fn print_startup_banner(
     fingerprint_index: usize,
     seed: i64,
     workers: usize,
+    is_dfid: bool,
 ) {
     let machine = printer.host.machine();
     let (system, release, arch) = (&machine.system, &machine.release, &machine.arch);
     printer.print(
-        code::MODEL_CHECKING,
+        if is_dfid { 2271 } else { code::MODEL_CHECKING },
         Level::None,
         &format!(
-            "Running breadth-first search Model-Checking with fp {fingerprint_index} and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
+            "Running {} search Model-Checking with fp {fingerprint_index} and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
+            if is_dfid { "depth-first" } else { "breadth-first" },
             if workers == 1 { "" } else { "s" },
             machine.cores,
             machine.memory_megabytes,
@@ -284,6 +462,8 @@ pub(crate) enum Event {
     /// What TLC prints itself as it starts, after the constant definitions and before the
     /// assumptions, as tla-front writes it.
     StartupMessage(StartupMessage),
+    DfidLevel(u32, u64, u64),
+    DfidContinued(Box<DfidContinuedReport>),
     InitialStatesStarted,
     InitialStatesProgress(u64),
     InitialStates(u64, u64),
@@ -294,6 +474,7 @@ pub(crate) enum Event {
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
     Print(Option<String>),
+    Warning(tla_engine::RuntimeWarning),
     /// TLC warns that the sets the symmetry permutes, by these names, hold fewer than two
     /// elements.
     SymmetrySetsTooSmall(Vec<String>),
@@ -317,6 +498,13 @@ pub(crate) enum Event {
 
 /// A violation TLC reports under -continue and goes on past: its headline, and its trace with
 /// each step's label, or the initial state alone.
+pub(crate) struct DfidContinuedReport {
+    code: u32,
+    headline: String,
+    states: Vec<Vec<crate::plain::Variable>>,
+    is_initial: bool,
+}
+
 pub(crate) struct ContinuedReport {
     code: u32,
     headline: String,
@@ -339,6 +527,8 @@ pub(crate) struct Relay<'ir> {
     is_coverage_reached: bool,
     /// Whether the relay sent `Event::Declined`.
     is_declined: bool,
+    /// The -dfid bound, past which the relay declines a search as its level 2 starts.
+    dfid: Option<u32>,
     /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
     /// sends the text in parts (`Event::Dumped`) for the host to write.
     is_dumped: bool,
@@ -360,7 +550,7 @@ pub(crate) struct Relay<'ir> {
     /// Whether the search found each startup definition failing as TLC started.
     failed_startup: Vec<bool>,
     /// What the run printed of the assumptions, from `startup_done` on.
-    pub(crate) assumed_printed: Vec<String>,
+    pub(crate) assumed_printed: Vec<crate::trace::PrintedOutput>,
     /// Why the trace evaluator mustn't check an assumption the engine leaves to it, as where it
     /// would read the model checker's TLCGet in a simulation.
     pub(crate) undelegated: Option<&'static str>,
@@ -392,6 +582,7 @@ impl<'ir> Relay<'ir> {
             coverage_countdown: None,
             is_coverage_reached: false,
             is_declined: false,
+            dfid: None,
             is_dumped: false,
             dumped: None,
             ir,
@@ -439,7 +630,12 @@ impl<'ir> Relay<'ir> {
                 let Ok(checked) = checked else {
                     break;
                 };
-                texts.extend(checked.printed.iter().map(|print| format_print(print)));
+                texts.extend(checked.printed.iter().filter_map(|output| {
+                    match crate::trace::format_output(output) {
+                        crate::trace::PrintedOutput::Print(text) => Some(text),
+                        _ => None,
+                    }
+                }));
                 if checked.holds != Some(true) {
                     break;
                 }
@@ -491,6 +687,45 @@ impl Reporter for Relay<'_> {
             ),
         };
         let is_initial = matches!(kind, ViolationKind::InitialInvariant(_));
+        if continued.is_dfid {
+            let report = headline.map_err(String::from).and_then(|headline| {
+                if continued.holds_collapsed {
+                    return Err("a value whose printed shape is not retained".into());
+                }
+                let states = continued
+                    .states
+                    .iter()
+                    .map(|state| {
+                        state
+                            .iter()
+                            .map(|&id| tla_trace::from_store(continued.store, id))
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(|values| {
+                                crate::trace::get_state_variables(ir, &values, self.is_plain)
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| "a state value that cannot be rendered")?;
+                Ok(DfidContinuedReport {
+                    code,
+                    headline,
+                    states,
+                    is_initial,
+                })
+            });
+            match report {
+                Ok(report) => {
+                    let _ = self.sender.send(Event::DfidContinued(Box::new(report)));
+                }
+                Err(reason) => {
+                    self.is_declined = true;
+                    let _ = self.sender.send(Event::Declined(format!(
+                        "a DFID trace under -continue: {reason}"
+                    )));
+                }
+            }
+            return;
+        }
         let report = headline.map_err(String::from).and_then(|headline| {
             let trace = rebuild_continued(ir, &continued, &kind, self.is_tool, self.is_plain)?;
             let labels = trace_labels(ir, &trace)?
@@ -515,6 +750,27 @@ impl Reporter for Relay<'_> {
                     "a trace under -continue: {reason}"
                 )));
             }
+        }
+    }
+
+    fn dfid_level(&mut self, level: u32, generated: u64, distinct: u64) {
+        let _ = self
+            .sender
+            .send(Event::DfidLevel(level, generated, distinct));
+        // As each level from 2 on starts, TLC's DFIDWorker allocates its stacks for every level
+        // up to -dfid (`DFIDModelChecker.runTLC`): four arrays of that length, and a StateVec(1)
+        // and a LongVec(1) for each level, over a hundred bytes a level, which deep enough runs
+        // out of the JVM's heap. The search stops there, since past that point TLC prints nothing
+        // the binary can follow, and an unbounded spec would never end.
+        if self
+            .dfid
+            .is_some_and(|limit| u64::from(limit) > DFID_STACKS_MODELLED)
+            && !self.is_declined
+        {
+            self.is_declined = true;
+            let _ = self.sender.send(Event::Declined(
+                "-dfid with stacks TLC may not have the memory for".to_owned(),
+            ));
         }
     }
 
@@ -578,6 +834,19 @@ impl Reporter for Relay<'_> {
 
     fn print(&mut self, store: &Store, prints: &Prints) {
         self.send_print(format_printed(store, prints));
+        // TLC waits for a byte of its standard input after the prompt TLCSet("pause", TRUE)
+        // prints (`System.in.read`), and goes on at its end.
+        if prints.is_pause_prompt {
+            let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
+        }
+    }
+
+    fn warning(&mut self, warning: &tla_engine::RuntimeWarning) {
+        if self.startup_worded.is_none() {
+            self.assumed_printed
+                .push(crate::trace::PrintedOutput::Warning(warning.clone()));
+        }
+        let _ = self.sender.send(Event::Warning(warning.clone()));
     }
 
     // What the substitutes and constant definitions print, which the trace evaluator prints as
@@ -587,7 +856,8 @@ impl Reporter for Relay<'_> {
         let worded = format_printed(store, prints);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
-            self.assumed_printed.extend(printed.clone());
+            self.assumed_printed
+                .extend(printed.clone().map(crate::trace::PrintedOutput::Print));
             self.send_print(printed);
             return;
         };
@@ -604,7 +874,13 @@ impl Reporter for Relay<'_> {
                 .is_none()
                 .then(|| Rebuilder::new(ir).and_then(|mut rebuilder| rebuilder.startup_prints()))
                 .and_then(Result::ok)?;
-            let texts: Vec<String> = texts.iter().map(|print| format_print(print)).collect();
+            let texts: Vec<String> = texts
+                .iter()
+                .filter_map(|output| match crate::trace::format_output(output) {
+                    crate::trace::PrintedOutput::Print(text) => Some(text),
+                    _ => None,
+                })
+                .collect();
             // The prints already sent, which the store worded, must be the evaluator's.
             let index = worded_prints.len() - 1;
             (texts.len() > index
@@ -673,6 +949,30 @@ impl Reporter for Relay<'_> {
             ));
             return;
         }
+        // What the symmetry's definition prints as TLC builds its `Tool`, after it printed its
+        // warnings about the configuration, the engine reports with the constant definitions'
+        // prints, before them.
+        let is_symmetry_printing =
+            self.ir
+                .model
+                .startup
+                .symmetry
+                .as_ref()
+                .is_some_and(|symmetry| {
+                    may_print(self.ir, self.ir.definitions[symmetry.definition as usize])
+                });
+        if is_symmetry_printing
+            && self
+                .startup_messages
+                .iter()
+                .any(|message| !matches!(message.code, 2212 | 2279))
+        {
+            self.is_declined = true;
+            let _ = self.sender.send(Event::Declined(
+                "warnings about the configuration before a symmetry that may print".to_owned(),
+            ));
+            return;
+        }
         let (invariants, rest): (Vec<_>, Vec<_>) = self
             .startup_messages
             .drain(..)
@@ -690,19 +990,116 @@ impl Reporter for Relay<'_> {
                 let _ = self.sender.send(Event::StartupMessage(message));
             }
         }
+        // Where the configuration's predicates all hold, TLC has processed its configuration
+        // (`SpecProcessor.processConfig`), and printed its warnings, before it builds its `Tool`:
+        // the symmetry's warnings and exceptions, and `getActions`'s, follow them. The liveness
+        // checker's messages come once the model checker is built.
+        if holding.len() >= self.ir.model.startup.predicates.len() {
+            let (configured, rest): (Vec<_>, Vec<_>) = self
+                .startup_messages
+                .drain(..)
+                .partition(|message| !matches!(message.code, 2212 | 2279));
+            self.startup_messages = rest;
+            for message in configured {
+                let _ = self.sender.send(Event::StartupMessage(message));
+            }
+        }
+    }
+
+    // The trace evaluator computes a startup print as TLC does, apart from the startup around it,
+    // which the confirmation evaluates again (`confirm_startup`).
+    fn computes_startup_print(&mut self, position: usize) -> Option<Vec<tla_ir::RuntimeWarning>> {
+        if self.ir.model.startup.symmetry.is_some() {
+            return None;
+        }
+        let mut rebuilder = Rebuilder::new(self.ir).ok()?;
+        rebuilder.set_workers(self.workers);
+        rebuilder.computes_startup_print(position)
+    }
+
+    // The trace evaluator computes a register probe the engine stopped at a limit of its own on as
+    // TLC does as it starts, after the startup's definitions, and confirms it fails there before
+    // any effect, with TLC's own error.
+    fn fails_register_probe(&mut self, position: usize) -> bool {
+        Rebuilder::new(self.ir).is_ok_and(|mut rebuilder| {
+            rebuilder.set_workers(self.workers);
+            rebuilder
+                .confirm_failing_probe(position, self.is_tool)
+                .is_ok()
+        })
+    }
+
+    // The trace evaluator computes the startup as TLC does up to the definition the engine left to
+    // it, and again past it: where it made as many prints before it as the engine did, from the
+    // same generator's state, and computes it without a warning or a register's write, its prints
+    // are TLC's there, which `startup_print` words, and its draws leave TLC's generator as the
+    // evaluator's.
+    fn computes_left_startup(
+        &mut self,
+        position: usize,
+        printed: usize,
+        random: u64,
+    ) -> Option<LeftStartup> {
+        if self.ir.model.startup.symmetry.is_some() {
+            return None;
+        }
+        let compute = |count| {
+            let mut rebuilder = Rebuilder::new(self.ir).ok()?;
+            rebuilder.set_workers(self.workers);
+            rebuilder.compute_startup_until(count).ok()
+        };
+        let before = compute(position)?;
+        let after = compute(position + 1)?;
+        (before.prints == printed
+            && before.random == random
+            && after.is_last_computed
+            && after.warnings == before.warnings
+            && after.writes == before.writes)
+            .then(|| LeftStartup {
+                prints: after.prints - before.prints,
+                random: after.random,
+            })
     }
 
     // The search swallowed each startup definition it found failing, as TLC does, which the trace
     // evaluator confirms TLC fails on too, whether or not anything reads the definition.
-    fn confirm_startup(&mut self, failed: &[bool]) -> Result<(), String> {
+    // It confirms too that the trace evaluator computes each print the search couldn't compute.
+    // A warning-only definition the search failed at a limit of its own the evaluator confirms
+    // TLC computes, or fails on, as it starts without a warning or a print (`set_searched_limited`),
+    // and one it failed on otherwise before any warning, where the evaluator words what TLC does
+    // there (`set_searched_unwarned`).
+    // Each failure it confirms it confirms after as many prints, and draws, as the search made
+    // before it (`set_searched_effects`).
+    fn confirm_startup(
+        &mut self,
+        failed: &[bool],
+        unworded: &[bool],
+        limited: &[bool],
+        unwarned: &[bool],
+        effects: &[(usize, bool)],
+    ) -> Result<(), String> {
         self.failed_startup = failed.to_vec();
-        if !failed.contains(&true) {
+        if !failed.contains(&true)
+            && !unworded.contains(&true)
+            && !limited.contains(&true)
+            && !unwarned.contains(&true)
+        {
             return Ok(());
         }
         Rebuilder::new(self.ir)
             .and_then(|mut rebuilder| {
                 rebuilder.set_workers(self.workers);
                 rebuilder.set_searched_failing(failed);
+                rebuilder.set_searched_effects(effects);
+                rebuilder.set_searched_limited(limited);
+                rebuilder.set_searched_unwarned(unwarned);
+                rebuilder.set_searched_printed(
+                    &effects
+                        .iter()
+                        .map(|&(printed, _)| printed)
+                        .collect::<Vec<_>>(),
+                );
+                rebuilder.set_searched_unworded(unworded);
                 rebuilder.confirm_startup()
             })
             .map_err(|Unsupported(reason)| format!("a startup definition that fails: {reason}"))
@@ -735,25 +1132,47 @@ impl Reporter for Relay<'_> {
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
         // What the run printed of the assumption before it left it to the trace evaluator must be
         // what TLC prints first, after what the assumptions before it print.
-        let expected: Vec<String> = checked
+        let expected: Vec<crate::trace::PrintedOutput> = checked
             .printed_before
             .iter()
             .chain(&checked.printed)
-            .map(|print| format_print(print))
+            .map(crate::trace::format_output)
             .collect();
         if !expected.starts_with(&self.assumed_printed) {
             self.send_print(None);
             return Err("printing other than TLC prints".into());
         }
         for text in &expected[self.assumed_printed.len()..] {
-            self.assumed_worded.push(Some(text.clone()));
             self.assumed_printed.push(text.clone());
-            self.send_print(Some(text.clone()));
+            match text {
+                crate::trace::PrintedOutput::Print(text) => {
+                    self.assumed_worded.push(Some(text.clone()));
+                    self.send_print(Some(text.clone()));
+                }
+                crate::trace::PrintedOutput::Warning(warning) => {
+                    let _ = self.sender.send(Event::Warning(warning.clone()));
+                }
+            }
         }
         Ok(Delegated {
             holds: checked.holds,
             random: checked.random,
         })
+    }
+
+    // The trace evaluator words TLC's messages, which AssertError compares, here of one whose
+    // value is the same wherever TLC evaluates it.
+    fn check_constant(&mut self, node: u32) -> Result<bool, String> {
+        if let Some(reason) = self.undelegated {
+            return Err(reason.into());
+        }
+        Rebuilder::new(self.ir)
+            .and_then(|mut rebuilder| {
+                rebuilder.set_workers(self.workers);
+                rebuilder.set_searched_failing(&self.failed_startup);
+                rebuilder.check_constant(node, self.is_tool)
+            })
+            .map_err(|Unsupported(reason)| format!("computing an AssertError: {reason}"))
     }
 
     fn symmetry_sets_too_small(&mut self, names: &[String]) {
@@ -813,9 +1232,28 @@ impl Reporter for Relay<'_> {
     }
 }
 
+// The trace evaluator's computation of a constant definition TLC computes as it starts, which the
+// engine failed on (`Settings::adopter`): TLC keeps its value, a boolean it computes without an
+// effect or a warning, and every use reads it. The evaluator recurses, so it runs with the
+// search's stack.
+fn get_adopter(ir: &Arc<tla_ir::Ir>, workers: usize, is_tool: bool) -> tla_engine::search::Adopter {
+    let ir = Arc::clone(ir);
+    tla_engine::search::Adopter(Arc::new(move |index| {
+        on_search_stack(|| {
+            let mut rebuilder = Rebuilder::new(&ir).ok()?;
+            rebuilder.set_workers(workers);
+            rebuilder.compute_constant_definition(index, is_tool).ok()
+        })
+    }))
+}
+
 // What Print or PrintT prints of the values: TLC's text of each that the engine knew, or that the
 // store words, unless the store has forgotten how TLC built one.
 fn format_printed(store: &Store, prints: &Prints) -> Option<String> {
+    // Only the trace evaluator words a print the search couldn't compute.
+    if prints.is_unworded() {
+        return None;
+    }
     let printed = match &prints.texts {
         Some(texts) => texts.iter().map(|text| pretty_print(text)).collect(),
         None => prints
@@ -922,6 +1360,7 @@ fn check_spec(
     main_file: &str,
     args: &Parsed,
     java: &Java,
+    is_java_launch: bool,
     printer: &mut Printer,
 ) -> i32 {
     let started = printer.host.now();
@@ -947,35 +1386,130 @@ fn check_spec(
             "coverage on more than one worker is timing-dependent in TLC",
         );
     }
+    let dfid = args
+        .first("-dfid")
+        .and_then(|value| value.parse::<u32>().ok());
+    if dfid.is_some() && args.has("-coverage") {
+        return report_not_native(printer, "DFID with coverage");
+    }
     let simulation = get_simulation(args);
+    if dfid.is_some() && simulation.is_some() {
+        return report_not_native(printer, "DFID with simulation");
+    }
     // TLC's simulator also prints a coverage report, which the coverage pass, a replay of the
     // model checker's search, doesn't count.
     if args.has("-coverage") && simulation.is_some() {
         return report_not_native(printer, "coverage of a simulation");
     }
-    print_welcome(printer);
-    match &simulation {
-        Some(simulation) => print_banner(printer, simulation.seed, workers),
-        None => print_startup_banner(printer, fingerprint_index, seed, workers),
+    // -difftrace changes how TLC prints a trace, which the binary follows for the model
+    // checker's traces alone: the simulator also leaves out stuttering steps, DFID diffs the
+    // last state too, and -dump dot labels its edges with the diffs.
+    if args.has("-difftrace") {
+        let why = if simulation.is_some() {
+            Some("-difftrace in a simulation")
+        } else if dfid.is_some() {
+            Some("-difftrace with DFID")
+        } else if dump.is_some_and(|dump| dump.len() > 1) {
+            Some("-difftrace with -dump dot")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return report_not_native(printer, why);
+        }
     }
-    // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
-    // unless it has one.
+    // TLC opens the file once it has read its options, before it says which version it is and
+    // recovers, and names it with a suffix of .dump, or .dot for a graph, unless it has one.
+    // It reports one it can't open (`FileUtil.newBFOS`), with its name after `${metadir}` is
+    // replaced, a path the binary doesn't make.
+    let recover = args.first("-recover");
+    if recover.is_some() && dump.is_some() {
+        return report_not_native(printer, "-recover with -dump");
+    }
     let dump = match dump {
         None => None,
-        Some([file]) if !file.starts_with("${metadir}") => {
-            let path = if file.ends_with(".dump") {
+        Some([.., file]) if file.starts_with("${metadir}") => {
+            return report_not_native(printer, "-dump into the meta directory");
+        }
+        Some(values) => {
+            let (file, suffix) = match values {
+                [file] => (file, ".dump"),
+                [_, file] => (file, ".dot"),
+                _ => return report_not_native(printer, "-dump"),
+            };
+            let path = if file.ends_with(suffix) {
                 file.clone()
             } else {
-                format!("{file}.dump")
+                format!("{file}{suffix}")
             };
+            // The library's host answers for files alone, and has no directory to tell.
+            let is_unopenable = !printer.host.is_plain()
+                && (!crate::host::is_directory_there(printer.host, Path::new(&path))
+                    || printer.host.kind(Path::new(&path)) == crate::host::FileKind::Directory);
+            if is_unopenable {
+                printer.line(&format!("Error: Unable to write to file {path}"));
+                return print_command_line_error(
+                    printer,
+                    &format!("Error: Given file name {path} for dumping states invalid."),
+                );
+            }
+            if values.len() > 1 {
+                return report_not_native(printer, "-dump dot");
+            }
+            // A run that declines later, as a search can, puts the file back as it found it
+            // (`tla_values::written::restore`). The journal keeps a file it can read whole, of
+            // at most `KEPT_DUMP_BYTES`; another it truncates as TLC does and leaves so on a
+            // decline, as main did, but under -dfid, which main declined before it opened any
+            // file, where it declines first.
+            const KEPT_DUMP_BYTES: u64 = 64 << 20;
+            if printer.host.is_file_system() {
+                let is_keepable = std::fs::metadata(&path)
+                    .map_or(true, |metadata| metadata.len() <= KEPT_DUMP_BYTES);
+                let is_kept =
+                    is_keepable && tla_values::written::keep_file(Path::new(&path)).is_ok();
+                if !is_kept && dfid.is_some() {
+                    return report_not_native(
+                        printer,
+                        "-dfid with -dump into a file it can't keep",
+                    );
+                }
+            }
             if !printer.host.write_file(Path::new(&path), b"", false) {
                 return report_not_native(printer, "-dump into a file it can't create");
             }
             Some(path)
         }
-        Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
-        Some(_) => return report_not_native(printer, "-dump dot"),
     };
+    print_welcome(printer);
+    // TLC reads the checkpoint's intern table first, before its banner
+    // (`UniqueString.internTbl.recover`), from `<directory>/vars.chkpt`, a path java.io.File
+    // normalizes; the binary recovers from none, and reports why it can't read the file.
+    // The exception escapes into `TLC.process`'s catch, whose finally block still prints
+    // EC.TLC_FINISHED.
+    if let Some(directory) = recover {
+        let start = Instant::now();
+        let path = tla_values::java_file_path(&format!("{directory}//vars.chkpt"));
+        let reason = match printer.host.platform() {
+            Platform::Unix => printer.host.open_failure(Path::new(&path), false),
+            Platform::Windows => None,
+        };
+        let Some(reason) = reason else {
+            return report_not_native(printer, "-recover from a checkpoint");
+        };
+        printer.report(
+            code::GENERAL,
+            &format!(
+                "{}java.io.FileNotFoundException\n: {path} ({reason})",
+                tla_front::errors::UNEXPECTED_HEAD
+            ),
+        );
+        print_finished(printer, start);
+        return crate::failure::ERROR;
+    }
+    match &simulation {
+        Some(simulation) => print_banner(printer, simulation.seed, workers),
+        None => print_startup_banner(printer, fingerprint_index, seed, workers, dfid.is_some()),
+    }
     let directories = get_module_directories(printer.host.platform(), main_file, &java.libraries);
     let config_path = match find_config(
         printer.host,
@@ -997,10 +1531,240 @@ fn check_spec(
             return CONFIG_PARSE_ERROR;
         }
     };
+    let embedded_name =
+        crate::resolve::config_name(printer.host.platform(), args.first("-config"), main_file);
+    if embedded_name.ends_with(".tla") && workers > 1 {
+        return report_not_native(
+            printer,
+            "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
+        );
+    }
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
     // as it reports a TlaConfigError (`printFailure`).
-    let config_text = printer.host.read_text(&config_path);
+    let config_text = printer.host.read_text(&config_path).map(|text| {
+        if embedded_name.ends_with(".tla") {
+            embedded_config(&text, &embedded_name.replace(".tla", ""))
+        } else {
+            text
+        }
+    });
+    // The command line's postconditions, `module!operator`: TLC adds each module to the root
+    // module's EXTENDS (`ParameterizedSpecObj`) and checks each operator before the
+    // configuration's POSTCONDITIONs, along with -dumpTrace's and the trace exploration spec's
+    // in their order (`Spec.getPostConditionSpecs`). The binary checks them as POSTCONDITIONs
+    // where they are the only ones.
+    let post_conditions: Vec<(&str, &str)> = args
+        .options
+        .iter()
+        .filter(|(option, _)| option == crate::args::POST_CONDITION)
+        .map(|(_, values)| (values[0].as_str(), values[1].as_str()))
+        .collect();
+    let mut config_text = config_text;
+    if !post_conditions.is_empty() {
+        let is_name = |text: &str| {
+            text.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                && text.bytes().any(|byte| byte.is_ascii_alphabetic())
+        };
+        let why = if dfid.is_some() || simulation.is_some() {
+            Some("-postCondition in DFID or a simulation")
+        } else if args.has(crate::args::DUMP_TRACE)
+            || is_trace_recorded(args, spec_path, printer.host.platform())
+        {
+            Some("-postCondition beside the trace modules' postconditions")
+        } else if post_conditions
+            .iter()
+            .any(|(module, def)| !is_name(module) || !is_name(def) || module.starts_with('_'))
+        {
+            Some("-postCondition of a name the configuration doesn't spell")
+        } else if post_conditions
+            .iter()
+            .enumerate()
+            .any(|(index, (module, _))| {
+                post_conditions[..index]
+                    .iter()
+                    .any(|(other, _)| other == module)
+            })
+        {
+            Some("-postCondition of a module twice")
+        } else {
+            match config_text
+                .as_deref()
+                .map(|text| parse_config(text, TlcVersion::Master))
+            {
+                Some(Ok(config)) if config.postconditions.is_empty() => None,
+                Some(Ok(_)) => Some("-postCondition beside a POSTCONDITION"),
+                _ => None,
+            }
+        };
+        if let Some(why) = why {
+            return report_not_native(printer, why);
+        }
+        if let Some(Ok(_)) = config_text
+            .as_deref()
+            .map(|text| parse_config(text, TlcVersion::Master))
+        {
+            let text = config_text.take().unwrap_or_default();
+            config_text = Some(post_conditions.iter().fold(text, |text, (_, def)| {
+                format!("{text}\nPOSTCONDITION {def}\n")
+            }));
+        }
+    }
+    // The command line's invariants (`-inv`, `-invlevel`): TLC parses each expression as
+    // `__DebuggerExpr__<millis> == expr` on the fourth line of a module
+    // `__DebuggerModule__<millis>` that extends the root module (`TLCDebuggerExpression.process`),
+    // and checks it after the configuration's invariants. The binary lowers each definition at
+    // the end of the root module, where it reads what the module of TLC's would, unless the root
+    // module has a LOCAL definition, and moves it to TLC's module and line once it is lowered.
+    let invariants: Vec<&[String]> = args
+        .options
+        .iter()
+        .filter(|(option, _)| option == crate::args::INVARIANT)
+        .map(|(_, values)| values.as_slice())
+        .collect();
+    let mut appended = String::new();
+    let mut debugger_modules = Vec::new();
+    let mut invariant_extendees: Vec<&str> = Vec::new();
+    let mut invariant_syntax_error = None;
+    let mut original_config_text = None;
+    if !invariants.is_empty() {
+        let source = printer
+            .host
+            .read_text(Path::new(spec_path))
+            .unwrap_or_default();
+        let is_identifier = |text: &str| {
+            text.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        };
+        let why = if dfid.is_some() || simulation.is_some() {
+            Some("-inv in DFID or a simulation")
+        } else if args.has(crate::args::DUMP_TRACE)
+            || is_trace_spec_written(args, spec_path, printer.host.platform())
+            || args.has("-coverage")
+        {
+            Some("-inv with -dumpTrace, -coverage or the trace exploration spec")
+        } else if source.contains("LOCAL") || source.contains("__Debugger") {
+            Some("-inv of a root module with LOCAL definitions")
+        } else if invariants.iter().any(|values| {
+            values[0].contains(['\n', '\r'])
+                || is_identifier(values[0].trim())
+                || values[0].trim().is_empty()
+                || values.len() > 2 && values[1] != "TLC"
+        }) {
+            Some("-inv of a definition's name, of several lines or of several modules")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return report_not_native(printer, why);
+        }
+        let millis = printer
+            .host
+            .now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        for (position, values) in invariants.iter().enumerate() {
+            let stamp = millis + position as u128;
+            let name = format!("__DebuggerExpr__{stamp}");
+            let module = format!("__DebuggerModule__{stamp}");
+            let expression = &values[0];
+            let root = main_file.rsplit('/').next().unwrap_or(main_file);
+            let text = format!(
+                "---- MODULE {module} ----\nEXTENDS {root}\n\n{name} == {expression}\n===="
+            );
+            let is_parsed = tla_front::lexer::tokenize(&text).is_ok_and(|tokens| {
+                tla_front::parser::parse_module_tokens(&text, &tokens, TlcVersion::Master).is_ok()
+            });
+            if !is_parsed {
+                invariant_syntax_error.get_or_insert_with(|| {
+                    format!("Syntax error while parsing breakpoint expression \"{expression}\"")
+                });
+            }
+            appended.push_str(&format!("{name} == {expression}\n"));
+            debugger_modules.push((name, module));
+            for module in &values[1..] {
+                if !invariant_extendees.contains(&module.as_str()) {
+                    invariant_extendees.push(module);
+                }
+            }
+        }
+        original_config_text = config_text.clone();
+        if invariant_syntax_error.is_some() {
+            appended.clear();
+        } else if let Some(text) = config_text.take() {
+            config_text = Some(debugger_modules.iter().fold(text, |text, (name, _)| {
+                format!("{text}\nINVARIANT {name}\n")
+            }));
+        }
+    }
+    // A root module that extends one of TLC's trace modules and names its postcondition in the
+    // configuration, with the module's two constants (`EXTENDS _JsonTrace`, `POSTCONDITION
+    // _JsonTrace`, `CONSTANT _JsonTraceFile = "trace.json"`), checks the postcondition -dumpTrace
+    // adds: the binary writes the counterexample to the file as it does for -dumpTrace, and links
+    // the module's constants into the root module's scope.
+    let mut extended_dump = None;
+    let root_source = printer
+        .host
+        .read_text(Path::new(spec_path))
+        .unwrap_or_default();
+    let extended_traces: Vec<String> = tla_front::model::get_root_extends(&root_source)
+        .into_iter()
+        .filter(|name| name == "_JsonTrace" || name == tla_front::model::TRACE_MODULE)
+        .collect();
+    if let Some(module) = extended_traces.first() {
+        if extended_traces.len() > 1
+            || args.has(crate::args::DUMP_TRACE)
+            || !post_conditions.is_empty()
+            || !invariants.is_empty()
+            || dfid.is_some()
+            || simulation.is_some()
+            || is_trace_spec_written(args, spec_path, printer.host.platform())
+        {
+            return report_not_native(
+                printer,
+                "a spec that extends a trace module, beside -dumpTrace, -postCondition, -inv, \
+                 -dfid, -simulate or the trace exploration spec",
+            );
+        }
+        let file = config_text
+            .as_deref()
+            .and_then(|text| parse_config(text, TlcVersion::Master).ok())
+            .filter(|config| config.postconditions == [module.clone()])
+            .and_then(|config| {
+                let assigned = |suffix: &str| {
+                    let name = format!("{module}{suffix}");
+                    config
+                        .constants
+                        .iter()
+                        .find(|assignment| assignment.name == name && assignment.module.is_none())
+                        .filter(|assignment| assignment.args.is_none())
+                        .map(|assignment| assignment.value.clone())
+                };
+                assigned("InputFile")?;
+                match assigned("File")? {
+                    tla_front::config::ConfigValue::String(file) => Some(file),
+                    _ => None,
+                }
+            });
+        let line = format!("POSTCONDITION {module}");
+        let lines: Vec<&str> = config_text.as_deref().unwrap_or_default().lines().collect();
+        let positions: Vec<usize> = (lines.iter().enumerate())
+            .filter(|(_, text)| text.trim() == line)
+            .map(|(position, _)| position)
+            .collect();
+        let (Some(file), [position]) = (file, positions.as_slice()) else {
+            return report_not_native(
+                printer,
+                "a spec that extends a trace module whose postcondition and constants the \
+                 configuration doesn't name as -dumpTrace does",
+            );
+        };
+        let mut kept = lines.clone();
+        kept.remove(*position);
+        config_text = Some(kept.join("\n") + "\n");
+        extended_dump = Some((module == "_JsonTrace", file));
+    }
     let parsed = config_text
         .as_deref()
         .map(|text| parse_config(text, TlcVersion::Master));
@@ -1023,37 +1787,177 @@ fn check_spec(
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
+    // -view prints a state as the value of the VIEW (`TLCStateMut.toString`), which changes
+    // nothing without one.
+    if args.has("-view") && config.view.is_some() {
+        return report_not_native(printer, "-view with a VIEW");
+    }
+    let te_spec_out = args.first("-teSpecOutDir");
+    // TLC makes the directory -teSpecOutDir names as it writes the spec, after `_TLCTrace` failed
+    // to write the trace's file into it.
+    if let Some(out) = te_spec_out
+        && is_trace_spec_written(args, spec_path, printer.host.platform())
+    {
+        let (directory, _, name) = te_spec::get_files_place(main_file, started, Some(out));
+        if !te_spec::is_modelled_out(out) {
+            return report_not_native(printer, "-teSpecOutDir of a path the binary doesn't model");
+        }
+        if printer.host.kind(Path::new(&directory)) != crate::host::FileKind::Directory
+            && is_trace_recorded(args, spec_path, printer.host.platform())
+        {
+            printer.unplaced_trace_file =
+                Some(te_spec::join_place(&directory, &format!("{name}.bin")));
+        }
+    }
     let mut dumps = TraceDumps::new(
         args,
         &config,
         is_trace_recorded(args, spec_path, printer.host.platform()),
         Some({
-            let (directory, _, name) = te_spec::get_files_place(main_file, started);
+            let (directory, _, name) = te_spec::get_files_place(main_file, started, te_spec_out);
             te_spec::join_place(&directory, &format!("{name}.bin"))
         }),
     );
-    let front = match read_front(
-        spec_path,
-        config_text.as_deref().unwrap_or_default(),
-        !args.has("-nowarning"),
-        &Files {
-            spec: Path::new(spec_path),
-            main_file,
-            directories: &directories,
-            temporary: java.temporary_directory.as_deref(),
-            metadir: args.first("-metadir"),
-            jar: java
-                .class_path
-                .as_deref()
-                .and_then(|class_path| get_tools_jar(class_path, printer.host.platform())),
-            is_174: false,
-            root_extendees: &dumps.get_root_extendees(),
-        },
-        printer.host,
-        printer.is_tool,
-        seed,
-    ) {
+    if let Some((is_json, file)) = extended_dump {
+        dumps.add_extended(is_json, file);
+    }
+    // The files the run may write after the search: the trace exploration spec and each dump.
+    if is_trace_spec_written(args, spec_path, printer.host.platform()) {
+        let (directory, _, name) = te_spec::get_files_place(main_file, started, te_spec_out);
+        let path = te_spec::join_place(&directory, &format!("{name}.tla"));
+        printer.host.prepare_write(Path::new(&path));
+        // Where -teSpecOutDir names the directory, whether it is there, asked before the search
+        // as the files it writes are (the spec's own directory is).
+        if te_spec_out.is_some()
+            && let Some((directory, _)) = path.rsplit_once('/')
+            && !directory.is_empty()
+            && printer.host.kind(Path::new(directory)) == crate::host::FileKind::Absent
+        {
+            printer.absent_trace_spec_directory = Some(directory.to_string());
+        }
+    }
+    for path in dumps.get_paths() {
+        printer.host.prepare_write(Path::new(path));
+    }
+    let read = |config_text: &str, appended: &str| {
+        read_front(
+            spec_path,
+            config_text,
+            !args.has("-nowarning"),
+            &Files {
+                parent_runtime: printer.host.modeled_parent_runtime(is_java_launch),
+                java_profile: java.origin_profile(
+                    java.class_path
+                        .as_deref()
+                        .and_then(|path| get_tools_jar(path, printer.host.platform())),
+                ),
+                spec: Path::new(spec_path),
+                main_file,
+                directories: &directories,
+                temporary: java.temporary_directory.as_deref(),
+                metadir: args.first("-metadir"),
+                jar: java
+                    .class_path
+                    .as_deref()
+                    .and_then(|class_path| get_tools_jar(class_path, printer.host.platform())),
+                is_174: false,
+                root_extendees: &post_conditions
+                    .iter()
+                    .map(|(module, _)| *module)
+                    .chain(dumps.get_root_extendees())
+                    .chain(invariant_extendees.iter().copied())
+                    .collect::<Vec<_>>(),
+                appended,
+                lint_codes: tla_front::report::LintCodes {
+                    is_suppressed: args
+                        .get_sany_codes("-suppressMessages")
+                        .contains(&tla_front::report::RECORD_FIELD_NAME_CLASH),
+                    is_elevated: args
+                        .get_sany_codes("-messagesAsErrors")
+                        .contains(&tla_front::report::RECORD_FIELD_NAME_CLASH),
+                },
+            },
+            printer.host,
+            printer.is_tool,
+            seed,
+        )
+    };
+    let mut read_result = read(config_text.as_deref().unwrap_or_default(), &appended);
+    // A command-line invariant SANY's generator rejects, which TLC reports as it processes the
+    // configuration, as it does one that fails to parse: the run goes on reading the spec without
+    // the invariants for what TLC computed before.
+    if let Ok(Read::UnknownInInvariant(position)) = &read_result {
+        if invariants.len() != 1 {
+            return report_not_native(
+                printer,
+                "-inv of several expressions, one of which SANY rejects",
+            );
+        }
+        invariant_syntax_error = Some(format!(
+            "Unknown location\n\nSemantic error while parsing breakpoint expression \"{}\"",
+            invariants[*position][0]
+        ));
+        appended.clear();
+        read_result = read(original_config_text.as_deref().unwrap_or_default(), "");
+    }
+    // TLC fails the command-line invariants in `processConfig` before it processes the
+    // constraints, the RL reward and periodic operators and the possible predicates, and before
+    // it reads the SYMMETRY and VIEW (`getInvariants`, then `processModelConstraints`,
+    // `processActionConstraints`, `processRLReward`, `processPeriodic`, `processConfigPossible`).
+    // The front end doesn't say which of its checks failed, so with any of them named, a failure
+    // past SANY's declines but for those TLC reports as it reads the configuration's constants or
+    // processes its specification and properties (`processConstants`, `processConfigInitAndNext`,
+    // `processConfigSpec`, `processConfig`).
+    let is_before_invariants = |coded: &CodedError| {
+        coded.code == 2222
+            || coded
+                .text
+                .starts_with("The configuration file did not specify the ")
+            || coded.code == 2229
+                && [
+                    "The initial predicate ",
+                    "The next state action ",
+                    "The name ",
+                    "The property ",
+                    "The invariant ",
+                ]
+                .iter()
+                .any(|kind| coded.text.starts_with(kind))
+            // The specification's or a property's arity, which TLC words without the kind it
+            // words a constraint's with.
+            || coded.code == 2228 && !coded.text.contains(", but one was given: ")
+    };
+    if invariant_syntax_error.is_some()
+        && matches!(&read_result, Ok(Read::Failed(failure))
+            if failure.error.as_ref().is_some_and(|coded| !is_before_invariants(coded)))
+        && original_config_text
+            .as_deref()
+            .and_then(|text| parse_config(text, TlcVersion::Master).ok())
+            .is_some_and(|config| {
+                !config.constraints.is_empty()
+                    || !config.action_constraints.is_empty()
+                    || !config.possible.is_empty()
+                    || config.rl_reward.is_some()
+                    || config.periodic.is_some()
+                    || config.symmetry.is_some()
+                    || config.view.is_some()
+            })
+    {
+        return report_not_native(
+            printer,
+            "-inv of an expression that fails to parse, with a configuration failure TLC may report after it",
+        );
+    }
+    let front = match read_result {
         Ok(Read::Model(front)) => front,
+        // Where the root module SANY accepted fails with the invariants' definitions, they fail
+        // as TLC parses them in their own module, which the binary doesn't word.
+        Ok(Read::UnknownInInvariant(_)) => {
+            return report_not_native(printer, "-inv of an expression that fails to parse");
+        }
+        Ok(Read::Failed(_)) if !appended.is_empty() => {
+            return report_not_native(printer, "-inv of an expression that fails to parse");
+        }
         // TLC rejects a temporal formula as it builds its liveness checker, which a simulation
         // builds only as it checks a trace.
         Ok(Read::Failed(failure))
@@ -1065,18 +1969,21 @@ fn check_spec(
         {
             return report_not_native(printer, "a simulation of a temporal formula TLC rejects");
         }
+        Ok(Read::Failed(failure))
+            if dfid.is_some()
+                && failure
+                    .error
+                    .as_ref()
+                    .is_some_and(|coded| coded.code == 2253) =>
+        {
+            return report_not_native(
+                printer,
+                "DFID liveness constructor error before a tautology",
+            );
+        }
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
-    // The files the run may write after the search: the trace exploration spec and each dump.
-    if is_trace_spec_written(args, spec_path, printer.host.platform()) {
-        let (directory, _, name) = te_spec::get_files_place(main_file, started);
-        let path = te_spec::join_place(&directory, &format!("{name}.tla"));
-        printer.host.prepare_write(Path::new(&path));
-    }
-    for path in dumps.get_paths() {
-        printer.host.prepare_write(Path::new(path));
-    }
     // Everything the check reads, it has read by now: a host still missing some answers it first.
     if !printer.host.is_complete() {
         return NOT_NATIVE;
@@ -1087,6 +1994,112 @@ fn check_spec(
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
         }
     };
+    // TLC reports again each Java override it loaded as it processes each invariant of the
+    // command line: `TLCDebuggerExpression.process` runs `processModuleOverrides` over every
+    // module once more for the module it makes, after the constant definitions, which the
+    // binary doesn't follow.
+    if !invariants.is_empty() && !front.override_messages.is_empty() {
+        return report_not_native(printer, "-inv beside a Java override TLC loads");
+    }
+    // TLC reports an invariant of the command line that doesn't parse as it processes the
+    // configuration, after SANY and after it computed the constant definitions
+    // (`SpecProcessor.processSpec`, `Assert.fail(EC.TLC_PARSING_FAILED2, e)`).
+    if let Some(error) = &invariant_syntax_error {
+        let Some(sany) = &front.sany else {
+            return report_not_native(printer, "-inv of an expression that fails to parse");
+        };
+        if !front.startup_messages.is_empty()
+            || !front.override_messages.is_empty()
+            || !ir.model.startup.definitions.is_empty()
+        {
+            return report_not_native(
+                printer,
+                "-inv of an expression that fails to parse, after the constant definitions",
+            );
+        }
+        print_sany(printer, sany);
+        let message = format!("Parsing or semantic analysis failed.{error}");
+        let cause = if printer.is_tool {
+            format!(
+                "@!@!@STARTMSG {code}:0 @!@!@\n{message}\n@!@!@ENDMSG {code} @!@!@",
+                code = code::PARSING_FAILED_EXCEPTION
+            )
+        } else {
+            message
+        };
+        printer.print(
+            code::PARSING_FAILED_EXCEPTION,
+            Level::Error,
+            &format!("Parsing or semantic analysis failed.{cause}"),
+        );
+        print_finished(printer, start);
+        return SPEC_PARSE_ERROR;
+    }
+    // Each invariant's definition, at the root module's end, moves to the fourth line of TLC's
+    // module of its own.
+    if !debugger_modules.is_empty() {
+        let source = printer
+            .host
+            .read_text(Path::new(spec_path))
+            .unwrap_or_default();
+        let normalized = tla_front::report::end_lines_at_carriage_returns(&source);
+        let Some((_, first_line)) = crate::front::insert_before_module_end(&normalized, &appended)
+        else {
+            return report_not_native(
+                printer,
+                "-inv in a module whose end the binary doesn't place",
+            );
+        };
+        let root = ir
+            .texts
+            .iter()
+            .position(|text| **text == *main_file.rsplit('/').next().unwrap_or(main_file));
+        let modules: Vec<u32> = debugger_modules
+            .iter()
+            .map(|(_, module)| {
+                ir.texts.push(module.as_str().into());
+                (ir.texts.len() - 1) as u32
+            })
+            .collect();
+        for node in &mut ir.nodes.arena {
+            let Some(range) = node.range.as_mut() else {
+                continue;
+            };
+            let offset = range.start_line - first_line as i32;
+            if Some(range.module as usize) != root || offset < 0 || offset as usize >= modules.len()
+            {
+                continue;
+            }
+            if range.end_line != range.start_line {
+                return report_not_native(printer, "-inv of an expression the IR spreads");
+            }
+            range.module = modules[offset as usize];
+            range.start_line = 4;
+            range.end_line = 4;
+            node.line = 4;
+        }
+    }
+    // The front end gives a spec without variables FALSE for Init and Next, whether or not the
+    // configuration names a next-state relation, but DFIDModelChecker reports success right after
+    // the initial states only where TLC has no action (`getActions().length == 0`).
+    if dfid.is_some() && ir.variables.is_empty() {
+        return report_not_native(printer, "DFID of a spec without variables");
+    }
+    // DFIDModelChecker keeps no worker of its own in `workers` before it searches, which
+    // TLCGetOrDefault, as _Track applies it, then fails to read.
+    if dfid.is_some()
+        && ir
+            .builtins
+            .iter()
+            .any(|builtin| &*ir.texts[builtin.name as usize] == "_Track")
+    {
+        return report_not_native(printer, "DFID of a spec that applies _Track");
+    }
+    // -terse keeps TLC from expanding a value it keeps lazy as it prints it (`TLCGlobals.expand`),
+    // which changes nothing where the spec builds no such value.
+    if args.has("-terse") && may_build_lazy_value(&ir) {
+        return report_not_native(printer, "-terse with a value TLC may keep lazy");
+    }
     // TLCGet("-Dname") reads a system property, which the engine takes for unset.
     if let Some(name) = java
         .properties
@@ -1101,11 +2114,14 @@ fn check_spec(
     // TLC looks an ALIAS up among the definitions, the constants and TRUE, FALSE, BOOLEAN and
     // STRING (`SpecProcessor.processSpec`'s `defns`, `Spec.getAliasSpec`). Where the IR has no
     // definition of it, the binary reports it as one TLC doesn't find but where the configuration
-    // assigns it as a constant or it names one of the others.
+    // assigns it as a constant or it names a builtin, such as an operator a Java override
+    // implements, which TLC holds as a value, or one of the others.
     let is_alias_undefined_unsure = ir.model.alias.as_ref().is_some_and(|alias| {
         let name = &*ir.texts[alias.name as usize];
         alias.definition.is_none()
-            && (["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&name)
+            && (front.sany.is_none()
+                || front.defined_names.iter().any(|defined| **defined == *name)
+                || ["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&name)
                 || config
                     .constants
                     .iter()
@@ -1120,14 +2136,16 @@ fn check_spec(
     }
     // TLC names a postcondition with where its definition's body is written.
     let is_postcondition_unplaced = ir.model.postconditions.iter().any(|postcondition| {
-        postcondition.definition.is_none_or(|definition| {
-            match &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind {
-                tla_ir::NodeKind::Definition(definition) => {
-                    ir.nodes.arena[definition.body as usize].range.is_none()
-                }
-                _ => true,
+        let Some(definition) = postcondition.definition else {
+            // One TLC doesn't find is rejected below, but not under DFID.
+            return dfid.is_some();
+        };
+        match &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind {
+            tla_ir::NodeKind::Definition(definition) => {
+                ir.nodes.arena[definition.body as usize].range.is_none()
             }
-        })
+            _ => true,
+        }
     });
     if is_postcondition_unplaced {
         return report_not_native(printer, "a POSTCONDITION without a place in the source");
@@ -1145,6 +2163,25 @@ fn check_spec(
             }) if !params.is_empty()
         )
     };
+    // TLC finds a command line's postcondition among its module's definitions
+    // (`moduleNode.getOpDef`), and evaluates its body with no arguments bound: the binary
+    // follows one the root module's scope finds there, without parameters.
+    let is_post_condition_unfound =
+        post_conditions
+            .iter()
+            .zip(&ir.model.postconditions)
+            .any(|((module, _), postcondition)| {
+                postcondition.definition.is_none_or(|definition| {
+                    let node = &ir.nodes.arena[ir.definitions[definition as usize] as usize];
+                    takes_arguments(definition)
+                        || node
+                            .range
+                            .is_none_or(|range| &*ir.texts[range.module as usize] != *module)
+                })
+            });
+    if is_post_condition_unfound || ir.model.postconditions.len() < post_conditions.len() {
+        return report_not_native(printer, "a -postCondition operator TLC may find otherwise");
+    }
     let is_computed_at_startup = |definition: u32| {
         Rebuilder::new(&ir).and_then(|mut rebuilder| rebuilder.is_computed_at_startup(definition))
     };
@@ -1155,11 +2192,52 @@ fn check_spec(
         return report_not_native(printer, "an ALIAS TLC may compute as it starts");
     }
     let mut rejected_postcondition = None;
-    for postcondition in &ir.model.postconditions {
-        let Some(definition) = postcondition.definition else {
-            continue;
-        };
+    for (position, postcondition) in ir
+        .model
+        .postconditions
+        .iter()
+        .enumerate()
+        .filter(|_| dfid.is_none())
+    {
         let name = &ir.texts[postcondition.name as usize];
+        // TLC evaluates a command line's postcondition's body even where it computed the
+        // definition as it started (`ParameterizedSpecObj.getPostConditionSpecs`).
+        let is_command_line = position < post_conditions.len();
+        // TLC looks a POSTCONDITION up among the definitions, the constants and TRUE, FALSE,
+        // BOOLEAN and STRING (`Spec.getPostConditionSpecs`), as it does an ALIAS. Where the IR
+        // has no definition of it, the binary reports it as one TLC doesn't find but where it
+        // names a variable, a constant, a substitution, a builtin such as an operator a Java
+        // override implements, or one of the others.
+        let Some(definition) = postcondition.definition else {
+            let is_unsure = front.sany.is_none()
+                || front
+                    .defined_names
+                    .iter()
+                    .any(|defined| **defined == **name)
+                || ["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&&**name)
+                || config
+                    .constants
+                    .iter()
+                    .any(|constant| *constant.name == **name)
+                || config
+                    .substitutions
+                    .iter()
+                    .any(|substitution| *substitution.name == **name)
+                || ir
+                    .variables
+                    .iter()
+                    .any(|&variable| ir.texts[variable as usize] == *name);
+            if is_unsure {
+                return report_not_native(printer, "a POSTCONDITION TLC may not find");
+            }
+            rejected_postcondition = Some((
+                format!(
+                    "The post condition {name} specified in the configuration file\nis not defined in the specification."
+                ),
+                code::CONFIG_SPECIFIED_NOT_DEFINED,
+            ));
+            break;
+        };
         if takes_arguments(definition) {
             rejected_postcondition = Some((
                 format!(
@@ -1171,6 +2249,7 @@ fn check_spec(
         }
         match is_computed_at_startup(definition) {
             Ok(false) => {}
+            Ok(true) if is_command_line => {}
             Ok(true) => {
                 rejected_postcondition = Some((
                     format!("The post condition {name} cannot be a constant."),
@@ -1185,13 +2264,15 @@ fn check_spec(
     }
     let is_sany_warned = front.is_sany_warned;
     let is_tlcext_declined = front.is_tlcext_declined;
+    printer.alias_decline = front.alias_decline.clone();
+    printer.made_paths = get_made_paths(args, spec_path, &dumps, printer.host);
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
         printer.is_trace_recorded = is_trace_recorded(args, spec_path, printer.host.platform());
         if is_trace_spec_written(args, spec_path, printer.host.platform()) {
             printer.trace_spec = Some(TraceSpec::new(
                 main_file,
-                started,
+                te_spec::get_files_place(main_file, started, te_spec_out),
                 &ir,
                 &config,
                 &front.defined_names,
@@ -1212,6 +2293,16 @@ fn check_spec(
     // TLC seeds its generator with -seed, which an IR tla-front lowers doesn't hold.
     ir.model.random_seed = seed as u64;
     ir.model.fingerprint_index = fingerprint_index;
+    // The root module's name is the spec file's, as SANY requires.
+    ir.model.root_module_name = Path::new(spec_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| {
+            ir.texts[..(ir.ranked_count as usize).min(ir.texts.len())]
+                .iter()
+                .position(|text| &**text == stem)
+        })
+        .map(|position| position as tla_ir::TextId);
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }
@@ -1224,7 +2315,12 @@ fn check_spec(
             ir = split;
         }
     }
-    if let Some(simulation) = simulation {
+    // Shared with the engine's computation of a constant definition it fails on
+    // (`Settings::adopter`).
+    let ir = Arc::new(ir);
+    if let Some(mut simulation) = simulation {
+        simulation.initial_action =
+            crate::simulation::get_initial_action(&ir, front.initial_action.as_ref());
         let simulating = Simulating {
             simulation,
             config: &config,
@@ -1239,9 +2335,18 @@ fn check_spec(
     }
     // TLC checks the temporal properties as the search goes, unless -lncheck asks for one check at
     // the end.
-    let is_liveness_periodic = !args
-        .first("-lncheck")
-        .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
+    let lncheck = args.first("-lncheck").map(|check| check.to_lowercase());
+    let is_liveness_periodic = !lncheck
+        .as_deref()
+        .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check));
+    // With off, TLC skips the check on the complete state graph too (`LiveCheck.finalCheck`): it
+    // still adds each state to the behavior graphs and stops at a tableau node that accepts every
+    // behavior as it searches.
+    let is_liveness_off = lncheck.as_deref() == Some("off");
+    // Where TLC's workers stop at an accepting node depends on how they interleave.
+    if is_liveness_off && workers > 1 && !ir.model.live_formula.is_empty() {
+        return report_not_native(printer, "-lncheck off with several workers");
+    }
     let is_dumped = dump.is_some();
     if is_dumped && (ir.model.view.is_some() || ir.model.startup.symmetry.is_some()) {
         return report_not_native(printer, "-dump under SYMMETRY or a VIEW");
@@ -1254,6 +2359,9 @@ fn check_spec(
     // Under -continue TLC reports each invariant and action property violated with its trace and
     // goes on. Where it checks more than those, the binary doesn't follow.
     let is_continued = args.has("-continue");
+    if dfid.is_some() && is_continued && !args.has("-noGenerateSpecTE") {
+        return report_not_native(printer, "DFID continuation with trace files");
+    }
     if is_continued {
         let model = &ir.model;
         let is_built_in = |names: &[&str]| {
@@ -1261,7 +2369,9 @@ fn check_spec(
                 .iter()
                 .any(|builtin| names.contains(&&*ir.texts[builtin.name as usize]))
         };
-        let unfollowed = if !model.live_formula.is_empty() {
+        let unfollowed = if dfid.is_some() && model.alias.is_some() {
+            Some("DFID continuation with an ALIAS")
+        } else if !model.live_formula.is_empty() {
             Some("-continue with temporal properties")
         } else if model.view.is_some() || model.startup.symmetry.is_some() {
             Some("-continue under SYMMETRY or a VIEW")
@@ -1269,7 +2379,14 @@ fn check_spec(
             Some("-continue with a POSTCONDITION")
         } else if dumps.has_command_line_dumps() {
             Some("-continue with -dumpTrace")
-        } else if is_built_in(&["Print", "PrintT", "AssertEq", "TLCSet", "TLCGetAndSet"]) {
+        } else if is_built_in(&[
+            "Print",
+            "PrintT",
+            "AssertEq",
+            "TLCSet",
+            "TLCGetAndSet",
+            "_Track",
+        ]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then
             // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
             // which the search goes on reading.
@@ -1279,6 +2396,7 @@ fn check_spec(
             "RandomSubset",
             "RandomSetOfSubsets",
             "RandomSubsetSet",
+            "TestRandomSetOfSubsets",
         ]) {
             // TLC fails to recover the traces of a spec that draws at random as it goes on
             // (RandomElement, RandomSubsetNext): "Failed to recover the initial state".
@@ -1296,6 +2414,7 @@ fn check_spec(
         JsonFiles::Host(Arc::new(HostFiles::new(printer.host.spec_files_read())))
     };
     let settings = Settings {
+        dfid,
         is_violation_reported: true,
         // The front end leaves out a substitute or a value the configuration scopes to a module
         // (`<- [M]`, `= [M]`), which TLC applies, so what a model whose startup failed reads past
@@ -1333,6 +2452,7 @@ fn check_spec(
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
         json_files: json_files.clone(),
+        adopter: Some(get_adopter(&ir, workers, printer.is_tool)),
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -1355,7 +2475,7 @@ fn check_spec(
         .substitutions
         .iter()
         .any(|substitution| substitution.module.is_some());
-    let ir_ref = &ir;
+    let ir_ref: &tla_ir::Ir = &ir;
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
@@ -1370,6 +2490,7 @@ fn check_spec(
             relay.is_periodic = is_periodic;
             relay.is_dumped = is_dumped;
             relay.is_scoped_substituted = is_scoped_substituted;
+            relay.dfid = settings.dfid;
             relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
@@ -1378,22 +2499,36 @@ fn check_spec(
             loop {
                 // TLC prints each line as it goes, so what waits in the buffer goes out whenever
                 // the search has nothing more to say yet.
+                // While the run's output is held, the wait ends with the hold, so that what was
+                // printed streams from then on.
                 let event = match receiver.try_recv() {
                     Ok(event) => event,
                     Err(_) => {
                         printer.flush();
-                        let Ok(event) = receiver.recv() else {
+                        let received = match crate::transaction::get_hold_left() {
+                            Some(left) => match receiver.recv_timeout(left) {
+                                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                                received => received.map_err(|_| ()),
+                            },
+                            None => receiver.recv().map_err(|_| ()),
+                        };
+                        let Ok(event) = received else {
                             break;
                         };
                         event
                     }
                 };
                 match event {
+                    Event::DfidLevel(level, generated, distinct) => {
+                        printer.print(2205, Level::None, &format!("Starting level {level}: {generated} states generated, {distinct} distinct states found."));
+                    }
+                    Event::InitialStatesStarted if dfid.is_some() => {}
                     Event::InitialStatesStarted => printer.print(
                         code::COMPUTING_INIT,
                         Level::None,
                         "Computing initial states...",
                     ),
+                    Event::InitialStatesProgress(_) if dfid.is_some() => {}
                     Event::InitialStatesProgress(count) => printer.print(
                         code::COMPUTING_INIT_PROGRESS,
                         Level::None,
@@ -1401,7 +2536,11 @@ fn check_spec(
                     ),
                     Event::InitialStates(generated, distinct) => {
                         initial_generated = generated;
-                        print_initial_states(printer, generated, distinct)
+                        if dfid.is_some() {
+                            printer.print(2208, Level::None, &format!("Finished computing initial states: {generated} states generated, with {distinct} of them distinct."));
+                        } else {
+                            print_initial_states(printer, generated, distinct);
+                        }
                     }
                     Event::Progress(generated, distinct, queued, depth) => {
                         let statistics = Statistics {
@@ -1423,8 +2562,18 @@ fn check_spec(
                         }
                     }
                     Event::Print(Some(text)) => printer.printed(&text),
+                    Event::Warning(warning) => {
+                        if let Err(reason) = printer.runtime_warning(ir_ref, &warning) {
+                            declined = Some(reason.to_owned());
+                        }
+                    }
                     Event::StartupMessage(message) => print_startup_message(printer, &message),
-                    Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
+                    Event::SymmetrySetsTooSmall(names) => {
+                        if !print_small_sets(printer, &names) {
+                            declined = Some(SMALL_SET_UNNAMED.to_owned());
+                            break;
+                        }
+                    }
                     // Nothing more this run prints can be right, so it prints nothing more, and the
                     // search, which the relay cancels, ends with the events it sends unread.
                     Event::Print(None) => {
@@ -1440,9 +2589,15 @@ fn check_spec(
                         break;
                     }
                     Event::SimulationProgress(..) => {}
+                    Event::DfidContinued(report) => {
+                        is_continued_past = true;
+                        print_dfid_continued(printer, &report);
+                    }
                     Event::Continued(report) => {
                         is_continued_past = true;
-                        print_continued(printer, &report)
+                        if let Err(reason) = print_continued(printer, ir_ref, &report) {
+                            declined = Some(reason.to_owned());
+                        }
                     }
                     Event::Declined(reason) => {
                         declined = Some(reason);
@@ -1505,11 +2660,31 @@ fn check_spec(
     // other traces and exit codes, which the binary doesn't follow.
     // WebAssembly's recursion bound stops the search as it would without -continue.
     if is_continued
+        && !(dfid.is_some()
+            && matches!(
+                &outcome,
+                SearchOutcome::DfidLimited { .. } | SearchOutcome::DfidUnsupported { .. }
+            ))
         && !matches!(
             &outcome,
             SearchOutcome::Complete { .. } | SearchOutcome::Declined(_)
         )
         && !matches!(&outcome, SearchOutcome::Stopped { reason, .. } if reason == tla_engine::machine::WEBASSEMBLY_TOO_DEEP)
+        // A deadlock and an initial state that violates a property's state predicate stop TLC
+        // under -continue too, as they do without it, where it went on past nothing before
+        // (`doNextSetErr` keeps no error state, `DoInitFunctor` throws).
+        && !(!is_continued_past
+            && matches!(
+                &outcome,
+                SearchOutcome::Stopped { violation: Some(violation), .. }
+                    if matches!(
+                        violation.kind,
+                        tla_engine::search::ViolationKind::Deadlock {
+                            accepted: None,
+                            atom: None
+                        } | tla_engine::search::ViolationKind::InitialPredicate(_)
+                    )
+            ))
     {
         return report_not_native(printer, "-continue to a search that stops");
     }
@@ -1586,9 +2761,18 @@ fn check_spec(
             registers,
             ..
         } => {
-            // Once the search completes, TLC reports a _POSSIBLE predicate the search never
-            // witnessed, and then checks the postconditions.
-            if possible.iter().any(|&count| count <= 0) {
+            // Once the search completes, TLC checks one `_CheckName` for each _POSSIBLE
+            // predicate, which reports the first the search never witnessed, and then the
+            // postconditions (`Tool.checkPostConditionWithContext`): the pinned Jar checks
+            // neither those nor what they print after it. Where it checks temporal properties
+            // first, or with DFID or -continue, the binary doesn't follow.
+            let unwitnessed = possible.iter().position(|&count| count <= 0);
+            if unwitnessed.is_some()
+                && (liveness.is_some()
+                    || dfid.is_some()
+                    || is_continued
+                    || rejected_postcondition.is_some())
+            {
                 return report_not_native(
                     printer,
                     "a _POSSIBLE predicate the search didn't witness",
@@ -1627,7 +2811,8 @@ fn check_spec(
             if let Some(liveness) = liveness {
                 // TLC stops at a node that accepts every behavior as it searches, so it checks
                 // nothing once the search is done.
-                let is_lasso = matches!(liveness.verdict, Verdict::Lasso { .. });
+                let is_lasso =
+                    matches!(liveness.verdict, Verdict::Lasso { .. }) && !is_liveness_off;
                 let is_accepted = matches!(liveness.verdict, Verdict::Accepted { .. });
                 if let Some(violation) = violation.filter(|_| is_lasso || is_accepted) {
                     let run = postcondition_run(
@@ -1649,6 +2834,7 @@ fn check_spec(
                         &violation,
                         is_lasso.then_some((&liveness, checking)),
                         TraceChecks {
+                            workers: Some(workers),
                             dumps: &dumps,
                             run: Some(&run),
                         },
@@ -1663,6 +2849,7 @@ fn check_spec(
                 }
                 let why = match &liveness.verdict {
                     Verdict::Holds => None,
+                    Verdict::Lasso { .. } if is_liveness_off => None,
                     Verdict::Lasso { .. }
                         if ir.model.startup.symmetry.is_some() || ir.model.view.is_some() =>
                     {
@@ -1699,10 +2886,58 @@ fn check_spec(
                         "temporal properties of branches not counted",
                     );
                 };
-                let checking = print_liveness_started(printer, &statistics, branches);
-                print_liveness_finished(printer, checking);
+                if is_liveness_off {
+                    // `ModelChecker.modelCheck` reports its progress before `finalCheck`.
+                    print_progress(printer, &statistics, None);
+                } else {
+                    let checking = print_liveness_started(printer, &statistics, branches);
+                    print_liveness_finished(printer, checking);
+                }
             }
-            if !ir.model.postconditions.is_empty() {
+            if let Some(position) = unwitnessed {
+                let statistics = Statistics {
+                    generated: counts.generated,
+                    distinct: counts.distinct,
+                    queued: counts.queued,
+                    depth: counts.depth,
+                };
+                return print_unwitnessed(
+                    printer,
+                    &ir,
+                    &config,
+                    position,
+                    &postcondition_run(
+                        &ir,
+                        Some(&possible),
+                        &statistics,
+                        counts.initial_generated,
+                        start,
+                    ),
+                    &statistics,
+                    start,
+                )
+                .unwrap_or_else(|why| {
+                    report_not_native(
+                        printer,
+                        &format!("a _POSSIBLE predicate the search didn't witness: {why}"),
+                    )
+                });
+            }
+            // TLC finishes a spec without a next-state relation before it checks the
+            // postconditions (`ModelChecker.modelCheck`, `getActions().length == 0`); the front
+            // end gives a spec without variables no actions, which the binary follows where the
+            // configuration names no next-state relation either.
+            let has_no_actions = ir.variables.is_empty();
+            if has_no_actions
+                && (config.next.is_some() || config.specification.is_some())
+                && !ir.model.postconditions.is_empty()
+            {
+                return report_not_native(
+                    printer,
+                    "a POSTCONDITION of a spec without variables that names a next-state relation",
+                );
+            }
+            if dfid.is_none() && !ir.model.postconditions.is_empty() && !has_no_actions {
                 let statistics = Statistics {
                     generated: counts.generated,
                     distinct: counts.distinct,
@@ -1723,7 +2958,9 @@ fn check_spec(
                 // What the postconditions print comes as TLC evaluates them; TLC reports one that
                 // doesn't hold in place of the success, with the statistics.
                 for line in &checked.printed {
-                    printer.printed(line);
+                    if let Err(reason) = printer.replayed(&ir, line) {
+                        return report_not_native(printer, reason);
+                    }
                 }
                 if checked.failure.is_some() {
                     printer.outcome.status = Some("postcondition-violation");
@@ -1793,7 +3030,7 @@ fn check_spec(
             };
         }
         SearchOutcome::StartupException { message } => {
-            let message = format!("{UNEXPECTED_EXCEPTION}{message}");
+            let message = format!("{}{message}", tla_front::errors::UNEXPECTED_HEAD);
             set_startup_thrown(
                 printer,
                 Thrown::Evaluation(message.clone()),
@@ -1865,12 +3102,33 @@ fn check_spec(
                     print_finished(printer, start);
                     Ok(NO_NEXT_ACTION)
                 }
+                // With several workers, TLC's others take the states left on its queue and expand
+                // them as they race to the stop, and whichever worker adds a state two of a
+                // level step to is its parent in the trace: its trace and counts then differ
+                // from one worker's, and vary from run to run.
+                _ if workers > 1 && violation.counts.is_raced => {
+                    Err("a stop several workers race to".to_string())
+                }
                 // TLC's report of a failure evaluating the model, which it replays. It prints the
                 // trace through the ALIAS, which the printing follows for a failure in the
                 // next-state relation or an invariant.
                 ViolationKind::Error { .. } if !config.possible.is_empty() => {
                     Err("a failure with a _POSSIBLE predicate".to_string())
                 }
+                // With several workers, TLC's others expand the states the worker enqueued before
+                // a successor's constraint, action constraint or action property failed to
+                // evaluate, as they race to the stop: its trace and counts then differ from one
+                // worker's, and may vary from run to run.
+                ViolationKind::Error {
+                    site:
+                        ErrorSite::Constraint(_)
+                        | ErrorSite::ActionConstraint(_)
+                        | ErrorSite::ActionProperty(_),
+                } if workers > 1 && !violation.counts.is_lone_expansion => Err(
+                    "a constraint, an action constraint or an action property that fails with \
+                     several workers"
+                        .to_string(),
+                ),
                 // After a failure TLC checks the postconditions only as its worker goes on to
                 // check the state for deadlock, having generated no successor of it
                 // (`Worker.run`): which the search's counts say only of the first state expanded.
@@ -1882,9 +3140,9 @@ fn check_spec(
                         && (dumps.has_command_line_dumps()
                             || !config.postconditions.is_empty()
                                 && match site {
-                                    ErrorSite::Invariant(_) | ErrorSite::ActionConstraint(_) => {
-                                        false
-                                    }
+                                    ErrorSite::Invariant(_)
+                                    | ErrorSite::ActionConstraint(_)
+                                    | ErrorSite::Constraint(_) => false,
                                     ErrorSite::Next => {
                                         ir.model.check_deadlock
                                             && violation.counts.generated != initial_generated
@@ -1926,6 +3184,54 @@ fn check_spec(
                 {
                     Err("a failing action constraint the configuration binds".to_string())
                 }
+                ViolationKind::Error {
+                    site: ErrorSite::Constraint(position),
+                } if config
+                    .constraints
+                    .get(position as usize)
+                    .is_some_and(|name| {
+                        config
+                            .constants
+                            .iter()
+                            .any(|constant| constant.module.is_none() && &constant.name == name)
+                            || config
+                                .substitutions
+                                .iter()
+                                .any(|substitution| &substitution.name == name)
+                    }) =>
+                {
+                    Err("a failing constraint the configuration binds".to_string())
+                }
+                // TLC checks the postconditions after an initial state some variable lacks a
+                // value in (`ModelChecker.modelCheck`: `doInit` returns the violation
+                // `DoInitFunctor` threw), on the CounterExample of the state, and exits with the
+                // violation's status whatever they give. The counts of the run, the registers and
+                // the CounterExample they may read, _POSSIBLE's counts and the trace files aren't
+                // followed.
+                ViolationKind::Error {
+                    site: ErrorSite::Init,
+                } if reason == INCOMPLETE_INITIAL_STATE
+                    && (!config.postconditions.is_empty() || !config.possible.is_empty())
+                    && (!config.possible.is_empty()
+                        || !dumps.is_empty()
+                        || ir.builtins.iter().any(|builtin| {
+                            builtin.flags & tla_ir::Builtin::EXTERNAL_CLASS != 0
+                                || matches!(
+                                    &*ir.texts[builtin.name as usize],
+                                    "TLCGet"
+                                        | "_Counts"
+                                        | "_CheckName"
+                                        | "_PrintCounts"
+                                        | "CounterExample"
+                                        | "ToTrace"
+                                )
+                        })) =>
+                {
+                    Err(
+                        "a POSTCONDITION that reads the run after an incomplete initial state"
+                            .to_string(),
+                    )
+                }
                 ViolationKind::Error { site } => 'failure: {
                     let added = match violation.added.as_ref().map(|_| format_added(&violation)) {
                         Some(Err(why)) => break 'failure Err(why.to_string()),
@@ -1935,6 +3241,7 @@ fn check_spec(
                     let counts = &violation.counts;
                     let stop = ErrorStop {
                         added,
+                        workers,
                         reason: &reason,
                         startup: &violation.startup,
                         store: &violation.store,
@@ -1947,9 +3254,12 @@ fn check_spec(
                             ErrorSite::ActionConstraint(position) => {
                                 Site::ActionConstraint(position)
                             }
+                            ErrorSite::Constraint(position) => Site::Constraint(position),
+                            ErrorSite::ActionProperty(position) => Site::ActionProperty(position),
                             ErrorSite::InitialConstraint(position) => {
                                 Site::InitialConstraint(position)
                             }
+                            ErrorSite::InitialView => Site::InitialView,
                             ErrorSite::InitialInvariant(position) => {
                                 Site::InitialInvariant(position)
                             }
@@ -1977,8 +3287,8 @@ fn check_spec(
                         .then_some(&violation),
                         is_aliased: config.alias.is_some() && !is_initial_site(site),
                         postconditions: (!config.postconditions.is_empty()
-                            && site == ErrorSite::Next
-                            && ir.model.check_deadlock)
+                            && (site == ErrorSite::Next && ir.model.check_deadlock
+                                || site == ErrorSite::Init && reason == INCOMPLETE_INITIAL_STATE))
                             .then(|| {
                                 postcondition_run(
                                     &ir,
@@ -1995,6 +3305,13 @@ fn check_spec(
                             }),
                     };
                     print_failure(printer, &ir, &stop, start)
+                }
+                // DFIDModelChecker checks no postcondition after an initial state's violation,
+                // which `print_violation` checks as the breadth-first model checker does.
+                ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_)
+                    if dfid.is_some() && !config.postconditions.is_empty() =>
+                {
+                    Err("DFID's initial violation with a POSTCONDITION".to_string())
                 }
                 _ => {
                     let counts = &violation.counts;
@@ -2018,6 +3335,7 @@ fn check_spec(
                         &violation,
                         None,
                         TraceChecks {
+                            workers: Some(workers),
                             dumps: &dumps,
                             run: rejected_postcondition.is_none().then_some(&run),
                         },
@@ -2036,9 +3354,242 @@ fn check_spec(
         SearchOutcome::Invariant(reason) => {
             return report_not_native(printer, &format!("an engine invariant failed: {reason}"));
         }
+        SearchOutcome::DfidInitialIncomplete {
+            state,
+            store,
+            holds_collapsed,
+        } => {
+            if holds_collapsed || !args.has("-noGenerateSpecTE") {
+                return report_not_native(
+                    printer,
+                    "DFID incomplete initial state with unrenderable values or trace files",
+                );
+            }
+            let values = state
+                .iter()
+                .map(|&id| {
+                    if id == tla_engine::UNASSIGNED {
+                        Ok(None)
+                    } else {
+                        tla_trace::from_store(&store, id).map(Some)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>();
+            let Ok(values) = values else {
+                return report_not_native(
+                    printer,
+                    "DFID incomplete initial state has an unrenderable value",
+                );
+            };
+            let refs: Vec<_> = values.iter().map(Option::as_ref).collect();
+            let variables =
+                crate::trace::get_partial_variables(&ir, &refs, printer.host.is_plain());
+            printer.outcome.status = Some("error");
+            printer.report(
+                2106,
+                &format!(
+                    "State is not completely specified by the initial predicate:\n{}",
+                    format_variables(&variables)
+                ),
+            );
+            print_finished(printer, start);
+            return 255;
+        }
+        SearchOutcome::DfidIncomplete {
+            states,
+            store,
+            action,
+            holds_collapsed,
+            generated,
+            distinct,
+        } => {
+            if holds_collapsed {
+                return report_not_native(
+                    printer,
+                    "DFID incomplete trace holds a value whose printed shape is not retained",
+                );
+            }
+            if !args.has("-noGenerateSpecTE") || !dumps.is_empty() {
+                return report_not_native(printer, "DFID incomplete trace with trace files");
+            }
+            return print_dfid_incomplete(
+                printer,
+                &ir,
+                &states,
+                &store,
+                action,
+                (generated, distinct),
+                start,
+            )
+            .unwrap_or_else(|reason| report_not_native(printer, reason));
+        }
+        SearchOutcome::DfidInitialInvariantFailure(violation) => {
+            if !args.has("-noGenerateSpecTE")
+                || !dumps.is_empty()
+                || ir.builtins.iter().any(|builtin| {
+                    matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSetOfSubsets"
+                            | "RandomSubsetSet"
+                            | "TestRandomSetOfSubsets"
+                            | "TLCSet"
+                            | "TLCGetAndSet"
+                            | "_Track"
+                    )
+                })
+            {
+                return report_not_native(
+                    printer,
+                    "DFID initial invariant failure with trace files, random draws, or register writes",
+                );
+            }
+            return print_dfid_initial_invariant_failure(printer, &ir, &violation, start)
+                .unwrap_or_else(|reason| report_not_native(printer, &reason));
+        }
+        SearchOutcome::DfidInitialFailure(violation) => {
+            if !args.has("-noGenerateSpecTE")
+                || !dumps.is_empty()
+                || !ir.model.postconditions.is_empty()
+                || ir.builtins.iter().any(|builtin| {
+                    matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSetOfSubsets"
+                            | "RandomSubsetSet"
+                            | "TestRandomSetOfSubsets"
+                            | "TLCSet"
+                            | "TLCGetAndSet"
+                    )
+                })
+            {
+                return report_not_native(
+                    printer,
+                    "DFID initial failure with trace files, a postcondition, random draws, or register writes",
+                );
+            }
+            return print_dfid_initial_failure(printer, &ir, &violation, start)
+                .unwrap_or_else(|reason| report_not_native(printer, &reason));
+        }
+        SearchOutcome::DfidActionFailure(violation) => {
+            if !args.has("-noGenerateSpecTE")
+                || !dumps.is_empty()
+                || ir.builtins.iter().any(|builtin| {
+                    matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSetOfSubsets"
+                            | "RandomSubsetSet"
+                            | "TestRandomSetOfSubsets"
+                            | "TLCSet"
+                            | "TLCGetAndSet"
+                            | "_Track"
+                    )
+                })
+            {
+                return report_not_native(
+                    printer,
+                    "DFID action failure with trace files, random draws, or register writes",
+                );
+            }
+            return print_dfid_action_failure(printer, &ir, &violation, start)
+                .unwrap_or_else(|reason| report_not_native(printer, &reason));
+        }
+        SearchOutcome::DfidNextFailure(violation) => {
+            if !args.has("-noGenerateSpecTE")
+                || !dumps.is_empty()
+                || ir.builtins.iter().any(|builtin| {
+                    matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSetOfSubsets"
+                            | "RandomSubsetSet"
+                            | "TestRandomSetOfSubsets"
+                            | "TLCSet"
+                            | "TLCGetAndSet"
+                            | "_Track"
+                    )
+                })
+            {
+                return report_not_native(
+                    printer,
+                    "DFID next-state failure with trace files, random draws, or register writes",
+                );
+            }
+            return print_dfid_next_failure(printer, &ir, &violation, start)
+                .unwrap_or_else(|reason| report_not_native(printer, &reason));
+        }
+        SearchOutcome::DfidViolation(violation)
+        | SearchOutcome::DfidInvariantFailure(violation) => {
+            if !args.has("-noGenerateSpecTE")
+                || !dumps.is_empty()
+                || ir.builtins.iter().any(|builtin| {
+                    matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "RandomElement"
+                            | "RandomSubset"
+                            | "RandomSetOfSubsets"
+                            | "RandomSubsetSet"
+                            | "TestRandomSetOfSubsets"
+                            | "TLCSet"
+                            | "TLCGetAndSet"
+                            | "_Track"
+                    )
+                })
+            {
+                return report_not_native(
+                    printer,
+                    "DFID trace with trace files, random draws, or register writes",
+                );
+            }
+            return print_dfid_violation(printer, &ir, &violation, &dumps, start)
+                .unwrap_or_else(|reason| report_not_native(printer, reason));
+        }
+        SearchOutcome::DfidUnsupported { multiple_workers } => {
+            let text = if multiple_workers {
+                "Depth-First Iterative Deepening mode does not support multiple workers (https://github.com/tlaplus/tlaplus/issues/548).  Please run TLC with a single worker."
+            } else {
+                "Depth-First Iterative Deepening mode does not support checking liveness properties (https://github.com/tlaplus/tlaplus/issues/548).  Please check liveness properties in Breadth-First-Search mode."
+            };
+            printer.print(code::GENERAL, Level::Error, text);
+            print_finished(printer, start);
+            return 255;
+        }
+        SearchOutcome::DfidLimited {
+            generated,
+            distinct,
+        } => {
+            if printer.is_tool {
+                let date = printer.date();
+                printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {generated} states generated, {distinct} distinct states found, -1 states left on queue."));
+            }
+            printer.print(
+                2204,
+                Level::None,
+                &format!("{generated} states generated, {distinct} distinct states found."),
+            );
+            print_finished(printer, start);
+            return if dfid.is_some_and(|limit| limit >= 2) {
+                SUCCESS
+            } else {
+                255
+            };
+        }
     };
     let optimistic = optimistic_probability(counts.distinct, counts.generated);
-    let actual = fingerprint_distance(counts.distinct, counts.generated, &fingerprints, threads)
+    let distance = if dfid.is_some() {
+        crate::summary::dfid_fingerprint_distance(&fingerprints)
+    } else {
+        fingerprint_distance(counts.distinct, counts.generated, &fingerprints, threads)
+    };
+    if dfid.is_some() && distance.is_none() {
+        return report_not_native(printer, "DFID fingerprint distance is nonpositive");
+    }
+    let actual = distance
         .map(|distance| {
             format!(
                 "\n  based on the actual fingerprints:  val = {}",
@@ -2046,6 +3597,11 @@ fn check_spec(
             )
         })
         .unwrap_or_default();
+    let actual = if dfid.is_some() && counts.generated == 0 && counts.distinct == 0 {
+        "\n  based on the actual fingerprints:  val = 0.0".to_string()
+    } else {
+        actual
+    };
     printer.outcome.status = Some("success");
     printer.print(
         code::SUCCESS,
@@ -2061,6 +3617,23 @@ fn check_spec(
         queued: counts.queued,
         depth: counts.depth,
     };
+    if dfid.is_some() {
+        printer.outcome.counts = statistics.counts();
+        if printer.is_tool {
+            let date = printer.date();
+            printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {} states generated, {} distinct states found, -1 states left on queue.", counts.generated, counts.distinct));
+        }
+        printer.print(
+            2204,
+            Level::None,
+            &format!(
+                "{} states generated, {} distinct states found.",
+                counts.generated, counts.distinct
+            ),
+        );
+        print_finished(printer, start);
+        return SUCCESS;
+    }
     print_statistics(printer, &statistics, start);
     if let Some(summary) = out_degree_summary(&counts.out_degrees) {
         printer.print(code::STATE_GRAPH_OUTDEGREE, Level::None, &summary);
@@ -2149,6 +3722,504 @@ pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, s
     );
 }
 
+// `DFIDModelChecker.modelCheckImpl`: where computing the initial states throws before TLC has a
+// state (`errState`), TLC reports the exception as one it didn't expect, replays the initial
+// states with its call stack and, as that throws again, reports its `Tool` in place of the
+// stack, then the summary of the replay, which counted no state.
+fn print_dfid_initial_failure(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    violation: &Violation,
+    start: Instant,
+) -> Result<i32, String> {
+    let failure = crate::failure::dfid_initial_failure(ir, violation)?;
+    let message = if printer.is_tool {
+        &failure.tool_text
+    } else {
+        &failure.text
+    };
+    printer.outcome.status = Some("error");
+    printer.report(
+        code::GENERAL,
+        &format!(
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing initial states.\nThe exception was a {}\n: {message}",
+            failure.class_name
+        ),
+    );
+    // `Object.toString` of TLC's `Tool`: its class and identity hash.
+    let identity = (std::process::id() as u64)
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        .rotate_left(17) as u32
+        | 0x1000_0000;
+    printer.print(
+        code::NESTED_EXPRESSION,
+        Level::Error,
+        &format!(
+            "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\ntlc2.tool.impl.FastTool@{identity:x}"
+        ),
+    );
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(
+            2206,
+            Level::None,
+            &format!("Progress(-1) at {date}: 0 states generated, 0 distinct states found, -1 states left on queue."),
+        );
+    }
+    printer.print(
+        2204,
+        Level::None,
+        "0 states generated, 0 distinct states found.",
+    );
+    print_finished(printer, start);
+    Ok(75)
+}
+
+fn print_dfid_initial_invariant_failure(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    violation: &Violation,
+    start: Instant,
+) -> Result<i32, String> {
+    if violation.holds_collapsed {
+        return Err("DFID initial failure has an unrenderable value".into());
+    }
+    let ViolationKind::Error {
+        site: ErrorSite::InitialInvariant(position),
+    } = violation.kind
+    else {
+        return Err("DFID initial failure has no invariant".into());
+    };
+    let failure = crate::failure::dfid_initial_invariant_failure(ir, violation, position)?;
+    if failure.code != code::GENERAL
+        || failure.state.is_some()
+        || failure.fingerprint.is_some()
+        || !failure.printed.is_empty()
+    {
+        return Err("DFID initial invariant exception cannot be reported exactly".into());
+    }
+    let state = violation
+        .states
+        .first()
+        .ok_or("DFID initial failure state is missing")?;
+    let values = state
+        .iter()
+        .map(|&id| tla_trace::from_store(&violation.store, id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "DFID initial failure has an unrenderable value")?;
+    let variables = crate::trace::get_state_variables(ir, &values, printer.host.is_plain());
+    let message = if printer.is_tool {
+        &failure.tool_message
+    } else {
+        &failure.message
+    };
+    printer.outcome.status = Some("error");
+    printer.report(
+        2102,
+        &format!(
+            "{message}\nWhile working on the initial state:\n{}",
+            format_variables(&variables)
+        ),
+    );
+    let counts = &violation.counts;
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {} states generated, {} distinct states found, -1 states left on queue.", counts.generated, counts.distinct));
+    }
+    printer.print(
+        2204,
+        Level::None,
+        &format!(
+            "{} states generated, {} distinct states found.",
+            counts.generated, counts.distinct
+        ),
+    );
+    print_finished(printer, start);
+    Ok(0)
+}
+
+fn print_dfid_action_failure(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    violation: &Violation,
+    start: Instant,
+) -> Result<i32, String> {
+    if violation.holds_collapsed {
+        return Err("DFID action failure trace has an unrenderable value".into());
+    }
+    let ViolationKind::ActionProperty(position) = violation.kind else {
+        return Err("DFID action failure has no property".into());
+    };
+    let property = ir
+        .model
+        .action_properties
+        .get(position)
+        .ok_or("DFID action property is missing")?;
+    if property.scope.is_some() {
+        return Err("DFID action failure in an instance scope".into());
+    }
+    let stack = crate::failure::dfid_action_failure(ir, violation, position)?;
+    if stack.is_empty() {
+        return Err("DFID action failure has no reproducible call stack".into());
+    }
+    let states: Vec<_> = violation
+        .states
+        .iter()
+        .map(|state| {
+            state
+                .iter()
+                .map(|&id| tla_trace::from_store(&violation.store, id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<_, _>>()
+        .map_err(|_| "DFID action failure trace has an unrenderable value")?;
+    printer.outcome.status = Some("error");
+    printer.report(
+        2113,
+        &format!(
+            "Evaluating action property {} failed.",
+            ir.texts[property.name as usize]
+        ),
+    );
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for (position, state) in states.iter().enumerate() {
+        let variables = crate::trace::get_state_variables(ir, state, printer.host.is_plain());
+        printer.print(
+            code::STATE_PRINT_1,
+            Level::State,
+            &format!("{}:\n{}", position + 1, format_variables(&variables)),
+        );
+        if let Some(reported) = printer.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: String::new(),
+                variables,
+            });
+        }
+    }
+    if violation.counts.is_dfid_replayed {
+        print_call_stack(printer, ir, &stack);
+    }
+    let counts = &violation.counts;
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {} states generated, {} distinct states found, -1 states left on queue.", counts.generated, counts.distinct));
+    }
+    printer.print(
+        2204,
+        Level::None,
+        &format!(
+            "{} states generated, {} distinct states found.",
+            counts.generated, counts.distinct
+        ),
+    );
+    print_finished(printer, start);
+    Ok(13)
+}
+
+/// TLC's report of an exception in the next-state relation under -dfid (`DFIDModelChecker.doNext`
+/// catches it as a `Throwable`): an EvalException is `EC.GENERAL` with its message, and TLC keeps
+/// the call stack and replays the expansion on the next level, which prints the nested
+/// expressions. A recursion without end overflows TLC's stack, which it reports as
+/// `EC.SYSTEM_STACK_OVERFLOW` and keeps no call stack for (`setErrState` with `keepCallStack`
+/// false), so `runTLC` returns the error at once and no replay prints nested expressions.
+fn print_dfid_next_failure(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    violation: &Violation,
+    start: Instant,
+) -> Result<i32, String> {
+    if violation.holds_collapsed {
+        return Err("DFID failure trace has a value whose printed shape is not retained".into());
+    }
+    let failure = crate::failure::dfid_next_failure(ir, violation)?;
+    match &failure {
+        Some(failure)
+            if failure.code == code::GENERAL
+                || failure.call_stack.is_empty()
+                || !failure.printed.is_empty()
+                || failure.fingerprint.is_some() =>
+        {
+            return Err("DFID next-state exception cannot be reported exactly".into());
+        }
+        Some(_) => {}
+        None if printer.host.is_plain() => {
+            return Err("a recursion that overflows TLC's stack, in the library".into());
+        }
+        // What the spec printed before TLC overflowed, which the search doesn't keep.
+        None if !ir.model.live_properties.is_empty() || crate::failure::may_print(ir) => {
+            return Err(
+                "a recursion that overflows TLC's stack in a model that prints or checks more"
+                    .into(),
+            );
+        }
+        None => {}
+    }
+    let states: Vec<_> = violation
+        .states
+        .iter()
+        .map(|state| {
+            state
+                .iter()
+                .map(|&id| tla_trace::from_store(&violation.store, id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<_, _>>()
+        .map_err(|_| "DFID failure trace has an unrenderable value")?;
+    printer.outcome.status = Some("error");
+    match &failure {
+        Some(failure) => {
+            let message = if printer.is_tool {
+                format!(
+                    "@!@!@STARTMSG {}:0 @!@!@\n{}\n@!@!@ENDMSG {} @!@!@",
+                    failure.code, failure.message, failure.code
+                )
+            } else {
+                failure.message.clone()
+            };
+            printer.report(code::GENERAL, &format!("TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing the set of next states.\nThe exception was a tlc2.tool.EvalException\n: {message}"));
+        }
+        None => printer.report(code::SYSTEM_STACK_OVERFLOW, STACK_OVERFLOW_MESSAGE),
+    }
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for (position, state) in states.iter().enumerate() {
+        let variables = crate::trace::get_state_variables(ir, state, printer.host.is_plain());
+        printer.print(
+            code::STATE_PRINT_1,
+            Level::State,
+            &format!("{}:\n{}", position + 1, format_variables(&variables)),
+        );
+        if let Some(reported) = printer.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: String::new(),
+                variables,
+            });
+        }
+    }
+    // The nested expressions are what TLC's replay on the next level prints.
+    if let Some(failure) = &failure
+        && violation.counts.is_dfid_replayed
+    {
+        print_call_stack(printer, ir, &failure.call_stack);
+    }
+    let counts = &violation.counts;
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {} states generated, {} distinct states found, -1 states left on queue.", counts.generated, counts.distinct));
+    }
+    printer.print(
+        2204,
+        Level::None,
+        &format!(
+            "{} states generated, {} distinct states found.",
+            counts.generated, counts.distinct
+        ),
+    );
+    print_finished(printer, start);
+    Ok(255)
+}
+
+fn print_dfid_incomplete(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    states: &[Vec<tla_values::Id>],
+    store: &tla_values::Store,
+    action: u32,
+    counts: (u64, u64),
+    start: Instant,
+) -> Result<i32, &'static str> {
+    let (generated, distinct) = counts;
+    let last = states.last().ok_or("DFID incomplete trace is empty")?;
+    let actions = &ir.model.actions;
+    let action = actions
+        .get(action as usize)
+        .ok_or("DFID incomplete action is unknown")?;
+    // `Action.getName`, as `doNextSetErr` names the action.
+    let subject = if actions.len() == 1 {
+        "the next-state action".to_string()
+    } else {
+        format!(
+            "action {} of the next-state relation",
+            ir.texts[action.name as usize]
+        )
+    };
+    let mut names: Vec<&str> = last
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| **id == tla_engine::UNASSIGNED)
+        .map(|(index, _)| ir.texts[ir.variables[index] as usize].as_ref())
+        .collect();
+    if names.is_empty() {
+        return Err("DFID incomplete successor has no missing variable");
+    }
+    names.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    let (noun, verb) = if names.len() > 1 {
+        ("variables", "are")
+    } else {
+        ("variable", "is")
+    };
+    let states: Vec<_> = states
+        .iter()
+        .map(|state| {
+            state
+                .iter()
+                .map(|&id| {
+                    if id == tla_engine::UNASSIGNED {
+                        Ok(None)
+                    } else {
+                        tla_trace::from_store(store, id).map(Some)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<_, _>>()
+        .map_err(|_| "DFID incomplete trace holds a value that cannot be rendered")?;
+    printer.outcome.status = Some("error");
+    printer.report(code::INCOMPLETE_SUCCESSOR, &format!("Successor state is not completely specified by {subject}. The following {noun} {verb} not defined: {}.\n", names.join(", ")));
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for (position, state) in states.iter().enumerate() {
+        let values: Vec<_> = state.iter().map(Option::as_ref).collect();
+        let variables = crate::trace::get_partial_variables(ir, &values, printer.host.is_plain());
+        printer.print(
+            code::STATE_PRINT_1,
+            Level::State,
+            &format!("{}:\n{}", position + 1, format_variables(&variables)),
+        );
+        if let Some(reported) = printer.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: String::new(),
+                variables,
+            });
+        }
+    }
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {generated} states generated, {distinct} distinct states found, -1 states left on queue."));
+    }
+    printer.print(
+        2204,
+        Level::None,
+        &format!("{generated} states generated, {distinct} distinct states found."),
+    );
+    print_finished(printer, start);
+    Ok(75)
+}
+
+fn print_dfid_violation(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    violation: &Violation,
+    _dumps: &TraceDumps,
+    start: Instant,
+) -> Result<i32, &'static str> {
+    let (code, headline, status, exit, state_code) = match violation.kind {
+        ViolationKind::Invariant(owner) => (
+            code::INVARIANT_VIOLATED_BEHAVIOR,
+            format!("Invariant {} is violated.", invariant_name(ir, owner)?),
+            "invariant-violation",
+            SAFETY_VIOLATION,
+            code::STATE_PRINT_2,
+        ),
+        ViolationKind::Deadlock { .. } => (
+            code::DEADLOCK_REACHED,
+            "Deadlock reached.".to_string(),
+            "deadlock",
+            DEADLOCK,
+            code::STATE_PRINT_1,
+        ),
+        ViolationKind::Error {
+            site: ErrorSite::Invariant(owner),
+        } => (
+            2111,
+            format!(
+                "Evaluating invariant {} failed.",
+                invariant_name(ir, owner as usize)?
+            ),
+            "error",
+            76,
+            code::STATE_PRINT_1,
+        ),
+        ViolationKind::ActionProperty(position) => (
+            code::ACTION_PROPERTY_VIOLATED_BEHAVIOR,
+            action_property_headline(ir, position)?,
+            "liveness-violation",
+            LIVENESS_VIOLATION,
+            code::STATE_PRINT_1,
+        ),
+        _ => return Err("unsupported DFID violation"),
+    };
+    if violation.holds_collapsed {
+        return Err("DFID trace holds a value whose printed shape is not retained");
+    }
+    let states: Vec<_> = violation
+        .states
+        .iter()
+        .map(|state| {
+            state
+                .iter()
+                .map(|&id| tla_trace::from_store(&violation.store, id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<_, _>>()
+        .map_err(|_| "DFID trace holds a value that cannot be rendered")?;
+    printer.outcome.status = Some(status);
+    printer.report(code, &headline);
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    for (position, state) in states.iter().enumerate() {
+        let variables = crate::trace::get_state_variables(ir, state, printer.host.is_plain());
+        let separator = if state_code == code::STATE_PRINT_2 {
+            ": \n"
+        } else {
+            ":\n"
+        };
+        printer.print(
+            state_code,
+            Level::State,
+            &format!(
+                "{}{separator}{}",
+                position + 1,
+                format_variables(&variables)
+            ),
+        );
+        if let Some(reported) = printer.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: String::new(),
+                variables,
+            });
+        }
+    }
+    let counts = &violation.counts;
+    if printer.is_tool {
+        let date = printer.date();
+        printer.print(2206, Level::None, &format!("Progress(-1) at {date}: {} states generated, {} distinct states found, -1 states left on queue.", counts.generated, counts.distinct));
+    }
+    printer.print(
+        2204,
+        Level::None,
+        &format!(
+            "{} states generated, {} distinct states found.",
+            counts.generated, counts.distinct
+        ),
+    );
+    print_finished(printer, start);
+    Ok(exit)
+}
+
 const BOOK: &str = "(compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).";
 const NO_SPECIFICATION_WARNING: &str = "The stuttering counterexample above may be caused by the absence of a behavior specification (SPECIFICATION). Only INIT and NEXT have been provided, so TLC permits infinite stuttering. To rule out such counterexamples, use SPECIFICATION Spec, with Spec asserting a suitable fairness constraint (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).";
 
@@ -2161,6 +4232,7 @@ fn is_initial_site(site: ErrorSite) -> bool {
         site,
         ErrorSite::Init
             | ErrorSite::InitialConstraint(_)
+            | ErrorSite::InitialView
             | ErrorSite::InitialInvariant(_)
             | ErrorSite::InitialPredicate(_)
             | ErrorSite::InitialAtom { .. }
@@ -2205,14 +4277,28 @@ pub(crate) fn print_violation(
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
-    if !is_writable(printer.host, &trace.dumped) {
+    // The trace's file of the trace exploration spec, which `_TLCTrace`'s postcondition fails to
+    // write where its directory isn't there.
+    let unplaced = printer.unplaced_trace_file.clone();
+    let is_unplaced = |file: &crate::dump_trace::DumpedFile| {
+        !file.is_printed && Some(&file.path) == unplaced.as_ref()
+    };
+    let placed: Vec<_> = trace
+        .dumped
+        .iter()
+        .filter(|file| !is_unplaced(file))
+        .collect();
+    if !placed
+        .iter()
+        .all(|file| printer.host.can_write(Path::new(&file.path)))
+    {
         return Err("-dumpTrace into a directory that doesn't exist");
     }
-    let dumped_lines: Vec<String> = trace
+    let dumped_lines: Vec<crate::trace::PrintedOutput> = trace
         .dumped
         .iter()
         .filter(|file| file.is_printed)
-        .map(|file| file.get_line())
+        .map(|file| crate::trace::PrintedOutput::Print(file.get_line()))
         .collect();
     // TLC adds a deadlocked state to the behavior graphs after it reports the deadlock, and
     // reports the tableau node that accepts every behavior it reaches next.
@@ -2289,7 +4375,9 @@ pub(crate) fn print_violation(
             LIVENESS_VIOLATION,
             "liveness-violation",
         ),
-        ViolationKind::NoNextState | ViolationKind::Error { .. } => return Err(NOT_IN_IR),
+        ViolationKind::NoNextState
+        | ViolationKind::Error { .. }
+        | ViolationKind::SimulatedLasso { .. } => return Err(NOT_IN_IR),
         // Under SYMMETRY or a VIEW, TLC names the properties the lasso it rebuilt violates.
         ViolationKind::Lasso { .. } => (
             code::TEMPORAL_PROPERTY_VIOLATED,
@@ -2374,17 +4462,46 @@ pub(crate) fn print_violation(
     // and no statistics, since it checks the initial states before it searches.
     if let ViolationKind::InitialInvariant(_) | ViolationKind::InitialPredicate(_) = violation.kind
     {
-        // TLC checks the postconditions then, with the counts of the initial states it found,
-        // which the binary doesn't follow.
-        if !ir.model.postconditions.is_empty() {
-            return Err("a POSTCONDITION after an initial state's violation");
-        }
+        // TLC checks the postconditions then, on the CounterExample of the state, and exits with
+        // the violation's status whatever they give (`ModelChecker.modelCheck` drops
+        // `checkPostConditionWithCounterExample`'s): what they print and the report of one that
+        // fails follow the violation's. The counts of the initial states they may read, and the
+        // trace files, aren't followed.
+        let postconditions = if ir.model.postconditions.is_empty() {
+            None
+        } else {
+            let reads_run = ir.builtins.iter().any(|builtin| {
+                builtin.flags & tla_ir::Builtin::EXTERNAL_CLASS != 0
+                    || matches!(
+                        &*ir.texts[builtin.name as usize],
+                        "TLCGet" | "_Counts" | "_CheckName" | "_PrintCounts" | "Trace"
+                    )
+            });
+            if reads_run || !dumped_lines.is_empty() || !trace.dumped.is_empty() {
+                return Err(
+                    "a POSTCONDITION that reads the run or writes a trace file after an initial state's violation",
+                );
+            }
+            Some(
+                trace
+                    .postconditions
+                    .as_ref()
+                    .ok_or("a POSTCONDITION TLC rejects after an initial state's violation")?,
+            )
+        };
         let state = trace.states.into_iter().next().ok_or(NOT_IN_IR)?;
+        // TLC evaluates the ALIAS on the state as it builds the message (`ModelChecker.doInit`).
+        for line in &state.alias_output {
+            printer.replayed(ir, line)?;
+        }
         printer.print(
             code,
             Level::Error,
             &format!("{text}\n{}", format_variables(&state.variables)),
         );
+        if unplaced.is_some() {
+            return Err("-teSpecOutDir into a directory that isn't there");
+        }
         if !write(printer.host, &trace.dumped) {
             return Ok(report_not_native(
                 printer,
@@ -2401,12 +4518,21 @@ pub(crate) fn print_violation(
             loop_start: None,
         });
         for line in &dumped_lines {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
+        }
+        if let Some(checked) = postconditions {
+            for line in &checked.printed {
+                printer.replayed(ir, line)?;
+            }
+            print_postcondition_failure(printer, ir, Some(checked));
         }
         print_finished(printer, start);
         return Ok(exit_code);
     }
-    let added = format_added(violation)?;
+    let added: Vec<_> = format_added(violation)?
+        .into_iter()
+        .map(crate::trace::PrintedOutput::Print)
+        .collect();
     // TLC reports a postcondition that fails before it adds the state it stopped at to the
     // behavior graphs, which the printing doesn't order.
     if !added.is_empty() && !ir.model.postconditions.is_empty() {
@@ -2415,7 +4541,9 @@ pub(crate) fn print_violation(
     let lasso_printed = match &violation.kind {
         ViolationKind::Lasso { printed, .. } => printed
             .iter()
-            .map(|prints| format_printed(&violation.store, prints))
+            .map(|prints| {
+                format_printed(&violation.store, prints).map(crate::trace::PrintedOutput::Print)
+            })
             .collect::<Option<Vec<_>>>()
             .ok_or("printing a value whose text depends on how TLC built it")?,
         _ => Vec::new(),
@@ -2440,12 +4568,21 @@ pub(crate) fn print_violation(
     let first_output = trace.states[0].output.iter();
     let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
+        }
+        // TLC evaluates the ALIAS of each state once it has rebuilt them, before it finds the
+        // properties the counterexample violates.
+        let is_interleaved = match lasso {
+            Some((_, is_stuttering, ..)) => !is_stuttering,
+            None => trace.states.len() > 1,
+        };
+        for line in counterexample_alias_output(&trace, is_interleaved)? {
+            printer.replayed(ir, line)?;
         }
         // What the atoms print as TLC finds the properties the lasso it rebuilt violates, as it
         // checks them rather than as it rebuilds the trace.
         for line in &lasso_printed {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
         }
         printer.report(code, &text);
         (
@@ -2455,7 +4592,7 @@ pub(crate) fn print_violation(
     } else {
         printer.report(code, &text);
         for line in first_output {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
         }
         (
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2463,7 +4600,7 @@ pub(crate) fn print_violation(
         )
     };
     printer.print(heading_code, Level::Error, heading);
-    print_states(printer, &trace.states, &labels);
+    print_states(printer, ir, &trace.states, &labels, is_counterexample)?;
     // `printTraceAndStop` reports what `printTrace` throws on the successor it didn't find, and
     // the run ends as after the trace.
     if trace.is_successor_lost {
@@ -2478,13 +4615,49 @@ pub(crate) fn print_violation(
             "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null",
         );
     }
-    // -dumpTrace's postconditions write their files as TLC checks them.
-    if !write(printer.host, &trace.dumped) {
-        return Ok(report_not_native(
-            printer,
-            "-dumpTrace into a file it can't write",
-        ));
+    // -dumpTrace's postconditions write their files as TLC checks them, then the trace
+    // exploration spec's, before the configuration's (`Spec.getPostConditionSpecs`); TLC stops
+    // at the first that fails (`Tool.checkPostConditionWithContext`). The binary follows the
+    // trace exploration spec's failure after a safety violation's trace without a POSTCONDITION,
+    // whose report then ends with it.
+    let mut unwritten = None;
+    for file in &trace.dumped {
+        if !is_unplaced(file) {
+            if !printer
+                .host
+                .write_file(Path::new(&file.path), &file.bytes, false)
+            {
+                return Ok(report_not_native(
+                    printer,
+                    "-dumpTrace into a file it can't write",
+                ));
+            }
+            continue;
+        }
+        let is_followed = lasso.is_none()
+            && !is_counterexample
+            && added.is_empty()
+            && accepted.is_none()
+            && checking.is_none()
+            && atom_stack.is_empty()
+            && !trace.is_successor_lost
+            && ir.model.postconditions.is_empty();
+        if !is_followed {
+            return Err("-teSpecOutDir into a directory that isn't there");
+        }
+        let path = Path::new(&file.path);
+        if printer.host.write_file(path, &file.bytes, false) {
+            continue;
+        }
+        let Some(reason) = printer.host.open_failure(path, true) else {
+            return Ok(report_not_native(
+                printer,
+                "-dumpTrace into a file it can't write",
+            ));
+        };
+        unwritten = Some(format!("{} ({reason})", file.path));
     }
+    printer.unplaced_trace_file = None;
     if let (Some(reported), Some((loop_start, ..))) = (printer.outcome.violations.last_mut(), lasso)
     {
         reported.loop_start = Some(loop_start);
@@ -2500,7 +4673,7 @@ pub(crate) fn print_violation(
     );
     if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
         }
     }
     match lasso {
@@ -2514,7 +4687,7 @@ pub(crate) fn print_violation(
                 .chain(postcondition_output.clone())
                 .chain(&added)
             {
-                printer.printed(line);
+                printer.replayed(ir, line)?;
             }
         }
         Some((loop_start, true, _, _)) => {
@@ -2576,7 +4749,7 @@ pub(crate) fn print_violation(
     }
     if lasso.is_some() {
         for line in postcondition_output {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
         }
     }
     if let Some((accepted, headline, labels)) = accepted {
@@ -2585,7 +4758,10 @@ pub(crate) fn print_violation(
             .iter()
             .chain(&accepted.trace_output)
         {
-            printer.printed(line);
+            printer.replayed(ir, line)?;
+        }
+        for line in counterexample_alias_output(&accepted, accepted.states.len() > 1)? {
+            printer.replayed(ir, line)?;
         }
         printer.report(code::TEMPORAL_PROPERTY_VIOLATED, &headline);
         printer.print(
@@ -2593,9 +4769,12 @@ pub(crate) fn print_violation(
             Level::Error,
             "The following behavior constitutes a counter-example:\n",
         );
-        print_states(printer, &accepted.states, &labels);
+        print_states(printer, ir, &accepted.states, &labels, true)?;
     }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
+    if let Some(error) = unwritten {
+        print_trace_file_failure(printer, &error);
+    }
     if !atom_stack.is_empty() {
         print_call_stack(printer, ir, &atom_stack);
     }
@@ -2653,7 +4832,61 @@ fn trace_labels<'i>(
 
 // A violation under -continue as TLC prints it, without the statistics that end a stop: an
 // initial state in the headline's message, any other with its trace.
-fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
+fn print_dfid_continued(printer: &mut Printer, report: &DfidContinuedReport) {
+    if report.is_initial {
+        let variables = report.states.first().cloned().unwrap_or_default();
+        printer.print(
+            report.code,
+            Level::Error,
+            &format!("{}\n{}", report.headline, format_variables(&variables)),
+        );
+        printer.record(Reported {
+            code: report.code,
+            headline: report.headline.clone(),
+            states: vec![ReportedState {
+                label: String::new(),
+                variables,
+            }],
+            loop_start: None,
+        });
+        return;
+    }
+    printer.report(report.code, &report.headline);
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    let state_code = if report.code == code::INVARIANT_VIOLATED_BEHAVIOR {
+        code::STATE_PRINT_2
+    } else {
+        code::STATE_PRINT_1
+    };
+    for (index, variables) in report.states.iter().enumerate() {
+        let separator = if state_code == code::STATE_PRINT_2 {
+            ": \n"
+        } else {
+            ":\n"
+        };
+        printer.print(
+            state_code,
+            Level::State,
+            &format!("{}{separator}{}", index + 1, format_variables(variables)),
+        );
+        if let Some(reported) = printer.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: String::new(),
+                variables: variables.clone(),
+            });
+        }
+    }
+}
+
+fn print_continued(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    report: &ContinuedReport,
+) -> Result<(), &'static str> {
     let trace = &report.trace;
     if report.is_initial {
         let variables = trace
@@ -2674,7 +4907,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
             }],
             loop_start: None,
         });
-        return;
+        return Ok(());
     }
     printer.report(report.code, &report.headline);
     for line in trace
@@ -2683,7 +4916,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
         .into_iter()
         .flat_map(|state| &state.output)
     {
-        printer.printed(line);
+        printer.replayed(ir, line)?;
     }
     printer.print(
         code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2691,28 +4924,93 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
         "The behavior up to this point is:",
     );
     let labels: Vec<&str> = report.labels.iter().map(String::as_str).collect();
-    print_states(printer, &trace.states, &labels);
+    print_states(printer, ir, &trace.states, &labels, false)?;
     for line in &trace.trace_output {
-        printer.printed(line);
+        printer.replayed(ir, line)?;
     }
+    Ok(())
 }
 
-fn print_states(printer: &mut Printer, states: &[PrintedState], labels: &[&str]) {
+// What the ALIAS prints as TLC evaluates it on a counterexample's states, in their order. TLC
+// rebuilds a lasso's path to its cycle before it evaluates the ALIAS on it, but evaluates it on
+// each state of a cycle that isn't a stuttering one as it rebuilds the next
+// (`LiveWorker.printTrace`), and so on each state of a counterexample `LiveCheck` finds
+// (`LiveCheck.printErrorTrace`): where the spec prints too, those prints interleave with the
+// ALIAS's, which the rebuilt trace, holding what the spec printed as one, doesn't place.
+fn counterexample_alias_output(
+    trace: &crate::trace::PrintedTrace,
+    is_interleaved: bool,
+) -> Result<Vec<&crate::trace::PrintedOutput>, &'static str> {
+    let output: Vec<_> = trace
+        .states
+        .iter()
+        .flat_map(|state| &state.alias_output)
+        .collect();
+    let is_spec_printing =
+        !trace.trace_output.is_empty() || trace.states.iter().any(|state| !state.output.is_empty());
+    if is_interleaved && is_spec_printing && !output.is_empty() {
+        return Err(
+            "a counterexample whose states TLC rebuilds between the prints of an ALIAS that prints",
+        );
+    }
+    Ok(output)
+}
+
+pub(crate) const DIFF_UNKNOWN: &str =
+    "-difftrace of a value TLC may compare otherwise than its text";
+
+fn print_states(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    states: &[PrintedState],
+    labels: &[&str],
+    is_counterexample: bool,
+) -> Result<(), &'static str> {
     for (position, (state, label)) in states.iter().zip(labels).enumerate() {
         if position > 0 {
             for line in &state.output {
-                printer.printed(line);
+                printer.replayed(ir, line)?;
             }
         }
-        printer.state(position + 1, label, state.variables.clone());
+        // TLC evaluates the ALIAS of a counterexample's states before it reports the violation
+        // (`LiveWorker.printTrace`, `LiveCheck.printErrorTrace`), and of a behavior's as it
+        // prints each state (`TLCTrace.printTrace`).
+        if !is_counterexample {
+            for output in &state.alias_output {
+                printer.replayed(ir, output)?;
+            }
+        }
+        // Under -difftrace a liveness counterexample diffs every state against the one printed
+        // before it (`LiveCheck.printTrace`), while `TLCTrace.printTrace` prints a behavior's
+        // first and last states whole.
+        let is_diffed = printer.is_diff_trace
+            && position > 0
+            && (is_counterexample || position + 1 < states.len());
+        if is_diffed {
+            let previous = &states[position - 1];
+            let text = get_diff_text(
+                (&state.variables, &state.comparable, state.is_alias_record),
+                (
+                    &previous.variables,
+                    &previous.comparable,
+                    previous.is_alias_record,
+                ),
+            )
+            .ok_or(DIFF_UNKNOWN)?;
+            printer.state_text(position + 1, label, &text, state.variables.clone());
+        } else {
+            printer.state(position + 1, label, state.variables.clone());
+        }
         printer
             .recorded_trace
             .record_state(position + 1, state.values.clone());
     }
+    Ok(())
 }
 
 // TLC names the properties the lasso violates, or none when it can't tell which
 // (`getTemporalHeadline`).
+
 fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
     let Verdict::Lasso { violated, .. } = &liveness.verdict else {
         return None;
@@ -2721,7 +5019,7 @@ fn temporal_headline(ir: &tla_ir::Ir, liveness: &Liveness) -> Option<String> {
 }
 
 // The headline that names the temporal properties at `violated` in the model's properties.
-fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
+pub(crate) fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
     let mut names: Vec<&str> = Vec::new();
     for &position in violated {
         let name = &*ir.texts[ir.model.live_properties.get(position)?.name as usize];
@@ -2738,6 +5036,58 @@ fn properties_headline(ir: &tla_ir::Ir, violated: &[usize]) -> Option<String> {
             if rest.len() > 1 { "," } else { "" }
         ),
     })
+}
+
+/// TLC's report of the first `_POSSIBLE` predicate the search didn't witness: `_CheckName`
+/// prints the counts, and TLC names the predicate with where its definition's body is written
+/// (`Tool.checkPostConditionWithContext`, `EC.TLC_POSSIBLE_UNWITNESSED`).
+fn print_unwitnessed(
+    printer: &mut Printer,
+    ir: &tla_ir::Ir,
+    config: &ModelConfig,
+    position: usize,
+    run: &PostconditionRun,
+    statistics: &Statistics,
+    start: Instant,
+) -> Result<i32, String> {
+    let predicate = &ir.model.possible[position].name;
+    let name = &ir.texts[predicate.name as usize];
+    // TLC names the definition the configuration names, which a substitution may replace.
+    if config
+        .substitutions
+        .iter()
+        .any(|substitution| *substitution.name == **name)
+    {
+        return Err("a predicate the configuration substitutes".into());
+    }
+    let range = predicate
+        .definition
+        .and_then(|definition| {
+            match &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind {
+                tla_ir::NodeKind::Definition(definition) => {
+                    ir.nodes.arena[definition.body as usize].range
+                }
+                _ => None,
+            }
+        })
+        .ok_or("a predicate whose definition has no place")?;
+    let printed = print_possible_counts(ir, run)?;
+    printer.replayed(ir, &printed).map_err(str::to_string)?;
+    printer.outcome.status = Some("postcondition-violation");
+    printer.report(
+        code::POSSIBLE_UNWITNESSED,
+        &format!(
+            "The _POSSIBLE predicate {name} at line {}, col {} to line {}, col {} of module {} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.",
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+            ir.texts[range.module as usize]
+        ),
+    );
+    print_statistics(printer, statistics, start);
+    print_finished(printer, start);
+    Ok(ASSUMPTION_VIOLATION)
 }
 
 /// What TLCGet reads once the search is over, for the postconditions: each `_POSSIBLE`
@@ -2786,26 +5136,52 @@ pub(crate) fn print_postcondition_failure(
     };
     let postcondition = &ir.model.postconditions[*index];
     let name = &ir.texts[postcondition.name as usize];
+    // `pc.getPred().toString()`: SANY names a numeral by its image, as written (`\b101`, `007`),
+    // and any other node by where it is written.
     let location = postcondition
         .definition
         .and_then(|definition| {
             let node = ir.definitions[definition as usize];
             match &ir.nodes.arena[node as usize].kind {
                 tla_ir::NodeKind::Definition(definition) => {
-                    ir.nodes.arena[definition.body as usize].range
+                    let mut id = definition.body;
+                    while let tla_ir::NodeKind::Reference(target) = ir.nodes.arena[id as usize].kind
+                    {
+                        id = target;
+                    }
+                    Some(id)
                 }
                 _ => None,
             }
         })
-        .map(|range| {
-            format!(
-                " at line {}, col {} to line {}, col {} of module {}",
-                range.start_line,
-                range.start_column,
-                range.end_line,
-                range.end_column,
-                ir.texts[range.module as usize]
-            )
+        .and_then(|id| {
+            let body = &ir.nodes.arena[id as usize];
+            let range = body.range?;
+            let image = match &body.kind {
+                tla_ir::NodeKind::Number(_) if let Some(&image) = ir.nodes.numerals.get(&id) => {
+                    Some(ir.texts[image as usize].to_string())
+                }
+                tla_ir::NodeKind::Number(int) => Some(int.to_string()),
+                tla_ir::NodeKind::WideNumber(text) => Some(ir.texts[*text as usize].to_string()),
+                _ => None,
+            };
+            Some(match image {
+                Some(image)
+                    if range.start_line == range.end_line
+                        && usize::try_from(range.end_column - range.start_column + 1)
+                            .is_ok_and(|width| width == image.len()) =>
+                {
+                    format!(" at {image}")
+                }
+                _ => format!(
+                    " at line {}, col {} to line {}, col {} of module {}",
+                    range.start_line,
+                    range.start_column,
+                    range.end_line,
+                    range.end_column,
+                    ir.texts[range.module as usize]
+                ),
+            })
         })
         .unwrap_or_default();
     let (code, text) = match verdict {
@@ -2822,6 +5198,29 @@ pub(crate) fn print_postcondition_failure(
         ),
     };
     printer.report(code, &text);
+}
+
+/// `_TLCTrace`'s failure to write the trace's file for the trace exploration spec: the
+/// IOException of `ioSerialize`, which TLC reports as a failure of the Java method, within that
+/// of the postcondition.
+fn print_trace_file_failure(printer: &mut Printer, error: &str) {
+    const JAVA_METHOD_FAILED: u32 = 2154;
+    let failure = format!(
+        "Attempted to apply the operator overridden by the Java method\npublic static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,\nbut it produced the following error:\n{error}"
+    );
+    let failure = if printer.is_tool {
+        format!(
+            "@!@!@STARTMSG {JAVA_METHOD_FAILED}:0 @!@!@\n{failure}\n@!@!@ENDMSG {JAVA_METHOD_FAILED} @!@!@"
+        )
+    } else {
+        failure
+    };
+    printer.report(
+        code::POSTCONDITION_FAILED,
+        &format!(
+            "Evaluating postcondition _TLCTraceSilent at line 28, col 5 to line 28, col 21 of module _TLCTrace failed.\n{failure}"
+        ),
+    );
 }
 
 /// A spec TLC stops at before it searches: SANY's report, framed by SANY's start and finish under
@@ -2842,6 +5241,42 @@ fn print_sany(printer: &mut Printer, sany: &str) {
     );
 }
 
+// Whether evaluating an expression may print: whether it reaches Print or PrintT, itself or
+// through the definitions it names.
+fn may_print(ir: &tla_ir::Ir, root: tla_ir::NodeId) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        let kind = &ir.nodes.arena[node as usize].kind;
+        match kind {
+            tla_ir::NodeKind::Reference(target) => pending.push(*target),
+            tla_ir::NodeKind::Definition(definition) => pending.push(definition.body),
+            tla_ir::NodeKind::Identifier(name)
+            | tla_ir::NodeKind::OperatorReference(name)
+            | tla_ir::NodeKind::Apply { name, .. } => match name.resolution {
+                tla_ir::Resolution::Definition(index) => {
+                    pending.push(ir.definitions[index as usize]);
+                }
+                tla_ir::Resolution::Builtin(index)
+                    if matches!(
+                        &*ir.texts[ir.builtins[index as usize].name as usize],
+                        "Print" | "PrintT"
+                    ) =>
+                {
+                    return true;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        pending.extend(kind.children());
+    }
+    false
+}
+
 // `isTraceRecorded`: whether TLC writes the trace exploration spec, which it parses with the spec.
 // Whether TLC writes a trace exploration spec after an error trace: unless -noGenerateSpecTE, -tool
 // or -continue says not to, or the spec is one it wrote (`TraceExplorationSpec.isTESpecFile`), or
@@ -2857,6 +5292,35 @@ fn is_trace_spec_written(args: &Parsed, spec_path: &str, platform: Platform) -> 
 
 // Whether TLC records the trace in a file for its trace exploration spec too, with `_TLCTrace`'s
 // postcondition.
+// The paths TLC makes before it evaluates anything, which the replay doesn't see on the file
+// system. `FileUtil.makeMetaDir` makes a directory named for the start time in the -metadir, or in
+// `states` in the spec's directory where TLC was given the spec by an absolute path and in the
+// working directory otherwise; -recover names the metadir itself. TLC opens its dumps and its
+// -userFile as it starts. With -cleanup TLC deletes the working directory's `states` first, which
+// leaves none known.
+fn get_made_paths(
+    args: &Parsed,
+    spec_path: &str,
+    dumps: &TraceDumps,
+    host: &dyn Host,
+) -> Option<Vec<std::path::PathBuf>> {
+    if args.has("-cleanup") {
+        return None;
+    }
+    let current = host.current_dir();
+    let mut made = vec![current.join("states")];
+    if let Some(parent) = Path::new(spec_path).parent() {
+        made.push(current.join(parent).join("states"));
+    }
+    for name in ["-metadir", "-recover", "-userFile"] {
+        if let Some(path) = args.first(name) {
+            made.push(current.join(path));
+        }
+    }
+    made.extend(dumps.get_paths().map(|path| current.join(path)));
+    Some(made)
+}
+
 fn is_trace_recorded(args: &Parsed, spec_path: &str, platform: Platform) -> bool {
     is_trace_spec_written(args, spec_path, platform) && !args.has("-noGenerateSpecTEBin")
 }
@@ -2871,8 +5335,16 @@ pub(crate) fn print_startup_message(printer: &mut Printer, message: &StartupMess
     printer.print(message.code, level, &message.text);
 }
 
-// `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it.
-pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) {
+pub(crate) const SMALL_SET_UNNAMED: &str =
+    "a too-small symmetry set written in a form TLC names by its tokens";
+
+// `TLC_SYMMETRY_SET_TOO_SMALL`, as `symmetry.ts` words it, false where it names a set by an
+// image the front end couldn't take from its tokens (`addToSubTwoSizedSymmetrySetList`), which
+// it doesn't print.
+pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) -> bool {
+    if names.iter().any(String::is_empty) {
+        return false;
+    }
     let is_plural = names.len() > 1;
     printer.print(
         code::SYMMETRY_SET_TOO_SMALL,
@@ -2885,6 +5357,7 @@ pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) {
             if is_plural { "" } else { "s" },
         ),
     );
+    true
 }
 
 fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
@@ -2980,6 +5453,7 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
 }
 
 pub(crate) fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
+    crate::transaction::mark_declined(what);
     printer.note(&format!("prove-it: not native yet: {what}"));
     NOT_NATIVE
 }
@@ -3234,6 +5708,68 @@ IsSimpleCycle(S, r) ==
                     && distinct - queued > 1),
             "{:?}",
             progressed.0
+        );
+    }
+}
+
+// MonolithSpecExtractor.config reads lines independently of the module parser.
+fn embedded_config(text: &str, name: &str) -> String {
+    let mut active = false;
+    let mut result = String::new();
+    let lines = text.replace("\r\n", "\n").replace('\r', "\n");
+    for line in lines.split('\n') {
+        if active && line.starts_with("====") {
+            break;
+        }
+        if !active && embedded_config_header(line, name) {
+            active = true;
+        } else if active {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.trim_matches(|c| c <= '\u{20}').to_owned()
+}
+
+fn embedded_config_header(line: &str, name: &str) -> bool {
+    let whitespace = |c: char| matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r');
+    let Some(rest) = line.strip_prefix("----") else {
+        return false;
+    };
+    let rest = rest.trim_start_matches('-').trim_start_matches(whitespace);
+    let Some(rest) = rest.strip_prefix("CONFIG") else {
+        return false;
+    };
+    let trimmed = rest.trim_start_matches(whitespace);
+    if trimmed.len() == rest.len() {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix(name) else {
+        return false;
+    };
+    let rest = rest.trim_start_matches(whitespace);
+    rest.len() >= 4 && rest.bytes().all(|b| b == b'-')
+}
+
+#[cfg(test)]
+mod embedded_config_tests {
+    use super::embedded_config;
+
+    #[test]
+    fn extracts_tlcs_named_section() {
+        let text = "---- CONFIG Other ----\nBAD\n====\n---- CONFIG M ----\r\nINIT Init\r\nNEXT Next\r\n==== ignored\r\n---- CONFIG M ----\nBAD\n====";
+        assert_eq!(embedded_config(text, "M"), "INIT Init\nNEXT Next");
+        assert_eq!(
+            embedded_config(" ---- CONFIG M ----\nINIT Init\n====", "M"),
+            ""
+        );
+        assert_eq!(
+            embedded_config("---- CONFIG M ---- INIT Init\n====", "M"),
+            ""
+        );
+        assert_eq!(
+            embedded_config("---- CONFIG M ----\rINIT Init\r====", "M"),
+            "INIT Init"
         );
     }
 }

@@ -25,12 +25,14 @@ mod te_spec;
 mod time;
 mod tlapm;
 mod trace;
+mod transaction;
 mod xml_exporter;
 mod zip;
 pub mod zone;
 
 pub use check::run;
 pub use files::FileDescriber;
+pub use front::JVM_VARIABLES;
 pub use host::{
     Entry, FileDescription, FileKind, Files, Host, Machine, SystemHost, is_directory_there,
 };
@@ -38,4 +40,5 @@ pub use messages::Output;
 pub use outcome::{Counts, Outcome, Reported, ReportedState, Thrown};
 pub use overlay::FileOperation;
 pub use plain::Variable;
+pub use transaction::flush_held_on_interrupt;
 pub use zone::Zone;
