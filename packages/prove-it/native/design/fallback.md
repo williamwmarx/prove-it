@@ -4940,6 +4940,15 @@ matches TLC or declines exactly.
   its effects then alone; and reading a JSON file again shows nothing. Each of these declined at
   first and answers again as on main (corpus models of the Parity jobs, such as
   `simple_lambda` and `Traceetcdraft`).
+- A set enumeration compared with a filter TLC keeps lazy whose predicate fails, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `SetEnumValue.equals` converts the other operand
+  (`toSetEnum`) inside its own method, so the failure, which froze the call stack in the
+  predicate's frames, passes through it and comes out as a FingerprintException where the set
+  enumeration has a source: `{} = x'` with `x' = {n \in SUBSET {1} : 1 \div 0 = 1}` is "TLC was
+  unable to fingerprint" with the frozen frames (exit 75), where the binary reported the nested
+  expressions (exit 255). A filter over a set enumeration, which TLC filters at once, fails
+  before any comparison, and a filter on the left fails in its own conversion, as before. Fixtures
+  `equality-frozen-*`.
 - A startup definition that fails, of a module another extends or instantiates without
   parameters (`HD == PrintT("h") /\ 1 \div 0 = 1` in HA, `EXTENDS HA`): `processConstantDefns`
   runs for every module, over `getOpDefs`, which holds the definitions the module extends, and
