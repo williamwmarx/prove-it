@@ -3244,6 +3244,52 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
     }
 }
 
+// tests/pruned: `x' \in [S -> T]`, then guards, then `\A j \in S \ {i} : x'[j] = e`, which the
+// walk enumerates only at the functions with the quantifier's values where it can show the others
+// fail before it without an error: guards the walk walks, keys of numbers, a guard that fails on
+// the first, a middle and the last value of T, a quantifier that fails to evaluate or compares
+// values TLC can't, a guard that reads a key the quantifier fixes, values outside T, a guard that
+// prints, a quantifier over no keys, and a quantifier or a guard that reads TLCGet, which a TLCSet
+// after them changes between functions. TLC's output on each at d8fb231 is beside it.
+#[test]
+fn enumerates_functions_a_quantifier_fixes_as_tlc() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pruned");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the specs")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 14);
+    for name in names {
+        let read = |extension: &str| {
+            std::fs::read_to_string(directory.join(format!("{name}.{extension}"))).expect(extension)
+        };
+        let args = [
+            "-workers",
+            "1",
+            "-nowarning",
+            "-seed",
+            "4",
+            "-fp",
+            "0",
+            "-lncheck",
+            "final",
+        ];
+        let (output, run) = run_front(&format!("pruned-{name}"), &read("tla"), &read("cfg"), &args);
+        let text = stdout(&output);
+        assert_eq!(
+            get_untimed(&text),
+            read("txt"),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(run).expect("removed");
+    }
+}
+
 // tests/settled: a membership in a set of records whose parts call a recursive operator, which
 // the engine runs every time, as TLC does, rather than once: 100 calls deep, TLC's output beside
 // it at d8fb231; 1,800 deep, where TLC's stack overflows, which the engine declines: directly, in

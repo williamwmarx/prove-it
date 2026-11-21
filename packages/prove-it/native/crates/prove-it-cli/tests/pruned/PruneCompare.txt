@@ -1,0 +1,25 @@
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 0 with non-integer:
+"one"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = (a :> 0 @@ b :> 0 @@ c :> 0)
+
+State 2: <Grow(a) line 7, col 5 to line 9, col 66 of module PruneCompare>
+x = (a :> 1 @@ b :> 0 @@ c :> 0)
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 5 to line 9, column 66 in PruneCompare
+1. Line 7, column 8 to line 7, column 25 in PruneCompare
+2. Line 8, column 8 to line 8, column 19 in PruneCompare
+3. Line 9, column 8 to line 9, column 66 in PruneCompare
+4. Line 9, column 27 to line 9, column 66 in PruneCompare
+
+
+8 states generated, 7 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 2.

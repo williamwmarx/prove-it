@@ -753,6 +753,95 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 
 Together they bound StarkMutex at about 1.25×.
 
+### Pruning `x' \in [S -> T]` by per-key constraints (MCabs), as built
+
+MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
+enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
+`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
+admits would turn 64,000 into about 40.
+
+**TLC's order** (tlaplus d8fb231):
+- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
+  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
+  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
+  at that candidate.
+- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
+  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
+  order.
+- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
+
+**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
+`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
+candidates with f[j] = e(j) for every constrained j.
+
+**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
+Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
+x'[b] for keys b that Ck leaves free.
+
+Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
+be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
+- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
+  one free key, 40 on MCabs.
+- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
+- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
+
+D must be a subset of S; otherwise fall back.
+
+**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
+order of the free keys' values. Successor order, state numbering, traces, and any later Print or
+error therefore stay TLC's. The states-generated and distinct counts count successors only, so
+they are unchanged. Under `-coverage`, don't prune.
+
+**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
+enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
+models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
+successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
+`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. It is
+one spec's idiom, built because it is the suite's weakest model against TLC.
+
+**As built** (`compile/pruned.rs`):
+- The conjuncts between the membership and the quantifier are often operators the walk walks
+  (`IsPrefix` is one), and a walk is not an evaluation: an `\E` walks every binding where
+  evaluation stops at the first TRUE. So the pre-pass runs the compiled walk of those conjuncts,
+  to their end, for each assignment of the free keys, and keeps the assignments it reaches the end
+  for. A skipped function with the same free values walks them the same way.
+- The quantifier is checked by evaluating its own body, `x'[j] = e`, for each j of E and each
+  value of T, bound to a function of the set with that value at j, so the equality is the
+  compiled one, failures included; it must hold for exactly one value of each j.
+- The positions of the survivors in the set are computed from the odometer and each is checked
+  against its function's keys and values, so nothing rests on how the store lays the set out.
+- The static checks: every conjunct before the quantifier is free of effects and reads x' only as
+  `x'[k]`, with k of names bound outside the conjunction, through no prime, UNCHANGED, ENABLED,
+  action or temporal operator, and through definitions that read no next state. At run time each k
+  must be a key outside E.
+- Nothing from the membership through the quantifier may read what TLC keeps beside the state,
+  which a TLCSet after the quantifier, or the search, can change between two functions of the
+  enumeration: no TLCGet or other builtin of TLC's registers, caches, counts, level, files,
+  environment, random draws or trace (`is_steady_builtin`), and no compiled footprint with a
+  search, register, print or warning slot. Codex found the first on #375: a quantifier that
+  compares with TLCGet(1), followed by TLCSet(1, 1).
+- It is off while generating, where the walk streams a set held as built, and where the search
+  keeps the shapes of assigned values for liveness atoms. Coverage is counted by tla-trace's own
+  pass, which this doesn't touch. Anything a pre-pass evaluation prints or warns, and any failure,
+  sends the walk through every function, as before.
+
+`prove-it-cli/tests/pruned` compares fourteen specs with TLC at d8fb231: guards the walk walks, keys
+of numbers, a guard that fails on the first, a middle and the last value of T, a quantifier that
+fails to evaluate or compares a number with a string, a guard reading a key the quantifier fixes,
+a value outside T, a guard that prints, a quantifier over no keys, and a quantifier or a guard
+that reads TLCGet, the level or a register a later TLCSet changes.
+
+**Measured** on Depot against `main` at b7f832b9, `bench-suite.ts` with `native` and
+`native-base`, one worker, median wall seconds with the range:
+
+| Suite, machine, runs | MCabs | Geomean, all models | Models agreeing with TLC |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 10.07 (10.04–10.11) → 0.19 (0.19–0.19) | 1.35× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | not in the suite | 1.00× | 18/18 |
+
+No other model moved outside its range on the 4-core suite, as none has the shape. MCabs is now
+start-up and its 349 states; TLC on one worker takes 34.6 s on the 16-core runner.
+
 ### Start-up of the npm package: the keys a check asks for first (seeded-keys)
 
 The npm package runs the native check in-process in rounds (`checkAllSources`): the engine runs
@@ -778,6 +867,32 @@ So the npm CLI costs about 25 ms over the binary on the smallest models, half of
 start, not the 0.23 s a model measured before the check ran in-process; the rounds were worth 1 to
 8 ms of it. On the 4-core container a warm library check of 2PCwithBTM went 22 → 17 ms.
 
+### Liveness atoms on the helpers (atoms-on-helpers)
+
+Timed on 16 cores, the atoms scaled least of the liveness models' phases: 1.5× on StarkMutex and
+1.9× on cf1s_folklore, where the first ENABLED atom took 0.71 s of 2.7 s, almost all of it on the
+search's thread, computing which of TLC's actions changed the subscript from each state and running
+ENABLED on the states the steps don't answer; and each of StarkMutex's 60 action atoms launched the
+helpers twice, once for the steps and once for the stuttering steps. A helper now computes the
+changed actions of its run of states as it answers the atoms, answers an atom's steps and
+stuttering steps in one pass, and runs ENABLED on the states the steps leave unknown, each
+state's evaluation the same on any thread; the search's thread reads what the steps answer and
+evaluates only a state whose subscript failed on a step, or everything where the atoms print or
+`PROVE_IT_LIVE_CHECK` compares the two. On `depot-ubuntu-24.04-16`, medians of 3, against `main`
+at de9ca77d, 16 threads (one thread is within the build-to-build noise of the suite, 2 %):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.60 | 1.33 | 1.20× | 932 → 839 |
+| cf1s_folklore | 2.68 | 1.91 | 1.40× | 2,228 → 976 |
+
+The rest of the suite is within noise. What is left of the liveness check at 16 threads on
+StarkMutex is the search's merge (0.27 s), the atoms (about 0.3 s) and the checker (0.35 s once
+the shared table is read in place, below, of which each behavior's thread spends 0.06 s building
+successor sets, 0.06 s writing nodes and 0.11 s searching its graph); on cf1s_folklore the
+checker's 1.2 s is 0.5 s of successor sets and 0.15 s of consistency rows, each behavior's thread
+again.
+
 ### The checker's shared table of action checks, read in place (checker-shared-steps)
 
 Timed per phase on 16 cores, each thread of the liveness checker that built a behavior's graph
@@ -798,6 +913,31 @@ has no shared table, is unchanged):
 cf1s_folklore has few action checks, so its rows are a few bits and the copy was never its cost:
 of its threads' 1.2 s, 0.5 s builds the successor sets and 0.15 s reads the consistency rows,
 which the next change reads ahead on every thread.
+
+### The checker's successor sets, state checks and consistency read ahead (checker-precompute)
+
+Each state's successor set in TLC's order, its state checks and its consistency with the tableau's
+nodes come from the graph and the tables alone, and each behavior's thread computed them again as
+it added the states. The threads now read them ahead, each a run of the states, as they read the
+action checks: the state checks and consistency rows of each behavior, which its thread takes
+over, and the order of every successor set, which the threads share at 4 bytes a step. TLC's
+SetOfStates orders a set by a capacity that grows with every set that outgrows it, so a first pass
+counts each state's distinct steps, a scan finds the capacity as each set is built, and a second
+pass builds the sets with it. A check with one behavior reads ahead on the workers too. Per
+thread at 16 threads, adding the states went from 1.2 s to about 0.4 s on cf1s_folklore (sets
+0.5 → 0.09 s, consistency 0.15 → 0.08, state checks 0.06 → 0.05) and from 0.53 to about 0.2 s
+on StarkMutex, where writing the nodes (0.06–0.09 s) and searching each graph (0.1–0.14 s) are
+what is left. On `depot-ubuntu-24.04-16`, medians of 3, against `checker-shared-steps` at
+b1a08c45, 16 threads:
+
+| Model | Before, 16 threads | Now, 16 threads | Gain | RSS MB |
+|---|---:|---:|---:|---|
+| cf1s_folklore | 2.75 | 2.35 | 1.17× | 2,235 → 2,229 |
+| StarkMutex | 1.26 | 1.22 | 1.03× | 787 → 790 |
+| SpanTreeRandom | 0.41 | 0.38 | 1.08× | 77 → 84 |
+
+One thread, which builds the sets with the same code and reads nothing ahead, is within noise
+(cf1s_folklore 6.61 → 6.37, StarkMutex 3.04 → 3.08); the rest of the suite is within noise.
 
 ## Measured and dropped
 
@@ -974,62 +1114,6 @@ Two engine costs grew with the number of threads, and a shared level reported no
 - The tests in `prove-it-check`'s `check.rs` use the ewd998 example's IsSimpleCycle and RingOfNodes, and fail on the code before this change.
 
 ## Designs ready, not built
-
-### Pruning `x' \in [S -> T]` by per-key constraints (MCabs)
-
-MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
-enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
-`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
-admits would turn 64,000 into about 40.
-
-**TLC's order** (tlaplus d8fb231):
-- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
-  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
-  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
-  at that candidate.
-- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
-  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
-  order.
-- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
-
-**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
-`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
-candidates with f[j] = e(j) for every constrained j.
-
-**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
-Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
-x'[b] for keys b that Ck leaves free.
-
-Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
-be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
-- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
-  one free key, 40 on MCabs.
-- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
-- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
-
-D must be a subset of S; otherwise fall back.
-
-**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
-order of the free keys' values. Successor order, state numbering, traces, and any later Print or
-error therefore stay TLC's. The states-generated and distinct counts count successors only, so
-they are unchanged. Under `-coverage`, don't prune.
-
-**Why it isn't built.** A grep of the corpus, tlaplus/Examples included, finds the shape in an
-action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]` is a TypeOK' in a
-`*_proof.tla` or a TLC test model. The 18 `\E f \in [S -> T]` outside proofs are in Init, in
-invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
-(`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
-
-**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
-enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
-models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
-successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
-`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. Built,
-it would take MCabs from 10.2 s toward start-up, and so the suite's geomean by about 1.3×, from one
-spec's idiom.
-
-Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
-compared with TLC.
 
 ### Answering liveness action atoms from the steps the search took
 
