@@ -1,4 +1,4 @@
----- MODULE Aux ----
+---- MODULE Aid ----
 EXTENDS Naturals
 VARIABLE y
 A == y<2 /\ y'=y+1

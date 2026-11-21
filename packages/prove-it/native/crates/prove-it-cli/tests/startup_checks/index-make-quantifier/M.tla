@@ -1,5 +1,5 @@
 ---- MODULE M ----
-EXTENDS Aux, Naturals
+EXTENDS Aid, Naturals
 VARIABLE s
 Init == s = 0
 Next == UNCHANGED s

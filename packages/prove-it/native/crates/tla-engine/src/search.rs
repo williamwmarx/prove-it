@@ -2425,17 +2425,13 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     replayed: None,
                     counts: self.stop_counts(is_new),
                 });
-                let is_deferred = is_new
-                    && fingerprint.is_some_and(|fingerprint| {
-                        self.states.defers_violation(self.expanding, fingerprint)
-                    });
-                if !is_deferred {
-                    if self.held.is_some() && is_in_model && is_new {
-                        self.note_stopped(fingerprint);
-                    }
-                    return Err(Bail("an action property violated"));
+                // TLC checks an action property on every step, to a successor seen or not
+                // (`Worker.doNextCheckImplied`), so the step violates it whichever thread found
+                // the successor's key first, and the search stops at this state on any thread.
+                if self.held.is_some() && is_in_model && is_new {
+                    self.note_stopped(fingerprint);
                 }
-                break;
+                return Err(Bail("an action property violated"));
             }
         }
         if let (Some(Err(slot)), Some(fingerprint)) = (found, fingerprint) {
@@ -4805,12 +4801,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // held prints come out between them: neither may meet a level the threads share.
         && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
         && !settings.is_live_checked
-        && context.possible.is_empty()
-        // Under a VIEW or symmetry a thread waits to report an invariant a new state violates
-        // until no other thread found its key first, but an action property is of the step, which
-        // violates it whichever thread found the key.
-        && !(!context.action_properties.is_empty()
-            && (model.view.is_some() || model.startup.symmetry.is_some()));
+        && context.possible.is_empty();
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
     // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
     // it in the order it first evaluates each expression), or anything prints, draws or reads or
