@@ -6333,8 +6333,6 @@ these, each as main b7f832b9 prints it:
   substitutions: `A(C)` with `CONSTANT C <- Lit` and a state-level `Lit` is split into `A(1)`, and
   `A(Def)` with `Def == x` and `Def <- Alt` is not, where the binary decides on the substituted
   expression; `A(D(1))` with `D(q) == TLCGet("level") + q` reads the level as TLC starts (0).
-  TLCGet("spec")'s `inits` names an initial predicate a SPECIFICATION reaches through a LET by the
-  LET's name (`I2`), where the binary names the definition it stands for.
 - Strings TLC interns as it splits the next-state relation or builds TLCExt's records rank before
   those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
   "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
