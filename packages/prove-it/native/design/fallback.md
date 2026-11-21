@@ -6316,6 +6316,40 @@ text (probes of 2026-11-18):
   also lacks the frame of a selection through a single copy, which answers now (see "Call stacks
   of a selection"). The assumption context matches.
 
+The specs of upstream tla-ts's unit tests at 0341dbe5 (`packages/tla-ts/tests/unit`, lifted
+statically and run against the pinned jar: `scratch/upstream/unit` on `upstream-results`) show
+these, each as main b7f832b9 prints it:
+
+- TLCEval of an argument of constant level caches its value in the semantic graph for the run
+  (`TLCEval.tlcEvalConst`), where the evaluation's `Context` is deep-empty: TLC evaluates it once,
+  with the empty state, and the binary at each evaluation. `Inv == x >= 0 /\ TLCEval(Print("b",
+  TRUE))` prints `"b"` once in TLC and at each state natively; `x' = TLCEval(RandomElement(1..1000))`
+  draws once in TLC; and `Inv == TLCEval(Print(v, TRUE))`, whose argument SANY gives constant
+  level (Print's first parameter is unused), fails in TLC on the undefined `v` and holds natively.
+  A zero-arity definition read under a binder sees its caller's context, so whether TLC caches
+  depends on where the definition is read; LET definitions after the first have a context too.
+- The split of the next-state relation (`Tool.getActionsAppl`) evaluates an operator's arguments
+  where SANY gives each constant level (`args[i].getLevel()`), before the configuration's
+  substitutions: `A(C)` with `CONSTANT C <- Lit` and a state-level `Lit` is split into `A(1)`, and
+  `A(Def)` with `Def == x` and `Def <- Alt` is not, where the binary decides on the substituted
+  expression; `A(D(1))` with `D(q) == TLCGet("level") + q` reads the level as TLC starts (0).
+  TLCGet("spec")'s `inits` names an initial predicate a SPECIFICATION reaches through a LET by the
+  LET's name (`I2`), where the binary names the definition it stands for.
+- Strings TLC interns as it splits the next-state relation or builds TLCExt's records rank before
+  those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
+  "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
+  TLC and `{"action", "zzq"}` natively.
+- `{} = x'` where `x'` holds a filter TLC keeps lazy (over `SUBSET {1}`) whose predicate fails:
+  TLC reports a FingerprintException ("TLC was unable to fingerprint", exit 75) and the binary the
+  nested expressions (exit 255), with the same frames; a filter over a set enumeration, which TLC
+  filters at once, matches.
+- An initial predicate that leaves a variable undefined after two complete initial states prints
+  TLC's "Computed 2 initial states..." twice in TLC, once natively.
+- Two prints TLC makes that the binary doesn't, not yet traced: `PROPERTY Prop` with `Prop ==
+  <>[]~S(x)`, `S(v) == v < 0 /\ PrintT("s")` and x from 0 to 4 prints `"s"` once in TLC, though
+  no state makes `v < 0` hold; and `Next == \E i \in {PrintT(<<"split", TLCGet("level")>>)} :
+  TRUE` under `SPECIFICATION Spec` with `Spec == [][Next]_<<>>` prints `<<"split", 1>>` in TLC.
+
 #### Sets past `TLCGlobals.setBound`
 
 TLC builds a set enumeration element by element in a `ValueVec`, which fails once it holds
