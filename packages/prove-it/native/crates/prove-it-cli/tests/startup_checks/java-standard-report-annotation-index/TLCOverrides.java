@@ -1,1 +1,1 @@
-package tlc2.overrides; public class TLCOverrides implements ITLCOverrides { public Class<?>[] get() { try { return new Class<?>[]{Class.forName("Aux")}; } catch(Exception e) { throw new RuntimeException(e); } } }
+package tlc2.overrides; public class TLCOverrides implements ITLCOverrides { public Class<?>[] get() { try { return new Class<?>[]{Class.forName("Aid")}; } catch(Exception e) { throw new RuntimeException(e); } } }

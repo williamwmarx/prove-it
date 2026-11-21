@@ -689,12 +689,9 @@ pub fn check(
             answers: &answers,
         };
         // Where nothing has effects or reads TLC's diameter, which grows as the states are
-        // added, each behavior's graph may be built on a thread of its own.
-        let verdict = if !is_effectful
-            && graph.diameters.is_none()
-            && threads > 1
-            && checker.branches() > 1
-        {
+        // added, the threads read the tables ahead and each behavior's graph may be built on a
+        // thread of its own.
+        let verdict = if !is_effectful && graph.diameters.is_none() && threads > 1 {
             checker::check_shared(
                 &mut checker,
                 &|| build().map(|built| built.0),

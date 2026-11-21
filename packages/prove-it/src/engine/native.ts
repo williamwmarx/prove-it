@@ -85,13 +85,18 @@ export interface NativeCheckOutcome {
 }
 
 // Runs checkSources to the end: each round, `read` answers the keys it asks for.
+// Each round runs the check from the start, so the keys the caller can answer before it asks,
+// `seeded`, are answered first: a key it never asks costs its answer and nothing more.
 export const checkAllSources = (
   addon: NativeAddon,
   args: string[],
   machine: NativeMachine,
   read: (key: string) => string | Uint8Array | undefined,
+  seeded: readonly string[] = [],
 ) => {
-  const known = new Map<string, string | Uint8Array | undefined>();
+  const known = new Map<string, string | Uint8Array | undefined>(
+    seeded.map((key) => [key, read(key)]),
+  );
   const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
     const result = addon.checkSources(args, [...known], machine);
     if (result.kind !== "needed") return result;
