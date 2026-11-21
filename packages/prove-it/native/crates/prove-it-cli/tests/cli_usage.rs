@@ -92,7 +92,7 @@ fn reports_a_checkpoint_it_cant_recover_as_tlc() {
         if cfg!(windows) {
             assert_eq!(
                 String::from_utf8_lossy(&output.stderr),
-                "prove-it: not native yet: -recover from a checkpoint"
+                "prove-it: not native yet: -recover from a checkpoint\n"
             );
             assert_eq!(output.status.code(), Some(1));
             continue;
