@@ -325,6 +325,13 @@ fn get_level_inner(
             _ => match user_operator_level() {
                 Some((params, mut level)) if params.len() == args.len() => {
                     for (param, argument) in params.iter().zip(args) {
+                        // SANY counts an argument's level where the body reads the parameter
+                        // (`OpDefNode.levelCheck` gives the parameter weight 1 where the body's
+                        // level parameters hold it, and `OpApplNode.levelCheck` takes the
+                        // operands of weight 1), so `F(x')` with `F(p) == x = 0` is state-level.
+                        if !is_operator_parameter_read(expression, scope, environment, param) {
+                            continue;
+                        }
                         if param.arity == 0 {
                             level = level.max(get_level_inner(
                                 argument,
@@ -334,8 +341,7 @@ fn get_level_inner(
                                 shadowed,
                                 walk,
                             ));
-                        } else if is_operator_parameter_read(expression, scope, environment, param)
-                        {
+                        } else {
                             // `Specs.getLevel` takes SANY's level, which counts the level of an
                             // operator argument that the body applies (`getLevelParams`), where
                             // the body's walk reads the parameter as a constant.
@@ -359,6 +365,14 @@ fn get_level_inner(
                 }
                 _ => get_name_level(expression).max(get_children_level(expression)),
             },
+        },
+        // `LetInNode.levelCheck` takes the body's level: a definition the body doesn't apply
+        // counts for nothing, and one it applies counts through its application.
+        ExpressionKind::Let {
+            definitions, body, ..
+        } => match bind_definitions(definitions, scope) {
+            Ok(bound) => get_level_inner(body, bound.as_ref(), environment, facts, shadowed, walk),
+            Err(_) => get_children_level(expression),
         },
         _ => get_children_level(expression),
     }
@@ -4332,22 +4346,13 @@ pub fn get_properties(
                     continue;
                 }
                 // `processConfigProps` takes the operand of [] as an invariant where
-                // `getLevelBound` finds it below action level. That bound gives an operator
-                // argument level 0, so that an operator that applies a temporal LAMBDA it is
-                // passed is an invariant, which TLC rejects as it evaluates it.
-                let level = match level(body) {
-                    Level::Temporal
-                        if crate::startup::get_level_bound(
-                            environment,
-                            body,
-                            item.scope.as_ref(),
-                        ) < 2 =>
-                    {
-                        Level::Variable
-                    }
-                    level => level,
-                };
-                if level <= Level::Variable {
+                // `getLevelBound` finds it below action level. That bound counts an operator's
+                // every argument and a LET's every definition, so `[](F(x'))` with `F(p) == x =
+                // 0` is a temporal property, whose operand the liveness checker then takes as
+                // the state predicate SANY levels it as; and it gives an operator argument level
+                // 0, so that an operator that applies a temporal LAMBDA it is passed is an
+                // invariant, which TLC rejects as it evaluates it.
+                if crate::startup::get_level_bound(environment, body, item.scope.as_ref()) < 2 {
                     // TLC names the invariant by the operator the property asserts always holds,
                     // when it applies the operator to no arguments.
                     // SANY names a definition an INSTANCE copies by its path (`I!Inv`,
@@ -4380,23 +4385,24 @@ pub fn get_properties(
                     continue;
                 }
             }
-            match level(conjunct) {
-                Level::Constant | Level::Variable => properties.initial_predicates.push(Property {
+            // `getLevelBound` again, as `processConfigProps` sorts the conjunct by it.
+            match crate::startup::get_level_bound(environment, conjunct, item.scope.as_ref()) {
+                0 | 1 => properties.initial_predicates.push(Property {
                     name: part_name,
                     expression: item.expression,
                     scope: item.scope,
                 }),
-                Level::Action => {
+                3 => properties.liveness.push(Property {
+                    name: name.clone(),
+                    expression: item.expression,
+                    scope: item.scope,
+                }),
+                _ => {
                     return Err(with_warnings(
                         FrontError::Config(get_action_property_message(&part_name, conjunct)),
                         &properties,
                     ));
                 }
-                Level::Temporal => properties.liveness.push(Property {
-                    name: name.clone(),
-                    expression: item.expression,
-                    scope: item.scope,
-                }),
             }
         }
     }

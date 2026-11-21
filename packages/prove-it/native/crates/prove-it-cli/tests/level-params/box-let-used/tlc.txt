@@ -1,0 +1,10 @@
+TLC2 Version 2026.11.21.201612 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 17161] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/packages/prove-it/native/crates/prove-it-cli/tests/level-params/box-let-used/M.tla
+Parsing file /tmp/tlc-6218384635367656700/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/tools/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-21 22:38:20)
+Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
+Finished in 00s at (2026-11-21 22:38:20)
