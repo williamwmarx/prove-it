@@ -601,6 +601,41 @@ within noise at 4 threads (MCExactInitialSync 6.81 / 6.76 / 7.47 s, Detlefs 1.13
 MCbtree 0.370 / 0.377 / 0.368, MCLamportMutex 1.25 / 1.25 / 1.25). Not built: the store's import
 rewritten for at most 1.3×. Huge pages on the state table, which cut the kernel's part, come first.
 
+### Action properties under a VIEW or symmetry on threads (#372)
+
+Since #237 a model with an action property (`[][A]_v`) under a VIEW or SYMMETRY searched on one
+thread: a thread sharing a level deferred the step's violation as it defers an invariant's, for the
+merge to decide by the key, which is wrong where another thread had found the key, since TLC checks
+an action property on every step, seen or not (`Worker.doNextCheckImplied`). The thread now stops
+the level at that state at once, and the level's rest runs on one thread from there
+(parallel.md, "Stops"). On `depot-ubuntu-24.04-16`, medians of 3, against `main` at b7f832b9, 16
+threads (one thread is unchanged, 1.01×):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain |
+|---|---:|---:|---:|
+| MCabs | 10.63 | 1.22 | 8.7× |
+| FastPaxos | 1.45 | 0.27 | 5.4× |
+| BufferedRandomAccessFile | 1.74 | 0.22 | 7.9× |
+
+The rest of the suite is within noise, and 16 threads go from 2.6× one thread to 3.9× in geomean
+over it. On the 4-core suite, Paxos_MC (symmetry with a PROPERTY) goes 0.61 → 0.30 s on every core.
+
+### Warnings on threads (#374)
+
+Since #369 a level ran on one thread, unpipelined, wherever the spec could raise a runtime
+warning (2143, 2144), which with warnings on, TLC's default and the npm package's, is any spec
+with an EXCEPT. TLC prints each warning's message once (`MP.printWarning`), and the first warning
+of a run once more, since its first message carries the hint to `-nowarning`. The search now
+counts the warnings it reports, and a thread that raises one TLC may still print stops the level
+at that state, as a violation does; a warning TLC never prints again stops nothing. The suites
+pass `-nowarning`, so they show no change: on `depot-ubuntu-24.04-16` and `-4` against `main` at
+b7f832b9 every model is within noise, one thread 1.00×. With warnings on (`bench-suite.ts`
+without `-nowarning`, bench-suite.json on `depot-ubuntu-24.04-4`, medians of 7, against `main`
+at e63fc6c), `main` on every core was 1.04× slower than itself on one thread over the suite, and
+this is 1.5× faster: Commit 0.43 → 0.16 s, MCLamportMutex 2.57 → 0.97, MCbtree 0.94 → 0.33,
+SimpleRegular 0.68 → 0.28, MCBakery 1.00 → 0.56, MCSingleNode 0.47 → 0.24, Paxos_MC 0.64 →
+0.32, philosophers 0.14 → 0.07; one thread 1.00×.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
@@ -656,6 +691,50 @@ Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
 | perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 23.06 (22.97–24.15) → 15.08 (14.92–15.37) | 1.03× | 15/15 |
 | bench-suite.json, `depot-ubuntu-24.04-4`, 5 | — | 1.01× | 18/18 |
 
+### Memo heights beside their values
+
+#369 records, for each memo entry, how deep its evaluation nested recursive calls, so that a hit
+reaches as deep as TLC's evaluation, which keeps no table, and stops where TLC's stack would. The
+heights were kept in a map keyed by the entry's six keys and hashed a byte at a time
+(`IntegerHasher::write`). Every hit then looked its height up there, and every store removed or
+inserted one, once any entry had a height. On MCbtree, `Machine::call_recursive` went from 3.1% to
+7.5% of the run.
+
+A table of one or two keys now keeps the height in its entry, in what was its padding, and reads
+it with the value in one probe. A direct table keeps them in a parallel array once one isn't 0.
+A wider table keeps the map, hashed a word at a time. A store for keys a table already holds
+overwrites them, as the map did, so the heights are the same.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | MCbtree | TLCSailfish1 | Geomean | Agreeing |
+|---|---|---|---:|---:|
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | 0.78 → 0.73 | — | 0.99× | 18/18 |
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 0.79 → 0.74 | 3.65 → 3.39 | 1.04× | 15/15 |
+
+On a 4-core runner, with 9 interleaved runs, MCbtree took 0.633 s at fb05e28, 0.773 s at
+8f623123 (#369) and 0.725 s with this change. So it wins back about a third of the loss there.
+
+### Testing in place what a successor needs counted
+
+The 4-core bisect of fb05e28..8f623123 (9 and 7 interleaved runs, one machine) put most of the
+one-worker slowdown on commit, SimpleRegular and MCbtree at #369: 0.271 → 0.308, 0.505 → 0.544
+and 0.649 → 0.785 s. The memo heights above are MCbtree's share. The rest is spread over the
+search loop, which #369 split into calls made for each successor: `set_counts` (only where the
+spec reads TLCGet's counts), `record_step` (only where a graph is kept),
+`holds_action_constraints` and `count_possible` (only where there are any). Each now tests that
+in place, and calls out only for the work.
+
+Depot, against `main` at 5749ccd1, one worker:
+- On one 4-core runner, 11 interleaved runs, with fb05e28 beside them: commit 0.265 / 0.308 →
+  0.294 s, MCbtree 0.666 / 0.749 → 0.735 s and SimpleRegular 0.506 / 0.574 → 0.554 s.
+- `bench-suite.json`, 4 cores, 5 runs: 1.02×, 18/18 agreeing.
+- `perf-suite.json`, 16 cores, 3 runs: 1.00×, 15/15 agreeing.
+
+What is left of #369's cost is spread over the walker's `segment`, `check_complete_successor` and
+the memo lookups. Each carries a check that a new output needs: the held sets, `note_assigned`,
+`Unchanged` warnings, PickSuccessor, DFID and contest tracking.
+
 ### Liveness (`perf-liveness`)
 
 The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
@@ -672,6 +751,52 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 | A flat form of the 60 action checks the checker evaluates as it adds states | 0.3–0.5 s of `add_states`' 1.7 s: 1.07–1.12× | Most of `add_states` is reading the answer tables and building the behavior graphs, which the flat form leaves. |
 
 Together they bound StarkMutex at about 1.25×.
+
+### Start-up of the npm package: the keys a check asks for first (seeded-keys)
+
+The npm package runs the native check in-process in rounds (`checkAllSources`): the engine runs
+until it has read keys the caller hasn't answered, returns them, and the caller answers them and
+runs it again from the start. On the CLI path 2PCwithBTM took four rounds (the spec and its
+configuration; 92 keys of modules and directories; the real path of the temp directory; the
+check), each but the last re-doing the front end's work so far, and on the library path three
+(the spec and configuration texts; the built-in modules and the class space; the check). The
+caller now answers before the first round what it holds anyway, so a model whose modules are all
+built in checks in one round on the library path and two on the CLI's.
+
+What the npm CLI costs over the binary, measured on `depot-ubuntu-24.04-4` (medians of 20 runs,
+milliseconds, `main` at 31b00e33 then this):
+
+| Model | Binary | Bare Node | Node CLI, `main` | Node CLI, this |
+|---|---:|---:|---:|---:|
+| 2PCwithBTM | 12.7 | 12.5 | 36.5 | 35.8 |
+| Queue | 21.1 | 12.3 | 41.8 | 42.1 |
+| SyncCons | 22.3 | 14.1 | 51.5 | 43.6 |
+| VoucherRedeem | 26.0 | 12.6 | 47.4 | 45.8 |
+
+So the npm CLI costs about 25 ms over the binary on the smallest models, half of it Node's own
+start, not the 0.23 s a model measured before the check ran in-process; the rounds were worth 1 to
+8 ms of it. On the 4-core container a warm library check of 2PCwithBTM went 22 → 17 ms.
+
+### The checker's shared table of action checks, read in place (checker-shared-steps)
+
+Timed per phase on 16 cores, each thread of the liveness checker that built a behavior's graph
+spent most of its time before writing the nodes: StarkMutex's four threads 0.29 s of 0.53 s each
+walking the 60 action checks on every step's row to find them all answered already, since the
+table the threads read ahead (`read_positions`) answered them, after copying each row into a table
+of the thread's own. A step's row is now its position in the shared table where that has every
+check the thread's behaviors make, and a row of the thread's own, copied from it, only where it
+doesn't, and a successor set whose rows are complete skips the checks after one word a row. On
+`depot-ubuntu-24.04-16`, medians of 3, against `main` at c34616b8, 16 threads (one thread, which
+has no shared table, is unchanged):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.57 | 1.25 | 1.26× | 938 → 785 |
+| cf1s_folklore | 2.66 | 2.71 | noise | 2,243 → 2,234 |
+
+cf1s_folklore has few action checks, so its rows are a few bits and the copy was never its cost:
+of its threads' 1.2 s, 0.5 s builds the successor sets and 0.15 s reads the consistency rows,
+which the next change reads ahead on every thread.
 
 ## Measured and dropped
 
