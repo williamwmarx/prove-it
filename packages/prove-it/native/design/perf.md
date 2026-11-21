@@ -939,6 +939,37 @@ b1a08c45, 16 threads:
 One thread, which builds the sets with the same code and reads nothing ahead, is within noise
 (cf1s_folklore 6.61 → 6.37, StarkMutex 3.04 → 3.08); the rest of the suite is within noise.
 
+### The state table filled on threads, with the indices (merge-fill-indices)
+
+The merge of a shared level has the threads find which candidates are new first, each filling a
+range of the state table's slots (`FingerprintSet::fill`), where the table keeps no indices: a
+graph's edges need the index of each state a step reached, which the fill didn't give. Since
+#369 the table keeps indices on every search with several workers, to tell the states another
+state also steps to, so the fill had run on none of them, and every level's merge probed the
+table once per candidate on one thread: at 16 threads 0.46 s of cf1s_folklore's 2.4 s and
+0.27 s of StarkMutex's 1.3 s, about 40 % of their merges, and a like share of every other
+model's. The fill now gives each candidate's state its index: equal fingerprints share a home
+slot, so a thread decides the fingerprints of its range in the merge's order and the new states
+take the indices they will have, which a second pass over the ranges writes, reading each seen
+candidate's; the fingerprints the threads leave are inserted in order before the indices are
+assigned. The merge imports the new states and records the edges from those indices. A level that
+may reach a bound the merge stops at, on a graph's states or edges, merges as before, as does a
+search that verifies fingerprints by their keys. On `depot-ubuntu-24.04-16`, medians of 3,
+against `main` at 32811017, 16 threads (one thread, which fills nothing, is within noise):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain |
+|---|---:|---:|---:|
+| MCExactInitialSync | 3.06 | 2.10 | 1.46× |
+| PaxosCommit | 2.44 | 2.21 | 1.10× |
+| MCMultiNode | 0.94 | 0.84 | 1.12× |
+| Detlefs | 0.55 | 0.50 | 1.10× |
+| cf1s_folklore | 1.47 | 1.27 | 1.16× |
+| StarkMutex | 0.98 | 1.00 | noise |
+
+StarkMutex merges 115 levels of 2,000 to 10,000 states, each too small for the fill's threads to
+gain on; the rest of the suite is within noise, and 16 threads go from 3.7× one thread to 3.9×
+in geomean over it.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
