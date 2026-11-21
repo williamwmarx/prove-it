@@ -212,6 +212,16 @@ impl Taken {
     }
 }
 
+/// An action atom the helpers answer with the others of its subscript: its action, its subscript,
+/// what marks the steps its split or pieces take, and the ENABLED of its fairness on each state,
+/// where the checker asks about no step from a state where that is false.
+struct Member<'a> {
+    action: &'a Eval,
+    subscript: Option<&'a Eval>,
+    marks: Marks<'a>,
+    disabled: Option<&'a [u8]>,
+}
+
 /// The answers to one atom: for a state predicate or ENABLED, one per state; for an action, one
 /// per step, then one per state for its stuttering step.
 pub struct Table {
@@ -856,7 +866,7 @@ pub fn answer_atoms(
                             _ => false,
                         })
                         .collect();
-                    let members: Vec<(&Eval, Option<&Eval>, Marks<'_>, Option<&[u8]>)> = group
+                    let members: Vec<Member<'_>> = group
                         .iter()
                         .map(|&at| {
                             let Atom::Action {
@@ -875,12 +885,12 @@ pub fn answer_atoms(
                                 .and_then(|position| tables.get(position))
                                 .filter(|table: &&Table| table.answers.len() == graph.count)
                                 .map(|table| &table.answers[..]);
-                            (
+                            Member {
                                 action,
-                                subscript.as_ref(),
-                                Marks::of(graph, *is_next, split.as_ref(), *piece),
+                                subscript: subscript.as_ref(),
+                                marks: Marks::of(graph, *is_next, split.as_ref(), *piece),
                                 disabled,
-                            )
+                            }
                         })
                         .collect();
                     let members = &members;
@@ -902,9 +912,15 @@ pub fn answer_atoms(
                             if answers.is_empty() {
                                 answers.resize_with(members.len(), Default::default);
                             }
-                            for ((action, subscript, marks, disabled), (steps, stutters)) in
+                            for (member, (steps, stutters)) in
                                 members.iter().zip(answers.iter_mut())
                             {
+                                let Member {
+                                    action,
+                                    subscript,
+                                    marks,
+                                    disabled,
+                                } = *member;
                                 let is_asked = disabled.is_none_or(|answers| answers[index] != 0);
                                 if index < graph.expanded {
                                     let start = graph.edge_offsets[index] as usize;
@@ -916,14 +932,14 @@ pub fn answer_atoms(
                                         steps.push(if is_asked {
                                             let next = graph.edges[edge] as usize;
                                             let taken = marks.taken(graph, edge, &run.marked);
-                                            run.action(action, *subscript, index, next, taken)
+                                            run.action(action, subscript, index, next, taken)
                                         } else {
                                             UNKNOWN
                                         });
                                     }
                                 }
                                 stutters.push(if is_asked {
-                                    run.action(action, *subscript, index, index, None)
+                                    run.action(action, subscript, index, index, None)
                                 } else {
                                     UNKNOWN
                                 });
