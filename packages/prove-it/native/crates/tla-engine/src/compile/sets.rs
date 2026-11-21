@@ -19,10 +19,6 @@ use super::{
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
 
-/// A machine's round of parts that have run once without failing and do the same every time
-/// (`Compiler::once_a_round`); `u64::MAX` is a round that has never run.
-const SETTLED: u64 = u64::MAX - 1;
-
 // Past this many functions the interpreter builds the set instead, before memory runs short.
 const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
 
@@ -195,25 +191,28 @@ impl Compiler<'_> {
     // parts run once: definitions can share a set, as Sn == [a : Sm, b : Sm] does, and bindings
     // don't change within a round. Parts of sets that read nothing, neither the state nor a bound
     // name nor TLC's registers, and print, draw or warn nothing (`components`), do the same each
-    // time they run, so once they have run without failing on a machine they run no more there.
+    // time they run, so once they have run without failing on a machine they run no more there,
+    // though each time they would have, the evaluation reaches as deep as they nested.
     pub(crate) fn once_a_round(&mut self, inner: Vec<Parts>, components: &[&Compiled]) -> Parts {
         let round = self.allocate_round();
         let is_settled = components
             .iter()
             .all(|component| component.footprint.width() == 0);
         parts(move |machine| {
-            let ran = machine.rounds[round];
-            if ran == machine.parts_round || ran == SETTLED {
+            if is_settled {
+                return machine
+                    .run_settled(round, |machine| {
+                        inner.iter().try_for_each(|part| part(machine))
+                    })
+                    .map(|_| ());
+            }
+            if machine.rounds[round] == machine.parts_round {
                 return Ok(());
             }
             for part in &inner {
                 part(machine)?;
             }
-            machine.rounds[round] = if is_settled {
-                SETTLED
-            } else {
-                machine.parts_round
-            };
+            machine.rounds[round] = machine.parts_round;
             Ok(())
         })
     }

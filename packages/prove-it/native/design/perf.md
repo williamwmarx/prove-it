@@ -644,7 +644,10 @@ Parts whose sets read nothing, neither a variable nor a bound name nor TLC's reg
 print, draw or warn nothing (an empty footprint, which holds those as slots), do the same every
 time they run. So once a machine has run such a round without failing, it marks the round settled
 and runs it no more. A round that fails isn't marked, and fails again where it is next reached, as
-before.
+before. Each later run in a new round reaches as deep as the first run's recursive calls
+nested (`Machine::run_settled`), as `once` and the memo tables do, so a membership whose parts
+recurse past TLC's stack still stops where TLC's does. Codex found that on #377, with `[a : H(1800)]`
+for a recursive H.
 
 Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
 

@@ -3244,6 +3244,48 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
     }
 }
 
+// tests/settled: a membership in a set of records whose parts call a recursive operator, which
+// the engine runs once and then reaches as deep again each time TLC runs them: 100 calls deep,
+// TLC's output beside it at d8fb231; 1,800 deep, where TLC's stack overflows, which the engine
+// declines.
+#[test]
+fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/settled");
+    let read = |file: &str| std::fs::read_to_string(directory.join(file)).expect(file);
+    let args = [
+        "-workers",
+        "1",
+        "-nowarning",
+        "-seed",
+        "4",
+        "-fp",
+        "0",
+        "-lncheck",
+        "final",
+    ];
+    let (output, run) = run_front(
+        "settled-shallow",
+        &read("SettledShallow.tla"),
+        &read("SettledShallow.cfg"),
+        &args,
+    );
+    assert_eq!(get_untimed(&stdout(&output)), read("SettledShallow.txt"));
+    std::fs::remove_dir_all(run).expect("removed");
+    let (output, run) = run_front(
+        "settled-depth",
+        &read("SettledDepth.tla"),
+        &read("SettledDepth.cfg"),
+        &args,
+    );
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("prove-it: not native yet: the engine stopped: recursion too deep"),
+        "{}{error}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(run).expect("removed");
+}
+
 // tests/processes: the fairness PlusCal writes, `\A self \in S : WF_vars(p(self))`, whose atoms are
 // each the action under one value of `self`: one process set over an interval, two sets with WF on
 // both, SF, a process waiting on a guard, model values, a constant set, WF on some processes only
