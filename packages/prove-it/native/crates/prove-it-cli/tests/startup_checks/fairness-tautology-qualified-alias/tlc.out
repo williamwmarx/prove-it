@@ -1,8 +1,8 @@
 exit 0
 Semantic processing of module Naturals
-Semantic processing of module Aux
+Semantic processing of module Aid
 Semantic processing of module M
-Linting of module Aux
+Linting of module Aid
 Linting of module M
 Warning: Implied-temporal checking is a tautology.
 The temporal formula Alias at line 5, col 1 to line 5, col 12 of module M equals

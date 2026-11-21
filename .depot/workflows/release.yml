@@ -34,7 +34,7 @@ jobs:
   arm64:
     name: Build the Linux arm64 engine
     if: github.ref == 'refs/heads/main'
-    runs-on: depot-ubuntu-24.04-arm
+    runs-on: depot-ubuntu-24.04-arm-8
     timeout-minutes: 30
     steps:
       - name: Check out exactly the pushed main commit
@@ -48,7 +48,8 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           cd packages/prove-it
-          (cd native && cargo test --locked)
+          # Optimized lightly, the tests, most of which check models, run in a third of the time.
+          (cd native && CARGO_PROFILE_DEV_OPT_LEVEL=1 cargo test --locked)
           bun scripts/platform-packages.ts build
           bun run build
           PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
@@ -74,9 +75,9 @@ jobs:
       matrix:
         include:
           - cpu: x64
-            runner: depot-ubuntu-24.04
+            runner: depot-ubuntu-24.04-8
           - cpu: arm64
-            runner: depot-ubuntu-24.04-arm
+            runner: depot-ubuntu-24.04-arm-8
     steps:
       - name: Check out exactly the pushed main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -84,9 +85,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Build, test and pack on Alpine
+        env:
+          CRATE_TESTS: "true"
         run: |
           set -euo pipefail
-          docker run --rm --volume "$PWD:/repo" \
+          docker run --rm --volume "$PWD:/repo" --env CRATE_TESTS \
             alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
             /repo/scripts/ci/alpine-package.sh
           platform=$(ls platform-packages/*-linux-${{ matrix.cpu }}-musl-*.tgz)

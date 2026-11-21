@@ -400,13 +400,22 @@ fn rejects_the_proof_that_zenons_not_subseteq_cap_rule_gives() {
 
 #[test]
 fn fails_on_malformed_input_as_tlapm_counts_it() {
-    let decision = prove_zenon::decide("$sig a", &limits());
+    let decision = prove_zenon::decide("$include a", &limits());
     assert_eq!(
         decision,
         Err(prove_decide::DecideError::Prover(
-            "Zenon: line 1: unsupported phrase $sig".into()
+            "Zenon: line 1: unsupported phrase $include".into()
         ))
     );
+}
+
+/// Zenon's own tests declare the types of their symbols, which Zenon reads and drops
+/// (`Phrase.separate`).
+#[test]
+fn reads_and_drops_signatures() {
+    let text = read_fixture("signatures/test01.znn");
+    let proof = get_proof(decide_zenon(&text, &limits()).expect("a valid input"));
+    assert_eq!(proof, Some(read_fixture("signatures/test01.isar")));
 }
 
 #[test]

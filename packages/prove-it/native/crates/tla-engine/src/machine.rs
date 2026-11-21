@@ -269,6 +269,11 @@ pub struct Machine<'p> {
     pub(crate) deep_onces: Vec<(Id, u32)>,
     // The round of membership tests in which each set's parts last ran (`onceARound`).
     pub(crate) rounds: Vec<u64>,
+    /// For each round of parts whose sets read nothing, whether a run of it settled it
+    /// (`run_settled`).
+    settled_rounds: Vec<bool>,
+    /// How many times a run of parts passed a round that ran before in it and didn't settle.
+    unsettled_passes: u64,
     pub(crate) parts_round: u64,
     parts_rounds: u64,
     pub(crate) depth: u32,
@@ -444,6 +449,8 @@ impl<'p> Machine<'p> {
             onces: vec![EMPTY; program.once_count],
             deep_onces: vec![(EMPTY, 0); program.once_count],
             rounds: vec![u64::MAX; program.round_count],
+            settled_rounds: vec![false; program.round_count],
+            unsettled_passes: 0,
             parts_round: 0,
             parts_rounds: 0,
             depth: 0,
@@ -660,9 +667,9 @@ impl<'p> Machine<'p> {
             return inner(self);
         }
         let read = keys.map(|key| self.read_key(key));
-        let known = self.tables[table].get(&read);
+        let (known, height) = self.tables[table].find(&read);
         if known != EMPTY {
-            self.reach_cached(self.tables[table].height(&read))?;
+            self.reach_cached(height)?;
             return Ok(known);
         }
         let output_at = self.output.len();
@@ -876,6 +883,33 @@ impl<'p> Machine<'p> {
         )
     }
 
+    /// Runs the parts of a round whose sets read nothing, as `Compiler::once_a_round` runs a
+    /// round: once in each run of parts. Such parts do the same each time, so once a run of them
+    /// has neither failed nor nested a recursive call, a cached one's height included, nor passed
+    /// a round that did, they run no more on this machine: TLC's stack feels nothing of them.
+    pub(crate) fn run_settled(
+        &mut self,
+        round: usize,
+        run: impl FnOnce(&mut Self) -> Outcome<()>,
+    ) -> Outcome<()> {
+        if self.settled_rounds[round] {
+            return Ok(());
+        }
+        if self.rounds[round] == self.parts_round {
+            // It ran in this run of parts and didn't settle, so it recursed.
+            self.unsettled_passes += 1;
+            return Ok(());
+        }
+        let passes = self.unsettled_passes;
+        let outer = self.reach_from_here();
+        let result = run(self);
+        let height = self.reached_below(outer);
+        result?;
+        self.settled_rounds[round] = height == 0 && self.unsettled_passes == passes;
+        self.rounds[round] = self.parts_round;
+        Ok(())
+    }
+
     /// Runs a set's parts in a round of their own, in which each lazy set's parts run once.
     pub(crate) fn run_parts(&mut self, parts: &Parts) -> Outcome<()> {
         let outer = self.parts_round;
@@ -919,10 +953,9 @@ impl<'p> Machine<'p> {
                     read[index] = self.read_key(key);
                 }
                 let keys = &read[..recursive.keys.len()];
-                let known = self.tables[table].get(keys);
+                let (known, height) = self.tables[table].find(keys);
                 if known != EMPTY {
                     // TLC calls the operator again, as deep as it went where it was kept.
-                    let height = self.tables[table].height(keys);
                     self.reach_cached(height).map(|()| known)
                 } else {
                     let output_at = self.output.len();

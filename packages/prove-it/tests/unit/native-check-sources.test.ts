@@ -23,6 +23,30 @@ import { readFileKey } from "../../src/cli/shared";
 import { checkAllSources, getNativeAddon } from "../../src/engine/native";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
+
+// A key the caller answers before the check asks is known on the first round, so a check that
+// needs only those runs once; one it asks for later still comes back as needed.
+describe("checkAllSources", () => {
+  it("answers the seeded keys before the first round", () => {
+    const rounds: string[][] = [];
+    const addon = {
+      checkSources: (_args: string[], known: [string, unknown][]) => {
+        rounds.push(known.map(([key]) => key));
+        return known.some(([key]) => key === "text:M.cfg")
+          ? { kind: "checked" as const }
+          : { kind: "needed" as const, keys: ["text:M.cfg"] };
+      },
+    } as unknown as Parameters<typeof checkAllSources>[0];
+    const read = (key: string) => `answer to ${key}`;
+    checkAllSources(addon, [], [] as never, read, ["text:M.tla", "cwd"]);
+    expect(rounds).toEqual([
+      ["text:M.tla", "cwd"],
+      ["text:M.tla", "cwd", "text:M.cfg"],
+    ]);
+    checkAllSources(addon, [], [] as never, read, ["text:M.cfg"]);
+    expect(rounds.at(-1)).toEqual(["text:M.cfg"]);
+  });
+});
 const BINARY = join(dirname(getBuiltAddon() ?? ""), "bin", "prove-it");
 const JARS = join(import.meta.dirname, "../../native/crates/prove-it-check/fixtures");
 

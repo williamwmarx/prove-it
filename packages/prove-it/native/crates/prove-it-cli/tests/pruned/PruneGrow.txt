@@ -1,0 +1,11 @@
+Computing initial states...
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = (a :> 0 @@ b :> 0 @@ c :> 0)
+
+State 2: <Grow(a) line 7, col 5 to line 11, col 38 of module PruneGrow>
+x = (a :> 3 @@ b :> 0 @@ c :> 0)
+
+13 states generated, 10 distinct states found, 6 states left on queue.
+The depth of the complete state graph search is 2.
