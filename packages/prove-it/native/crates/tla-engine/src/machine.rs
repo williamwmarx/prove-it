@@ -269,9 +269,6 @@ pub struct Machine<'p> {
     pub(crate) deep_onces: Vec<(Id, u32)>,
     // The round of membership tests in which each set's parts last ran (`onceARound`).
     pub(crate) rounds: Vec<u64>,
-    /// For each round of parts that does the same every time, once it has run without failing,
-    /// how many recursive calls nested below it (`run_settled`).
-    round_heights: Vec<Option<u32>>,
     pub(crate) parts_round: u64,
     parts_rounds: u64,
     pub(crate) depth: u32,
@@ -447,7 +444,6 @@ impl<'p> Machine<'p> {
             onces: vec![EMPTY; program.once_count],
             deep_onces: vec![(EMPTY, 0); program.once_count],
             rounds: vec![u64::MAX; program.round_count],
-            round_heights: vec![None; program.round_count],
             parts_round: 0,
             parts_rounds: 0,
             depth: 0,
@@ -878,30 +874,6 @@ impl<'p> Machine<'p> {
             self.random.state(),
             self.registers.writes,
         )
-    }
-
-    /// Runs the parts of a round that does the same every time it runs, as `Compiler::once_a_round`
-    /// runs a round: once in each run of parts. The first run measures how deep its recursive
-    /// calls nested; later runs reach that deep again without running them, as TLC does run them.
-    pub(crate) fn run_settled(
-        &mut self,
-        round: usize,
-        run: impl FnOnce(&mut Self) -> Outcome<()>,
-    ) -> Outcome<()> {
-        if self.rounds[round] == self.parts_round {
-            return Ok(());
-        }
-        if let Some(height) = self.round_heights[round] {
-            self.reach_cached(height)?;
-        } else {
-            let outer = self.reach_from_here();
-            let result = run(self);
-            let height = self.reached_below(outer);
-            result?;
-            self.round_heights[round] = Some(height);
-        }
-        self.rounds[round] = self.parts_round;
-        Ok(())
     }
 
     /// Runs a set's parts in a round of their own, in which each lazy set's parts run once.

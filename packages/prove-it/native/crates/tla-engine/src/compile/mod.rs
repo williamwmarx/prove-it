@@ -7268,7 +7268,7 @@ impl<'a> Compiler<'a> {
                     .iter()
                     .map(|bound| compiler.compile(bound.set, &outer))
                     .collect::<Compiling<Vec<Compiled>>>()?;
-                Ok(compiler.product_of(&factors))
+                Ok(compiler.product_of(&factors, false))
             }
         })?;
         let record = Rc::new(RecursiveFunction {
@@ -7315,7 +7315,7 @@ impl<'a> Compiler<'a> {
                                         .iter()
                                         .map(|bound| compiler.compile(bound.set, &body_context))
                                         .collect::<Compiling<Vec<Compiled>>>()?;
-                                    compiler.product_of(&factors)
+                                    compiler.product_of(&factors, false)
                                 }
                             };
                             Ok((element, slot_start, slot_end, compiler.member_test(&domain)))
