@@ -36,18 +36,18 @@ Larger models, as the median of three runs on a 16-core machine. tla-ts and tla-
 
 | Model | Distinct states | TLC, 1 worker | TLC, 16 workers | tla-ts | tla-rs | Prove It, 1 worker | Prove It, 16 workers | Prove It over TLC, 1 worker each |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| mongodb/MCExactInitialSync | 9,610,407 | 98.10 s | 18.52 s | 92.47 s | over 300 s | 13.54 s | 1.97 s | 7x |
-| cf1s-folklore/cf1s_folklore | 2,057,174 | 137.29 s | 13.38 s | 122.89 s | 171.94 s | 6.56 s | 2.77 s | 21x |
-| ccf consistency/MCMultiNode | 1,546,226 | 48.92 s | 5.66 s | 25.38 s | 199.01 s | 4.41 s | 0.81 s | 11x |
-| transaction_commit/PaxosCommit | 1,321,761 | 92.47 s | 9.69 s | 86.15 s | over 300 s | 14.41 s | 2.69 s | 6x |
-| pcal/Detlefs | 952,912 | 19.58 s | 4.34 s | 55.81 s | fails | 1.72 s | 0.41 s | 11x |
-| StarkMutex (liveness) | 399,763 | 72.55 s | 10.49 s | 132.21 s | fails | 3.13 s | 1.56 s | 23x |
-| btree/MCbtree | 374,727 | 23.17 s | 3.51 s | 9.52 s | fails | 0.72 s | 0.17 s | 32x |
-| dag-consensus/TLCSailfish1 | 109,604 | 26.04 s | 2.90 s | 26.91 s | fails | 2.84 s | 0.36 s | 9x |
-| SimplifiedFastPaxos/FastPaxos | 25,617 | 21.44 s | 2.20 s | 62.48 s | fails | 1.30 s | 1.28 s | 16x |
-| ccf consensus/MCabs | 349 | 33.83 s | 3.21 s | 87.56 s | fails | 9.51 s | 9.61 s | 4x |
+| mongodb/MCExactInitialSync | 9,610,407 | 98.33 s | 17.71 s | 93.81 s | over 300 s | 13.45 s | 3.33 s | 7x |
+| cf1s-folklore/cf1s_folklore | 2,057,174 | 134.47 s | 13.39 s | 116.34 s | 167.90 s | 6.53 s | 2.71 s | 21x |
+| ccf consistency/MCMultiNode | 1,546,226 | 48.29 s | 5.80 s | 24.82 s | 195.92 s | 4.57 s | 0.92 s | 11x |
+| transaction_commit/PaxosCommit | 1,321,761 | 93.60 s | 9.88 s | 88.13 s | over 300 s | 23.43 s | 4.59 s | 4x |
+| pcal/Detlefs | 952,912 | 19.34 s | 4.31 s | 54.40 s | fails | 1.84 s | 0.54 s | 11x |
+| StarkMutex (liveness) | 399,763 | 72.60 s | 10.06 s | 120.09 s | fails | 3.12 s | 1.62 s | 23x |
+| btree/MCbtree | 374,727 | 21.38 s | 3.10 s | 8.79 s | fails | 0.76 s | 0.20 s | 28x |
+| dag-consensus/TLCSailfish1 | 109,604 | 27.32 s | 3.00 s | 27.99 s | fails | 3.89 s | 0.49 s | 7x |
+| SimplifiedFastPaxos/FastPaxos | 25,617 | 21.68 s | 2.21 s | 63.91 s | fails | 1.44 s | 1.43 s | 15x |
+| ccf consensus/MCabs | 349 | 34.55 s | 3.49 s | 92.33 s | fails | 10.34 s | 10.40 s | 3x |
 
-Over the fifteen models of this suite, Prove It on one worker is 13 times faster than TLC on one worker at the geometric mean, and on sixteen workers it is 6 times faster than TLC on sixteen. It also uses less memory: 901 MB against TLC's 1,848 MB on the largest model. Sixteen workers are 2.8 times faster than one at the geometric mean, and no faster on models with few states and expensive steps: on MCabs, TLC on sixteen workers is 3 times faster than Prove It.
+Over the fifteen models of this suite, Prove It on one worker is 12 times faster than TLC on one worker at the geometric mean, and on sixteen workers it is 5 times faster than TLC on sixteen. It also uses less memory: 907 MB against TLC's 1,748 MB on the largest model. Sixteen workers are 2.6 times faster than one at the geometric mean, and no faster on models with few states and expensive steps: on MCabs, TLC on sixteen workers is 3 times faster than Prove It.
 
 TLC is built from `tlaplus/tlaplus` d8fb231 and runs on JDK 21, [tla-ts](https://github.com/aidenybai/tla-ts) is 0.0.10 on one worker under Node 24, and [tla-rs](https://github.com/fabracht/tla-rs) is 0.24.11, which has no parallel mode. tla-rs fails five of the models in the first table: two do not parse, two stop on an evaluation error, and one was killed at 15.6 GB of memory. The machines are Depot `depot-ubuntu-24.04-4` and `depot-ubuntu-24.04-16` runners (AMD EPYC 9R45, 16 GB and 63 GB). The first benchmark runs weekly on eighteen models; [`.depot/README.md`](https://github.com/williamwmarx/prove-it/blob/main/.depot/README.md#benchmark) describes it and how to run it.
 
