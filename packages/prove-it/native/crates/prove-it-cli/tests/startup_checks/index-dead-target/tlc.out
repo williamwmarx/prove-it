@@ -1,8 +1,8 @@
 exit 0
-Semantic processing of module Aux
+Semantic processing of module Aid
 Semantic processing of module Naturals
 Semantic processing of module M
-Linting of module Aux
+Linting of module Aid
 Linting of module M
 Computing initial states...
 Model checking completed. No error has been found.
