@@ -1193,7 +1193,9 @@ impl<'ir> Evaluator<'ir> {
                 return fail("variable not assigned");
             };
             if let Some(assigned) = &self.next[variable as usize] {
-                if !equals(assigned, &value)? {
+                // `processUnchanged` compares `val0.equals(val1)`: the current value fails as the
+                // receiver.
+                if !equals(&value, assigned)? {
                     self.emit_warning(tla_ir::RuntimeWarning::Unchanged {
                         node: self.resolved(expression),
                         variable,
