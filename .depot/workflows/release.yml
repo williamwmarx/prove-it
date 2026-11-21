@@ -34,7 +34,7 @@ jobs:
   arm64:
     name: Build the Linux arm64 engine
     if: github.ref == 'refs/heads/main'
-    runs-on: depot-ubuntu-24.04-arm
+    runs-on: depot-ubuntu-24.04-arm-8
     timeout-minutes: 30
     steps:
       - name: Check out exactly the pushed main commit
@@ -48,7 +48,8 @@ jobs:
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           cd packages/prove-it
-          (cd native && cargo test --locked)
+          # Optimized lightly, the tests, most of which check models, run in a third of the time.
+          (cd native && CARGO_PROFILE_DEV_OPT_LEVEL=1 cargo test --locked)
           bun scripts/platform-packages.ts build
           bun run build
           PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \

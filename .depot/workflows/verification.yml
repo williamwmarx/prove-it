@@ -199,10 +199,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Build, test, install and pack on Alpine
+        env:
+          # A pull request waits on the slowest job; arm64's crate tests take 9 minutes.
+          ARM64_CRATE_TESTS: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           docker run --rm --volume "$PWD:/repo" \
-            --env CARGO_PROFILE_RELEASE_LTO --env CARGO_PROFILE_RELEASE_CODEGEN_UNITS \
+            --env CARGO_PROFILE_RELEASE_LTO --env CARGO_PROFILE_RELEASE_CODEGEN_UNITS --env ARM64_CRATE_TESTS \
             alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
             /repo/scripts/ci/alpine-package.sh
   # fetch-depth 0 so a secret a later commit deleted is still found. The repository is public, so

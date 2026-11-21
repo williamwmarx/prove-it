@@ -1,9 +1,10 @@
 #!/bin/sh
 # Builds, tests and packs the native engine's musl platform package for this machine's CPU, on
 # Alpine: run it in an Alpine container with the repository at /repo. It installs Bun's musl build
-# and Rust's musl toolchain, runs the crates' tests on arm64, builds the package with platform-packages.ts, runs the native unit
-# tests with the addon, runs install-test, which installs the packed packages with npm and needs
-# "native: complete" under Node and Bun, and packs the package into /repo/platform-packages.
+# and Rust's musl toolchain, runs the crates' tests on arm64 when asked, builds the package with
+# platform-packages.ts, runs the native unit tests with the addon, runs install-test, which installs
+# the packed packages with npm and needs "native: complete" under Node and Bun, and packs the
+# package into /repo/platform-packages.
 set -eu
 
 case "$(uname -m)" in
@@ -41,9 +42,10 @@ cd /repo
 bun install --frozen-lockfile --ignore-scripts
 cd packages/prove-it
 (cd native && rustup toolchain install)
-# The crates' tests run on x64 in Verification's Cargo Test; arm64 runs them nowhere else before a
-# release. Optimized lightly, they run in a third of the time.
-if [ "$(uname -m)" = aarch64 ]; then
+# The crates' tests run on x64 in Verification's Cargo Test. On arm64 they run here when
+# ARM64_CRATE_TESTS is true, which Verification sets on pushes to main, and before a release in
+# release.yml. Optimized lightly, they run in a third of the time.
+if [ "$(uname -m)" = aarch64 ] && [ "${ARM64_CRATE_TESTS:-}" = true ]; then
   (cd native && CARGO_PROFILE_DEV_OPT_LEVEL=1 cargo test --locked)
 fi
 bun scripts/platform-packages.ts build
