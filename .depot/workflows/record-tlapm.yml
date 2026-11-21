@@ -1,0 +1,74 @@
+# Records tlapm's full output on the specs scripts/ci/tlapm-recordings.txt lists, each with the
+# options the list gives, from a tlapm built at the tlaplus/tlapm commit the input names with the
+# backends its build pins (Zenon, Z3, Isabelle and LS4), as the Record TLC workflow records TLC's.
+# It runs by hand only and holds no credential. Each run's stdout, stderr, exit code, command line
+# and fingerprints file are its artifact, to copy into the fixtures they are expected outputs of.
+name: Record tlapm
+"on":
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The tlaplus/tlapm commit to build
+        default: b91fb6c46c39895841cc29eafedc3661ef09628b
+      filter:
+        description: Only the runs whose spec path contains this text
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: record-tlapm
+  cancel-in-progress: false
+env:
+  NPM_TOKEN: ""
+  NODE_AUTH_TOKEN: ""
+  OP_SERVICE_ACCOUNT_TOKEN: ""
+  ONEPASSWORD_PROVE_IT_RELEASE_TOKEN: ""
+jobs:
+  record:
+    name: Record tlapm's output
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build tlapm and its backends
+        env:
+          TLAPM_COMMIT: ${{ inputs.commit || 'b91fb6c46c39895841cc29eafedc3661ef09628b' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes opam zlib1g-dev gawk time wget
+          opam init --bare --disable-sandboxing --yes
+          # The OCaml tlapm's own CI builds with.
+          opam switch create tlapm ocaml-base-compiler.5.5.2 --yes
+          eval "$(opam env --switch=tlapm --set-switch)"
+          tlapm="$RUNNER_TEMP/tlapm"
+          git init -q "$tlapm"
+          git -C "$tlapm" remote add origin https://github.com/tlaplus/tlapm.git
+          git -C "$tlapm" fetch -q --depth 1 origin "$TLAPM_COMMIT"
+          git -C "$tlapm" checkout -q FETCH_HEAD
+          cd "$tlapm"
+          make opam-deps
+          # The LSP tlapm's build includes needs these too.
+          make opam-deps-opt
+          make
+          dune install --relocatable --prefix "$RUNNER_TEMP/tlapm-install"
+          "$RUNNER_TEMP/tlapm-install/bin/tlapm" --version
+      - name: Record tlapm's output
+        env:
+          FILTER: ${{ inputs.filter || '' }}
+        run: |
+          set -euo pipefail
+          scripts/ci/record-tlapm.sh "$RUNNER_TEMP/tlapm-install/bin/tlapm" \
+            scripts/ci/tlapm-recordings.txt "$RUNNER_TEMP/tlapm-recordings" "$FILTER" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the recordings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: tlapm-recordings-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tlapm-recordings/
+          if-no-files-found: warn
+          retention-days: 90
