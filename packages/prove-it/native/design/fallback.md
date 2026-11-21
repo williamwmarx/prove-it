@@ -4910,6 +4910,14 @@ matches TLC or declines exactly.
   that fails at startup`, `front_constants/substitute-conjunct-failing`), where taking J for a K
   had it answer that no error was found.
 
+- A FingerprintException thrown in an operator argument a Java method applies, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `MethodValue.apply` catches it as any exception and
+  rethrows the method's EvalException ("Attempted to apply the operator overridden by the Java
+  method ... SelectSeq ..."), so TLC prints the frames the FingerprintException froze, the failing
+  value's source among them, with the nested expressions (`SelectSeq(<<1>>, LAMBDA k : {x} =
+  <<x>>)`, SortSeq's comparison likewise), where the binary reported "TLC was unable to
+  fingerprint". The trace evaluator now turns the sources into frames there, as it does
+  for an `EvaluatingValue` (`catch_fingerprint`). Fixtures `java-method-f*`.
 - A constant definition held as a filter, or a `\cup`, `\cap`, `\` or UNION TLC keeps lazy,
   whose part prints, draws or sets a register, counted, compared or printed (`S == {x \in 1..3 :
   PrintT(x)}`, `Cardinality(S) > 0`): TLC converts the one value it keeps at the first such use

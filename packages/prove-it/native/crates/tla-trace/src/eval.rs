@@ -4222,6 +4222,21 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // What a Java method that evaluates an operator argument returns (`MethodValue.apply`): a
+    // FingerprintException thrown in the argument, which it catches as any exception, it rethrows
+    // as the method's EvalException, as `EvaluatingValue.eval` does (`catch_fingerprint`).
+    fn java_method_result<T>(&mut self, signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+        if let Err(EvalError {
+            message: Some(message),
+            ..
+        }) = &result
+            && !message.is_eval_exception
+        {
+            self.catch_fingerprint();
+        }
+        as_java_runtime_failure(signature, result)
+    }
+
     // `TLCExt.tlcEval2`, an `EvaluatingValue`, of an expression of constant level: the value it
     // cached for the key, which is the expression's where the expression reads nothing that varies
     // and has no effect, and a failure, which TLC never caches, of either, reported as the Java
@@ -14797,7 +14812,7 @@ impl<'ir> Evaluator<'ir> {
                 let mut kept = Vec::new();
                 for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
                     let tested = self.call_with_values(&test, std::slice::from_ref(element));
-                    match as_java_runtime_failure(SELECT_SEQ, tested)? {
+                    match self.java_method_result(SELECT_SEQ, tested)? {
                         Value::Bool(true) => kept.push(element.clone()),
                         Value::Bool(false) => {}
                         value => {
@@ -14893,7 +14908,7 @@ impl<'ir> Evaluator<'ir> {
                     while position > 0 {
                         let pair = [element.clone(), sorted[position - 1].clone()];
                         let compared = self.call_with_values(&less, &pair);
-                        match as_java_runtime_failure(SORT_SEQ, compared)? {
+                        match self.java_method_result(SORT_SEQ, compared)? {
                             Value::Bool(true) => position -= 1,
                             Value::Bool(false) => break,
                             other => {
