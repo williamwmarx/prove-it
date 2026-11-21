@@ -1958,9 +1958,19 @@ impl<'a> Compiler<'a> {
             .chain(footprint.primes.iter().map(|&variable| Key::Next(variable)))
             .chain(footprint.slots.iter().map(|&slot| Key::Slot(slot)))
             .collect();
+        let looked_up = memo_lookup(table, &keys, compiled.eval.clone());
+        // An expression keyed by state variables alone has one value while a state is current,
+        // which an epoch cache of one entry answers again without hashing into the table.
+        let evaluate = if footprint.slots.is_empty() && footprint.primes.is_empty() {
+            let cache = self.program.epoch_count;
+            self.program.epoch_count += 1;
+            eval(move |machine| machine.epoch_lookup(cache, &[], &looked_up))
+        } else {
+            looked_up
+        };
         Compiled {
             is_costly: false,
-            ..compiled.with_eval(memo_lookup(table, &keys, compiled.eval.clone()))
+            ..compiled.with_eval(evaluate)
         }
     }
 
