@@ -667,6 +667,32 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 
 Together they bound StarkMutex at about 1.25×.
 
+### Liveness atoms on the helpers (atoms-on-helpers)
+
+Timed on 16 cores, the atoms scaled least of the liveness models' phases: 1.5× on StarkMutex and
+1.9× on cf1s_folklore, where the first ENABLED atom took 0.71 s of 2.7 s, almost all of it on the
+search's thread, computing which of TLC's actions changed the subscript from each state and running
+ENABLED on the states the steps don't answer; and each of StarkMutex's 60 action atoms launched the
+helpers twice, once for the steps and once for the stuttering steps. A helper now computes the
+changed actions of its run of states as it answers the atoms, answers an atom's steps and
+stuttering steps in one pass, and runs ENABLED on the states the steps leave unknown, each
+state's evaluation the same on any thread; the search's thread reads what the steps answer and
+evaluates only a state whose subscript failed on a step, or everything where the atoms print or
+`PROVE_IT_LIVE_CHECK` compares the two. On `depot-ubuntu-24.04-16`, medians of 3, against `main`
+at de9ca77d, 16 threads (one thread is within the build-to-build noise of the suite, 2 %):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.60 | 1.33 | 1.20× | 932 → 839 |
+| cf1s_folklore | 2.68 | 1.91 | 1.40× | 2,228 → 976 |
+
+The rest of the suite is within noise. What is left of the liveness check at 16 threads on
+StarkMutex is the search's merge (0.27 s), the atoms (about 0.3 s) and the checker (0.64 s, of
+which each behavior's thread spends 0.29 s skipping the action checks the shared table answers,
+0.06 s building successor sets and 0.11 s searching its graph); on cf1s_folklore the checker's
+1.2 s is 0.5 s of successor sets, 0.4 s copying the shared table's rows and 0.15 s of consistency
+rows, each behavior's thread again.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
