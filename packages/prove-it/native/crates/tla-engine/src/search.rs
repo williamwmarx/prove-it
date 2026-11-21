@@ -1577,6 +1577,10 @@ struct Search<'r, T, E = Dense> {
     held: Option<Vec<Vec<Printed>>>,
     // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
     is_exit_followed: bool,
+    // How often the search has reported each warning. TLC prints a warning's message once
+    // (`MP.printWarning`), and the first warning of a run once more, since its first message
+    // carries the hint to -nowarning: after two reports a warning never prints again.
+    warned: HashMap<crate::RuntimeWarning, u32>,
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -1638,6 +1642,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
+            warned: HashMap::new(),
         }
     }
 
@@ -1650,6 +1655,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             return;
         }
         for printed in &output {
+            if let Printed::Warning(warning) = printed {
+                *self.warned.entry(warning.clone()).or_insert(0) += 1;
+            }
             report_printed(self.reporter, &machine.store, printed);
         }
     }
@@ -2827,6 +2835,7 @@ impl Worker<'_> {
             canonicalizer.forget_from(self.bound);
         }
         self.machine.store.attach(store.clone());
+        self.machine.output.clear();
         self.bound = store.value_count() as Id;
         self.imported.clear();
     }
@@ -2957,6 +2966,9 @@ struct Shared<'s> {
     actions: Option<&'s [Step]>,
     // Where the search records its graph, what each thread records of its steps.
     recording: Option<Recording>,
+    // The warnings the search has reported, and how often, so that a thread tells a warning TLC
+    // may still print from one it never prints again.
+    warned: &'s HashMap<crate::RuntimeWarning, u32>,
 }
 
 // What a graph keeps of each step besides its target: the action that took it, and the state it
@@ -3046,7 +3058,24 @@ fn expand_claimed(
                 false,
                 level.check_deadlock,
             ) {
+                // A warning TLC may print, raised in the walk of this state or in its
+                // successors' checks, must come out in its place among what the search prints,
+                // which the thread can't give it: the level stops here, and its rest runs on one
+                // thread, which expands this state again and prints it. A warning TLC never
+                // prints again goes unreported, as it would on one thread.
+                Ok(())
+                    if machine.output.iter().any(|printed| {
+                        matches!(printed, Printed::Warning(warning) if {
+                            shared.warned.get(warning).is_none_or(|&count| count < 2)
+                        })
+                    }) =>
+                {
+                    machine.output.clear();
+                    level.stop.fetch_min(expanding, Ordering::Relaxed);
+                    break 'claiming;
+                }
                 Ok(()) => {
+                    machine.output.clear();
                     successors.push(search.successors as u32);
                     if let Some(graph) = &mut search.graph {
                         graph.edge_offsets.push(graph.edges.len() as u32);
@@ -3059,6 +3088,7 @@ fn expand_claimed(
                     counts.expanded.store(successors.len(), Ordering::Relaxed);
                 }
                 Err(_) => {
+                    machine.output.clear();
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
                     break 'claiming;
                 }
@@ -3110,6 +3140,7 @@ impl Search<'_, States> {
                 piece_width: graph.pieces.as_ref().map_or(0, |_| graph.piece_width),
                 is_real: graph.reals.is_some(),
             }),
+            warned: &self.warned,
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
@@ -4781,14 +4812,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // A level's states are shared between threads where the order of the steps across states
     // shows nowhere but in the states found and the graph the merge records in that order: nothing
     // prints or reads the count of distinct states, and no test asks for a check of the graph at
-    // a state inside a level.
+    // a state inside a level. A warning may be raised, since a thread that raises one TLC may
+    // print stops the level at its state (`expand_claimed`).
     // More threads than the machine runs at once would only take turns.
     let thread_count = settings
         .threads
         .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
     // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
-        && !is_warning
         && !compiler.is_ranking
         && !is_picking
         && !compiler.is_printing
