@@ -19,6 +19,10 @@ use super::{
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
 
+/// A machine's round of parts that have run once without failing and do the same every time
+/// (`Compiler::once_a_round`); `u64::MAX` is a round that has never run.
+const SETTLED: u64 = u64::MAX - 1;
+
 // Past this many functions the interpreter builds the set instead, before memory runs short.
 const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
 
@@ -189,17 +193,27 @@ impl Compiler<'_> {
 
     // A membership test evaluates its set's parts in a round of its own, in which each lazy set's
     // parts run once: definitions can share a set, as Sn == [a : Sm, b : Sm] does, and bindings
-    // don't change within a round.
-    pub(crate) fn once_a_round(&mut self, inner: Vec<Parts>) -> Parts {
+    // don't change within a round. Parts of sets that read nothing, neither the state nor a bound
+    // name nor TLC's registers, and print, draw or warn nothing (`components`), do the same each
+    // time they run, so once they have run without failing on a machine they run no more there.
+    pub(crate) fn once_a_round(&mut self, inner: Vec<Parts>, components: &[&Compiled]) -> Parts {
         let round = self.allocate_round();
+        let is_settled = components
+            .iter()
+            .all(|component| component.footprint.width() == 0);
         parts(move |machine| {
-            if machine.rounds[round] == machine.parts_round {
+            let ran = machine.rounds[round];
+            if ran == machine.parts_round || ran == SETTLED {
                 return Ok(());
             }
             for part in &inner {
                 part(machine)?;
             }
-            machine.rounds[round] = machine.parts_round;
+            machine.rounds[round] = if is_settled {
+                SETTLED
+            } else {
+                machine.parts_round
+            };
             Ok(())
         })
     }
@@ -316,7 +330,10 @@ impl Compiler<'_> {
         let range = self.compile(range, context)?;
         let range_member = self.member_test(&range);
         let footprint = domain.footprint.merge(&range.footprint);
-        let set_parts = self.once_a_round(vec![Self::parts_of(&domain), Self::parts_of(&range)]);
+        let set_parts = self.once_a_round(
+            vec![Self::parts_of(&domain), Self::parts_of(&range)],
+            &[&domain, &range],
+        );
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
         let member_parts = set_parts.clone();
@@ -394,6 +411,7 @@ impl Compiler<'_> {
                 .iter()
                 .map(|field| Self::parts_of(&field.1))
                 .collect(),
+            &written.iter().map(|field| &field.1).collect::<Vec<_>>(),
         );
         let mut sorted = written;
         let mut sort_error = None;
@@ -513,7 +531,10 @@ impl Compiler<'_> {
             .iter()
             .map(|factor| self.member_test(factor))
             .collect();
-        let set_parts = self.once_a_round(factors.iter().map(Self::parts_of).collect());
+        let set_parts = self.once_a_round(
+            factors.iter().map(Self::parts_of).collect(),
+            &factors.iter().collect::<Vec<_>>(),
+        );
         let sets: Vec<Eval> = factors.iter().map(|factor| factor.eval.clone()).collect();
         let member_parts = set_parts.clone();
         let components: Vec<&Compiled> = factors.iter().collect();
