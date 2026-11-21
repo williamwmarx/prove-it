@@ -677,12 +677,13 @@ running `Message`'s record sets' parts again was 26% of the run: `parts_of` 10.9
 
 Parts whose sets read nothing, neither a variable nor a bound name nor TLC's registers, and that
 print, draw or warn nothing (an empty footprint, which holds those as slots), do the same every
-time they run. So once a machine has run such a round without failing, it marks the round settled
-and runs it no more. A round that fails isn't marked, and fails again where it is next reached, as
-before. A round also settles only if its sets reach no recursive operator or function,
-through the definitions they name (`Compiler::is_recursion_free`), so its parts nest no recursive
-call whose depth TLC's stack would feel. Codex found the need on #377: `[a : H(1800)]` for a
-recursive H, where TLC's stack overflows each time it runs the parts.
+time they run. A machine runs such a round as before until a run of it neither fails nor nests a
+recursive call, a cached one's height included, nor passes a round that ran earlier in the same
+run of parts without settling (`Machine::run_settled`). From then on it skips the round. A round
+that recursed runs every time, so TLC's stack depth is felt where TLC's is. Codex found three ways
+a static test of recursion missed it on #377: a recursive operator in a field, a LET RECURSIVE in
+one, and a set of records two others share. `prove-it-cli/tests/settled` keeps all of them,
+declining as main does, beside a shallow one that matches TLC.
 
 Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
 

@@ -1,10 +1,9 @@
 //! Sets the engine tests for membership without building them, and the sets of functions, records
 //! and tuples, which it builds only when it must, as `compileLazySet` and `memberTest` do.
 
-use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
-use tla_ir::{Definition, NodeId, NodeKind, Resolution};
+use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
     is_function_kind, is_tested_set_kind,
@@ -15,15 +14,10 @@ use super::builtins::expect_int;
 use super::lazy::{Lazy, PrintedSet};
 use super::nodes::expect_set;
 use super::{
-    Binding, Compiled, Compiler, Compiling, Context, Shape, argument_context, combine_references,
-    eval, leaf, lookup, member, parts,
+    Compiled, Compiler, Compiling, Context, Shape, combine_references, eval, leaf, member, parts,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Member, Parts};
-
-/// A machine's round of parts that have run once without failing and do the same every time
-/// (`Compiler::once_a_round`); `u64::MAX` is a round that has never run.
-const SETTLED: u64 = u64::MAX - 1;
 
 // Past this many functions the interpreter builds the set instead, before memory runs short.
 const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
@@ -196,85 +190,31 @@ impl Compiler<'_> {
     // A membership test evaluates its set's parts in a round of its own, in which each lazy set's
     // parts run once: definitions can share a set, as Sn == [a : Sm, b : Sm] does, and bindings
     // don't change within a round. Parts of sets that read nothing, neither the state nor a bound
-    // name nor TLC's registers, and print, draw or warn nothing (`components`), and that reach no
-    // recursive operator or function (`is_recursion_free`), do the same each time they run and
-    // nest no recursive call whose depth TLC's stack would feel, so once they have run without
-    // failing on a machine they run no more there.
-    pub(crate) fn once_a_round(
-        &mut self,
-        inner: Vec<Parts>,
-        components: &[&Compiled],
-        is_recursion_free: bool,
-    ) -> Parts {
+    // name nor TLC's registers, and print, draw or warn nothing (`components`), do the same each
+    // time they run, so once a run of them has made no recursive call on a machine
+    // (`Machine::run_settled`), they run no more there.
+    pub(crate) fn once_a_round(&mut self, inner: Vec<Parts>, components: &[&Compiled]) -> Parts {
         let round = self.allocate_round();
-        let is_settled = is_recursion_free
-            && components
-                .iter()
-                .all(|component| component.footprint.width() == 0);
+        let is_settled = components
+            .iter()
+            .all(|component| component.footprint.width() == 0);
         parts(move |machine| {
-            let ran = machine.rounds[round];
-            if ran == machine.parts_round || ran == SETTLED {
+            if is_settled {
+                return machine
+                    .run_settled(round, |machine| {
+                        inner.iter().try_for_each(|part| part(machine))
+                    })
+                    .map(|_| ());
+            }
+            if machine.rounds[round] == machine.parts_round {
                 return Ok(());
             }
             for part in &inner {
                 part(machine)?;
             }
-            machine.rounds[round] = if is_settled {
-                SETTLED
-            } else {
-                machine.parts_round
-            };
+            machine.rounds[round] = machine.parts_round;
             Ok(())
         })
-    }
-
-    /// Whether evaluating the expressions reaches no recursive operator or function, through the
-    /// definitions they name; an operator passed as an argument, or a value a LET holds, may.
-    pub(crate) fn is_recursion_free(&self, nodes: &[NodeId], context: &Context) -> bool {
-        let mut seen = HashSet::new();
-        nodes
-            .iter()
-            .all(|&node| !self.may_recurse(node, context, &mut seen))
-    }
-
-    fn may_recurse(&self, node: NodeId, context: &Context, seen: &mut HashSet<NodeId>) -> bool {
-        if !seen.insert(node) {
-            return false;
-        }
-        let kind = self.node(node).1;
-        let named = match kind {
-            NodeKind::FunctionConstruction {
-                is_recursive: true, ..
-            } => return true,
-            NodeKind::Identifier(name)
-            | NodeKind::OperatorReference(name)
-            | NodeKind::Apply { name, .. } => {
-                if name.is_local {
-                    match lookup(&context.scope, name.text)
-                        .as_ref()
-                        .map(|scope| &scope.binding)
-                    {
-                        None | Some(Binding::Slot(_)) => false,
-                        Some(Binding::Argument(argument)) => {
-                            self.may_recurse(argument.expression, &argument_context(argument), seen)
-                        }
-                        Some(_) => true,
-                    }
-                } else if let Resolution::Definition(index) = name.resolution {
-                    let definition = self.definition(self.ir.definitions[index as usize]);
-                    definition.flags & (Definition::RECURSIVE | Definition::SELF_REFERENTIAL) != 0
-                        || self.may_recurse(definition.body, &context.global(false), seen)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        };
-        named
-            || self
-                .evaluated_children(node)
-                .into_iter()
-                .any(|child| self.may_recurse(child, context, seen))
     }
 
     pub(crate) fn compile_lazy_set(
@@ -385,7 +325,6 @@ impl Compiler<'_> {
         range: NodeId,
         context: &Context,
     ) -> Compiling<Compiled> {
-        let (domain_node, range_node) = (domain, range);
         let domain = self.compile(domain, context)?;
         let range = self.compile(range, context)?;
         let range_member = self.member_test(&range);
@@ -393,7 +332,6 @@ impl Compiler<'_> {
         let set_parts = self.once_a_round(
             vec![Self::parts_of(&domain), Self::parts_of(&range)],
             &[&domain, &range],
-            self.is_recursion_free(&[domain_node, range_node], context),
         );
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
@@ -473,10 +411,6 @@ impl Compiler<'_> {
                 .map(|field| Self::parts_of(&field.1))
                 .collect(),
             &written.iter().map(|field| &field.1).collect::<Vec<_>>(),
-            self.is_recursion_free(
-                &fields.iter().map(|&(_, value)| value).collect::<Vec<_>>(),
-                context,
-            ),
         );
         let mut sorted = written;
         let mut sort_error = None;
@@ -583,18 +517,15 @@ impl Compiler<'_> {
     }
 
     fn compile_product(&mut self, factors: &[NodeId], context: &Context) -> Compiling<Compiled> {
-        let factor_nodes = factors;
         let factors = factors
             .iter()
             .map(|&factor| self.compile(factor, context))
             .collect::<Compiling<Vec<Compiled>>>()?;
-        let is_recursion_free = self.is_recursion_free(factor_nodes, context);
-        Ok(self.product_of(&factors, is_recursion_free))
+        Ok(self.product_of(&factors))
     }
 
-    // The product of compiled sets, `\X`'s value and a function's domain of several bounds, whose
-    // parts reach no recursion where `is_recursion_free`.
-    pub(crate) fn product_of(&mut self, factors: &[Compiled], is_recursion_free: bool) -> Compiled {
+    // The product of compiled sets, `\X`'s value and a function's domain of several bounds.
+    pub(crate) fn product_of(&mut self, factors: &[Compiled]) -> Compiled {
         let members: Vec<Member> = factors
             .iter()
             .map(|factor| self.member_test(factor))
@@ -602,7 +533,6 @@ impl Compiler<'_> {
         let set_parts = self.once_a_round(
             factors.iter().map(Self::parts_of).collect(),
             &factors.iter().collect::<Vec<_>>(),
-            is_recursion_free,
         );
         let sets: Vec<Eval> = factors.iter().map(|factor| factor.eval.clone()).collect();
         let member_parts = set_parts.clone();

@@ -4093,15 +4093,7 @@ impl Compiler<'_> {
                     self.may_have_effect_in(operand.node, &operand.context, &mut HashSet::new())
                 });
                 let mixed = [0, 1].map(|index| self.mixed_scalar_elements(&operands[index]));
-                let is_recursion_free = self
-                    .is_recursion_free(&[operands[0].node], &operands[0].context)
-                    && self.is_recursion_free(&[operands[1].node], &operands[1].context);
-                let compiled = self.compile_set_operation(
-                    name,
-                    (&left, &right),
-                    has_effect,
-                    is_recursion_free,
-                )?;
+                let compiled = self.compile_set_operation(name, &left, &right, has_effect)?;
                 // `SetEnumValue.cap` and `diff` test the set enumeration's elements in the other
                 // set, an interval by its bounds (`IntervalValue.member`), without building it.
                 let is_filtered = name != "\\cup"
@@ -5029,9 +5021,9 @@ impl Compiler<'_> {
     fn compile_set_operation(
         &mut self,
         name: &str,
-        (left, right): (&Compiled, &Compiled),
+        left: &Compiled,
+        right: &Compiled,
         has_effect: bool,
-        is_recursion_free: bool,
     ) -> Compiling<Option<Compiled>> {
         // A set the engine tests for membership without building it, such as Nat \ {0}, combines
         // the operands' tests.
@@ -5068,7 +5060,6 @@ impl Compiler<'_> {
         let operand_parts = self.once_a_round(
             vec![Self::parts_of(left), Self::parts_of(right), reduction],
             &[left, right],
-            is_recursion_free,
         );
         let lazy_member = if is_lazy(left) || is_lazy(right) {
             let (left_member, right_member) = (self.member_test(left), self.member_test(right));

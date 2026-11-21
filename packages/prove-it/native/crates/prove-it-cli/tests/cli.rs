@@ -3246,8 +3246,9 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
 
 // tests/settled: a membership in a set of records whose parts call a recursive operator, which
 // the engine runs every time, as TLC does, rather than once: 100 calls deep, TLC's output beside
-// it at d8fb231; 1,800 deep, where TLC's stack overflows, which the engine declines, directly and
-// through a set of records shared by two others.
+// it at d8fb231; 1,800 deep, where TLC's stack overflows, which the engine declines: directly, in
+// a LET RECURSIVE inside the set, and through a set of records shared by two others, defined at
+// the top or in a LET.
 #[test]
 fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/settled");
@@ -3271,7 +3272,12 @@ fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
     );
     assert_eq!(get_untimed(&stdout(&output)), read("SettledShallow.txt"));
     std::fs::remove_dir_all(run).expect("removed");
-    for name in ["SettledDepth", "SettledShared"] {
+    for name in [
+        "SettledDepth",
+        "SettledShared",
+        "SettledLet",
+        "SettledSharedLet",
+    ] {
         let (output, run) = run_front(
             &format!("settled-{name}"),
             &read(&format!("{name}.tla")),
