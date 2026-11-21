@@ -3249,7 +3249,8 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
 // fail before it without an error: guards the walk walks, keys of numbers, a guard that fails on
 // the first, a middle and the last value of T, a quantifier that fails to evaluate or compares
 // values TLC can't, a guard that reads a key the quantifier fixes, values outside T, a guard that
-// prints and a quantifier over no keys. TLC's output on each at d8fb231 is beside it.
+// prints, a quantifier over no keys, and a quantifier or a guard that reads TLCGet, which a TLCSet
+// after them changes between functions. TLC's output on each at d8fb231 is beside it.
 #[test]
 fn enumerates_functions_a_quantifier_fixes_as_tlc() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pruned");
@@ -3261,7 +3262,7 @@ fn enumerates_functions_a_quantifier_fixes_as_tlc() {
         })
         .collect();
     names.sort();
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 14);
     for name in names {
         let read = |extension: &str| {
             std::fs::read_to_string(directory.join(format!("{name}.{extension}"))).expect(extension)

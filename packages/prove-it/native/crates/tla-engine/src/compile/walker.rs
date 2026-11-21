@@ -3046,9 +3046,16 @@ impl<'a> Compiler<'a> {
             .conjunction(&prefix, context, options, 0, 0, after, &mut |_, _| Ok(None))
             .ok()?;
         let walk = walk.unwrap_or_else(|| step(|machine, on_complete| on_complete(machine)));
-        self.compile_pruning(walk, &keys, following[length], variable, context)
-            .ok()
-            .flatten()
+        self.compile_pruning(
+            walk,
+            &following[..length],
+            &keys,
+            following[length],
+            variable,
+            context,
+        )
+        .ok()
+        .flatten()
     }
 
     // The conjunction from a conjunct on, past the shortcut's check, which its caller made.

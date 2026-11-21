@@ -709,15 +709,22 @@ one spec's idiom, built because it is the suite's weakest model against TLC.
   `x'[k]`, with k of names bound outside the conjunction, through no prime, UNCHANGED, ENABLED,
   action or temporal operator, and through definitions that read no next state. At run time each k
   must be a key outside E.
+- Nothing from the membership through the quantifier may read what TLC keeps beside the state,
+  which a TLCSet after the quantifier, or the search, can change between two functions of the
+  enumeration: no TLCGet or other builtin of TLC's registers, caches, counts, level, files,
+  environment, random draws or trace (`is_steady_builtin`), and no compiled footprint with a
+  search, register, print or warning slot. Codex found the first on #375: a quantifier that
+  compares with TLCGet(1), followed by TLCSet(1, 1).
 - It is off while generating, where the walk streams a set held as built, and where the search
   keeps the shapes of assigned values for liveness atoms. Coverage is counted by tla-trace's own
   pass, which this doesn't touch. Anything a pre-pass evaluation prints or warns, and any failure,
   sends the walk through every function, as before.
 
-`prove-it-cli/tests/pruned` compares eleven specs with TLC at d8fb231: guards the walk walks, keys
+`prove-it-cli/tests/pruned` compares fourteen specs with TLC at d8fb231: guards the walk walks, keys
 of numbers, a guard that fails on the first, a middle and the last value of T, a quantifier that
 fails to evaluate or compares a number with a string, a guard reading a key the quantifier fixes,
-a value outside T, a guard that prints, and a quantifier over no keys.
+a value outside T, a guard that prints, a quantifier over no keys, and a quantifier or a guard
+that reads TLCGet, the level or a register a later TLCSet changes.
 
 **Measured** on Depot against `main` at b7f832b9, `bench-suite.ts` with `native` and
 `native-base`, one worker, median wall seconds with the range:

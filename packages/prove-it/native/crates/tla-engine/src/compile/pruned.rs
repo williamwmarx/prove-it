@@ -23,7 +23,10 @@ use tla_values::Id;
 use tla_values::store::{FALSE, Outcome, TRUE, is_function_kind};
 
 use super::walker::{Ordered, element_at};
-use super::{Binding, Compiler, Compiling, Context, argument_context, lookup};
+use super::{
+    Binding, Compiler, Compiling, Context, SEARCH_SLOTS, WARNING_SLOT, argument_context, lookup,
+};
+use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Step, UNASSIGNED};
 
 /// What the walk of `x' \in [D -> T]` evaluates to find the functions that reach past the guards
@@ -39,6 +42,47 @@ pub(super) struct Pruning {
     slot: u32,
     /// The quantifier's body, `x'[j] = e`.
     body: Eval,
+}
+
+/// Whether a builtin's value is the same wherever the walk evaluates it with the same arguments:
+/// not `\cdot`, an action, and none that reads or changes what TLC keeps beside the state, which
+/// can change between two functions of the enumeration (TLC's registers and caches, its counts
+/// and level, files, the environment, random draws, the trace, the successor's history).
+fn is_steady_builtin(name: &str) -> bool {
+    const PREFIXES: [&str; 9] = [
+        "TLC",
+        "IO",
+        "Random",
+        "CSV",
+        "Json",
+        "ndJson",
+        "Serialize",
+        "Deserialize",
+        "_",
+    ];
+    const NAMES: [&str; 11] = [
+        "\\cdot",
+        "Print",
+        "PrintT",
+        "Assert",
+        "AssertEq",
+        "AssertError",
+        "TestRandomSetOfSubsets",
+        "CounterExample",
+        "Trace",
+        "PickSuccessor",
+        "JavaTime",
+    ];
+    !NAMES.contains(&name) && !PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
+/// Whether a compiled expression reads nothing of TLC's search and keeps no slot for a print or
+/// a warning, so that it has one value for the state and the names it reads.
+fn is_steady(footprint: &Footprint) -> bool {
+    footprint
+        .slots
+        .iter()
+        .all(|slot| !SEARCH_SLOTS.contains(slot) && *slot != WARNING_SLOT)
 }
 
 /// The integer r with r to the power `width` equal to `size`, if there is one.
@@ -78,11 +122,13 @@ impl<'a> Compiler<'a> {
         None
     }
 
-    /// The pruning whose conjuncts before the quantifier `constraint` walk as `prefix`, reading
-    /// x' at `keys`.
+    /// The pruning whose conjuncts before the quantifier `constraint`, `prefix_nodes`, walk as
+    /// `prefix`, reading x' at `keys`; none where any of them, the quantifier's set or its body
+    /// reads what TLC keeps beside the state.
     pub(super) fn compile_pruning(
         &mut self,
         prefix: Step,
+        prefix_nodes: &[NodeId],
         keys: &[NodeId],
         constraint: NodeId,
         variable: u32,
@@ -91,19 +137,35 @@ impl<'a> Compiler<'a> {
         let Some((bound, body)) = self.constraint_of(constraint, variable, context) else {
             return Ok(None);
         };
-        let keys = keys
-            .iter()
-            .map(|&key| self.compile(key, context).map(|compiled| compiled.eval))
-            .collect::<Compiling<Vec<_>>>()?;
+        let mut evals = Vec::with_capacity(keys.len());
+        for &key in keys {
+            let compiled = self.compile(key, context)?;
+            if !is_steady(&compiled.footprint) {
+                return Ok(None);
+            }
+            evals.push(compiled.eval);
+        }
+        for &conjunct in prefix_nodes {
+            if !is_steady(&self.compile(conjunct, context)?.footprint) {
+                return Ok(None);
+            }
+        }
         let compiled = self.compile(bound.set, context)?;
+        if !is_steady(&compiled.footprint) {
+            return Ok(None);
+        }
         let ordered = self
             .order(compiled.clone(), bound.set, context, false)?
             .checked(compiled);
         let binder = self.bind_bound(&bound.pattern, context);
-        let body = self.compile(body, &binder.context)?.eval;
+        let body = self.compile(body, &binder.context)?;
+        if !is_steady(&body.footprint) {
+            return Ok(None);
+        }
+        let body = body.eval;
         Ok(Some(Pruning {
             prefix,
-            keys,
+            keys: evals,
             bound: ordered,
             slot: binder.slots[0],
             body,
@@ -219,7 +281,7 @@ impl<'a> Compiler<'a> {
                             let body = self.definition(self.ir.definitions[index as usize]).body;
                             self.is_next_free(body, &mut HashSet::new())
                         }
-                        Resolution::Builtin(index) => self.builtin_name(index) != "\\cdot",
+                        Resolution::Builtin(index) => is_steady_builtin(self.builtin_name(index)),
                         Resolution::Variable(_) | Resolution::Constant(_) | Resolution::None => {
                             true
                         }
@@ -268,7 +330,7 @@ impl<'a> Compiler<'a> {
                         let body = self.definition(self.ir.definitions[index as usize]).body;
                         self.is_next_free(body, seen)
                     }
-                    Resolution::Builtin(index) => self.builtin_name(index) != "\\cdot",
+                    Resolution::Builtin(index) => is_steady_builtin(self.builtin_name(index)),
                     _ => true,
                 }
             }
