@@ -4737,6 +4737,14 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- The call stack of a failure in an argument of a function application of several, found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5. SANY parses `f[a, b]` as `f[<<a, b>>]`, a
+  `$Tuple` node with the application's range, which `OPCODE_fa` evaluates (`args[1]`), so TLC's
+  call stack holds the application's range twice before the failing argument's: `x' = x + [i
+  \in 0..2, j \in 1..2 |-> i][1 \div x, 1]` lists `Line 8, column 18 to line 8, column 60` twice,
+  where the trace evaluator listed it once (`StackFrame::Arguments`). Fixtures
+  `function-arguments-frame-*`.
+
 - A record in the value of a function TLC kept lazy, printed. TLC prints its fields as written
   where the engine printed them as TLC sorts them (by when it interned each name): a LET
   definition or an operator's argument whose function constructor TLC first computed with

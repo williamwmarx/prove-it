@@ -833,6 +833,9 @@ pub enum StackFrame {
     Node(NodeId),
     /// The first `count` operands of a junction.
     Prefix(NodeId, usize),
+    /// The tuple of the arguments of a function application of several, which SANY builds as a
+    /// node of its own with the application's range (`f[a, b]` is `f[<<a, b>>]`).
+    Arguments(NodeId),
 }
 
 /// Where TLC needed a boolean, which words its failure where the value isn't one: each is an
@@ -4783,7 +4786,9 @@ impl<'ir> Evaluator<'ir> {
             .frames
             .iter()
             .map(|frame| match *frame {
-                StackFrame::Node(node) | StackFrame::Prefix(node, _) => node,
+                StackFrame::Node(node)
+                | StackFrame::Prefix(node, _)
+                | StackFrame::Arguments(node) => node,
             })
             .collect();
         let ir = self.ir;
@@ -8707,7 +8712,9 @@ impl<'ir> Evaluator<'ir> {
             .frames
             .iter()
             .map(|frame| match frame {
-                StackFrame::Node(node) | StackFrame::Prefix(node, _) => self.node(*node).0,
+                StackFrame::Node(node)
+                | StackFrame::Prefix(node, _)
+                | StackFrame::Arguments(node) => self.node(*node).0,
             })
             .collect();
         let Some(&innermost) = nodes.last() else {
@@ -10608,7 +10615,7 @@ impl<'ir> Evaluator<'ir> {
                 if let [bound] = &bounds[..] {
                     self.apply_kept_lazy(bound, body, &own, args[0], context)
                 } else {
-                    self.apply_kept_lazy_several(&bounds, body, args, context)
+                    self.apply_kept_lazy_several(node, &bounds, body, args, context)
                 }
             }
             result => result,
@@ -10622,6 +10629,7 @@ impl<'ir> Evaluator<'ir> {
     // and its domain, the set of tuples of the domains.
     fn apply_kept_lazy_several(
         &mut self,
+        node: NodeId,
         bounds: &[Bound],
         body: NodeId,
         args: &[NodeId],
@@ -10635,15 +10643,7 @@ impl<'ir> Evaluator<'ir> {
             }
             domains.push(set);
         }
-        let argument = if let [arg] = args {
-            self.evaluate(*arg, context)?
-        } else {
-            Value::tuple(
-                args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            )
-        };
+        let argument = self.evaluate_arguments(node, args, context)?;
         if matches!(argument, Value::Lambda(_)) {
             return fail(LAZY_BODY_AT_KEY);
         }
@@ -11235,6 +11235,26 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
+    // The argument of a function application: its one argument, or the tuple of several, which
+    // TLC evaluates in a frame of its own (`OPCODE_fa` evaluates `args[1]`, SANY's `$Tuple`).
+    fn evaluate_arguments(
+        &mut self,
+        application: NodeId,
+        args: &[NodeId],
+        context: &Context,
+    ) -> Evaluated<Value> {
+        if let [arg] = args {
+            return self.evaluate(*arg, context);
+        }
+        self.in_frame(StackFrame::Arguments(application), &mut |evaluator| {
+            Ok(Value::tuple(
+                args.iter()
+                    .map(|&arg| evaluator.evaluate(arg, context))
+                    .collect::<Evaluated<_>>()?,
+            ))
+        })
+    }
+
     fn apply_function_value(
         &mut self,
         node: NodeId,
@@ -11242,16 +11262,7 @@ impl<'ir> Evaluator<'ir> {
         args: &[NodeId],
         context: &Context,
     ) -> Evaluated<Value> {
-        let argument = |evaluator: &mut Self| {
-            if args.len() == 1 {
-                return evaluator.evaluate(args[0], context);
-            }
-            Ok(Value::tuple(
-                args.iter()
-                    .map(|&arg| evaluator.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            ))
-        };
+        let argument = |evaluator: &mut Self| evaluator.evaluate_arguments(node, args, context);
         // A function TLC keeps lazy, a definition's or a LET's, is applied without being built.
         // A LET's LazyValue keeps the function its first use computed, with the domain evaluated
         // then: where the evaluator built it before, TLC holds it built (`toFcnRcd`), and
