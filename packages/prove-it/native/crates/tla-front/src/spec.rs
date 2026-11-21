@@ -391,7 +391,7 @@ fn is_operator_parameter_read(
     let Some((_, body, _)) = resolve_apply_operator(application, scope, environment) else {
         return true;
     };
-    is_parameter_read_in(&body, &param.name, environment, &mut Vec::new())
+    is_parameter_read_in(&body, &param.name, environment, &mut Vec::new(), &[])
 }
 
 // Whether `body` reads the operator parameter `name` where SANY counts it among its level
@@ -399,14 +399,15 @@ fn is_operator_parameter_read(
 // where that operator's own parameter does (`OpApplNode.levelCheck` takes the level parameters
 // of an argument through the operator's `getLevelParams`), as `Over(G)` with `Over(F(_)) ==
 // ENABLED F(2)` reads G under ENABLED alone; an operator a LET defines reads it where it is
-// itself read.
+// itself read, through the LET definitions in scope where it is defined (`enclosing`).
 fn is_parameter_read_in(
     body: &Expr,
     name: &Name,
     environment: &Environment,
     visiting: &mut Vec<(*const Expression, usize)>,
+    enclosing: &[Rc<Definition>],
 ) -> bool {
-    let mut locals: Vec<Rc<Definition>> = Vec::new();
+    let mut locals: Vec<Rc<Definition>> = enclosing.to_vec();
     let mut pending = vec![body.clone()];
     while let Some(expression) = pending.pop() {
         let reference = expression.reference();
@@ -458,7 +459,8 @@ fn is_parameter_read_in(
                 return true;
             }
             visiting.push(key);
-            let is_read = is_parameter_read_in(&definition.body, name, environment, visiting);
+            let is_read =
+                is_parameter_read_in(&definition.body, name, environment, visiting, &locals);
             visiting.pop();
             is_read
         };
@@ -482,9 +484,11 @@ fn is_parameter_read_in(
             return true;
         }
         if let ExpressionKind::Apply { args, .. } = &expression.kind
-            && let Some((params, inner, _)) = called
+            && let Some((params, inner, definition)) = called
             && params.len() == args.len()
         {
+            // A global operator's body reads no LET of this body; a LET's reads those in scope.
+            let inner_locals: &[Rc<Definition>] = if definition.is_some() { &locals } else { &[] };
             for (index, (param, argument)) in params.iter().zip(args).enumerate() {
                 let passed = if param.arity > 0
                     && matches!(argument.kind, ExpressionKind::Identifier { .. })
@@ -511,8 +515,13 @@ fn is_parameter_read_in(
                             return true;
                         }
                         visiting.push(key);
-                        let is_read =
-                            is_parameter_read_in(&inner, &param.name, environment, visiting);
+                        let is_read = is_parameter_read_in(
+                            &inner,
+                            &param.name,
+                            environment,
+                            visiting,
+                            inner_locals,
+                        );
                         visiting.pop();
                         if is_read {
                             return true;

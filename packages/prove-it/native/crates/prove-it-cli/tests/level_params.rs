@@ -36,7 +36,7 @@ fn levels_a_property_as_sany_and_tlc_do() {
         .map(|entry| entry.expect("an entry").path())
         .collect();
     cases.sort();
-    assert_eq!(cases.len(), 16);
+    assert_eq!(cases.len(), 19);
     for fixture in cases {
         let name = fixture
             .file_name()
