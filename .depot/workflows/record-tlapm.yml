@@ -51,6 +51,8 @@ jobs:
           git -C "$tlapm" checkout -q FETCH_HEAD
           cd "$tlapm"
           make opam-deps
+          # The LSP tlapm's build includes needs these too.
+          make opam-deps-opt
           make
           dune install --relocatable --prefix "$RUNNER_TEMP/tlapm-install"
           "$RUNNER_TEMP/tlapm-install/bin/tlapm" --version
