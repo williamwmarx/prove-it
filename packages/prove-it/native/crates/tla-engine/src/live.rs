@@ -109,33 +109,32 @@ impl<'a> Marks<'a> {
         }
     }
 
-    fn is_marked(&self, edge: usize) -> bool {
-        match *self {
-            Marks::Unknown => false,
-            Marks::All => true,
-            Marks::Labels { actions, labels } => {
-                actions.get(labels[edge] as usize).copied().unwrap_or(false)
-            }
-            Marks::Pieces {
-                pieces,
-                width,
-                byte,
-                mask,
-            } => pieces[edge * width + byte] & mask != 0,
-        }
-    }
-
     /// The successors the marked steps from a state reach, sorted into `marked`: TLC evaluates
     /// the action once for each successor, so it holds of every step to a successor one marked
     /// step reaches.
     fn successors(&self, graph: &LiveGraph<'_>, index: usize, marked: &mut Vec<u32>) {
         let steps = graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
         marked.clear();
-        marked.extend(
-            steps
-                .filter(|&edge| self.is_marked(edge))
-                .map(|edge| graph.edges[edge]),
-        );
+        // A loop for each kind of mark, read once a step.
+        match *self {
+            Marks::Unknown => return,
+            Marks::All => marked.extend(steps.map(|edge| graph.edges[edge])),
+            Marks::Labels { actions, labels } => marked.extend(
+                steps
+                    .filter(|&edge| actions.get(labels[edge] as usize).copied().unwrap_or(false))
+                    .map(|edge| graph.edges[edge]),
+            ),
+            Marks::Pieces {
+                pieces,
+                width,
+                byte,
+                mask,
+            } => marked.extend(
+                steps
+                    .filter(|&edge| pieces[edge * width + byte] & mask != 0)
+                    .map(|edge| graph.edges[edge]),
+            ),
+        }
         marked.sort_unstable();
     }
 
