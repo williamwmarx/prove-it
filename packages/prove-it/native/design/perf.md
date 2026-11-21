@@ -674,6 +674,26 @@ Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
 On a 4-core runner, with 9 interleaved runs, MCbtree took 0.633 s at fb05e28, 0.773 s at
 8f623123 (#369) and 0.725 s with this change. So it wins back about a third of the loss there.
 
+### Testing in place what a successor needs counted
+
+The 4-core bisect of fb05e28..8f623123 (9 and 7 interleaved runs, one machine) put most of the
+one-worker slowdown on commit, SimpleRegular and MCbtree at #369: 0.271 → 0.308, 0.505 → 0.544
+and 0.649 → 0.785 s. The memo heights above are MCbtree's share. The rest is spread over the
+search loop, which #369 split into calls made for each successor: `set_counts` (only where the
+spec reads TLCGet's counts), `record_step` (only where a graph is kept),
+`holds_action_constraints` and `count_possible` (only where there are any). Each now tests that
+in place, and calls out only for the work.
+
+Depot, against `main` at 5749ccd1, one worker:
+- On one 4-core runner, 11 interleaved runs, with fb05e28 beside them: commit 0.265 / 0.308 →
+  0.294 s, MCbtree 0.666 / 0.749 → 0.735 s and SimpleRegular 0.506 / 0.574 → 0.554 s.
+- `bench-suite.json`, 4 cores, 5 runs: 1.02×, 18/18 agreeing.
+- `perf-suite.json`, 16 cores, 3 runs: 1.00×, 15/15 agreeing.
+
+What is left of #369's cost is spread over the walker's `segment`, `check_complete_successor` and
+the memo lookups. Each carries a check that a new output needs: the held sets, `note_assigned`,
+`Unchanged` warnings, PickSuccessor, DFID and contest tracking.
+
 ### Liveness (`perf-liveness`)
 
 The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
