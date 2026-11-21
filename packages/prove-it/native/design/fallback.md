@@ -8349,6 +8349,25 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   obligations of the 1,507 modules tlapm accepted prints byte for byte, and the 366 modules it
   rejected decline.
 
+### Upstream conformance
+
+tla-ts, which Prove It was forked from, records tlapm b91fb6c and its backends on a suite of its
+own (`packages/conformance/test/tlapm` of aidenybai/tla-ts, at 0341dbe5 of 2026-11-21): 1,351
+tlapm command lines, run as `--strict --toolbox 0 0 --threads 1` with `-N --printallobs` or
+`--debug tempfiles` by the test's mode, and 1,398 backend inputs each decided alone, 1,042 of them
+SMT-LIB scripts from z3test recorded with Z3 5.3.2, which the SMT port declines as it reads only
+what tlapm writes. Measured with a port of its harness (`scratch/upstream` on the
+`upstream-results` branch): a run matches where its exit status and normalized transcript equal
+the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
+is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
+and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
+of integer powers; the runs those change count as wrong here until the port follows them.
+
+| main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
+|---|---|---|
+| b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
+| with the frontends' notes and refusals | 731 / 574 / 46 | 292 / 1,042 / 64 |
+
 ### Declines
 
 - **What timing decides** (`Schedule.run`): tlapm launches every decision it can, up to
@@ -8443,6 +8462,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
   `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
   flight together declines in toolbox mode.
+- M_elab's level check of a step that cites ENABLEDaxioms (`check_usable`, which refuses the
+  directive where an assumption or a cited step is of level above 1, with an `Error:` line on
+  stderr as the module is elaborated) is not ported: the rule is applied whatever the levels, so
+  `tlapm/proofs/enabled/enabled_axioms_level` of the upstream suite is proved where tlapm reports
+  `ENABLEDaxioms depends on assumptions of level > 1`.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
 - A TAB before the module header, on the header's line, shifts the columns printed on that line,

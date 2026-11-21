@@ -1,0 +1,14 @@
+File "./Frontends.tla", line 8, character 17:
+[INFO]: Auto-expanding the definition of operator:  A
+
+File "./Frontends.tla", line 8, character 30:
+[INFO]: Auto-expanding the definition of operator:  A
+
+expr has ENABLEDaxioms property ===
+expr has ENABLEDaxioms property ===
+File "./Frontends.tla", line 13, characters 3-4:
+[INFO]
+Proved pconj
+
+(* created new ".tlacache/Frontends.tlaps/Frontends.thy" *)
+(* fingerprints written in ".tlacache/Frontends.tlaps/fingerprints" *)

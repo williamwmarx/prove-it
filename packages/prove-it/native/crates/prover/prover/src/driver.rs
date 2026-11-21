@@ -14,11 +14,15 @@ use std::collections::HashMap;
 
 use prove_decide::Verdict;
 use prove_obligations::errors::{ObligationError, Result};
-use prove_obligations::expression::{Expr, ExprCore, Hyp, Hyps, Sequent, get_children, map_hyp};
+use prove_obligations::expression::{
+    Builtin, Expr, ExprCore, Hyp, Hyps, ObligationWarning, Sequent, expr, get_children, map_hyp,
+};
 use prove_obligations::index::PrintedObligation;
 use prove_obligations::prep::fingerprint::get_fingerprint;
-use prove_obligations::prep::methods::{FoundMethods, Method, find_methods};
-use prove_obligations::prep::normalize::{is_trivial, normalize_expand};
+use prove_obligations::prep::methods::{FoundMethods, Method, find_methods, is_frontend};
+use prove_obligations::prep::normalize::{
+    expand_defs, is_trivial, normalize_expand, normalize_sequent,
+};
 use prove_obligations::proof::ObligationKind;
 use prove_obligations::ship::{ProofAttempt, encode_normalized};
 use prove_obligations::smt::rewrite::EncodingSession;
@@ -74,6 +78,7 @@ impl Attempt {
     pub fn is_skipped(&self) -> bool {
         !self.attempt.is_proved
             && !self.attempt.is_reused
+            && !is_frontend(&self.attempt.method.prover)
             && self.verdict.is_none()
             && self
                 .reason
@@ -191,8 +196,19 @@ fn get_digest(text: &str) -> String {
 pub struct Cache {
     heads: HashMap<usize, (FoundMethods, String)>,
     sequents: HashMap<usize, (Sequent, bool)>,
+    /// The soundness check's message where a frontend refused the obligation.
+    refusals: HashMap<usize, String>,
     texts: HashMap<(usize, usize, usize), (Result<String>, usize)>,
 }
+
+// The frontends in the order Prep.normalize_expand names the one whose soundness check failed.
+const FAILING_FRONTENDS: [&str; 5] = [
+    "expandenabled",
+    "expandcdot",
+    "lambdify",
+    "enabledaxioms",
+    "levelcomparison",
+];
 
 // What tlapm keeps across one run's obligations. A round (`prove_obligations_with`) answers the
 // decisions from `answers`; a `Prover` hands each to its caller.
@@ -204,6 +220,8 @@ struct Run<'a> {
     results: KnownResults,
     // The CASE errors the SMT encoder has standardized so far.
     case_errors: usize,
+    // What the frontends printed as they ran, for the caller to print in turn.
+    warnings: Vec<ObligationWarning>,
     // Whether an earlier obligation waits, so that later reports wait for its.
     is_waiting: bool,
     // Whether an earlier obligation that waits may still number CASE errors: one that waits before
@@ -277,19 +295,138 @@ impl Run<'_> {
         Ok(head)
     }
 
+    // Prep.normalize_expand, once per obligation: what its frontends print is kept for the caller,
+    // and a frontend's refusal is a TlaProverError, kept as well.
     fn get_prepared(&mut self, position: usize, methods: &FoundMethods) -> Result<(Sequent, bool)> {
         if let Some(prepared) = self.cache.sequents.get(&position) {
             return Ok(prepared.clone());
         }
+        if let Some(message) = self.cache.refusals.get(&position) {
+            return Err(ObligationError::Prover(message.clone()));
+        }
         let obligation = &self.obligations[position];
+        let warnings = &mut self.warnings;
         let sequent = normalize_expand(
             &obligation.sequent,
             obligation.method.as_ref(),
             Some(methods),
-        )?;
+            obligation.locus.as_ref(),
+            &mut |warning| warnings.push(warning),
+        );
+        let sequent = match sequent {
+            Err(ObligationError::Prover(message)) => {
+                self.cache.refusals.insert(position, message.clone());
+                return Err(ObligationError::Prover(message));
+            }
+            sequent => sequent?,
+        };
         let prepared = (sequent.clone(), is_case_numbered("smt", &sequent)?);
         self.cache.sequents.insert(position, prepared.clone());
         Ok(prepared)
+    }
+
+    // Prep.normalize_expand's failure: the first frontend cited in its order is named, its refusal
+    // printed and saved (NotTried, a Cantwork failure), and Prep.ship goes on with the obligation
+    // the frontends left, whose goal is FALSE: trivial for a support obligation, else each prover
+    // answers from the fingerprints file alone, as no backend runs.
+    fn refuse(
+        &mut self,
+        task: &mut Task,
+        methods: &FoundMethods,
+        fingerprint: &str,
+        message: String,
+    ) -> Result<Step> {
+        let position = task.position;
+        let Some(prover) = FAILING_FRONTENDS
+            .iter()
+            .find(|name| methods.frontends.iter().any(|frontend| frontend == *name))
+        else {
+            return Err(ObligationError::Prover(message));
+        };
+        let refusal = Attempt {
+            attempt: ProofAttempt {
+                method: Method {
+                    prover: (*prover).to_owned(),
+                    time_limit_ms: f64::INFINITY,
+                    rlimit: None,
+                    tactic: None,
+                },
+                is_proved: false,
+                is_reused: false,
+            },
+            reason: Some(message.clone()),
+            verdict: None,
+            time_used_ms: None,
+        };
+        self.save(fingerprint.to_owned(), refusal.clone());
+        task.attempts.push(refusal);
+        task.failures.push(MethodFailure {
+            reason: format!("{prover} failed: {message}"),
+            is_decided: true,
+        });
+        let obligation = &self.obligations[position];
+        let falsified = Sequent {
+            active: expr(ExprCore::Internal {
+                builtin: Builtin::FALSE,
+            }),
+            ..normalize_sequent(&expand_defs(&obligation.sequent, true)?)?
+        };
+        if matches!(obligation.kind, ObligationKind::Support) && is_trivial(&falsified)? {
+            self.results
+                .results
+                .get_or_insert_with(fingerprint.to_owned(), KnownAttempts::default);
+            let attempts = std::mem::take(&mut task.attempts);
+            return Ok(Step::Settled(self.get_base(
+                position,
+                Status::Trivial,
+                attempts,
+            )));
+        }
+        for method in &methods.provers {
+            let prior = self.get_prior(position, fingerprint, method);
+            if let Some(prior) = prior.clone().filter(|prior| prior.attempt.is_proved) {
+                task.attempts.push(Attempt {
+                    attempt: ProofAttempt {
+                        is_reused: true,
+                        ..prior.attempt
+                    },
+                    time_used_ms: None,
+                    ..prior
+                });
+                return Ok(self.settle_proved(task, &method.prover));
+            }
+            if let Some(prior) =
+                prior.filter(|prior| get_budget(&prior.attempt.method) >= get_budget(method))
+            {
+                task.attempts.push(Attempt {
+                    attempt: ProofAttempt {
+                        is_reused: true,
+                        ..prior.attempt
+                    },
+                    time_used_ms: None,
+                    ..prior
+                });
+                task.failures.push(MethodFailure {
+                    reason: format!(
+                        "{} failed on an obligation with the same fingerprint",
+                        method.prover
+                    ),
+                    is_decided: true,
+                });
+            }
+        }
+        let reason = task
+            .failures
+            .iter()
+            .map(|failure| failure.reason.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let attempts = std::mem::take(&mut task.attempts);
+        Ok(Step::Settled(self.get_base(
+            position,
+            Status::Failed { reason },
+            attempts,
+        )))
     }
 
     // The request for a decision, by a key that names it.
@@ -407,7 +544,13 @@ impl Run<'_> {
                 reuse(&mut task.attempts, prior);
                 return Ok(self.settle_proved(task, &prover));
             }
-            let (sequent, _) = self.get_prepared(position, &methods)?;
+            let sequent = match self.get_prepared(position, &methods) {
+                Ok((sequent, _)) => sequent,
+                Err(ObligationError::Prover(message)) => {
+                    return self.refuse(task, &methods, &fingerprint, message);
+                }
+                Err(error) => return Err(error),
+            };
             // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
             if matches!(self.obligations[position].kind, ObligationKind::Support)
                 && is_trivial(&sequent)?
@@ -722,6 +865,7 @@ impl<'a> Prover<'a> {
                 settings,
                 results: settings.known.clone(),
                 case_errors: 0,
+                warnings: Vec::new(),
                 is_waiting: false,
                 is_count_open: false,
                 waiting_fingerprints: Vec::new(),
@@ -734,6 +878,12 @@ impl<'a> Prover<'a> {
 
     /// Evaluates the task's thunks from where it left off, up to a decision or its end. An error
     /// that is neither unsupported nor a prover's ends the run.
+    /// What the frontends printed since the last call, as they ran (Util.printf and Util.eprintf
+    /// of Expr.Action, and Prep.expand_enabled_cdot's own line).
+    pub fn take_warnings(&mut self) -> Vec<ObligationWarning> {
+        std::mem::take(&mut self.run.warnings)
+    }
+
     pub fn step(&mut self, task: &mut Task) -> Result<Step> {
         match self.run.step(task, false) {
             Err(error) => self.settle_error(task, error).map(Step::Settled),
@@ -825,6 +975,7 @@ pub fn prove_obligations_with(
         settings,
         results: settings.known.clone(),
         case_errors: 0,
+        warnings: Vec::new(),
         is_waiting: false,
         is_count_open: false,
         waiting_fingerprints: Vec::new(),

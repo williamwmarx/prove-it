@@ -366,6 +366,39 @@ fn prints_each_provers_result_in_toolbox_mode() {
     }
 }
 
+// Prep.normalize_expand runs the frontends an obligation cites as its first thunk is evaluated,
+// printing what they do (Util.printf's notes on stdout, Util.eprintf's errors on stderr) and, where
+// one refuses the obligation, its refusal under the frontend's name (NotTried), with the obligation
+// as far as Prep.normalize_expr took it, saved in the fingerprints file (Fpfile's field for the
+// frontend, a constructor without an argument); no backend then runs.
+#[test]
+fn prints_what_the_frontends_print_and_their_refusals_as_tlapm_does() {
+    let output = run(
+        "tlapm-cli",
+        &["--threads", "1", "--toolbox", "0", "0", "Frontends.tla"],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        without_time_used(&stderr(&output)),
+        without_time_used(&read_recording("tlapm-cli", "Frontends.toolbox"))
+    );
+    let directory = copy_fixtures("tlapm-cli");
+    let output = run_in(&directory, &["Frontends.tla"]);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        stdout(&output),
+        read_recording("tlapm-cli", "Frontends.stdout")
+    );
+    assert_eq!(
+        stderr(&output),
+        read_recording("tlapm-cli", "Frontends.stderr")
+    );
+    assert_eq!(
+        read_fingerprints(&directory.join(".tlacache/Frontends.tlaps/fingerprints")),
+        read_fingerprints(&directory.join("Frontends.fingerprints"))
+    );
+}
+
 // tlapm evaluates an obligation's methods as its scheduler starts them (Prep.already_processed in
 // Schedule.run's thunks), and launches every decision it can before it takes a result: with two
 // threads, the second of two obligations with one fingerprint starts while the first's Zenon runs,
