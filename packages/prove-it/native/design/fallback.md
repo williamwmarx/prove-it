@@ -1484,6 +1484,12 @@ is an invariant TLC reports violated by the initial state, not a temporal proper
 with `F(p) == x = 0`, `F(p) == LET A == p  B == A IN B` or `F(p) == LET f[i \in p] == i IN 1 \in
 DOMAIN f` is an action where the body reads `p` and a state predicate where it doesn't
 (`tests/level-params`). An operator SANY's level check doesn't accept counts every argument.
+SANY levels an application of a standard module's operator by the module's definition of it,
+which the front end parses for that (`get_standard_definition`): `PickSuccessor(exp)` is of
+`exp`'s level, which `astToLive` raises to the Java method's action level through
+`getLevelBound`, so `PROPERTY P` with `P == []PickSuccessor(TRUE)` is TLC's "Temporal formulas
+containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
+which declined before.
 
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an

@@ -336,8 +336,24 @@ fn get_level_inner(
         if shadowed.contains(&name) {
             return None;
         }
-        let (params, body, closure_scope) = resolve_apply_operator(expression, scope, environment)?;
-        let global_definition = || get_definition(&name, environment).cloned();
+        // A standard module's operator the front end implements, which SANY levels by the
+        // module's definition of it.
+        let standard = || {
+            let definition = environment.get_standard_definition(&name)?;
+            match &definition.kind {
+                DefinitionKind::Operator { params, .. } => {
+                    Some((params.clone(), definition.body.clone(), None))
+                }
+                DefinitionKind::Function { .. } => None,
+            }
+        };
+        let (params, body, closure_scope) =
+            resolve_apply_operator(expression, scope, environment).or_else(standard)?;
+        let global_definition = || {
+            get_definition(&name, environment)
+                .cloned()
+                .or_else(|| environment.get_standard_definition(&name))
+        };
         // TLC retains the caller context while visiting a global operator body. A local closure
         // instead carries the lexical scope in which it was created.
         let is_global = !expression.is_locally_resolved() && global_definition().is_some();
