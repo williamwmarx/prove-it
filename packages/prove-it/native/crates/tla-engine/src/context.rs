@@ -1485,7 +1485,7 @@ impl EngineContext {
                     // TLC's diameter is the level of its empty trace as it checks the
                     // assumptions, which the startup sets, not one the search grows.
                     let is_diameter_read = compiler.is_diameter_read;
-                    let compiled = compiler.compile_root_printing(Root::Expression(node), true);
+                    let compiled = compiler.compile_assumption(node);
                     compiler.is_diameter_read = is_diameter_read;
                     let eval = match compiled {
                         Ok(compiled) => compiled.eval,

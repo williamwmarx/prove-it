@@ -972,6 +972,36 @@ StarkMutex merges 115 levels of 2,000 to 10,000 states, each too small for the f
 gain on; the rest of the suite is within noise, and 16 threads go from 3.7× one thread to 3.9×
 in geomean over it.
 
+### Effects TLC has only as it starts (startup-only-effects)
+
+SpanTreeRandom gained nothing from threads: 0.40 s on one, 0.38 s on 16. Its `Edges` draws the
+graph with RandomElement, and one flag, `Compiler::is_printing`, stood for anything that prints,
+draws or uses a register anywhere in the model, so the search ran every level on one thread and
+answered the liveness atoms on one. TLC computes `Edges` once as it starts
+(`SpecProcessor.processConstantDefns`) and reads its value from then on, as it checks an
+assumption once: nothing draws once the search runs. The compiler now tells an effect of the
+startup alone from one the search may have ([parallel.md](parallel.md), where a level runs on
+one thread), and only the second keeps the search and the atoms on one thread, holds what the
+search prints for the liveness checker to place, and turns off the walk's read-ahead. So a model
+that prints its constants in an ASSUME, or draws them, shares its levels too. Timed per phase on
+`depot-ubuntu-24.04-16`, ms:
+
+| SpanTreeRandom | Front end, startup | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|---:|
+| One thread | 11 | 223 | 84 | 90 | 412 |
+| 16 threads, `main` | 10 | 221 | 80 | 63 | 378 |
+| 16 threads, now | 15 | 50 | 21 | 43 | 135 |
+
+Of the search's 50 ms, the threads take 32 and the merge 13, on three shared levels of 2,690,
+16,085 and 46,320 states. Medians of 5 against `main` at a747d1d5, each run of one build
+between runs of the other: SpanTreeRandom on 16 threads 0.38 → 0.14 s (2.7×), and 0.40 s on one
+thread before and after. Over the rest of perf-suite.json and bench-suite.json one thread is
+1.004× `main` in geomean and 16 threads 1.001×. On one thread no model of 0.1 s or more moves
+the same way by more than 4 % in both pairings of the builds. On 16 threads, timed in one
+pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 → 2.49 s, less
+than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
+2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
