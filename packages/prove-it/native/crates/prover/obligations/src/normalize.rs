@@ -1151,7 +1151,7 @@ mod tests {
         HypNode, Modal, ParenForm, Quantifier, Selector, Substitution as Entry, XlabelIndex,
     };
     use crate::module::{Declaration, get_standard_modules};
-    use crate::pragma::{OldMethod, PragmaSetting, PragmaValue};
+    use crate::pragma::{OldMethod, PragmaSetting, PragmaSpan, PragmaValue};
     use crate::proof::{QedStep, Step, StepCore, StepNumber, Usable, UseDef, UseDefCore};
     use crate::simplify::create_simplifier;
 
@@ -1720,6 +1720,7 @@ mod tests {
                 other if atom(other) == "Default" => PragmaValue::Default,
                 other => PragmaValue::Float(number(other)),
             },
+            span: PragmaSpan::default(),
         }
     }
 

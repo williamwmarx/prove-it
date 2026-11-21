@@ -1,0 +1,135 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:5:14:5:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:5:17:5:24
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:14:6:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:17:6:29
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:7:14:7:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:7:17:7:29
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:6
+@!!END
+
+@!!BEGIN
+@!!type:warning
+@!!msg:File "./Pragmas.tla", line 3, characters 25-30 :
+Unknown prover: foo
+@!!END
+
+@!!BEGIN
+@!!type:warning
+@!!msg:File "./Pragmas.tla", line 6, character 27 :
+Invalid SMT budget "r0": expected a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5").
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:5:17:5:24
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:17:6:29
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:7:14:7:16
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: inf; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:7:17:7:29
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:14:6:16
+@!!status:failed
+@!!prover:fail
+@!!meth:time-limit: inf
+@!!reason:unexpected error
+@!!already:false
+@!!obl:ASSUME Budget("r0") 
+PROVE  TRUE
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:5:14:5:16
+@!!status:failed
+@!!prover:fail
+@!!meth:time-limit: inf
+@!!reason:unexpected error
+@!!already:false
+@!!obl:ASSUME Unknown 
+PROVE  TRUE
+
+@!!END
+
+File "./Pragmas.tla", line 6, characters 14-15:
+[ERROR]: Could not prove or check:
+           ASSUME Budget("r0") 
+           PROVE  TRUE
+File "./Pragmas.tla", line 5, characters 14-15:
+[ERROR]: Could not prove or check:
+           ASSUME Unknown 
+           PROVE  TRUE
+File "./Pragmas.tla", line 1, character 1 to line 8, character 4:
+[ERROR]: 2/6 obligations failed.
+There were backend errors processing module `"Pragmas"`.

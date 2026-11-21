@@ -1,11 +1,12 @@
 //! Prep.find_meth and Prep.compute_meth: the methods the pragmas an obligation cites select, each a
 //! prover with its time limit, or a frontend that rewrites the obligation first. A malformed method
-//! throws a TlaProverError, since Prep.ship catches compute_meth's failure and fails only that
-//! obligation. A port of `src/prover/prep/methods.ts`.
+//! is a located `ObligationError::Method`: tlapm warns where it is and Prep.ship catches
+//! compute_meth's failure, leaving only that obligation untreated. A port of
+//! `src/prover/prep/methods.ts`.
 
-use crate::errors::{ObligationError, Result};
+use crate::errors::{ObligationError, Result, quote_ocaml};
 use crate::expression::{DefnCore, Expr, ExprCore, HypCore, Locus, Sequent, Visibility, to_index};
-use crate::pragma::{OldMethod, PragmaSetting, PragmaValue};
+use crate::pragma::{OldMethod, PragmaSetting, PragmaSpan, PragmaValue};
 
 /// A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
 /// the time limit off (`time_limit_ms` is infinite).
@@ -108,20 +109,12 @@ fn get_known_prover(name: &str) -> Option<KnownProver> {
 }
 
 fn get_prover_method(
-    name: &str,
+    known: &KnownProver,
     timeout: Option<f64>,
     rlimit: Option<u64>,
     tactic: Option<&str>,
-) -> Result<Method> {
-    let Some(known) = get_known_prover(name) else {
-        return Err(ObligationError::prover(format!("Unknown prover: {name}")));
-    };
-    if rlimit.is_some() && !known.is_budgeted {
-        return Err(ObligationError::prover(
-            "A Z3 rlimit budget (\"rN\") is only supported by the SMT and Z3 backends.",
-        ));
-    }
-    Ok(Method {
+) -> Method {
+    Method {
         prover: known.prover.to_owned(),
         time_limit_ms: match rlimit {
             None => timeout.unwrap_or(known.seconds) * 1000.0,
@@ -129,162 +122,302 @@ fn get_prover_method(
         },
         rlimit,
         tactic: (known.prover == "isabelle").then(|| tactic.unwrap_or("auto").to_owned()),
+    }
+}
+
+// Errors.err ~at: where compute_meth's error points, the setting's hint, the pragma's use or an
+// argument, which Prep.ship then fails on.
+fn method_error(message: impl Into<String>, at: Option<&Locus>) -> ObligationError {
+    ObligationError::Method {
+        message: message.into(),
+        at: at.cloned(),
+    }
+}
+
+/// A hint's locus in the pragma's file: the span's line and columns, each counted from 1, as the
+/// loci of the file's expressions are.
+fn get_span_locus(pragma: &Locus, span: PragmaSpan) -> Locus {
+    let line = u32::try_from(span.line + 1).unwrap_or(u32::MAX);
+    Locus {
+        file: pragma.file.clone(),
+        start_line: line,
+        start_column: u32::try_from(span.start + 1).unwrap_or(u32::MAX),
+        end_line: line,
+        end_column: u32::try_from(span.end + 1).unwrap_or(u32::MAX),
+    }
+}
+
+fn is_c_space(character: char) -> bool {
+    matches!(character, '\t'..='\r' | ' ')
+}
+
+fn is_hex_digit(character: char) -> bool {
+    character.is_ascii_hexdigit()
+}
+
+// caml_float_of_hex: `0x` digits, a point among them, and `p` with a binary exponent.
+fn parse_hex_float(text: &str) -> Option<f64> {
+    let (mantissa, exponent) = match text.find(['p', 'P']) {
+        Some(at) => (&text[..at], Some(&text[at + 1..])),
+        None => (text, None),
+    };
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, fraction),
+        None => (mantissa, ""),
+    };
+    if whole.is_empty() && fraction.is_empty()
+        || !whole.chars().all(is_hex_digit)
+        || !fraction.chars().all(is_hex_digit)
+    {
+        return None;
+    }
+    let exponent: i32 = match exponent {
+        Some(exponent) => {
+            let digits = exponent.trim_start_matches(is_c_space);
+            let unsigned = digits.strip_prefix(['+', '-']).unwrap_or(digits);
+            if unsigned.is_empty() || !unsigned.chars().all(|character| character.is_ascii_digit())
+            {
+                return None;
+            }
+            digits.parse().unwrap_or(if digits.starts_with('-') {
+                i32::MIN
+            } else {
+                i32::MAX
+            })
+        }
+        None => 0,
+    };
+    let value = whole
+        .chars()
+        .chain(fraction.chars())
+        .fold(0.0, |value, digit| {
+            value * 16.0 + f64::from(digit.to_digit(16).unwrap_or(0))
+        });
+    let scale = exponent.saturating_sub(i32::try_from(4 * fraction.len()).unwrap_or(i32::MAX));
+    Some(if value == 0.0 {
+        0.0
+    } else {
+        value * 2f64.powi(scale)
     })
 }
 
-/// A StrWhiteSpaceChar of ECMAScript, which `parseFloat` skips.
-fn is_js_whitespace(character: char) -> bool {
-    matches!(
-        character,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
-/// `Number.parseFloat`: the longest decimal literal after leading white space, or NaN. Infinity
-/// reads as NaN, which the one caller rejects just the same.
-fn parse_js_float(text: &str) -> f64 {
-    let trimmed = text.trim_start_matches(is_js_whitespace).as_bytes();
-    let count_digits = |from: usize| {
-        trimmed[from.min(trimmed.len())..]
-            .iter()
-            .take_while(|byte| byte.is_ascii_digit())
-            .count()
+// A C99 decimal float: `\d+\.?\d*|\.\d+` with an optional `e[+-]?\d+`.
+fn is_decimal_float(text: &str) -> bool {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], Some(&text[at + 1..])),
+        None => (text, None),
     };
-    let sign_length = usize::from(matches!(trimmed.first(), Some(b'+' | b'-')));
-    let integer_digits = count_digits(sign_length);
-    let mut end = sign_length + integer_digits;
-    let fraction_digits = if trimmed.get(end) == Some(&b'.') {
-        count_digits(end + 1)
-    } else {
-        0
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (mantissa, None),
     };
-    if integer_digits == 0 && fraction_digits == 0 {
-        return f64::NAN;
-    }
-    if trimmed.get(end) == Some(&b'.') {
-        end += 1 + fraction_digits;
-    }
-    if matches!(trimmed.get(end), Some(b'e' | b'E')) {
-        let exponent_sign_length = usize::from(matches!(trimmed.get(end + 1), Some(b'+' | b'-')));
-        let exponent_digits = count_digits(end + 1 + exponent_sign_length);
-        if exponent_digits > 0 {
-            end += 1 + exponent_sign_length + exponent_digits;
+    let is_digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    let is_mantissa = match fraction {
+        Some(fraction) => {
+            is_digits(whole) && (fraction.is_empty() || is_digits(fraction))
+                || whole.is_empty() && is_digits(fraction)
         }
-    }
-    String::from_utf8_lossy(&trimmed[..end])
-        .parse()
-        .unwrap_or(f64::NAN)
+        None => is_digits(whole),
+    };
+    is_mantissa
+        && exponent
+            .is_none_or(|exponent| is_digits(exponent.strip_prefix(['+', '-']).unwrap_or(exponent)))
 }
 
-// parse_rlimit: "rN" is N times the base resource count, at least 1.
-fn get_rlimit(budget: &str) -> Result<u64> {
-    let mut characters = budget.chars();
-    let is_shaped = matches!(characters.next(), Some('r' | 'R'))
-        && characters
-            .next()
-            .is_some_and(|character| !matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'));
-    let count = if is_shaped {
-        parse_js_float(&budget[1..])
-    } else {
-        f64::NAN
+/// OCaml's `float_of_string_opt`: `caml_float_of_string` drops every underscore, then reads the
+/// whole text as C does, past leading white space: a hexadecimal float, `inf`, `infinity` or
+/// `nan` in any case, or a decimal float.
+pub fn parse_ocaml_float(text: &str) -> Option<f64> {
+    let digits: String = text.chars().filter(|&character| character != '_').collect();
+    let unsigned = digits.trim_start_matches(is_c_space);
+    let (sign, unsigned) = match unsigned.strip_prefix('-') {
+        Some(rest) => (-1.0, rest),
+        None => (1.0, unsigned.strip_prefix('+').unwrap_or(unsigned)),
     };
-    if !is_shaped || !count.is_finite() || count <= 0.0 {
-        return Err(ObligationError::prover(format!(
-            "Invalid SMT budget \"{budget}\""
-        )));
+    if let Some(hex) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        return parse_hex_float(hex).map(|value| sign * value);
     }
+    let lower = unsigned.to_ascii_lowercase();
+    if lower == "inf" || lower == "infinity" {
+        return Some(sign * f64::INFINITY);
+    }
+    if lower == "nan"
+        || lower
+            .strip_prefix("nan(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|inside| !inside.contains(')'))
+    {
+        return Some(f64::NAN);
+    }
+    is_decimal_float(unsigned).then(|| sign * unsigned.parse::<f64>().unwrap_or(f64::NAN))
+}
+
+// parse_rlimit: "rN" is N times the base resource count, at least 1, for a finite positive N
+// `float_of_string_opt` reads.
+fn get_rlimit(budget: &str, at: Option<&Locus>) -> Result<u64> {
+    let count = budget
+        .strip_prefix(['r', 'R'])
+        .filter(|rest| !rest.is_empty())
+        .and_then(parse_ocaml_float);
+    let Some(count) = count.filter(|count| count.is_finite() && *count > 0.0) else {
+        return Err(method_error(
+            format!(
+                "Invalid SMT budget {}: expected a number of seconds (wall-clock timeout), or a \
+                 deterministic Z3 rlimit budget of the form \"rN\" (e.g. \"r5\").",
+                quote_ocaml(budget)
+            ),
+            at,
+        ));
+    };
     // The product is at most MAX_RLIMIT, a whole number below 2^32.
     Ok((count * RLIMIT_BASE).min(MAX_RLIMIT).trunc().max(1.0) as u64)
 }
 
-#[derive(Default)]
-struct MethodValues<'a> {
-    prover: Option<&'a str>,
-    timeout: Option<f64>,
-    rlimit: Option<u64>,
-    tactic: Option<&'a str>,
-}
-
-// compute_meth: a group of a pragma's settings, where each @ takes the next argument the pragma is
-// applied to.
-fn compute_method(settings: &[PragmaSetting], args: &[Expr]) -> Result<Method> {
-    let mut values = MethodValues::default();
+// compute_meth: a group of a pragma's settings, read in order, where each @ takes the next
+// argument the pragma is applied to at `use_locus`; `pragma` is where the definition carrying the
+// pragma is, which names the file its hints are in.
+fn compute_method(
+    settings: &[PragmaSetting],
+    args: &[Expr],
+    use_locus: Option<&Locus>,
+    pragma: Option<&Locus>,
+) -> Result<Method> {
+    let hint_locus =
+        |setting: &PragmaSetting| pragma.map(|pragma| get_span_locus(pragma, setting.span));
+    let mut prover: Option<(&str, Option<Locus>)> = None;
+    let mut timeout = None;
+    let mut rlimit = None;
+    let mut tactic = None;
     let mut rest = args;
-    for setting in settings {
-        let value = &setting.value;
-        let argument = match value {
-            PragmaValue::Default => {
-                let Some((argument, remaining)) = rest.split_first() else {
-                    return Err(ObligationError::prover("Some arguments are missing"));
-                };
-                rest = remaining;
-                Some(argument)
+    // The next argument the pragma is applied to, for an @.
+    fn take<'a>(rest: &mut &'a [Expr], use_locus: Option<&Locus>) -> Result<&'a Expr> {
+        match rest.split_first() {
+            Some((argument, remaining)) => {
+                *rest = remaining;
+                Ok(argument)
             }
-            _ => None,
-        };
-        let text = match (value, argument.map(|argument| &argument.core)) {
-            (PragmaValue::String(text), _) => Some(text.as_str()),
-            (_, Some(ExprCore::String { value })) => Some(value.as_str()),
-            _ => None,
-        };
+            None => Err(method_error("Some arguments are missing", use_locus)),
+        }
+    }
+    for setting in settings {
+        let at_hint = hint_locus(setting);
         match setting.hint.as_str() {
             "prover" | "tactic" => {
-                let Some(text) = text else {
-                    return Err(ObligationError::prover("This argument should be a string"));
+                let is_prover = setting.hint == "prover";
+                let (text, at) = match &setting.value {
+                    PragmaValue::String(text) => (text.as_str(), at_hint),
+                    PragmaValue::Default => {
+                        let argument = take(&mut rest, use_locus)?;
+                        match &argument.core {
+                            ExprCore::String { value } => (value.as_str(), use_locus.cloned()),
+                            _ => {
+                                return Err(method_error(
+                                    format!(
+                                        "This argument should be a string ({})",
+                                        if is_prover {
+                                            "prover name"
+                                        } else {
+                                            "proof tactic"
+                                        }
+                                    ),
+                                    argument.location.as_ref(),
+                                ));
+                            }
+                        }
+                    }
+                    PragmaValue::Float(_) => {
+                        return Err(method_error(
+                            "Argument should be a string or @",
+                            at_hint.as_ref(),
+                        ));
+                    }
                 };
-                if setting.hint == "prover" {
-                    values.prover = Some(text);
+                if is_prover {
+                    prover = Some((text, at));
                 } else {
-                    values.tactic = Some(text);
+                    tactic = Some(text);
                 }
             }
-            "timeout" => {
-                if let PragmaValue::Float(seconds) = value {
-                    values.timeout = Some(*seconds);
-                } else if let Some(text) = text {
-                    values.rlimit = Some(get_rlimit(text)?);
-                } else if let Some(ExprCore::Num { integer, fraction }) =
-                    argument.map(|argument| &argument.core)
-                {
-                    // Number(`${integer}.${fraction}`).
-                    values.timeout =
-                        Some(format!("{integer}.{fraction}").parse().unwrap_or(f64::NAN));
-                } else {
-                    return Err(ObligationError::prover(
-                        "This argument should be a number of seconds",
-                    ));
+            "timeout" => match &setting.value {
+                PragmaValue::Float(seconds) => timeout = Some(*seconds),
+                PragmaValue::String(budget) => rlimit = Some(get_rlimit(budget, at_hint.as_ref())?),
+                PragmaValue::Default => {
+                    let argument = take(&mut rest, use_locus)?;
+                    match &argument.core {
+                        ExprCore::Num { integer, fraction } => {
+                            // float_of_string (Printf.sprintf "%s.%s" s1 s2).
+                            timeout = Some(
+                                parse_ocaml_float(&format!("{integer}.{fraction}"))
+                                    .unwrap_or(f64::NAN),
+                            );
+                        }
+                        ExprCore::String { value } => {
+                            rlimit = Some(get_rlimit(value, argument.location.as_ref())?);
+                        }
+                        _ => {
+                            return Err(method_error(
+                                "This argument should be a number of seconds (wall-clock \
+                                 timeout), or a deterministic Z3 rlimit budget of the form \
+                                 \"rN\" (e.g. \"r5\")",
+                                argument.location.as_ref(),
+                            ));
+                        }
+                    }
                 }
-            }
-            hint => {
-                return Err(ObligationError::prover(format!(
-                    "Unknown keyword in proof method definition: {hint}"
-                )));
+            },
+            keyword => {
+                return Err(method_error(
+                    format!("Unknown keyword in proof method definition: {keyword}"),
+                    at_hint.as_ref(),
+                ));
             }
         }
     }
     if !rest.is_empty() {
-        return Err(ObligationError::prover("Too many arguments"));
+        return Err(method_error("Too many arguments", use_locus));
     }
-    let Some(prover) = values.prover else {
-        return Err(ObligationError::prover("Missing prover name"));
+    let Some((name, prover_locus)) = prover else {
+        return Err(method_error(
+            "Missing prover name",
+            settings.first().and_then(hint_locus).as_ref(),
+        ));
     };
-    get_prover_method(prover, values.timeout, values.rlimit, values.tactic)
+    let Some(known) = get_known_prover(name) else {
+        return Err(method_error(
+            format!("Unknown prover: {name}"),
+            prover_locus.as_ref(),
+        ));
+    };
+    if rlimit.is_some() && !known.is_budgeted {
+        return Err(method_error(
+            "A Z3 rlimit budget (\"rN\") is only supported by the SMT and Z3 backends.",
+            use_locus,
+        ));
+    }
+    Ok(get_prover_method(&known, timeout, rlimit, tactic))
 }
 
 // An old-style method, as Method_prs reads it, with its default time unless it names one.
 fn get_old_method(method: &OldMethod) -> Result<Method> {
-    get_prover_method(&method.name, method.timeout, None, method.tactic.as_deref())
+    let Some(known) = get_known_prover(&method.name) else {
+        return Err(ObligationError::prover(format!(
+            "Unknown prover: {}",
+            method.name
+        )));
+    };
+    Ok(get_prover_method(
+        &known,
+        method.timeout,
+        None,
+        method.tactic.as_deref(),
+    ))
 }
 
 enum Cited<'a> {
-    Premeth(&'a [Vec<PragmaSetting>]),
+    Premeth(&'a [Vec<PragmaSetting>], Option<&'a Locus>),
     Meth(&'a OldMethod),
 }
 
@@ -326,7 +459,7 @@ fn get_cited_methods(sequent: &Sequent) -> Result<Vec<Method>> {
                 DefnCore::Bpragma {
                     methods: groups, ..
                 } => {
-                    cited.push(Some(Cited::Premeth(groups)));
+                    cited.push(Some(Cited::Premeth(groups, definition.location.as_ref())));
                     continue;
                 }
                 DefnCore::Operator { body, .. } if *visibility == Visibility::Visible => {
@@ -355,14 +488,14 @@ fn get_cited_methods(sequent: &Sequent) -> Result<Vec<Method>> {
             .and_then(|cited_index| cited.get(cited_index))
             .and_then(Option::as_ref);
         match entry {
-            Some(Cited::Premeth(groups)) => {
+            Some(Cited::Premeth(groups, pragma)) => {
                 if use_location != Some(hyp_use_location.as_ref()) {
                     methods.clear();
                     use_location = Some(hyp_use_location.as_ref());
                 }
                 let computed = groups
                     .iter()
-                    .map(|group| compute_method(group, args))
+                    .map(|group| compute_method(group, args, expression.location.as_ref(), *pragma))
                     .collect::<Result<Vec<_>>>()?;
                 methods.extend(computed);
             }
@@ -519,6 +652,7 @@ mod tests {
         PragmaSetting {
             hint: hint.to_owned(),
             value,
+            span: PragmaSpan::default(),
         }
     }
 
@@ -665,28 +799,76 @@ mod tests {
         );
     }
 
+    fn invalid(budget: &str) -> String {
+        format!(
+            "TlaMethodError: Invalid SMT budget {}: expected a number of seconds (wall-clock \
+             timeout), or a deterministic Z3 rlimit budget of the form \"rN\" (e.g. \"r5\").",
+            quote_ocaml(budget)
+        )
+    }
+
+    // A budget is "r" and what OCaml's float_of_string_opt reads whole, C's way.
     #[test]
     fn parses_budgets() {
         let cases = [
-            ("r2", "frontends=[] provers=[smt:Infinity:6000000:-]"),
-            ("R0.5", "frontends=[] provers=[smt:Infinity:1500000:-]"),
-            ("r1e3", "frontends=[] provers=[smt:Infinity:3000000000:-]"),
-            ("r 3", "frontends=[] provers=[smt:Infinity:9000000:-]"),
-            ("rx", "TlaProverError: Invalid SMT budget \"rx\""),
-            ("r", "TlaProverError: Invalid SMT budget \"r\""),
-            ("r-1", "TlaProverError: Invalid SMT budget \"r-1\""),
-            ("r1e10", "frontends=[] provers=[smt:Infinity:4294967295:-]"),
-            ("r0.0000001", "frontends=[] provers=[smt:Infinity:1:-]"),
-            ("r\n3", "TlaProverError: Invalid SMT budget \"r\n3\""),
-            ("x2", "TlaProverError: Invalid SMT budget \"x2\""),
-            ("r2.5e", "frontends=[] provers=[smt:Infinity:7500000:-]"),
-            ("r+4", "frontends=[] provers=[smt:Infinity:12000000:-]"),
-            ("r.5", "frontends=[] provers=[smt:Infinity:1500000:-]"),
             (
-                "rInfinity",
-                "TlaProverError: Invalid SMT budget \"rInfinity\"",
+                "r2",
+                "frontends=[] provers=[smt:Infinity:6000000:-]".to_owned(),
             ),
-            ("r\u{a0}2", "frontends=[] provers=[smt:Infinity:6000000:-]"),
+            (
+                "R0.5",
+                "frontends=[] provers=[smt:Infinity:1500000:-]".to_owned(),
+            ),
+            (
+                "r1e3",
+                "frontends=[] provers=[smt:Infinity:3000000000:-]".to_owned(),
+            ),
+            (
+                "r 3",
+                "frontends=[] provers=[smt:Infinity:9000000:-]".to_owned(),
+            ),
+            ("rx", invalid("rx")),
+            ("r", invalid("r")),
+            ("r-1", invalid("r-1")),
+            (
+                "r1e10",
+                "frontends=[] provers=[smt:Infinity:4294967295:-]".to_owned(),
+            ),
+            (
+                "r0.0000001",
+                "frontends=[] provers=[smt:Infinity:1:-]".to_owned(),
+            ),
+            (
+                "r\n3",
+                "frontends=[] provers=[smt:Infinity:9000000:-]".to_owned(),
+            ),
+            ("x2", invalid("x2")),
+            ("r2.5e", invalid("r2.5e")),
+            (
+                "r+4",
+                "frontends=[] provers=[smt:Infinity:12000000:-]".to_owned(),
+            ),
+            (
+                "r.5",
+                "frontends=[] provers=[smt:Infinity:1500000:-]".to_owned(),
+            ),
+            ("rInfinity", invalid("rInfinity")),
+            ("rnan", invalid("rnan")),
+            ("r\u{a0}2", invalid("r\u{a0}2")),
+            (
+                "r1_0",
+                "frontends=[] provers=[smt:Infinity:30000000:-]".to_owned(),
+            ),
+            (
+                "r0x1p2",
+                "frontends=[] provers=[smt:Infinity:12000000:-]".to_owned(),
+            ),
+            (
+                "r0x.8",
+                "frontends=[] provers=[smt:Infinity:1500000:-]".to_owned(),
+            ),
+            ("r0x", invalid("r0x")),
+            ("r1\"", invalid("r1\"")),
         ];
         for (budget, expected) in cases {
             assert_eq!(cite(smt_at(), vec![string(budget)]), expected, "{budget:?}");
@@ -696,34 +878,72 @@ mod tests {
                 vec![vec![text("prover", "zenon"), text("timeout", "r2")]],
                 vec![]
             ),
-            "TlaProverError: A Z3 rlimit budget (\"rN\") is only supported by the SMT and Z3 backends."
+            "TlaMethodError: A Z3 rlimit budget (\"rN\") is only supported by the SMT and Z3 backends."
         );
+    }
+
+    #[test]
+    fn reads_floats_as_ocaml_does() {
+        for (text, expected) in [
+            ("1.5", Some(1.5)),
+            (" \t1.", Some(1.0)),
+            (".5", Some(0.5)),
+            ("1e3", Some(1000.0)),
+            ("1E-2", Some(0.01)),
+            ("1_000.5", Some(1000.5)),
+            ("-2", Some(-2.0)),
+            ("+2", Some(2.0)),
+            ("0x10", Some(16.0)),
+            ("0X1.8p1", Some(3.0)),
+            ("-0x1p-1", Some(-0.5)),
+            ("0x1P+2", Some(4.0)),
+            ("0x", None),
+            ("0x.", None),
+            ("0x1p", None),
+            ("inf", Some(f64::INFINITY)),
+            ("-Infinity", Some(f64::NEG_INFINITY)),
+            ("1.5 ", None),
+            ("1e", None),
+            ("e1", None),
+            ("", None),
+            ("1.2.3", None),
+            ("1.5x", None),
+        ] {
+            assert_eq!(parse_ocaml_float(text), expected, "{text:?}");
+        }
+        assert!(parse_ocaml_float("nan").is_some_and(f64::is_nan));
+        assert!(parse_ocaml_float("NaN(abc)").is_some_and(f64::is_nan));
+        assert_eq!(parse_ocaml_float("nan(a)b"), None);
     }
 
     #[test]
     fn rejects_malformed_pragmas() {
         assert_eq!(
             show(vec![pragma(smt_at()), fact(ix(1), locus(1))], None),
-            "TlaProverError: Some arguments are missing"
+            "TlaMethodError: Some arguments are missing"
         );
         assert_eq!(
             cite(vec![prover("smt")], vec![num("1", "")]),
-            "TlaProverError: Too many arguments"
+            "TlaMethodError: Too many arguments"
         );
         assert_eq!(
             cite(vec![vec![set("timeout", PragmaValue::Float(4.5))]], vec![]),
-            "TlaProverError: Missing prover name"
+            "TlaMethodError: Missing prover name"
         );
         assert_eq!(
             cite(
                 vec![vec![text("prover", "smt"), text("speed", "fast")]],
                 vec![]
             ),
-            "TlaProverError: Unknown keyword in proof method definition: speed"
+            "TlaMethodError: Unknown keyword in proof method definition: speed"
         );
         assert_eq!(
             cite(vec![vec![set("prover", PragmaValue::Float(1.5))]], vec![]),
-            "TlaProverError: This argument should be a string"
+            "TlaMethodError: Argument should be a string or @"
+        );
+        assert_eq!(
+            cite(vec![vec![set("tactic", PragmaValue::Float(1.5))]], vec![]),
+            "TlaMethodError: Argument should be a string or @"
         );
         assert_eq!(
             cite(
@@ -740,11 +960,142 @@ mod tests {
                 vec![vec![set("prover", PragmaValue::Default)]],
                 vec![num("1", "")]
             ),
-            "TlaProverError: This argument should be a string"
+            "TlaMethodError: This argument should be a string (prover name)"
+        );
+        assert_eq!(
+            cite(
+                vec![vec![
+                    text("prover", "isabelle"),
+                    set("tactic", PragmaValue::Default)
+                ]],
+                vec![num("1", "")]
+            ),
+            "TlaMethodError: This argument should be a string (proof tactic)"
         );
         assert_eq!(
             cite(smt_at(), vec![truth()]),
-            "TlaProverError: This argument should be a number of seconds"
+            "TlaMethodError: This argument should be a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form \"rN\" (e.g. \"r5\")"
+        );
+        assert_eq!(
+            cite(vec![prover("foo")], vec![]),
+            "TlaMethodError: Unknown prover: foo"
+        );
+    }
+
+    fn at(line: u32, start_column: u32, end_column: u32) -> Option<Locus> {
+        Some(Locus {
+            file: Rc::from("M"),
+            start_line: line,
+            start_column,
+            end_line: line,
+            end_column,
+        })
+    }
+
+    fn placed(expression: Expr, location: Option<Locus>) -> Expr {
+        crate::expression::located(expression.core.clone(), location)
+    }
+
+    // Where each error points: the setting's hint (defpt), the use (usept), or the argument.
+    #[test]
+    fn places_its_errors() {
+        let hint = |hint: &str, value: PragmaValue, start: usize, end: usize| PragmaSetting {
+            hint: hint.to_owned(),
+            value,
+            span: PragmaSpan {
+                line: 2,
+                start,
+                end,
+            },
+        };
+        let defined = |groups: Vec<Vec<PragmaSetting>>| {
+            hyp(HypCore::Defn {
+                definition: Defn {
+                    core: DefnCore::Bpragma {
+                        name: "P".to_owned(),
+                        body: truth(),
+                        methods: groups,
+                    },
+                    location: at(3, 1, 40),
+                },
+                where_defined: WhereDefined::User,
+                visibility: Visibility::Visible,
+                is_local: false,
+                is_constness_unset: false,
+            })
+        };
+        let place = |groups: Vec<Vec<PragmaSetting>>, args: Vec<Expr>| {
+            let citing = placed(apply(ix(1), args), at(9, 6, 10));
+            let sequent = Sequent {
+                context: vec![defined(groups), fact(citing, locus(9))],
+                active: truth(),
+            };
+            match find_methods(&sequent, None) {
+                Err(ObligationError::Method { message, at }) => (message, at),
+                other => panic!("{other:?}"),
+            }
+        };
+        let foo = |value: PragmaValue| hint("prover", value, 21, 27);
+        assert_eq!(
+            place(
+                vec![vec![foo(PragmaValue::String("foo".to_owned()))]],
+                vec![]
+            ),
+            ("Unknown prover: foo".to_owned(), at(3, 22, 28))
+        );
+        assert_eq!(
+            place(vec![vec![foo(PragmaValue::Default)]], vec![string("foo")]),
+            ("Unknown prover: foo".to_owned(), at(9, 6, 10))
+        );
+        assert_eq!(
+            place(vec![vec![foo(PragmaValue::Default)]], vec![]),
+            ("Some arguments are missing".to_owned(), at(9, 6, 10))
+        );
+        assert_eq!(
+            place(
+                vec![vec![foo(PragmaValue::Default)]],
+                vec![placed(num("1", ""), at(9, 13, 14))]
+            ),
+            (
+                "This argument should be a string (prover name)".to_owned(),
+                at(9, 13, 14)
+            )
+        );
+        assert_eq!(
+            place(
+                vec![vec![hint("timeout", PragmaValue::Float(3.0), 21, 28)]],
+                vec![]
+            ),
+            ("Missing prover name".to_owned(), at(3, 22, 29))
+        );
+        assert_eq!(
+            place(
+                vec![vec![
+                    hint("prover", PragmaValue::String("smt".to_owned()), 21, 27),
+                    hint("timeout", PragmaValue::Default, 34, 41)
+                ]],
+                vec![placed(string("r0"), at(9, 13, 14))]
+            ),
+            (
+                invalid("r0")
+                    .trim_start_matches("TlaMethodError: ")
+                    .to_owned(),
+                at(9, 13, 14)
+            )
+        );
+        assert_eq!(
+            place(
+                vec![vec![
+                    hint("prover", PragmaValue::String("zenon".to_owned()), 21, 27),
+                    hint("timeout", PragmaValue::String("r2".to_owned()), 34, 41)
+                ]],
+                vec![]
+            ),
+            (
+                "A Z3 rlimit budget (\"rN\") is only supported by the SMT and Z3 backends."
+                    .to_owned(),
+                at(9, 6, 10)
+            )
         );
     }
 
