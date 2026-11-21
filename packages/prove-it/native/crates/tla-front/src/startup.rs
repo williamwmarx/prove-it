@@ -267,14 +267,34 @@ fn get_module_override_level(module: &str, name: &str) -> Option<u8> {
         .map(|(_, _, level)| level)
 }
 
+thread_local! {
+    static STANDARD_MODULES: std::cell::OnceCell<Rc<Vec<Module>>> =
+        const { std::cell::OnceCell::new() };
+}
+
+/// The standard modules' texts parsed, once on each thread: each level bound of a startup reads
+/// them, and their texts are the front end's own.
+fn parsed_standard_modules() -> Rc<Vec<Module>> {
+    STANDARD_MODULES.with(|modules| {
+        Rc::clone(modules.get_or_init(|| {
+            Rc::new(
+                crate::standard_modules::MASTER
+                    .iter()
+                    .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
+                    .collect(),
+            )
+        }))
+    })
+}
+
 /// `SymbolNodeValueLookupProvider.getLevelBound` over the AST.
 struct LevelBound<'a> {
     environment: &'a Environment,
     overridden: FastMap<usize, u8>,
     /// The statements of the named theorems and assumptions, by address.
     facts: FastSet<usize>,
-    /// The standard modules, parsed once one is needed.
-    standard: std::cell::OnceCell<Vec<Module>>,
+    /// The standard modules, once one is needed (`parsed_standard_modules`).
+    standard: std::cell::OnceCell<Rc<Vec<Module>>>,
 }
 
 impl LevelBound<'_> {
@@ -436,12 +456,7 @@ impl LevelBound<'_> {
     // The level of a standard module's operator TLC implements with no Java method, which it
     // finds by walking the operator's TLA+ definition in its module.
     fn get_standard_operator_level(&self, name: &str) -> u8 {
-        let modules = self.standard.get_or_init(|| {
-            crate::standard_modules::MASTER
-                .iter()
-                .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
-                .collect()
-        });
+        let modules = self.standard.get_or_init(parsed_standard_modules);
         modules
             .iter()
             .find_map(|module| {
