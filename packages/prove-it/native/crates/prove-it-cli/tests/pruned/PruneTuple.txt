@@ -1,0 +1,23 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = <<0, 0, 0>>
+
+State 2: <Grow(1) line 8, col 5 to line 10, col 41 of module PruneTuple>
+x = <<1, 0, 0>>
+
+State 3: <Grow(1) line 8, col 5 to line 10, col 41 of module PruneTuple>
+x = <<2, 0, 0>>
+
+State 4: <Grow(2) line 8, col 5 to line 10, col 41 of module PruneTuple>
+x = <<2, 1, 0>>
+
+State 5: <Grow(2) line 8, col 5 to line 10, col 41 of module PruneTuple>
+x = <<2, 2, 0>>
+
+State 6: <Grow(3) line 8, col 5 to line 10, col 41 of module PruneTuple>
+x = <<2, 2, 1>>
+
+98 states generated, 24 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 6.

@@ -1,0 +1,24 @@
+Computing initial states...
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = (a :> 0 @@ b :> 0 @@ c :> 0)
+
+State 2: <Grow(a) line 7, col 5 to line 10, col 38 of module PruneFailLast>
+x = (a :> 1 @@ b :> 0 @@ c :> 0)
+
+State 3: <Grow(a) line 7, col 5 to line 10, col 38 of module PruneFailLast>
+x = (a :> 2 @@ b :> 0 @@ c :> 0)
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 5 to line 10, column 38 in PruneFailLast
+1. Line 7, column 8 to line 7, column 25 in PruneFailLast
+2. Line 8, column 8 to line 8, column 35 in PruneFailLast
+3. Line 8, column 8 to line 8, column 23 in PruneFailLast
+4. Line 9, column 8 to line 9, column 30 in PruneFailLast
+5. Line 9, column 8 to line 9, column 26 in PruneFailLast
+
+
+16 states generated, 10 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 3.

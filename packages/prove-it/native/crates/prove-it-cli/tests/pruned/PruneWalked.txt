@@ -1,0 +1,14 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = (a :> 0 @@ b :> 0 @@ c :> 0)
+
+State 2: <Grow(a) line 8, col 5 to line 12, col 38 of module PruneWalked>
+x = (a :> 1 @@ b :> 0 @@ c :> 0)
+
+State 3: <Grow(a) line 8, col 5 to line 12, col 38 of module PruneWalked>
+x = (a :> 3 @@ b :> 0 @@ c :> 0)
+
+14 states generated, 8 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 3.

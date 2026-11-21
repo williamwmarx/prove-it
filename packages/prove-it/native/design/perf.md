@@ -727,6 +727,95 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 
 Together they bound StarkMutex at about 1.25×.
 
+### Pruning `x' \in [S -> T]` by per-key constraints (MCabs), as built
+
+MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
+enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
+`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
+admits would turn 64,000 into about 40.
+
+**TLC's order** (tlaplus d8fb231):
+- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
+  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
+  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
+  at that candidate.
+- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
+  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
+  order.
+- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
+
+**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
+`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
+candidates with f[j] = e(j) for every constrained j.
+
+**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
+Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
+x'[b] for keys b that Ck leaves free.
+
+Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
+be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
+- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
+  one free key, 40 on MCabs.
+- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
+- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
+
+D must be a subset of S; otherwise fall back.
+
+**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
+order of the free keys' values. Successor order, state numbering, traces, and any later Print or
+error therefore stay TLC's. The states-generated and distinct counts count successors only, so
+they are unchanged. Under `-coverage`, don't prune.
+
+**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
+enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
+models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
+successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
+`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. It is
+one spec's idiom, built because it is the suite's weakest model against TLC.
+
+**As built** (`compile/pruned.rs`):
+- The conjuncts between the membership and the quantifier are often operators the walk walks
+  (`IsPrefix` is one), and a walk is not an evaluation: an `\E` walks every binding where
+  evaluation stops at the first TRUE. So the pre-pass runs the compiled walk of those conjuncts,
+  to their end, for each assignment of the free keys, and keeps the assignments it reaches the end
+  for. A skipped function with the same free values walks them the same way.
+- The quantifier is checked by evaluating its own body, `x'[j] = e`, for each j of E and each
+  value of T, bound to a function of the set with that value at j, so the equality is the
+  compiled one, failures included; it must hold for exactly one value of each j.
+- The positions of the survivors in the set are computed from the odometer and each is checked
+  against its function's keys and values, so nothing rests on how the store lays the set out.
+- The static checks: every conjunct before the quantifier is free of effects and reads x' only as
+  `x'[k]`, with k of names bound outside the conjunction, through no prime, UNCHANGED, ENABLED,
+  action or temporal operator, and through definitions that read no next state. At run time each k
+  must be a key outside E.
+- Nothing from the membership through the quantifier may read what TLC keeps beside the state,
+  which a TLCSet after the quantifier, or the search, can change between two functions of the
+  enumeration: no TLCGet or other builtin of TLC's registers, caches, counts, level, files,
+  environment, random draws or trace (`is_steady_builtin`), and no compiled footprint with a
+  search, register, print or warning slot. Codex found the first on #375: a quantifier that
+  compares with TLCGet(1), followed by TLCSet(1, 1).
+- It is off while generating, where the walk streams a set held as built, and where the search
+  keeps the shapes of assigned values for liveness atoms. Coverage is counted by tla-trace's own
+  pass, which this doesn't touch. Anything a pre-pass evaluation prints or warns, and any failure,
+  sends the walk through every function, as before.
+
+`prove-it-cli/tests/pruned` compares fourteen specs with TLC at d8fb231: guards the walk walks, keys
+of numbers, a guard that fails on the first, a middle and the last value of T, a quantifier that
+fails to evaluate or compares a number with a string, a guard reading a key the quantifier fixes,
+a value outside T, a guard that prints, a quantifier over no keys, and a quantifier or a guard
+that reads TLCGet, the level or a register a later TLCSet changes.
+
+**Measured** on Depot against `main` at b7f832b9, `bench-suite.ts` with `native` and
+`native-base`, one worker, median wall seconds with the range:
+
+| Suite, machine, runs | MCabs | Geomean, all models | Models agreeing with TLC |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 10.07 (10.04–10.11) → 0.19 (0.19–0.19) | 1.35× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | not in the suite | 1.00× | 18/18 |
+
+No other model moved outside its range on the 4-core suite, as none has the shape. MCabs is now
+start-up and its 349 states; TLC on one worker takes 34.6 s on the 16-core runner.
+
 ### Start-up of the npm package: the keys a check asks for first (seeded-keys)
 
 The npm package runs the native check in-process in rounds (`checkAllSources`): the engine runs
@@ -974,62 +1063,6 @@ Two engine costs grew with the number of threads, and a shared level reported no
 - The tests in `prove-it-check`'s `check.rs` use the ewd998 example's IsSimpleCycle and RingOfNodes, and fail on the code before this change.
 
 ## Designs ready, not built
-
-### Pruning `x' \in [S -> T]` by per-key constraints (MCabs)
-
-MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
-enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
-`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
-admits would turn 64,000 into about 40.
-
-**TLC's order** (tlaplus d8fb231):
-- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
-  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
-  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
-  at that candidate.
-- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
-  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
-  order.
-- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
-
-**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
-`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
-candidates with f[j] = e(j) for every constrained j.
-
-**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
-Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
-x'[b] for keys b that Ck leaves free.
-
-Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
-be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
-- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
-  one free key, 40 on MCabs.
-- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
-- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
-
-D must be a subset of S; otherwise fall back.
-
-**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
-order of the free keys' values. Successor order, state numbering, traces, and any later Print or
-error therefore stay TLC's. The states-generated and distinct counts count successors only, so
-they are unchanged. Under `-coverage`, don't prune.
-
-**Why it isn't built.** A grep of the corpus, tlaplus/Examples included, finds the shape in an
-action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]` is a TypeOK' in a
-`*_proof.tla` or a TLC test model. The 18 `\E f \in [S -> T]` outside proofs are in Init, in
-invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
-(`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
-
-**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
-enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
-models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
-successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
-`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. Built,
-it would take MCabs from 10.2 s toward start-up, and so the suite's geomean by about 1.3×, from one
-spec's idiom.
-
-Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
-compared with TLC.
 
 ### Answering liveness action atoms from the steps the search took
 
