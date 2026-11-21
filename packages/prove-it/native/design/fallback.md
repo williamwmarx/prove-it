@@ -6575,6 +6575,16 @@ violation).
   function`, `reading a count _Track took of a name that isn't a string`, `reading a count _Track
   took of a name TLC made as it searched`, `reading a count _Track took that isn't an integer`
   and `reading counts _Track took in a crowded bucket`.
+- An incomplete successor whose action fails as TLC evaluates it in full to print the trace ("an
+  incomplete successor whose action fails as TLC evaluates it in full to print the trace"). After
+  reporting the successor that leaves a variable undefined, `printTrace` finds it again among all
+  of the action's successors (`Tool.getState`, `getNextStates` into a StateVec), so `x' = 1 /\ (x =
+  0 \/ <<x>>[2] = 0)` fails on its second disjunct there: `printTraceAndStop` prints that failure
+  (1000) in place of the successor. The binary printed the successor. The rebuild now walks the
+  action in full and declines where the rest fails; an action of the next-state relation split
+  from it is a separate action `getState` doesn't reach once it found the successor. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `incomplete-successor-*`.
+
 - A `tlc2.overrides.TLCOverrides` index (see "Java overrides that stay declined"): `a TLCOverrides
   index whose classes the front end doesn't read`, and `a class a TLCOverrides index names` `that
   isn't a plain class`, `with a superclass`, `that implements an interface`, `with a static
