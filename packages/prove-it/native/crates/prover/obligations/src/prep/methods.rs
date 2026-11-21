@@ -194,11 +194,43 @@ fn parse_hex_float(text: &str) -> Option<f64> {
             value * 16.0 + f64::from(digit.to_digit(16).unwrap_or(0))
         });
     let scale = exponent.saturating_sub(i32::try_from(4 * fraction.len()).unwrap_or(i32::MAX));
-    Some(if value == 0.0 {
-        0.0
-    } else {
-        value * 2f64.powi(scale)
-    })
+    Some(ldexp(value, scale))
+}
+
+/// C's `ldexp`, which `caml_float_of_hex` scales the mantissa by: `value * 2^exponent`, rounded
+/// to nearest, ties to even, once, where the result is subnormal.
+fn ldexp(value: f64, exponent: i32) -> f64 {
+    if value == 0.0 || !value.is_finite() {
+        return value;
+    }
+    let bits = value.to_bits();
+    let sign = bits & (1 << 63);
+    let mut biased = i64::try_from((bits >> 52) & 0x7ff).expect("eleven bits");
+    let mut mantissa = bits & ((1 << 52) - 1);
+    if biased == 0 {
+        let shift = i64::from(mantissa.leading_zeros()) - 11;
+        mantissa = (mantissa << shift) & ((1 << 52) - 1);
+        biased = 1 - shift;
+    }
+    let scaled = biased + i64::from(exponent);
+    if scaled >= 0x7ff {
+        return f64::from_bits(sign | (0x7ff << 52));
+    }
+    if scaled >= 1 {
+        return f64::from_bits(sign | ((scaled as u64) << 52) | mantissa);
+    }
+    let shift = 1 - scaled;
+    if shift > 54 {
+        return f64::from_bits(sign);
+    }
+    let full = mantissa | (1 << 52);
+    let remainder = full & ((1u64 << shift) - 1);
+    let half = 1u64 << (shift - 1);
+    let mut result = full >> shift;
+    if remainder > half || (remainder == half && result & 1 == 1) {
+        result += 1;
+    }
+    f64::from_bits(sign | result)
 }
 
 // A C99 decimal float: `\d+\.?\d*|\.\d+` with an optional `e[+-]?\d+`.
@@ -897,6 +929,13 @@ mod tests {
             ("0X1.8p1", Some(3.0)),
             ("-0x1p-1", Some(-0.5)),
             ("0x1P+2", Some(4.0)),
+            ("0x1p-1024", Some(2f64.powi(-1022) / 4.0)),
+            ("0x1p-1074", Some(f64::from_bits(1))),
+            ("0x3p-1075", Some(f64::from_bits(2))),
+            ("0x1p-1075", Some(0.0)),
+            ("0x1.8p-1074", Some(f64::from_bits(2))),
+            ("0x1p1024", Some(f64::INFINITY)),
+            ("0x1.fffffffffffffp1023", Some(f64::MAX)),
             ("0x", None),
             ("0x.", None),
             ("0x1p", None),
