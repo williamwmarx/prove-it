@@ -888,6 +888,31 @@ cf1s_folklore has few action checks, so its rows are a few bits and the copy was
 of its threads' 1.2 s, 0.5 s builds the successor sets and 0.15 s reads the consistency rows,
 which the next change reads ahead on every thread.
 
+### The checker's successor sets, state checks and consistency read ahead (checker-precompute)
+
+Each state's successor set in TLC's order, its state checks and its consistency with the tableau's
+nodes come from the graph and the tables alone, and each behavior's thread computed them again as
+it added the states. The threads now read them ahead, each a run of the states, as they read the
+action checks: the state checks and consistency rows of each behavior, which its thread takes
+over, and the order of every successor set, which the threads share at 4 bytes a step. TLC's
+SetOfStates orders a set by a capacity that grows with every set that outgrows it, so a first pass
+counts each state's distinct steps, a scan finds the capacity as each set is built, and a second
+pass builds the sets with it. A check with one behavior reads ahead on the workers too. Per
+thread at 16 threads, adding the states went from 1.2 s to about 0.4 s on cf1s_folklore (sets
+0.5 → 0.09 s, consistency 0.15 → 0.08, state checks 0.06 → 0.05) and from 0.53 to about 0.2 s
+on StarkMutex, where writing the nodes (0.06–0.09 s) and searching each graph (0.1–0.14 s) are
+what is left. On `depot-ubuntu-24.04-16`, medians of 3, against `checker-shared-steps` at
+b1a08c45, 16 threads:
+
+| Model | Before, 16 threads | Now, 16 threads | Gain | RSS MB |
+|---|---:|---:|---:|---|
+| cf1s_folklore | 2.75 | 2.35 | 1.17× | 2,235 → 2,229 |
+| StarkMutex | 1.26 | 1.22 | 1.03× | 787 → 790 |
+| SpanTreeRandom | 0.41 | 0.38 | 1.08× | 77 → 84 |
+
+One thread, which builds the sets with the same code and reads nothing ahead, is within noise
+(cf1s_folklore 6.61 → 6.37, StarkMutex 3.04 → 3.08); the rest of the suite is within noise.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
