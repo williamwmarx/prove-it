@@ -198,6 +198,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       true,
     ],
     read,
+    // What the check asks for first, which the caller holds: the spec, its configuration, the
+    // modules the engine reads as its own and whether there are classes.
+    [...texts.keys()]
+      .map((path) => `text:${path}`)
+      .concat(
+        [...BUILT_IN_MODULES].map((module) => `module:${module}`),
+        ["class-space"],
+      ),
   );
   if (result.kind === "declined") {
     if (isWebAssemblyStack(result.reason)) throw new WebAssemblyStackError();
