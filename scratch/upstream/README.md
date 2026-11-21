@@ -184,3 +184,11 @@ Pinned-jar runs (`adjudication/pinned-tlc-tla-ts-0341dbe5.jsonl.gz`, ids in `jar
 | noncompletion | 0 (the three engine262 runs finish now) |
 
 `results/main-b7f832b9-tla-ts-0341dbe5.*` hold the per-run rows.
+
+## Upstream's unit-test specs at 0341dbe5 (`unit/`)
+
+Upstream's fixes since the last sync carry their regression cases in `packages/tla-ts/tests/unit/*.test.ts`, as specs written inline, not in the conformance suite. `unit/extract_unit.py <tla-ts>/packages/tla-ts/tests/unit <out>` reads those files as text (it runs none of upstream's code): it evaluates each `check({...})` call's `source` and `config` statically, binds the parameters of an enclosing `it.each` table row by row, maps the options TLC has flags for (`seed`, `workers`, `livenessCheck`, `fingerprintPolynomial`, `isLazyValueExpanded: false` as `-terse`, `isViewPrinted`, `maxSetSize`, `isContinued`, `isWarningEnabled: false` as `-nowarning`, `coverage`) and skips any call it can't evaluate or whose options it doesn't map (592 of them). Each case becomes a conformance-format file (`outcome: any`, its `config` and `args`), so `harness.ts` runs it, with the binary and with the pinned jar; upstream's own expectations are not used. `unit-suite-0341dbe5.tar.gz` holds the 696 cases.
+
+main b7f832b9 against the pinned jar (`unit/main-b7f832b9-vs-jar.txt`): 419 match, 211 decline, 64 differ, 2 don't finish in 120 s where the jar does (liveness c0016, c0019). Of the 64, 5 are SANY's output (check-levels c0029, c0030, c0040, c0066; check-name-resolution c0021) and 9 are the level SANY gives an operator applied to an argument whose parameter it doesn't use, or a LET definition it doesn't use (check c0159-c0161, c0163, c0164; possible c0003-c0005, c0007): both routed to the SANY session. The rest are the model checker's, worked through in the branches below.
+
+`tools/pr.sh <binary> <dir>` runs probe specs (`<dir>/<name>/M.tla`, `M.cfg`, optional `args`) with the binary and the jar through the harness and prints the differences; `tools/tryfix.sh <binary> <fixture>...` compares a `startup_checks` fixture as `startup_checks.rs` does; `tools/gates.sh <worktree> <target>` runs AGENTS.md's checks with this container's JVM variables unset.
