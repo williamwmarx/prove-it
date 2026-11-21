@@ -772,10 +772,32 @@ at de9ca77d, 16 threads (one thread is within the build-to-build noise of the su
 | cf1s_folklore | 2.68 | 1.91 | 1.40× | 2,228 → 976 |
 
 The rest of the suite is within noise. What is left of the liveness check at 16 threads on
-StarkMutex is the search's merge (0.27 s), the atoms (about 0.3 s) and the checker (0.64 s, of
-which each behavior's thread spends 0.29 s skipping the action checks the shared table answers,
-0.06 s building successor sets and 0.11 s searching its graph); on cf1s_folklore the checker's
-1.2 s is 0.5 s of successor sets and 0.15 s of consistency rows, each behavior's thread again.
+StarkMutex is the search's merge (0.27 s), the atoms (about 0.3 s) and the checker (0.35 s once
+the shared table is read in place, below, of which each behavior's thread spends 0.06 s building
+successor sets, 0.06 s writing nodes and 0.11 s searching its graph); on cf1s_folklore the
+checker's 1.2 s is 0.5 s of successor sets and 0.15 s of consistency rows, each behavior's thread
+again.
+
+### The checker's shared table of action checks, read in place (checker-shared-steps)
+
+Timed per phase on 16 cores, each thread of the liveness checker that built a behavior's graph
+spent most of its time before writing the nodes: StarkMutex's four threads 0.29 s of 0.53 s each
+walking the 60 action checks on every step's row to find them all answered already, since the
+table the threads read ahead (`read_positions`) answered them, after copying each row into a table
+of the thread's own. A step's row is now its position in the shared table where that has every
+check the thread's behaviors make, and a row of the thread's own, copied from it, only where it
+doesn't, and a successor set whose rows are complete skips the checks after one word a row. On
+`depot-ubuntu-24.04-16`, medians of 3, against `main` at c34616b8, 16 threads (one thread, which
+has no shared table, is unchanged):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.57 | 1.25 | 1.26× | 938 → 785 |
+| cf1s_folklore | 2.66 | 2.71 | noise | 2,243 → 2,234 |
+
+cf1s_folklore has few action checks, so its rows are a few bits and the copy was never its cost:
+of its threads' 1.2 s, 0.5 s builds the successor sets and 0.15 s reads the consistency rows,
+which the next change reads ahead on every thread.
 
 ## Measured and dropped
 
