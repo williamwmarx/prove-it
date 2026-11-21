@@ -2902,6 +2902,7 @@ fn ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange>
         let range = match frame {
             StackFrame::Node(node) => node_range(evaluator, node),
             StackFrame::Prefix(node, count) => prefix_range(evaluator, node, count),
+            StackFrame::Arguments(node) => node_range(evaluator, node),
         };
         ranges.extend(range);
         // The frame of a copy's `SubstInNode`, after the one that names the copy.
