@@ -115,10 +115,10 @@ impl<'a> Marks<'a> {
     fn successors(&self, graph: &LiveGraph<'_>, index: usize, marked: &mut Vec<u32>) {
         let steps = graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
         marked.clear();
-        // A loop for each kind of mark, read once a step.
+        // A loop for each kind of mark, read once a step; where every step is marked or none can
+        // be told, `taken` reads no successors.
         match *self {
-            Marks::Unknown => return,
-            Marks::All => marked.extend(steps.map(|edge| graph.edges[edge])),
+            Marks::Unknown | Marks::All => return,
             Marks::Labels { actions, labels } => marked.extend(
                 steps
                     .filter(|&edge| actions.get(labels[edge] as usize).copied().unwrap_or(false))
