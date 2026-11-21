@@ -7619,6 +7619,14 @@ A, defined before K, between K and L, and after L, read by an assumption such as
   ("Attempted to apply EXCEPT construct to the value 1."), and main reports that failure as TLC
   does, not by chance. Winning it takes following the EXCEPT's update path into the lazy
   function's value at the key where the evaluator now stops.
+- A Json or IOUtils operator that writes to what isn't a regular file, a pipe or a device, as
+  `ASSUME JsonSerialize("/dev/stdout", <<123>>)` ("JsonSerialize, whose file the replay doesn't
+  read or write"). TLC writes `[123]` into its own output and completes, and main does the same,
+  not by chance. Here a run holds its output until it knows it won't decline and keeps each file
+  as it was before it writes it; a pipe has no bytes to keep and a read of one may never end, and
+  bytes written past the hold would come before what the run holds. Winning it takes writing such
+  a destination through the hold where it is the run's own output, and for another only once the
+  run can no longer decline.
 
 #### Every reason
 
