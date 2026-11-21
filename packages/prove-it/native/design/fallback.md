@@ -4737,16 +4737,6 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
-- A constant-level definition through TLCCache or AssertError that the configuration names, found
-  in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
-  `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
-  `AssertError(m, e)` at the level of their arguments, and `processConstantDefns` computes such a
-  definition as TLC starts: `Inv == TLCCache(FALSE, {})` as the invariant is "The invariant of Inv
-  is equal to FALSE" (exit 151), as a property or a constraint likewise, and TRUE warns as a
-  constant invariant does. The front end's builtin table marked both state-level, so the binary
-  checked such an invariant in each state ("Invariant Inv is violated by the initial state").
-  Fixtures `tlcext-constant-*`.
-
 - A record in the value of a function TLC kept lazy, printed. TLC prints its fields as written
   where the engine printed them as TLC sorts them (by when it interned each name): a LET
   definition or an operator's argument whose function constructor TLC first computed with
@@ -4851,6 +4841,15 @@ matches TLC or declines exactly.
   computes as it starts is read as the value it kept (`constant_once`). A function constructor as the substitute
   whose body prints, applied twice (`S <- [x \in {1} |-> PrintT(x)]` with `S[1] /\ S[1]`), which
   TLC prints at each application, declines with them, as on main.
+- A constant-level definition through TLCCache or AssertError that the configuration names, found
+  in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
+  `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
+  `AssertError(m, e)` at the level of their arguments, and `processConstantDefns` computes such a
+  definition as TLC starts: `Inv == TLCCache(FALSE, {})` as the invariant is "The invariant of Inv
+  is equal to FALSE" (exit 151), as a property or a constraint likewise, and TRUE warns as a
+  constant invariant does. The front end's builtin table marked both state-level, so the binary
+  checked such an invariant in each state ("Invariant Inv is violated by the initial state").
+  Fixtures `tlcext-constant-*`.
 - A startup definition that prints and failed as TLC started (`D == PrintT("d") /\ 1 \div 0 =
   0`), read as a conjunct of the initial predicate or of an action before every variable is
   assigned (`Init == D /\ x = 0`, also through a LET name, an operator's argument, `\E`, `\/`,
