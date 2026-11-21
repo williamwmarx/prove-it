@@ -980,9 +980,9 @@ pub fn answer_atoms(
                             .collect(),
                         None => vec![u64::MAX; words],
                     };
-                    let mut answers = Vec::with_capacity(graph.count);
-                    for index in 0..graph.count {
-                        let from_steps = match (steps, &mut changed) {
+                    // What the steps answer of each state, UNKNOWN where ENABLED must run.
+                    let mut answers: Vec<u8> = (0..graph.count)
+                        .map(|index| match (steps, &mut changed) {
                             (Some(steps), Some(changed))
                                 if index < graph.expanded && graph.partial != Some(index) =>
                             {
@@ -996,22 +996,52 @@ pub fn answer_atoms(
                                 }
                             }
                             _ => UNKNOWN,
-                        };
-                        let ran = match run {
-                            Ok(eval) if from_steps == UNKNOWN || is_live_checked => {
-                                evaluator.evaluate_state(index, eval)
+                        })
+                        .collect();
+                    match run {
+                        // ENABLED run on the states the steps don't answer, on the helpers, each
+                        // state's evaluation the same on any thread.
+                        Ok(eval) if is_shared && answers.contains(&UNKNOWN) => {
+                            let asked = &answers;
+                            let ran = on_helpers(
+                                evaluator.machine,
+                                helpers,
+                                graph,
+                                graph.count,
+                                |index| usize::from(asked[index] == UNKNOWN),
+                                |run, index, ran: &mut Vec<u8>| {
+                                    ran.push(if asked[index] == UNKNOWN {
+                                        run.state(index, eval)
+                                    } else {
+                                        UNKNOWN
+                                    });
+                                },
+                            )
+                            .concat();
+                            for (answer, ran) in answers.iter_mut().zip(ran) {
+                                if *answer == UNKNOWN {
+                                    *answer = ran;
+                                }
                             }
-                            _ => UNKNOWN,
-                        };
-                        keep_printed(evaluator.machine, &mut prints, index);
-                        if from_steps != UNKNOWN && ran != UNKNOWN && from_steps != ran {
-                            return Err(ENABLED_DIFFERS);
                         }
-                        answers.push(if from_steps == UNKNOWN {
-                            ran
-                        } else {
-                            from_steps
-                        });
+                        Ok(eval) if !is_shared => {
+                            for (index, answer) in answers.iter_mut().enumerate() {
+                                let from_steps = *answer;
+                                let ran = if from_steps == UNKNOWN || is_live_checked {
+                                    evaluator.evaluate_state(index, eval)
+                                } else {
+                                    UNKNOWN
+                                };
+                                keep_printed(evaluator.machine, &mut prints, index);
+                                if from_steps != UNKNOWN && ran != UNKNOWN && from_steps != ran {
+                                    return Err(ENABLED_DIFFERS);
+                                }
+                                if from_steps == UNKNOWN {
+                                    *answer = ran;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                     if let (Some(steps), Some(changed)) = (steps, changed) {
                         changes.insert(steps.key, changed);
