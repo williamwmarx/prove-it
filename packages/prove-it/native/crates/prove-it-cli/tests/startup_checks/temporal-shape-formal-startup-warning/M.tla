@@ -1,0 +1,9 @@
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x=0
+Next == x<2 /\ x'=x+1
+Unused==[[k \in {} |->k] EXCEPT !.a=9]
+Machine(i,n)==i /\ [][n]_x
+Spec == Machine(Init,Next)
+====

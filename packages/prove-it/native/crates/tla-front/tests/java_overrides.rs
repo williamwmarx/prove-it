@@ -25,6 +25,8 @@ fn link_in(fixture: &str, source: &str) -> Result<Environment, FrontError> {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     let load_class = |name: &str| std::fs::read(directory.join(format!("{name}.class"))).ok();
     create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &|_| None,
         config: &config,

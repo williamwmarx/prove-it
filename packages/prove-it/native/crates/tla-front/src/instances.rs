@@ -166,6 +166,16 @@ pub fn rename_locals(
             let renamed = names.get(&name).cloned().unwrap_or(name);
             with_reference(&mapped, renamed, None)
         }
+        // An operator symbol names a parameter of its own, such as the `++` of
+        // `M(_ ++ _) == INSTANCE I WITH F <- ++`, which the resolver leaves unmarked.
+        ExpressionKind::OperatorReference { .. }
+            if mapped
+                .reference()
+                .is_some_and(|name| !bound.contains(&name) && names.contains_key(&name)) =>
+        {
+            let name = mapped.reference().unwrap_or_default();
+            with_reference(&mapped, names[&name].clone(), None)
+        }
         _ => mapped,
     };
     tables.carry_substitution(expression, &renamed);
@@ -497,6 +507,10 @@ pub struct Instantiation<'a> {
         dyn Fn(&Name, &Name, &mut dyn FnMut(&Name) -> Result<Rc<Definition>>) -> Result<Name> + 'a,
     >,
     pub create_name: Box<dyn Fn(&str) -> Name + 'a>,
+    /// Whether a substitution names the definition a LET INSTANCE makes for the declaration,
+    /// which is put where the declaration is named, as TLC evaluates the substitute in a frame of
+    /// its own after the frame of the declaration's name.
+    pub is_named_where_used: bool,
 }
 
 /// LAMBDA is a keyword, so no name bound inside the instance can capture it.
@@ -630,7 +644,19 @@ impl<'a> Instantiator<'a> {
             return Ok(key.clone());
         };
         (self.instantiation.add_definition)(key, &definition.name, &mut |_| {
-            Ok(self.with_instance_params(&definition, &definition.location))
+            let copy = self.with_instance_params(&definition, &definition.location);
+            // The copy a named INSTANCE makes of a definition without parameters is a node of
+            // its own (`I!D`), which TLC computes as it starts apart from the definition, with
+            // its own effects.
+            Ok(
+                if Rc::ptr_eq(&copy, &definition)
+                    && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                {
+                    Rc::new((*definition).clone())
+                } else {
+                    copy
+                },
+            )
         })
     }
 
@@ -717,11 +743,24 @@ impl<'a> Instantiator<'a> {
         })
     }
 
+    /// The instance's parameters a copy's name forwards to the copy. A LET INSTANCE's are written
+    /// nowhere: TLC holds them in the `Context`, where evaluating one puts no frame of its own.
+    fn forwarded_params(&self, location: &Location) -> Vec<Expr> {
+        if self.instantiation.is_named_where_used {
+            let unwritten = Location {
+                range: None,
+                ..location.clone()
+            };
+            return local_arguments(&self.instantiation.params, &unwritten);
+        }
+        local_arguments(&self.instantiation.params, location)
+    }
+
     fn get_instance_operator(&self, key: Name, arity: usize, location: &Location) -> Expr {
         let names: Vec<Name> = (0..arity)
             .map(|index| Rc::from(format!("argument{index}")))
             .collect();
-        let mut args = local_arguments(&self.instantiation.params, location);
+        let mut args = self.forwarded_params(location);
         args.extend(
             names
                 .iter()
@@ -920,7 +959,45 @@ impl<'a> Instantiator<'a> {
                 let name = expression.reference().unwrap_or_default();
                 if is_free(&name) {
                     if let Some(replacement) = instantiation.substitutions.get(&name) {
-                        return Ok(replacement.clone());
+                        if !instantiation.is_named_where_used {
+                            // A substitute other than a name or a literal is used through a copy
+                            // of its own where the module names the declaration, which the IR
+                            // writes as a reference placed at the name, as TLC's call stack has a
+                            // frame there for the declaration's node before the substitute's.
+                            if matches!(
+                                replacement.kind,
+                                ExpressionKind::Identifier { .. }
+                                    | ExpressionKind::Number { .. }
+                                    | ExpressionKind::Decimal { .. }
+                                    | ExpressionKind::String { .. }
+                            ) {
+                                return Ok(replacement.clone());
+                            }
+                            let copy = rebuild(replacement, replacement.kind.clone());
+                            self.tables.carry_substitution(replacement, &copy);
+                            self.tables.add_substitute_use(
+                                &copy,
+                                expression.location.clone(),
+                                replacement.clone(),
+                            );
+                            return Ok(copy);
+                        }
+                        let named = match &replacement.kind {
+                            ExpressionKind::Apply { args, .. } => apply(
+                                replacement.reference().unwrap_or_default(),
+                                args.clone(),
+                                &expression.location,
+                            ),
+                            _ => identifier(
+                                replacement.reference().unwrap_or_default(),
+                                &expression.location,
+                            ),
+                        };
+                        named
+                            .resolved
+                            .is_local
+                            .set(replacement.resolved.is_local.get());
+                        return Ok(named);
                     }
                     let Some(copy) = self.get_copy(mode, &name)? else {
                         return Ok(expression.clone());
@@ -937,7 +1014,15 @@ impl<'a> Instantiator<'a> {
                             location,
                         ));
                     }
-                    return Ok(apply(copy, local_arguments(params, location), location));
+                    let applied = apply(copy, self.forwarded_params(location), location);
+                    if let Some(header) = (instantiation.get_definition)(&name)
+                        && get_arity(&header) == 0
+                        && !self.tables.is_selection(expression)
+                    {
+                        self.tables
+                            .add_synthetic_zero_arity(&applied, expression.clone(), header);
+                    }
+                    return Ok(applied);
                 }
             }
             ExpressionKind::Apply { args, .. } => {
@@ -1014,8 +1099,7 @@ impl<'a> Instantiator<'a> {
                     let Some(copy) = self.get_copy(mode, &operator)? else {
                         return Ok(rebuild(expression, replace_args(&expression.kind, args)));
                     };
-                    let all = local_arguments(params, location)
-                        .into_iter()
+                    let all = (self.forwarded_params(location).into_iter())
                         .chain(args)
                         .collect();
                     return Ok(with_reference(expression, copy, Some(all)));

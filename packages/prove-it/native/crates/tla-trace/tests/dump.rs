@@ -89,6 +89,7 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
                 &violation.store,
                 &violation.registers.numbered,
                 &violation.registers.named,
+                &violation.registers.properties,
             )
             .expect("registers"),
         );

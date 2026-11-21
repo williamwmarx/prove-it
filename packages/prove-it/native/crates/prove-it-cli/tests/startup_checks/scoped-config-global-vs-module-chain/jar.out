@@ -1,0 +1,7 @@
+exit 10
+Semantic processing of module M
+Semantic processing of module Probe
+Linting of module M
+Linting of module Probe
+Error: Evaluating assumption line 11, col 8 to line 11, col 12 of module Probe failed.
+class tla2sany.semantic.OpDefNode cannot be cast to class tlc2.value.impl.Value (tla2sany.semantic.OpDefNode and tlc2.value.impl.Value are in unnamed module of loader 'app')

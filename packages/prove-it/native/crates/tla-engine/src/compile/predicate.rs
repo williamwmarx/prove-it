@@ -121,7 +121,7 @@ impl Leaf {
                 key,
                 hint: Arc::new(AtomicU32::new(0)),
             },
-            Shape::Other => Leaf::Eval(compiled.eval.clone()),
+            Shape::Other | Shape::SimulationRun(_) => Leaf::Eval(compiled.eval.clone()),
         }
     }
 

@@ -1,0 +1,22 @@
+exit 150
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 3
+
+line 2, col 9 to line 2, col 9 of module M
+
+Unknown operator: `x'.
+
+
+line 2, col 11 to line 2, col 11 of module M
+
+Unknown operator: `y'.
+
+
+line 2, col 19 to line 2, col 21 of module M
+
+Unknown operator: `Nat'.
+
+
+Error: Parsing or semantic analysis failed.

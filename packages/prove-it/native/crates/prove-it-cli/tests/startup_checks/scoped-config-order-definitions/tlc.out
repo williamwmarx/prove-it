@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module M
+Semantic processing of module Probe
+Linting of module M
+Linting of module Probe
+Error: The configuration file substitutes for A with the undefined identifier MissingA.

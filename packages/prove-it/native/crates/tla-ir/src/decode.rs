@@ -5,10 +5,11 @@ use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, InstanceAction, Ir, Junction, LiveProperty,
-    LiveTerm, MAGIC, Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern,
-    PermutedSet, Possible, PredicateForm, Printed, Resolution, Scope, ScopeBinding, Selector,
-    SourceRange, Startup, StartupPredicate, Symmetry, TextId, Update, Value, Values, code, tag,
+    DefinitionForm, EnabledActions, EvaluatedDefinition, IR_VERSION, IR_VERSION_WITHOUT_DEPENDENTS,
+    Index, InstanceAction, Ir, Junction, LiveProperty, LiveTerm, MAGIC, Model, Name, Node, NodeId,
+    NodeKind, Nodes, Param, PathStep, Pattern, PermutedSet, Possible, PredicateForm, Printed,
+    Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, StartupPredicate, Symmetry,
+    TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -51,8 +52,9 @@ fn decode_here(bytes: &[u8]) -> Decoded<Ir> {
     if word(0) != MAGIC {
         return Err(fail("not an engine IR".into()));
     }
-    if word(1) != IR_VERSION {
-        return Err(fail(format!("IR version {}, not {IR_VERSION}", word(1))));
+    let version = word(1);
+    if version != IR_VERSION && version != IR_VERSION_WITHOUT_DEPENDENTS {
+        return Err(fail(format!("IR version {version}, not {IR_VERSION}")));
     }
     let (word_count, text_length) = (word(2) as usize, word(3) as usize);
     if word_count < 4 || word_count * 4 + text_length.next_multiple_of(4) != bytes.len() {
@@ -72,6 +74,7 @@ fn decode_here(bytes: &[u8]) -> Decoded<Ir> {
     Decoder {
         words: &words,
         at: 4,
+        version,
         text_count: 0,
         node_count: 0,
         depth: 0,
@@ -83,6 +86,7 @@ fn decode_here(bytes: &[u8]) -> Decoded<Ir> {
 struct Decoder<'a> {
     words: &'a [i32],
     at: usize,
+    version: u32,
     text_count: u32,
     node_count: u32,
     depth: usize,
@@ -332,6 +336,47 @@ impl Decoder<'_> {
                     table.push((arguments, self.value_ordinal()?));
                 }
             }
+            if flags & Builtin::PINNED_STANDARD_SOURCES != 0
+                && (arity != 1
+                    || !matches!(
+                        &*texts[name as usize],
+                        "ToJson" | "ToJsonArray" | "ToJsonObject"
+                    )
+                    || flags & !Builtin::STATE_LEVEL != Builtin::PINNED_STANDARD_SOURCES
+                    || !table.is_empty())
+            {
+                return self.error("an invalid pinned-standard-source Json marker".to_owned());
+            }
+            if flags & Builtin::CLOSED_JAVA_CONTEXT != 0
+                && (arity != 2
+                    || !matches!(&*texts[name as usize], "\\in" | "\\notin")
+                    || flags != Builtin::CLOSED_JAVA_CONTEXT
+                    || !table.is_empty())
+            {
+                return self.error("an invalid closed Java membership marker".to_owned());
+            }
+            if flags & Builtin::TABLE_PHASE_KNOWN != 0
+                && (flags != Builtin::TABLE | Builtin::TABLE_PHASE_KNOWN
+                    || arity <= 0
+                    || table.is_empty()
+                    || texts[name as usize].is_empty())
+            {
+                return self.error("an invalid configuration-table phase marker".to_owned());
+            }
+            if flags & Builtin::PACKAGED_TLC_DEFER != 0
+                && (arity != 1
+                    || &*texts[name as usize] != "TLCDefer"
+                    || flags != Builtin::PACKAGED_TLC_DEFER | Builtin::STATE_LEVEL | Builtin::LAZY)
+            {
+                return self.error("an invalid packaged TLCDefer marker".to_owned());
+            }
+            if flags & Builtin::UNINITIALIZED_LITERAL != 0
+                && (arity != 0
+                    || flags != Builtin::UNINITIALIZED_LITERAL | Builtin::DECLINED
+                    || &*texts[name as usize] != "$UninitializedLiteral")
+            {
+                return self.error("an invalid uninitialized-literal marker".to_owned());
+            }
             builtins.push(Builtin {
                 name,
                 arity,
@@ -399,6 +444,21 @@ impl Decoder<'_> {
             });
         }
 
+        for builtin in &builtins {
+            if builtin.flags & Builtin::TABLE_PHASE_KNOWN == 0 {
+                continue;
+            }
+            for (arguments, _) in &builtin.table {
+                if let Some(arguments) = arguments
+                    && !matches!(&values.list[*arguments as usize], Value::IntervalFunction {
+                        class: 2, low: 1, range,
+                    } if !range.is_empty())
+                {
+                    return self.error("an invalid configuration-table argument tuple".to_owned());
+                }
+            }
+        }
+
         let mut model_nodes = Vec::new();
         let mut model = self.model(scope_count, &mut model_nodes)?;
 
@@ -419,7 +479,10 @@ impl Decoder<'_> {
             .substitutes
             .iter()
             .map(|(_, index)| index)
+            .chain(&model.startup.recursive_substitutes)
             .chain(&model.startup.definitions)
+            .chain(&model.startup.register_probes)
+            .chain(model.startup.dependents.iter().map(|(_, index)| index))
             .chain(
                 model
                     .startup
@@ -441,6 +504,15 @@ impl Decoder<'_> {
                     .map(|action| &action.definition),
             )
             .chain(model.instance_names.iter().map(|(index, _)| index))
+            .chain(
+                model
+                    .evaluated_definitions
+                    .iter()
+                    .filter_map(|(_, found)| match found {
+                        EvaluatedDefinition::Body(index) => Some(index),
+                        _ => None,
+                    }),
+            )
             .chain(
                 model
                     .actions
@@ -745,16 +817,45 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
         let specification = self.range()?;
+        let mut recursive_substitutes = Vec::new();
+        if self.words.get(self.at).is_some_and(|&word| word < -1) {
+            let marker = self.next()?;
+            for _ in 0..(-2 - i64::from(marker)) {
+                recursive_substitutes.push(self.index()?);
+            }
+        }
         let count = self.count()?;
         let substitutes = (0..count)
             .map(|_| Ok((self.text()?, self.index()?)))
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
         let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let dependents = if self.version == IR_VERSION_WITHOUT_DEPENDENTS {
+            Vec::new()
+        } else {
+            let count = self.count()?;
+            (0..count)
+                .map(|_| Ok((self.count()? as u32, self.index()?)))
+                .collect::<Decoded<_>>()?
+        };
+        let mut register_probes = Vec::new();
+        let mut is_probe_assumed_once = false;
+        if self.words.get(self.at).is_some_and(|&word| word < -1) {
+            let marker = self.next()?;
+            for _ in 0..(-2 - i64::from(marker)) {
+                let word = self.next()?;
+                if word < 0 {
+                    is_probe_assumed_once = true;
+                }
+                register_probes.push(if word < 0 { -1 - word } else { word } as Index);
+            }
+        }
         let count = self.count()?;
         let predicates = (0..count)
             .map(|_| {
-                let form = match self.next()? {
+                let word = self.next()?;
+                let is_state_level = word & crate::encode::STATE_LEVEL_PREDICATE != 0;
+                let form = match word & !crate::encode::STATE_LEVEL_PREDICATE {
                     0 => PredicateForm::Predicate,
                     1 => PredicateForm::Definition,
                     2 => PredicateForm::Specification,
@@ -766,9 +867,14 @@ impl Decoder<'_> {
                     kind: self.text()?,
                     name: self.text()?,
                     definition: self.index()?,
+                    is_state_level,
                 })
             })
             .collect::<Decoded<_>>()?;
+        let is_next_constant_cast = self.words.get(self.at) == Some(&-2);
+        if is_next_constant_cast {
+            self.at += 1;
+        }
         let symmetry = match self.next()? {
             -1 => None,
             definition if definition >= 0 => {
@@ -810,7 +916,22 @@ impl Decoder<'_> {
         let instance_names = (0..count)
             .map(|_| Ok((self.index()?, self.text()?)))
             .collect::<Decoded<_>>()?;
-        let tlc_spec = match self.next()? {
+        let mut word = self.next()?;
+        let mut evaluated_definitions = Vec::new();
+        if word < -1 {
+            for _ in 0..(-2 - i64::from(word)) {
+                let name = self.text()?;
+                let found = match self.next()? {
+                    0 => EvaluatedDefinition::Body(self.index()?),
+                    1 => EvaluatedDefinition::Signature(self.text()?),
+                    2 if self.next()? == -1 => EvaluatedDefinition::Missing,
+                    other => return self.error(format!("TLCEvalDefinition lookup {other}")),
+                };
+                evaluated_definitions.push((name, found));
+            }
+            word = self.next()?;
+        }
+        let tlc_spec = match word {
             -1 => None,
             value if value >= 0 => Some(value as u32),
             other => return self.error(format!("TLCGet(\"spec\") value {other}")),
@@ -841,21 +962,28 @@ impl Decoder<'_> {
             version,
             random_seed,
             fingerprint_index: 0,
+            root_module_name: None,
             atoms,
             live_formula,
             live_properties,
             specification,
             startup: Startup {
                 substitutes,
+                recursive_substitutes,
                 definitions,
+                dependents,
+                register_probes,
+                is_probe_assumed_once,
                 predicates,
                 symmetry,
+                is_next_constant_cast,
                 assumptions,
             },
             next_substitution,
             instance_actions,
             instance_names,
             tlc_spec,
+            evaluated_definitions,
         })
     }
 
@@ -883,12 +1011,29 @@ impl Decoder<'_> {
                 return self.error(format!("a reference forward to {}", target.offset));
             }
             let id = self.resolve(&target)?;
+            let place = match flags {
+                0 => (0, 0, None),
+                1 => {
+                    let line = self.next()?;
+                    let column = self.next()?;
+                    (line, column, self.range()?)
+                }
+                _ => return self.error(format!("a reference with the flags {flags}")),
+            };
             self.depth -= 1;
-            return Ok(self.push(nodes, offset, (0, 0, None), NodeKind::Reference(id)));
+            return Ok(self.push(nodes, offset, place, NodeKind::Reference(id)));
         }
         let line = self.next()?;
         let column = self.next()?;
         let range = self.range()?;
+        // An unbounded quantifier's second flag bit marks it temporal, and a numeral's that its
+        // image follows its value.
+        let (flags, is_second_flagged) = match (tag, flags) {
+            (tag::UNBOUNDED_QUANTIFIER, 2 | 3) => (flags & 1, true),
+            (tag::NUMBER, 2) => (0, true),
+            _ => (flags, false),
+        };
+        let is_temporal = is_second_flagged && tag == tag::UNBOUNDED_QUANTIFIER;
         let is_flagged = match (tag, flags) {
             (tag::DEFINITION, _) | (_, 0) => false,
             (_, 1) => true,
@@ -915,7 +1060,13 @@ impl Decoder<'_> {
         let mut child = |decoder: &mut Self| decoder.node(start, limits, nodes);
         let kind = match tag {
             tag::NUMBER if is_flagged => NodeKind::WideNumber(self.text()?),
-            tag::NUMBER => NodeKind::Number(self.next()?),
+            tag::NUMBER => {
+                let value = self.next()?;
+                if is_second_flagged {
+                    nodes.numerals.insert(id, self.text()?);
+                }
+                NodeKind::Number(value)
+            }
             tag::DECIMAL => NodeKind::Decimal(self.text()?),
             tag::STRING => NodeKind::String(self.text()?),
             tag::IDENTIFIER => NodeKind::Identifier(self.name(is_flagged, limits)?),
@@ -984,6 +1135,7 @@ impl Decoder<'_> {
             },
             tag::UNBOUNDED_QUANTIFIER => NodeKind::UnboundedQuantifier {
                 is_forall: is_flagged,
+                is_temporal,
                 names: self.texts()?,
                 body: child(self)?,
             },
@@ -1113,7 +1265,16 @@ impl Decoder<'_> {
                 NodeKind::Subexpression(selectors)
             }
             tag::DEFINITION => {
-                if flags & !0x7f != 0 {
+                // IR16 has no RAW_BODY flag. Bit128 from the unadmitted warning prototype
+                // remains invalid; later carrier versions reserve it independently.
+                if flags
+                    & !(0x7f
+                        | Definition::STARTUP_WARNING_ONLY
+                        | Definition::NESTED_SUBSTITUTION
+                        | Definition::CONFIGURED_SUBSTITUTE
+                        | Definition::NAMED_AT_STARTUP)
+                    != 0
+                {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;

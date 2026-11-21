@@ -10,7 +10,7 @@
 
 use std::fmt::Write;
 
-use tla_trace::{Value, format_value};
+use tla_trace::{Value, format_units};
 
 /// A variable of a state TLC prints: its name, TLC's text of its value, and the value as plain
 /// data, `null` where TLC prints `null` for a variable a successor leaves undefined or where the
@@ -54,6 +54,7 @@ impl Writer {
 
     fn write(&mut self, value: &Value) -> Option<()> {
         match value {
+            Value::Null => return None,
             Value::Bool(value) => self.out.push_str(if *value { "true" } else { "false" }),
             Value::Int(value) => {
                 let _ = write!(self.out, "{value}");
@@ -69,7 +70,7 @@ impl Writer {
                 self.write_array(elements)?;
                 self.out.push('}');
             }
-            Value::Interval(low, high) => {
+            Value::Interval(low, high, _) => {
                 self.take(u64::try_from(i64::from(*high) - i64::from(*low) + 1).unwrap_or(0))?;
                 self.out.push_str("{\"@set\":[");
                 for (position, element) in (*low..=*high).enumerate() {
@@ -84,10 +85,7 @@ impl Writer {
             Value::Unsorted(_) => return None,
             Value::Lazy(_) | Value::Lambda(_) => {
                 self.out.push_str("{\"@lazy\":");
-                write_string(
-                    &format_value(value).encode_utf16().collect::<Vec<_>>(),
-                    &mut self.out,
-                );
+                write_string(&format_units(value), &mut self.out);
                 self.out.push('}');
             }
         }
@@ -195,10 +193,10 @@ mod tests {
         assert_eq!(to_plain(&tuple), "[1,true]");
         assert_eq!(to_plain(&Value::tuple(Vec::new())), "[]");
         assert_eq!(
-            to_plain(&Value::Set(Rc::new(vec![Value::Str(text("a\"\n\u{e9}"))]))),
+            to_plain(&Value::set(vec![Value::Str(text("a\"\n\u{e9}"))])),
             "{\"@set\":[\"a\\\"\\u000a\\u00e9\"]}"
         );
-        assert_eq!(to_plain(&Value::Interval(2, 3)), "{\"@set\":[2,3]}");
+        assert_eq!(to_plain(&Value::interval(2, 3)), "{\"@set\":[2,3]}");
         assert_eq!(to_plain(&Value::Model(text("m"))), "{\"@model\":\"m\"}");
         let record = Value::function(
             vec![Value::Str(text("a")), Value::Str(text("b"))],
@@ -214,7 +212,7 @@ mod tests {
         assert_eq!(to_plain(&tagged), "{\"@function\":[[\"@set\",1]]}");
         let function = Value::function(vec![Value::Int(0)], vec![Value::Int(1)], Class::Plain);
         assert_eq!(to_plain(&function), "{\"@function\":[[0,1]]}");
-        let unsorted = Value::Unsorted(Rc::new(vec![Value::Int(1), Value::Str(text("a"))]));
+        let unsorted = Value::unsorted(vec![Value::Int(1), Value::Str(text("a"))]);
         assert_eq!(
             to_plain(&Value::tuple(vec![Value::Int(1), unsorted])),
             "null"

@@ -40,6 +40,7 @@ pub fn export_xml(
             describe_file: &|_, _| Ok(String::new()),
             root_extendees: &[],
             is_xml_export: true,
+            lint_codes: Default::default(),
         },
     )?;
     // XMLExporter then prints the exception's Java stack trace, which isn't written.

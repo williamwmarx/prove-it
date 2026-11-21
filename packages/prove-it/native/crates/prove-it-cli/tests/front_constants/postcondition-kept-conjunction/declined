@@ -1,1 +1,1 @@
-a POSTCONDITION TLC may compute as it starts
+a configuration substitute with effects, which TLC evaluates at every use: C <- D

@@ -1,0 +1,16 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Bags
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 4, col 19 to line 4, col 22 of module M
+(Use the -nowarning option to disable this warning.)
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 4, col 19 to line 4, col 22 of module M
+Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
+Attempted to apply Tail to the empty sequence.

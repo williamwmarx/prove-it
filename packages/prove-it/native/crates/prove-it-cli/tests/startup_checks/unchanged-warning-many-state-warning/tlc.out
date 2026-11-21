@@ -1,0 +1,21 @@
+exit 0
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Warning: The variable x was changed while it is specified as UNCHANGED at
+line 5, col 29 to line 5, col 29 of module M
+(Use the -nowarning option to disable this warning.)
+Warning: The variable x was changed while it is specified as UNCHANGED at
+line 5, col 29 to line 5, col 29 of module M
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.6E-17
+34 states generated, 17 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).

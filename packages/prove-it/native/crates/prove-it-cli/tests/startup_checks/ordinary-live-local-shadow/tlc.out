@@ -1,0 +1,26 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+*** Warnings: 1
+
+line 16, col 16 to line 16, col 34 of module M
+
+Multiple declarations or definitions for symbol A.  
+This duplicates the one at line 14, col 1 to line 14, col 12 of module M.
+
+
+
+Semantic errors:
+
+*** Errors: 1
+
+line 16, col 16 to line 16, col 34 of module M
+
+Operator A already defined or declared.
+
+
+Error: Parsing or semantic analysis failed.

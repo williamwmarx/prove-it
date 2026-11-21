@@ -1,0 +1,2 @@
+line 8, col 1 to line 8, col 44 of module last_op
+Definition of R has different arity than its RECURSIVE declaration.

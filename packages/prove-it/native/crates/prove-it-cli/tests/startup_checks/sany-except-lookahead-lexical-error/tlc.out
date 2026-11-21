@@ -1,0 +1,17 @@
+exit 150
+Lexical error at line 2, column 41.  Encountered: "\n" (10), after : "\"unclosed"
+
+Fatal errors while parsing TLA+ spec in file M
+
+In module M
+
+Could not parse module M from file M.tla
+*** Errors: 1
+
+In module M
+
+Could not parse module M from file M.tla
+
+
+
+Error: Parsing or semantic analysis failed.

@@ -25,7 +25,7 @@ mod sets;
 mod split;
 mod value;
 
-pub use alias::Alias;
+pub use alias::{Alias, Aliases};
 pub use coverage::{CoverageMessage, CoverageReport};
 pub use dump::TraceDump;
 
@@ -38,17 +38,18 @@ pub fn get_startup_texts(
 ) -> Vec<Box<[u16]>> {
     eval::Evaluator::get_startup_texts(ir, definitions, interned)
 }
-pub use eval::Registers;
+pub use eval::{Registers, is_jvm_charset, take_endless_recursion};
 pub use failure::{
-    Assumption, Failure, FingerprintFailure, Incomplete, Replay, Site, format_call_stack,
+    Assumption, Failure, FingerprintFailure, Incomplete, Replay, SIMULATED_ACTION_PROPERTY_FAILED,
+    SIMULATED_INVARIANT_FAILED, SimulatedFailure, Site, StartupUntil, format_call_stack,
 };
 pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
 pub use pretty::pretty_print;
-pub use print::{format_printed, format_value};
+pub use print::{format_printed, format_units, format_value};
 pub use rebuild::Rebuilder;
 pub use split::{Described, SpecDescription, add_actions, add_spec};
 pub use value::RECORD_VALUE_FIELDS;
-pub use value::{Class, Text, Value};
+pub use value::{Class, LazySet, Set, SetClass, Text, Value, from_store, java_set_class};
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +71,13 @@ pub enum Ending {
     Lasso,
 }
 
+/// A Print or warning produced by evaluating the actual source expression, in evaluation order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutputEvent<T = Vec<String>> {
+    Print(T),
+    Warning(tla_ir::RuntimeWarning),
+}
+
 /// The states of a trace as TLC prints them, with what the spec printed as TLC rebuilt them. Each
 /// print is the text of each value Print or PrintT printed, which the caller pretty prints and
 /// joins as it does a print during the search.
@@ -77,11 +85,28 @@ pub struct Trace {
     pub states: Vec<TraceState>,
     /// What TLC prints after the trace, as it rebuilds a violation's trace once more
     /// (`traceOutput`); for a trace of one state, what the initial predicate printed.
-    pub trace_output: Vec<Vec<String>>,
+    pub trace_output: Vec<crate::OutputEvent>,
     /// Whether TLC failed to find the violating successor of the initial state again, where the
     /// caller let it (`Rebuilder::keep_lost_successor`): the trace then holds the initial state,
     /// and TLC fails with a NullPointerException as it prints the successor (`printTrace`).
     pub is_successor_lost: bool,
+    // Actual per-prefix reconstruction output, before compose groups it for printTrace.
+    pub(crate) quiet_prefixes: Option<Vec<bool>>,
+}
+
+impl Trace {
+    pub fn new(
+        states: Vec<TraceState>,
+        trace_output: Vec<OutputEvent>,
+        is_successor_lost: bool,
+    ) -> Self {
+        Self {
+            states,
+            trace_output,
+            is_successor_lost,
+            quiet_prefixes: None,
+        }
+    }
 }
 
 pub struct TraceState {
@@ -93,5 +118,5 @@ pub struct TraceState {
     /// `None` for the first state, a stuttering step, or a model whose IR carries no actions.
     pub action: Option<u32>,
     /// What TLC prints before the state.
-    pub printed: Vec<Vec<String>>,
+    pub printed: Vec<crate::OutputEvent>,
 }

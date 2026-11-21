@@ -11,18 +11,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::store::{
-    Bail, EMPTY_SLOT, Id, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT,
+    Bail, EMPTY_SLOT, Id, KIND_ANY, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT,
     KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, Store, TRUE,
 };
 
 /// Why a value has no fingerprint here: it holds, at any depth, a function TLC keeps lazy or
 /// Nat, Int or STRING, which TLC fails to fingerprint with an error the engine doesn't model.
+pub const ANY_FINGERPRINT: Bail = Bail("fingerprinting ANY");
+
 pub const UNFINGERPRINTABLE: Bail =
     Bail("unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING");
 
 const BOOL_VALUE: u8 = 0;
 const INT_VALUE: u8 = 1;
-const STRING_VALUE: u8 = 3;
+pub const STRING_VALUE: u8 = 3;
 const SET_ENUM_VALUE: u8 = 5;
 const FCN_RCD_VALUE: u8 = 9;
 pub const MODEL_VALUE: u8 = 21;
@@ -718,6 +720,7 @@ impl<E: Entries> Fingerprints<E> {
             KIND_INT => self.polynomial.of_int(store.int_of(id)),
             KIND_STRING => self.polynomial.of_string(store.text_of(id)),
             KIND_MODEL => self.polynomial.of_model(store.text_rank_of(id)),
+            KIND_ANY => return Err(ANY_FINGERPRINT),
             KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return Err(UNFINGERPRINTABLE),
             kind @ (KIND_SET | KIND_FUNCTION | KIND_TUPLE) => {
                 let tag = if kind == KIND_SET {

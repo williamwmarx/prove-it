@@ -1,0 +1,7 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module module_overrides_fixture
+Semantic processing of module unknown_operator_in_module
+Linting of module module_overrides_fixture
+Linting of module unknown_operator_in_module
+Error: In the configuration file, the identifier Nope does not appear in the specification.

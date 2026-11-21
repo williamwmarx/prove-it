@@ -14,7 +14,7 @@ use crate::lexer::{Token, TokenKind, tokenize};
 use crate::ordered_map::OrderedMap;
 use crate::parser::{extract_module, parse_module, parse_module_tokens};
 use crate::resolve::{Result, is_before};
-use crate::standard_builtins::USER_STANDARD_MODULES;
+use crate::standard_builtins::{REPLACEABLE_TLC_MODULES, USER_STANDARD_MODULES};
 use crate::standard_modules::TLC_SOURCES;
 use crate::tlc_data::{
     SANY_BUILTINS, SANY_NODE_NAMES, SANY_OPERATOR_SYNONYMS, TLC_RUNTIME_STRINGS,
@@ -281,8 +281,11 @@ fn get_module_references(
                 inner_modules.insert(name, inner.clone());
                 references.inner.push(inner);
                 index = end;
-            } else if index > 0 && text_at(tokens, index - 1) == Some(".") {
-                // A record field named EXTENDS or INSTANCE, as in r.EXTENDS.
+            } else if (index > 0 && text_at(tokens, index - 1) == Some("."))
+                || matches!(text_at(tokens, index + 1), Some("|->" | ":"))
+            {
+                // A record field named EXTENDS or INSTANCE, as in r.EXTENDS, [EXTENDS |-> 1] or
+                // [EXTENDS : S], which SANY takes for the first field of a record.
             } else if &*token.text == "EXTENDS" {
                 let names = get_declarations(tokens, index + 1);
                 all_extends.borrow_mut().extend(names.iter().cloned());
@@ -557,20 +560,20 @@ impl<'a> TlcOrder<'a> {
         }
         let text = match name {
             None => Some(self.source.to_owned()),
-            Some(name) => USER_STANDARD_MODULES
-                .contains(&name)
-                .then(|| (self.load_module)(name))
-                .flatten()
-                .or_else(|| {
-                    TLC_SOURCES
-                        .iter()
-                        .find(|module| module.0 == name)
-                        .map(|module| module.1.to_owned())
-                })
-                .or_else(|| (self.load_module)(name))
-                // The post conditions' modules, as `_TLCTrace`, are SANY's own standard modules.
-                .or_else(|| crate::get_standard_module(name, self.version).map(str::to_owned))
-                .or_else(|| extract_module(self.source, name)),
+            Some(name) => (USER_STANDARD_MODULES.contains(&name)
+                || REPLACEABLE_TLC_MODULES.contains(&name))
+            .then(|| (self.load_module)(name))
+            .flatten()
+            .or_else(|| {
+                TLC_SOURCES
+                    .iter()
+                    .find(|module| module.0 == name)
+                    .map(|module| module.1.to_owned())
+            })
+            .or_else(|| (self.load_module)(name))
+            // The post conditions' modules, as `_TLCTrace`, are SANY's own standard modules.
+            .or_else(|| crate::get_standard_module(name, self.version).map(str::to_owned))
+            .or_else(|| extract_module(self.source, name)),
         };
         let read = self.read_text(text)?;
         let (start, end) = get_module_name(&read.tokens)
@@ -1063,6 +1066,32 @@ impl<'a> TlcOrder<'a> {
             .collect();
         names.reverse();
         Ok(names)
+    }
+
+    /// The definitions visible in a module, in `ModuleNode.getOpDefs` order.
+    pub fn get_visible_definition_order(&self, name: Option<&str>) -> Result<Vec<Name>> {
+        self.get_context(None)?;
+        let table = self.get_context(name)?;
+        let table = table.borrow();
+        Ok(table
+            .inserted
+            .iter()
+            .filter(|entry| entry.kind == SymbolKind::Definition)
+            .map(|entry| entry.name.clone())
+            .collect())
+    }
+
+    /// The names of the definitions a module's context holds from the modules it extends, which
+    /// `ModuleNode.getOpDefs` lists before those the module adds itself, in its order.
+    pub fn get_inherited_definition_order(&self, name: Option<&str>) -> Result<Vec<Name>> {
+        self.get_context(None)?;
+        let table = self.get_context(name)?;
+        let table = table.borrow();
+        Ok(table.inserted[..table.own_start]
+            .iter()
+            .filter(|entry| entry.kind == SymbolKind::Definition)
+            .map(|entry| entry.name.clone())
+            .collect())
     }
 
     /// The names of the definitions a module adds to its context, in the order of

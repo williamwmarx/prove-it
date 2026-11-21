@@ -1,0 +1,10 @@
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module IntervalExcept
+Linting of module IntervalExcept
+<<5, 2>>
+Error: Evaluating assumption line 7, col 8 to line 7, col 51 of module IntervalExcept failed.
+Attempted to apply function with integer domain to the non-integer argument FALSE

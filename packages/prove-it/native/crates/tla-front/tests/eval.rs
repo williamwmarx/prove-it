@@ -26,6 +26,8 @@ fn try_evaluate_ranked(
         format!("---- MODULE Main ----\nEXTENDS Naturals, FiniteSets\n{definitions}\n====");
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     let environment = create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source: &source,
         load_module: &|_| None,
         config: &config,

@@ -1,0 +1,15 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module AliasPrintInitial
+Linting of module AliasPrintInitial
+Computing initial states...
+<<"init", 0>>
+<<"inv", 0>>
+<<"alias", 0>>
+Error: Invariant Inv is violated by the initial state:
+/\ x = 0
+/\ p = TRUE
+

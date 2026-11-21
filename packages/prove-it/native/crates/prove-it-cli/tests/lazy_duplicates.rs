@@ -145,6 +145,55 @@ fn get_untimed(text: &str) -> String {
         .collect()
 }
 
+// `transaction::run` commits output only when the run has not declined.
+fn is_atomic_decline(code: Option<i32>, stdout: &str, stderr: &str) -> bool {
+    code == Some(1)
+        && stdout.is_empty()
+        && stderr
+            .strip_prefix("prove-it: not native yet: ")
+            .and_then(|diagnostic| diagnostic.strip_suffix('\n'))
+            .is_some_and(|reason| !reason.trim().is_empty() && !reason.contains(['\n', '\r']))
+}
+
+#[test]
+fn requires_an_atomic_decline_with_its_actual_exit_and_diagnostic() {
+    let diagnostic = "prove-it: not native yet: unsupported model\n";
+    assert!(is_atomic_decline(Some(1), "", diagnostic));
+    for (label, code, stdout, stderr) in [
+        ("success exit", Some(0), "", diagnostic),
+        ("wrong exit", Some(2), "", diagnostic),
+        ("no exit", None, "", diagnostic),
+        (
+            "partial output",
+            Some(1),
+            "Computing initial states...\n",
+            diagnostic,
+        ),
+        ("no diagnostic", Some(1), "", ""),
+        ("false NoError", Some(1), "", "NoError\n"),
+        (
+            "missing reason",
+            Some(1),
+            "",
+            "prove-it: not native yet: \n",
+        ),
+        (
+            "blank reason",
+            Some(1),
+            "",
+            "prove-it: not native yet:   \n",
+        ),
+        (
+            "extra diagnostic",
+            Some(1),
+            "",
+            "prove-it: not native yet: unsupported model\nError: other\n",
+        ),
+    ] {
+        assert!(!is_atomic_decline(code, stdout, stderr), "{label}");
+    }
+}
+
 // Checks each spec, named by its cell, on one thread and with every level shared between four:
 // what differs from `lazy-grid/<cell>.out`, TLC's output or "not native yet" for a decline.
 fn get_differences(test: &str, configuration: &str, cells: &[(String, String)]) -> Vec<String> {
@@ -170,16 +219,10 @@ fn get_differences(test: &str, configuration: &str, cells: &[(String, String)]) 
                 .expect("the binary runs");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // The binary prints as it checks, so a decline in the next-state relation follows the
-            // initial states' report, which the library's check drops with it (`checkSources`).
-            // A decline prints nothing after that report, and only the cells recorded so print it.
+            // Both decline markers classify the streaming route; neither permits provisional
+            // output to escape the typed decline transaction.
             let is_as_expected = if is_declined {
-                let report = stdout
-                    .lines()
-                    .position(|line| line.starts_with("Finished computing initial states"));
-                stderr.contains("prove-it: not native yet: ")
-                    && report.is_some() == is_declined_after_initial
-                    && report.is_none_or(|index| stdout.lines().count() == index + 1)
+                is_atomic_decline(output.status.code(), &stdout, &stderr)
             } else {
                 get_untimed(&stdout) == expected
             };

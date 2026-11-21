@@ -36,13 +36,26 @@ pub(crate) fn is_shape_forgotten(machine: &Machine<'_>, set: Id) -> bool {
 
 /// TLC!RandomElement: each component of a set of functions, records or tuples in turn, and
 /// otherwise the enumerated set indexed with nextDouble.
-pub(crate) fn random_element(machine: &mut Machine<'_>, set: &Lazy) -> Outcome<Id> {
+pub(crate) fn random_element(
+    machine: &mut Machine<'_>,
+    set: &Lazy,
+    default_method: bool,
+) -> Outcome<Id> {
+    if default_method
+        && (matches!(set, Lazy::Infinite(_) | Lazy::Tested(_))
+            || matches!(set, Lazy::Set(id) if machine.store.kind_of(*id) != KIND_SET))
+    {
+        return Err(Bail("RandomElement of a value that isn't a finite set"));
+    }
     match set {
         Lazy::FunctionSet(domain, range) => {
+            if default_method && matches!(&**domain, Lazy::Infinite(_) | Lazy::Tested(_)) {
+                return Err(Bail("RandomElement of a value that isn't a finite set"));
+            }
             let keys = normalized(machine, domain)?;
             let mut values = Vec::with_capacity(keys.len());
             for _ in &keys {
-                values.push(random_element(machine, range)?);
+                values.push(random_element(machine, range, default_method)?);
             }
             let function = machine.store.function_of_sorted(&keys, &values);
             Ok(machine.store.mark_built_as_function(function))
@@ -50,14 +63,14 @@ pub(crate) fn random_element(machine: &mut Machine<'_>, set: &Lazy) -> Outcome<I
         Lazy::RecordSet(keys, sets) => {
             let mut values = Vec::with_capacity(sets.len());
             for set in sets {
-                values.push(random_element(machine, set)?);
+                values.push(random_element(machine, set, default_method)?);
             }
             Ok(machine.store.function_of_sorted(keys, &values))
         }
         Lazy::Product(factors) => {
             let mut values = Vec::with_capacity(factors.len());
             for factor in factors {
-                values.push(random_element(machine, factor)?);
+                values.push(random_element(machine, factor, default_method)?);
             }
             Ok(machine.store.tuple_of(&values))
         }
@@ -185,4 +198,91 @@ pub(crate) fn random_subset(
         });
     }
     Ok(drawn)
+}
+
+/// `SubsetValue.CoinTossingSubsetEnumerator`, with duplicate picks removed without another draw.
+pub(crate) fn random_subset_set(
+    machine: &mut Machine<'_>,
+    count: u32,
+    probability: f64,
+    source: &Source,
+) -> Outcome<Id> {
+    random_coin_subsets(machine, count, probability, None, source)
+}
+
+pub(crate) fn random_set_of_subsets(
+    machine: &mut Machine<'_>,
+    count: u32,
+    average: u32,
+    source: &Source,
+) -> Outcome<Id> {
+    random_coin_subsets(machine, count, f64::NAN, Some(average), source)
+}
+
+fn random_coin_subsets(
+    machine: &mut Machine<'_>,
+    count: u32,
+    probability: f64,
+    average: Option<u32>,
+    source: &Source,
+) -> Outcome<Id> {
+    if matches!(source, Source::Set(set) if !matches!(set, Lazy::Set(_))) {
+        return Err(Bail(
+            "RandomSubsetSet of a value with untracked lazy normalization",
+        ));
+    }
+    let elements = match source {
+        Source::Set(set) => normalized(machine, set)?,
+        Source::Interval(low, high) => {
+            let size = (high - low + 1).max(0) as usize;
+            if size > tla_values::SET_BOUND {
+                return Err(tla_values::SET_BOUND_EXCEEDED);
+            }
+            (0..size)
+                .map(|index| machine.store.int(low + index as i64))
+                .collect::<Outcome<Vec<_>>>()?
+        }
+    };
+    if elements
+        .iter()
+        .any(|&element| machine.store.holds_lazy_function(element))
+    {
+        return Err(Bail(
+            "RandomSubsetSet of a value with untracked lazy normalization",
+        ));
+    }
+    if (32 - count.leading_zeros()) as usize > elements.len()
+        && count as i32 > 1i32.wrapping_shl(elements.len() as u32)
+    {
+        return Err(Bail(
+            "RandomSubsetSet of a count greater than the number of subsets",
+        ));
+    }
+    let probability = if let Some(average) = average {
+        if average as usize > elements.len() {
+            return Err(Bail(
+                "RandomSetOfSubsets of an average larger than the base cardinality",
+            ));
+        }
+        f64::from(average) / elements.len() as f64
+    } else {
+        probability
+    };
+    let mut picks = std::collections::BTreeSet::new();
+    for _ in 0..count {
+        picks.insert(tla_values::random::coin_subset_indices(
+            &mut machine.random,
+            elements.len(),
+            probability,
+        ));
+    }
+    let mut subsets = Vec::with_capacity(picks.len());
+    for pick in picks {
+        let members = pick
+            .into_iter()
+            .map(|index| elements[index])
+            .collect::<Vec<_>>();
+        subsets.push(machine.store.set_of(&members)?);
+    }
+    machine.store.set_of(&subsets)
 }

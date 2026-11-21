@@ -431,6 +431,15 @@ impl Splitter<'_, '_> {
             }
             _ => return Ok(vec![whole()]),
         };
+        // Composition, ~> and -+-> are SANY builtins even though the IR has no builtin
+        // implementation of them. `getActionsAppl` keeps each whole, and `getNextStates` rejects
+        // it before its operands.
+        if name.resolution == Resolution::None
+            && matches!(self.evaluator.name(name.text), "\\cdot" | "~>" | "-+->")
+            && args.len() == 2
+        {
+            return Ok(vec![whole()]);
+        }
         if name.is_local {
             // An operator a LET defines without parameters, such as one an INSTANCE in the LET
             // copies, splits into its body, named as the LET names it.
@@ -447,6 +456,40 @@ impl Splitter<'_, '_> {
                 definition: None,
                 parameters: Vec::new(),
             };
+            // A name an INSTANCE in the LET exports is SANY's copy of the instancee's definition
+            // (`Generator.processModuleDefinition`). Where the INSTANCE substitutes something, the
+            // copy's body is a `SubstInNode`, which `getActions` keeps as one action, named after
+            // the copy and written at the INSTANCE; otherwise the body is the definition's own,
+            // which `getActions` splits on, still named after the copy. The IR's name forwards to
+            // the copy with the substitutes put in, at the INSTANCE, or to the definition itself,
+            // written nowhere.
+            let target = self.evaluator.resolved(body);
+            if let NodeKind::Identifier(forwarded) = &ir.nodes.arena[target as usize].kind {
+                if forwarded.is_local && is_let_instance_copy(self.evaluator.name(forwarded.text)) {
+                    return Ok(vec![SplitAction {
+                        expression: body,
+                        place: place.clone(),
+                        name: Some(name.text),
+                        location: Located::Node(body),
+                        definition: None,
+                        parameters: Vec::new(),
+                    }]);
+                }
+                if let Resolution::Definition(index) = forwarded.resolution
+                    && !forwarded.is_local
+                    && ir.nodes.arena[target as usize].range.is_none()
+                {
+                    let definition = self.evaluator.definition(ir.definitions[index as usize]);
+                    if matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                    {
+                        let global = Place {
+                            context: Context::default(),
+                            scope: None,
+                        };
+                        return self.split(definition.body, &global, Some(&closure));
+                    }
+                }
+            }
             return self.split(body, place, Some(&closure));
         }
         let Resolution::Definition(index) = name.resolution else {
@@ -724,6 +767,8 @@ impl Splitter<'_, '_> {
             .map_err(|error| {
                 Unsupported(format!("TLC's actions through a LET: {}", error.reason))
             })?;
+        // `getActions` doesn't add a LET's definitions to TLC's `Context`.
+        context.mark_walked(&place.context);
         let ir = self.evaluator.ir;
         let mut scope = place.scope;
         for &node in definitions {
@@ -881,7 +926,11 @@ fn next_state_relation(ir: &Ir) -> Option<(NodeId, Option<Index>)> {
 // Whether evaluating an expression can change what a run does (`hasEffect`): draw a random value,
 // set or read a TLC register, assert or print, itself or through a definition it names, but one
 // TLC evaluates once, as it does a constant definition without parameters.
-fn may_have_effect(evaluator: &Evaluator<'_>, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+pub(crate) fn may_have_effect(
+    evaluator: &Evaluator<'_>,
+    node: NodeId,
+    seen: &mut HashSet<NodeId>,
+) -> bool {
     if !seen.insert(node) {
         return false;
     }
@@ -906,6 +955,7 @@ fn may_have_effect(evaluator: &Evaluator<'_>, node: NodeId, seen: &mut HashSet<N
                                 | "TLCGetOrDefault"
                                 | "TLCGetAndSet"
                                 | "TLCSet"
+                                | "_Track"
                         )
                 }
                 Resolution::Definition(index) => {
@@ -988,6 +1038,7 @@ impl<'i> Writer<'i> {
             Class::Record => 3,
         };
         Ok(match value {
+            Value::Null => return Err(Unsupported("a null literal in an encoded value".into())),
             Value::Bool(value) => tla_ir::Value::Bool(*value),
             Value::Int(value) => tla_ir::Value::Int(*value),
             Value::Str(text) => tla_ir::Value::String(self.string(&text.units)),
@@ -1037,4 +1088,18 @@ impl<'i> Writer<'i> {
             }
         })
     }
+}
+
+// Whether a definition is the copy an INSTANCE in a LET with substitutions makes of a definition
+// of the instancee, by its key: the definition's name, the module's, and the copy's number.
+fn is_let_instance_copy(name: &str) -> bool {
+    name.split_once('@')
+        .and_then(|(_, module)| module.rsplit_once('#'))
+        .is_some_and(|(_, number)| {
+            number.split_once('.').is_some_and(|(copy, definition)| {
+                [copy, definition].iter().all(|digits| {
+                    !digits.is_empty() && digits.chars().all(|digit| digit.is_ascii_digit())
+                })
+            })
+        })
 }

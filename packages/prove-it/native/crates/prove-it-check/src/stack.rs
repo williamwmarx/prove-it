@@ -19,10 +19,14 @@ pub fn on_search_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
 /// `work` returns. In WebAssembly, `work` runs first and `consume` after it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn alongside<T: Send>(work: impl FnOnce() -> T + Send, consume: impl FnOnce()) -> T {
+    // The thread writes files for the check this one runs ([`tla_values::written`]).
+    let journal = tla_values::written::current();
     std::thread::scope(|scope| {
         let working = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, work)
+            .spawn_scoped(scope, move || {
+                tla_values::written::enter(journal.as_ref(), work)
+            })
             .expect("a thread with the search's stack");
         consume();
         working.join().unwrap_or_else(|panic| resume_unwind(panic))
@@ -42,9 +46,14 @@ pub fn map_on_threads<T: Send, U: Send>(
     items: impl Iterator<Item = T>,
     map: impl Fn(T) -> U + Sync,
 ) -> Vec<U> {
+    let journal = tla_values::written::current();
     std::thread::scope(|scope| {
-        let map = &map;
-        let mapping: Vec<_> = items.map(|item| scope.spawn(move || map(item))).collect();
+        let (map, journal) = (&map, &journal);
+        let mapping: Vec<_> = items
+            .map(|item| {
+                scope.spawn(move || tla_values::written::enter(journal.as_ref(), || map(item)))
+            })
+            .collect();
         mapping
             .into_iter()
             .map(|thread| thread.join().unwrap_or_else(|panic| resume_unwind(panic)))

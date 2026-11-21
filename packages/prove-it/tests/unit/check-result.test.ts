@@ -264,9 +264,10 @@ describe("check's result", () => {
     const directory = mkdtempSync(join(tmpdir(), "prove-it-check-log-"));
     const logPath = join(directory, "checks.jsonl");
     process.env.PROVE_IT_CHECK_LOG = logPath;
-    // TLC computes Bad as it starts, printing before it fails, which the native check declines.
+    // TLC fails in the body of the function it keeps lazy as it fingerprints the successor, which
+    // the native check declines.
     const source =
-      "---- MODULE M ----\nEXTENDS Naturals, Helper, TLC\nCONSTANT K\nVARIABLE x\nBad == PrintT(K) /= 7\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
+      "---- MODULE M ----\nEXTENDS Naturals, Helper, TLC\nCONSTANT K\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = [k \\in SUBSET {Value} |-> K \\div 0]\n====";
     const config = "INIT Init\nNEXT Next\nCONSTANT K = 3\nCHECK_DEADLOCK FALSE";
     try {
       await expect(

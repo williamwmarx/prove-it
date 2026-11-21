@@ -1,0 +1,11 @@
+Error: Attempted to check if the value:
+1
+is an element of the integer 7
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 23 in M
+1. Line 4, column 14 to line 4, column 22 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

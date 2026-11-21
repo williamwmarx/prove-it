@@ -23,6 +23,10 @@ ignorePatterns = [
   "packages/prove-it/native/crates/tla-trace/tests/dump/",
   # What TLC prints and writes with -dumpTrace, which the binary's tests compare byte for byte.
   "packages/prove-it/native/crates/prove-it-cli/tests/dump-trace/",
+  # Exact JSON inputs recorded with the ToJson startup fixtures.
+  "packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/tojson-read-*/empty.json",
+  # Generated parent metadata is reproduced byte for byte by its generator.
+  "packages/prove-it/native/crates/tla-front/src/java_parent/provenance.json",
 ]
 
 # `bun lint`: every rule the repository runs is named here, as an error, so a Bun upgrade that

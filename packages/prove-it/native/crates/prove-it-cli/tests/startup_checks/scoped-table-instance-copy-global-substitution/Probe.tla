@@ -1,0 +1,6 @@
+---- MODULE Probe ----
+EXTENDS TLC
+INSTANCE Base WITH C <- 7
+CONSTANT K
+ASSUME PrintT(K)
+====

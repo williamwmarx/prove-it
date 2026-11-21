@@ -11,8 +11,13 @@ use tla_values::random::JavaRandom;
 
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
-use crate::eval::{Context, Demand, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
+use crate::eval::{
+    Context, Demand, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression, kind_string,
+};
 use crate::print::format_value;
+
+/// `EC.TLC_ENABLED_WRONG_FORMULA`.
+const ENABLED_WRONG_FORMULA: u32 = 2260;
 use crate::sets::is_member;
 use crate::value::{
     Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_runtime, fail_with, is_same,
@@ -165,8 +170,10 @@ impl<'ir> Evaluator<'ir> {
         // outside the methods of the value, where the call stack freezes.
         if holds.is_err()
             && let Some(stack) = &mut self.call_stack
+            && !stack.is_frozen
         {
             stack.is_frozen = true;
+            self.check_substituted_frames();
         }
         if !holds? {
             return Ok(true);
@@ -197,8 +204,45 @@ impl<'ir> Evaluator<'ir> {
     pub(crate) fn is_precomputed(&mut self, definition: NodeId) -> bool {
         !self.may_reach(
             definition,
-            &["TLCGet", "TLCSet", "CounterExample", "_Counts"],
+            &[
+                "TLCGet",
+                "TLCSet",
+                "CounterExample",
+                "_Counts",
+                "_CheckName",
+                "_PrintCounts",
+                "Trace",
+            ],
         )
+    }
+
+    // Whether a name is of a definition without parameters that TLC computes as it starts and
+    // keeps as its value: one of constant level whose evaluation succeeds without effects, which
+    // the evaluator gives from that value too (`definition_value`).
+    fn is_computed_constant(&mut self, name: &Name) -> bool {
+        if name.is_local {
+            return false;
+        }
+        let Resolution::Definition(index) = name.resolution else {
+            return false;
+        };
+        let node = self.ir.definitions[index as usize];
+        let definition = self.definition(node);
+        matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && !self.ir.model.startup.definitions.contains(&index)
+            && !self.failed_startup.contains(&node)
+            && !self.uncomputed_warning_startup.contains(&node)
+            && !self.can_read(definition.body, &Context::default())
+            && self.is_precomputed(node)
+    }
+
+    // Whether TLC keeps the value of the definition a name of a computed constant names
+    // (`is_kept_at_startup`).
+    fn is_kept_name(&mut self, name: &Name, context: &Context) -> Evaluated<bool> {
+        let Resolution::Definition(index) = name.resolution else {
+            return Ok(false);
+        };
+        self.is_kept_at_startup(self.ir.definitions[index as usize], context)
     }
 
     /// Whether an expression may read the state or apply one of these builtins.
@@ -410,7 +454,7 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        if self.call_stack.is_none() {
+        if self.call_stack.is_none() || self.is_selection_let(self.resolved(node)) {
             return self.walk_node(node, context, is_init, then);
         }
         let frame = StackFrame::Node(self.resolved(node));
@@ -557,6 +601,11 @@ impl<'ir> Evaluator<'ir> {
                 definitions, body, ..
             } => {
                 let inner = self.bind_let(definitions, context)?;
+                // `getInitStates` and `getNextStates` don't add a LET's definitions to TLC's
+                // `Context`, as `enabled` does.
+                if !self.is_enabling {
+                    inner.mark_walked(context);
+                }
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {
@@ -579,11 +628,14 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::AngleAction { action, subscript } => {
                 let subscript = *subscript;
                 self.walk(*action, context, is_init, &mut |evaluator| {
-                    let now = evaluator.evaluate(subscript, context)?;
+                    let now = evaluator.evaluate_current_state(subscript, context)?;
                     // TLC's `Tool#enabled` names the fairness condition where A leaves a variable
                     // of v unassigned (`toUnspecifiedSubscriptError`), unlike TLC 1.7.4.
-                    let after = evaluator
-                        .evaluate(subscript, &context.primed(true))
+                    let after = if evaluator.is_enabling {
+                        evaluator.evaluate(subscript, &context.primed(true))
+                    } else {
+                        evaluator.evaluate_next_state(subscript, context, false)
+                    }
                         .or_else(|error| {
                             match error.reason.strip_prefix(PRIMED_UNASSIGNED) {
                                 Some(variable) if evaluator.is_enabling && !evaluator.is_174() => {
@@ -602,7 +654,12 @@ impl<'ir> Evaluator<'ir> {
                                 _ => Err(error),
                             }
                         })?;
-                    if equals(&now, &after)? {
+                    let is_unchanged = if evaluator.is_enabling {
+                        evaluator.subscript_equals(&now, &after)?
+                    } else {
+                        equals(&now, &after)?
+                    };
+                    if is_unchanged {
                         Ok(true)
                     } else {
                         then(evaluator)
@@ -622,6 +679,66 @@ impl<'ir> Evaluator<'ir> {
                 })
             }
             NodeKind::Label { body, .. } => self.walk(*body, context, is_init, then),
+            // `Tool.enabled` fails on a quantifier or a CHOOSE without a bound it is asked of
+            // (`OPCODE_ue`, `OPCODE_uf`, `OPCODE_uc`).
+            NodeKind::UnboundedQuantifier {
+                is_temporal: false,
+                is_forall,
+                ..
+            } if self.is_enabling => {
+                let symbol = if *is_forall { "\\A" } else { "\\E" };
+                fail_runtime(
+                    "an unbounded quantifier",
+                    format!(
+                        "In computing ENABLED, TLC encountered unbounded quantifier. Make sure that the expression is of form {symbol} x \\in S: P(x).\n{}",
+                        self.describe_range(node)
+                    ),
+                )
+            }
+            // ... and on a temporal quantifier (`OPCODE_te`, `OPCODE_tf`).
+            NodeKind::UnboundedQuantifier {
+                is_temporal: true, ..
+            } if self.is_enabling => fail_runtime(
+                "a temporal quantifier in ENABLED",
+                format!(
+                    "In computing ENABLED, TLC encountered temporal quantifier.\n{}",
+                    self.describe_range(node)
+                ),
+            ),
+            NodeKind::Choose { set: None, .. } if self.is_enabling => fail_runtime(
+                "an unbounded CHOOSE",
+                format!(
+                    "In computing ENABLED, TLC encountered unbounded CHOOSE. Make sure that the expression is of form CHOOSE x \\in S: P(x).\n{}",
+                    self.describe_range(node)
+                ),
+            ),
+            // `Tool.enabled` fails on a temporal operator it is asked of (`OPCODE_box`,
+            // `OPCODE_diamond`, `OPCODE_wf`, `OPCODE_sf`), naming it by where it is written.
+            NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. }
+                if self.is_enabling =>
+            {
+                let operator = match self.kind(node) {
+                    NodeKind::Always(_) => "[]",
+                    NodeKind::Eventually(_) => "<>",
+                    NodeKind::WeakFairness { .. } => "WF",
+                    _ => "SF",
+                };
+                fail_with(
+                    "a temporal formula in ENABLED",
+                    TlcMessage {
+                        text: format!(
+                            "In computing ENABLED, TLC encountered a temporal formula ({operator}).\n{}",
+                            self.describe_range(node)
+                        ),
+                        code: Some(ENABLED_WRONG_FORMULA),
+                        is_eval_exception: false,
+                        inner: None,
+                    },
+                )
+            }
             // `getInitStates` takes no literal for a relation, and words the node as SANY prints
             // it: a numeral as it is written, a string by where it is.
             NodeKind::Number(_) | NodeKind::String(_) if is_init && !self.is_enabling => {
@@ -674,6 +791,17 @@ impl<'ir> Evaluator<'ir> {
                 self.walk(body, &inner, is_init, then)
             }
             NodeKind::FunctionApplication { .. } => self.applied(node, context, is_init, then),
+            // A definition TLC computed as it started (`processConstantDefns`), which
+            // `getInitStates` and `getNextStates` look up as a value and test as a guard, in the
+            // frame of the name alone. One it failed on there they walk.
+            NodeKind::Identifier(name)
+                if node != self.ir.model.init
+                    && Some(node) != self.ir.model.next
+                    && self.is_computed_constant(name)
+                    && self.is_kept_name(name, context)? =>
+            {
+                self.guard(node, context, is_init, then)
+            }
             NodeKind::Identifier(name) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, is_init, then),
                 // TLC walks the body of the definition the configuration names as its initial
@@ -734,13 +862,28 @@ impl<'ir> Evaluator<'ir> {
                         }
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
-                            // TLC enumerates a set that is `Enumerable` alone.
-                            if let Value::Lazy(lazy) = &set
-                                && lazy.is_overridden()
+                            // TLC enumerates a set that is `Enumerable` alone: not a value
+                            // that is no set, as a tuple or a record.
+                            let is_overridden =
+                                matches!(&set, Value::Lazy(lazy) if lazy.is_overridden());
+                            if is_overridden
+                                || matches!(
+                                    set,
+                                    Value::Bool(_)
+                                        | Value::Int(_)
+                                        | Value::Str(_)
+                                        | Value::Model(_)
+                                        | Value::Function(_)
+                                        | Value::Lambda(_)
+                                )
                             {
                                 let range = self.describe_range(node);
                                 return fail_runtime(
-                                    "enumerated an infinite set",
+                                    if is_overridden {
+                                        "enumerated an infinite set"
+                                    } else {
+                                        crate::eval::ASSIGNED_NON_ENUMERABLE
+                                    },
                                     if self.is_enabling {
                                         format!(
                                             "The right side of \\IN is not enumerable.\n{range}"
@@ -753,9 +896,12 @@ impl<'ir> Evaluator<'ir> {
                                     },
                                 );
                             }
-                            let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
+                            let elements = elements(&set)?;
+                            // A set of one element at most streams in every order alike.
+                            let is_in_order = elements.len() <= 1
+                                || self.is_in_normalized_order(args[1], context, 0)?;
                             let effects = self.effects();
-                            for (position, element) in elements(&set)?.iter().enumerate() {
+                            for (position, element) in elements.iter().enumerate() {
                                 let chosen =
                                     self.choose(position as u32, is_in_order, &mut |evaluator| {
                                         evaluator.assign(variable, element.clone(), is_init, then)
@@ -788,9 +934,62 @@ impl<'ir> Evaluator<'ir> {
                         _ => fail("x' \\subseteq S"),
                     };
                 }
+                // `Tool.enabled`'s `OPCODE_leadto` and `OPCODE_arrow`, of the builtin whatever
+                // copy of a definition writes it.
+                let temporal = self.name(name.text);
+                if self.is_enabling
+                    && args.len() == 2
+                    && matches!(name.resolution, Resolution::Builtin(_) | Resolution::None)
+                    && matches!(temporal, "~>" | "-+->")
+                {
+                    return fail_runtime(
+                        "a temporal formula in ENABLED",
+                        format!(
+                            "In computing ENABLED, TLC encountered a temporal formula ({}).\n{}",
+                            if temporal == "~>" {
+                                "a ~> b"
+                            } else {
+                                "a -+-> formula"
+                            },
+                            self.describe_range(node)
+                        ),
+                    );
+                }
                 match operator {
+                    "$Nop" if args.len() == 1 => self.walk(args[0], context, is_init, then),
                     "=>" if args.len() == 2 => {
-                        if self.boolean(args[0], context)? {
+                        // `getInitStates`, `getNextStates` and `enabled` word a P that isn't a
+                        // boolean themselves.
+                        let premise = self.evaluate(args[0], context)?;
+                        let holds = match premise {
+                            Value::Bool(holds) => holds,
+                            other => {
+                                let reason =
+                                    format!("expected a boolean, not a {}", other.kind_name());
+                                let Some(kind) = kind_string(&other).filter(|_| !self.is_174())
+                                else {
+                                    return fail(reason);
+                                };
+                                let range = self.describe_range(node);
+                                return fail_runtime(
+                                    reason,
+                                    if self.is_enabling {
+                                        format!(
+                                            "While computing ENABLED of an expression of the form P => Q, P was {kind}.\n{range}"
+                                        )
+                                    } else if is_init {
+                                        format!(
+                                            "In computing initial states of a predicate of form P => Q, P was {kind}\n.{range}"
+                                        )
+                                    } else {
+                                        format!(
+                                            "In computing next states of a predicate of the form P => Q, P was\n{kind}.\n{range}"
+                                        )
+                                    },
+                                );
+                            }
+                        };
+                        if holds {
                             self.walk(args[1], context, is_init, then)
                         } else {
                             then(self)
@@ -993,6 +1192,21 @@ impl<'ir> Evaluator<'ir> {
             let Some(value) = self.current[variable as usize].clone() else {
                 return fail("variable not assigned");
             };
+            if let Some(assigned) = &self.next[variable as usize] {
+                if !equals(assigned, &value)? {
+                    self.emit_warning(tla_ir::RuntimeWarning::Unchanged {
+                        node: self.resolved(expression),
+                        variable,
+                    });
+                    return Ok(true);
+                }
+                if let Some(target) = &self.target
+                    && !is_same(&target[variable as usize], &value)
+                {
+                    return Ok(true);
+                }
+                return then(self);
+            }
             return self.assign(variable, value, false, then);
         }
         match self.kind(expression) {
@@ -1025,8 +1239,12 @@ impl<'ir> Evaluator<'ir> {
         context: &Context,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let now = self.evaluate(expression, context)?;
-        let after = self.evaluate(expression, &context.primed(true))?;
+        let now = self.evaluate_current_state(expression, context)?;
+        let after = if self.is_enabling {
+            self.evaluate_next_state(expression, context, true)?
+        } else {
+            self.evaluate(expression, &context.primed(true))?
+        };
         if equals(&now, &after)? {
             then(self)
         } else {
@@ -1044,7 +1262,7 @@ fn is_streamed_normalized(set: &Value) -> Evaluated<bool> {
         return Ok(!matches!(set, Value::Unsorted(_)));
     };
     let is_normalized = |part: &Value| !matches!(part, Value::Lazy(_) | Value::Unsorted(_));
-    Ok(match &**lazy {
+    Ok(match &***lazy {
         Lazy::FunctionSet(domain, range) => is_normalized(domain) && is_normalized(range),
         Lazy::RecordSet(fields, _) => fields.iter().all(|(_, part)| is_normalized(part)),
         Lazy::Product(parts) => parts.iter().all(is_normalized),

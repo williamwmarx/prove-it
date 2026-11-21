@@ -1,0 +1,9 @@
+2208: Finished computing initial states: 3 states generated, with 3 of them distinct.
+2205: Starting level 2: 3 states generated, 3 distinct states found.
+2193: Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 4.9E-19
+  based on the actual fingerprints:  val = 2.9E-19
+2206: Progress(-1) at <date>: 6 states generated, 3 distinct states found, -1 states left on queue.
+2204: 6 states generated, 3 distinct states found.

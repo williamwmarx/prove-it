@@ -53,6 +53,10 @@ fn read_files<'f>(files: &'f [(&str, &str)]) -> impl Fn(&str) -> HostValue + 'f 
             .iter()
             .any(|(file, _)| file.starts_with(&format!("{}/", path.trim_end_matches('/'))));
         match (kind, file) {
+            ("class-space", _) => HostValue::text("absent"),
+            ("class-origin", Some(_)) => HostValue::text("present"),
+            ("class-origin", None) if is_directory => HostValue::text("present"),
+            ("class-origin", None) => HostValue::text("absent"),
             ("cwd", _) => HostValue::text("/work"),
             ("tmpdir", _) => HostValue::text("/tmp"),
             ("stat", Some(_)) => HostValue::text("file"),
@@ -76,7 +80,14 @@ fn check(args: &[&str], files: &[(&str, &str)]) -> (HostValue, usize) {
 }
 
 fn check_on(args: &[&str], is_library: bool, files: &[(&str, &str)]) -> (HostValue, usize) {
-    let read = read_files(files);
+    check_with_reader(args, is_library, read_files(files))
+}
+
+fn check_with_reader(
+    args: &[&str],
+    is_library: bool,
+    read: impl Fn(&str) -> HostValue,
+) -> (HostValue, usize) {
     let mut known: Vec<(String, HostValue)> = Vec::new();
     for round in 1.. {
         let entries = known
@@ -233,5 +244,98 @@ fn keeps_the_continued_violations_only_for_the_library() {
             panic!("no violations: {result:?}");
         };
         assert_eq!(violations.len(), kept, "{is_library}: {out}");
+    }
+}
+
+#[test]
+fn missing_constant_requests_presence_without_class_bytes() {
+    let files = [
+        (
+            "/work/M.tla",
+            "---- MODULE M ----\nEXTENDS Sequences\nCONSTANT C\n====\n",
+        ),
+        ("/work/M.cfg", ""),
+    ];
+    let reader = read_files(&files);
+    let requests = std::cell::RefCell::new(Vec::new());
+    let (result, _) = check_with_reader(&["-noGenerateSpecTE", "M"], false, |key| {
+        requests.borrow_mut().push(key.to_owned());
+        reader(key)
+    });
+    assert_eq!(text(&get(&result, "kind")), "checked", "{result:?}");
+    assert_eq!(get(&result, "exitCode"), HostValue::Number(151.0));
+    assert!(
+        requests
+            .borrow()
+            .iter()
+            .any(|key| key.starts_with("class-origin:"))
+    );
+    assert!(
+        !requests
+            .borrow()
+            .iter()
+            .any(|key| key.starts_with("bytes:") && key.ends_with(".class")),
+        "{:?}",
+        requests.borrow()
+    );
+}
+
+#[test]
+fn library_virtual_class_space_keeps_worker_results() {
+    let files = [
+        (
+            "/work/M.tla",
+            "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====\n",
+        ),
+        ("/work/M.cfg", "INIT Init\nNEXT Next\n"),
+    ];
+    for workers in ["1", "4"] {
+        let reader = read_files(&files);
+        let requests = std::cell::RefCell::new(Vec::new());
+        let (result, _) = check_with_reader(
+            &["-noGenerateSpecTE", "-workers", workers, "M"],
+            true,
+            |key| {
+                requests.borrow_mut().push(key.to_owned());
+                reader(key)
+            },
+        );
+        assert_eq!(text(&get(&result, "kind")), "checked", "{result:?}");
+        assert_eq!(
+            get(&result, "exitCode"),
+            HostValue::Number(0.0),
+            "{result:?}"
+        );
+        assert!(requests.borrow().iter().any(|key| key == "class-space"));
+        assert!(
+            !requests
+                .borrow()
+                .iter()
+                .any(|key| key.starts_with("class:"))
+        );
+    }
+}
+
+#[test]
+fn virtual_absent_java_context_keeps_empty_universal_error() {
+    let files = [
+        (
+            "/work/M.tla",
+            "---- MODULE M ----\nVARIABLE x\nMakeEmpty == {}\nSpec == x=0 /\\ [][x'=x]_x\nP == \\A i \\in MakeEmpty : <>(x=i)\n====\n",
+        ),
+        ("/work/M.cfg", "SPECIFICATION Spec\nPROPERTY P\n"),
+    ];
+    for workers in ["1", "4"] {
+        let (result, _) = check_on(
+            &["-noGenerateSpecTE", "-workers", workers, "M"],
+            true,
+            &files,
+        );
+        assert_eq!(text(&get(&result, "kind")), "checked", "{result:?}");
+        assert_eq!(
+            get(&result, "exitCode"),
+            HostValue::Number(77.0),
+            "{result:?}"
+        );
     }
 }

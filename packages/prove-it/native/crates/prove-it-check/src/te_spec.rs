@@ -18,7 +18,13 @@ const CLOSING_TAG_WIDTH: usize = 77;
 /// Where TLC writes the trace exploration files of the spec at `main_file`, the path it was given
 /// without `.tla`, for a run that started at `started`: the directory as `Path.getParent` names it,
 /// the spec's module, and `<Spec>_TTrace_<epoch>`, the name of the files without their extension.
-pub fn get_files_place(main_file: &str, started: SystemTime) -> (String, &str, String) {
+/// `-teSpecOutDir` (`out`) names the directory instead, or, where it ends in `.tla`, the spec's
+/// file, whose name without `.tla` is then the files' (`TLC.process`).
+pub fn get_files_place<'m>(
+    main_file: &'m str,
+    started: SystemTime,
+    out: Option<&str>,
+) -> (String, &'m str, String) {
     let (directory, module) = match main_file.rsplit_once('/') {
         Some(("", module)) => ("/".to_string(), module),
         Some((directory, module)) => (directory.to_string(), module),
@@ -27,7 +33,44 @@ pub fn get_files_place(main_file: &str, started: SystemTime) -> (String, &str, S
     let epoch = started
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
-    (directory, module, format!("{module}_TTrace_{epoch}"))
+    let name = format!("{module}_TTrace_{epoch}");
+    match out {
+        None => (directory, module, name),
+        Some(out) => match out.strip_suffix(".tla") {
+            Some(stem) => match stem.rsplit_once('/') {
+                Some((directory, file)) => (directory.to_string(), module, file.to_string()),
+                None => (".".to_string(), module, stem.to_string()),
+            },
+            None => (out.to_string(), module, name),
+        },
+    }
+}
+
+/// Whether the binary follows TLC's place for the trace exploration files that `-teSpecOutDir`
+/// names: a relative path of plain names, which `Paths.get` keeps as it is, whose `.tla` file, if
+/// it names one, has a name a module may have.
+pub fn is_modelled_out(out: &str) -> bool {
+    let is_name = |name: &str| {
+        !name.is_empty()
+            && name != "."
+            && name != ".."
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
+    };
+    let is_path = |path: &str| path.split('/').all(is_name);
+    match out.strip_suffix(".tla") {
+        Some(stem) => {
+            let file = stem.rsplit_once('/').map_or(stem, |(_, file)| file);
+            is_path(stem)
+                && file
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                && file.bytes().any(|byte| byte.is_ascii_alphabetic())
+        }
+        // TLC takes a path that ends in `.TLA` for a file, but keeps the extension in its name.
+        None => is_path(out) && !out.to_ascii_lowercase().ends_with(".tla"),
+    }
 }
 
 /// Whether a name is an operator of a module `_TLCTrace` loads, or one of its own.
@@ -84,18 +127,18 @@ pub struct ModelValueName {
 }
 
 impl TraceSpec {
-    /// The spec TLC writes for the spec at `main_file`, the path TLC was given without `.tla`, of
-    /// a run that started at `started`.
+    /// The spec TLC writes for the spec at `main_file`, the path TLC was given without `.tla`, in
+    /// the place `get_files_place` names.
     pub fn new(
         main_file: &str,
-        started: SystemTime,
+        place: (String, &str, String),
         ir: &tla_ir::Ir,
         config: &ModelConfig,
         defined_names: &[String],
         fingerprint_index: usize,
         is_trace_recorded: bool,
     ) -> TraceSpec {
-        let (directory, module, name) = get_files_place(main_file, started);
+        let (directory, module, name) = place;
         let texts = &ir.texts[..ir.ranked_count as usize];
         let polynomial = Polynomial::get(fingerprint_index);
         let mut unsupported = None;
@@ -284,11 +327,29 @@ pub fn write_after_finish(printer: &mut Printer) {
         return;
     }
     let path = spec.get_path(".tla");
+    // TLC makes the directories first (`File.mkdirs`), and reports a spec it can't write.
+    if let Some(directory) = printer.absent_trace_spec_directory.clone()
+        && path.rsplit_once('/').is_some_and(|(at, _)| at == directory)
+    {
+        printer
+            .host
+            .apply(&crate::overlay::FileOperation::MakeDirectory(
+                directory.into(),
+            ));
+    }
     if !printer
         .host
         .write_file(Path::new(&path), text.as_bytes(), false)
     {
-        printer.trace_spec_decline = Some("a trace exploration spec it can't write".into());
+        let Some(reason) = printer.host.open_failure(Path::new(&path), true) else {
+            printer.trace_spec_decline = Some("a trace exploration spec it can't write".into());
+            return;
+        };
+        printer.print(
+            code::TRACE_SPEC_FAILED,
+            Level::None,
+            &format!("Failed to generate trace exploration spec; error message: {path} ({reason})"),
+        );
         return;
     }
     printer.print(

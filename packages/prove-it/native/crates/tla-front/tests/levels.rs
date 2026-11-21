@@ -15,6 +15,8 @@ fn get_level_errors(source: &str, modules: &[(&str, &str)]) -> Vec<(String, Stri
             .map(|module| module.1.to_owned())
     };
     let linked = create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &load_module,
         config: &config,
@@ -258,6 +260,8 @@ fn is_not_yet(source: &str) -> bool {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     matches!(
         create_environment(&EnvironmentOptions {
+            linked_extendees: &[],
+            origin: None,
             source,
             load_module: &|_| None,
             config: &config,

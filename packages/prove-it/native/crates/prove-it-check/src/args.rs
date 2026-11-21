@@ -18,6 +18,7 @@ const JAVA_MAIN_CLASSES: [&str; 2] = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 /// What the JVM options in front of TLC's set.
 #[derive(Debug, Default, PartialEq)]
 pub struct Java {
+    pub has_opaque_vm_options: bool,
     pub libraries: Vec<String>,
     pub class_path: Option<String>,
     /// `java.io.tmpdir`, where TLC copies the standard modules it parses.
@@ -31,8 +32,46 @@ pub struct Java {
     pub properties: Vec<String>,
 }
 
+impl Java {
+    pub fn origin_profile(&self, tools_jar: Option<&str>) -> tla_front::model::JavaProfile {
+        if self.has_opaque_vm_options
+            || self.properties.iter().any(|name| is_class_property(name))
+            || self
+                .class_path
+                .as_deref()
+                .is_some_and(|path| Some(path) != tools_jar)
+        {
+            tla_front::model::JavaProfile::Opaque
+        } else {
+            tla_front::model::JavaProfile::Default
+        }
+    }
+}
+
 /// Where TLC's classes name their system properties.
-const TLC_PROPERTY_NAMESPACES: [&str; 4] = ["tlc2.", "util.", "tla2sany.", "tlc."];
+pub const TLC_PROPERTY_NAMESPACES: [&str; 4] = ["tlc2.", "util.", "tla2sany.", "tlc."];
+
+/// The system properties the command line's options model, which the binary reads only there.
+pub const MODELLED_PROPERTIES: [&str; 3] = ["TLA-Library", "java.io.tmpdir", "tla-ts.tlc"];
+
+/// Whether a system property is the JVM's own, such as `java.class.path` or
+/// `java.system.class.loader`, which may change which classes TLC loads, and how. One in no
+/// namespace of the JVM's or TLC's is read only by code that asks for it by name: TLC's own
+/// properties decline (`Java::unmodelled_property`) and so does `TLCGet("-Dname")` of one.
+pub fn is_class_property(name: &str) -> bool {
+    !MODELLED_PROPERTIES.contains(&name)
+        && ["java.", "javax.", "jdk.", "sun.", "com.sun."]
+            .iter()
+            .any(|namespace| name.starts_with(namespace))
+}
+
+/// Whether a system property is one of TLC's that the binary doesn't model.
+pub fn is_unmodelled_property(name: &str) -> bool {
+    TLC_PROPERTY_NAMESPACES
+        .iter()
+        .any(|namespace| name.starts_with(namespace))
+        && !SILENT_PROPERTIES.contains(&name)
+}
 
 /// The properties of TLC's that change nothing TLC prints: both only reach the execution
 /// statistics TLC reports home (TLC.java:1710, ExecutionStatisticsCollector.java:74 and 205).
@@ -88,14 +127,12 @@ pub fn get_java_launch(args: &[String], platform: Platform) -> Option<Launch> {
             });
         } else if let Some(property) = arg.strip_prefix("-D") {
             let name = property.split_once('=').map_or(property, |(name, _)| name);
-            if TLC_PROPERTY_NAMESPACES
-                .iter()
-                .any(|namespace| name.starts_with(namespace))
-                && !SILENT_PROPERTIES.contains(&name)
-            {
+            if is_unmodelled_property(name) {
                 java.unmodelled_property.get_or_insert_with(|| name.into());
             }
-        } else if !arg.starts_with("-X") {
+        } else if arg.starts_with("-X") {
+            java.has_opaque_vm_options |= is_class_vm_option(arg);
+        } else {
             let is_launch = index > 0 || JAVA_MAIN_CLASSES.contains(&arg.as_str());
             return is_launch.then(|| Launch {
                 main_class: arg.clone(),
@@ -108,6 +145,22 @@ pub fn get_java_launch(args: &[String], platform: Platform) -> Option<Launch> {
     None
 }
 
+/// Whether a JVM option of the `-X` kind can change which classes TLC loads: one that adds to the
+/// boot class path, or reads more options from a file. A heap or stack size, a collector or a log
+/// changes none of them.
+pub fn is_class_vm_option(option: &str) -> bool {
+    ["-Xbootclasspath", "-XX:Flags=", "-XX:VMOptionsFile="]
+        .iter()
+        .any(|prefix| option.starts_with(prefix))
+}
+
+/// The command line's invariant, `-inv` or `-invlevel`: its expression, and the modules TLC adds
+/// to the root module's EXTENDS for it.
+pub const INVARIANT: &str = "-inv";
+
+/// The command line's postcondition `module!operator`, kept as its module and its operator.
+pub const POST_CONDITION: &str = "-postCondition";
+
 /// Why a command line starts no check.
 #[derive(Debug, PartialEq)]
 pub enum Stop {
@@ -115,34 +168,34 @@ pub enum Stop {
     Error { message: String, is_tool: bool },
     /// What TLC does with the command line that the binary doesn't do.
     NotNative(String),
+    /// `-help` or `-h`, where TLC prints its usage text and stops (`TLC.printUsage`).
+    Usage,
 }
 
 /// The options TLC reads that the binary doesn't model. TLC reads the last three in any case.
-const UNMODELLED: [&str; 22] = [
+const UNMODELLED: [&str; 6] = [
     "-generate",
-    "-difftrace",
-    "-cleanup",
-    "-suppressMessages",
-    "-messagesAsErrors",
-    "-gzip",
     "-terse",
     "-view",
     "-debug",
     "-inv",
-    "-invlevel",
     "-debugger",
-    "-teSpecOutDir",
-    "-help",
-    "-h",
-    "-checkpoint",
-    "-maxSetSize",
-    "-recover",
-    "-userFile",
-    "-dfid",
-    "-fpmem",
-    "-fpbits",
 ];
-const UNMODELLED_IN_ANY_CASE: [&str; 2] = ["-loadTrace", "-postCondition"];
+
+/// `String.split(",")`: the pieces between commas, without the empty ones at the end, and no
+/// piece of an empty text but itself.
+fn split_like_java(text: &str) -> Vec<&str> {
+    let mut pieces: Vec<&str> = text.split(',').collect();
+    if !text.is_empty() {
+        while pieces.last().is_some_and(|piece| piece.is_empty()) {
+            pieces.pop();
+        }
+    }
+    pieces
+}
+
+/// The most fingerprint bits -fpbits takes in the binary.
+const MODELLED_FP_BITS: i32 = 8;
 
 pub const DUMP_TRACE: &str = "-dumpTrace";
 
@@ -169,6 +222,9 @@ fn get_dump_format(flag: &str) -> Option<&'static str> {
         .find(|format| format.eq_ignore_ascii_case(flag))
 }
 
+/// How the parsed options mark a code of SANY's.
+const SANY_CODE: &str = "sany:";
+
 /// The options and specs of a check, as `TLC.handleParameters` reads them.
 #[derive(Debug, Default)]
 pub struct Parsed {
@@ -192,9 +248,85 @@ fn take(args: &[String], index: &mut usize, missing: &str, is_tool: bool) -> Res
 impl Parsed {
     /// Reads the arguments in order and stops at the first that TLC rejects, as TLC does. With
     /// `is_tlc` the command line is `tlc2.TLC`'s, which takes one spec; without it, Prove It's
-    /// own, which takes several.
+    /// own, which takes several without `-config`. Malformed invocations report TLC's first error.
     pub fn parse(args: &[String], is_tlc: bool) -> Result<Self, Stop> {
+        let result = Self::parse_options(args, is_tlc);
+        if is_tlc {
+            return result;
+        }
+        match result {
+            // An option that took `-config` for its value, as TLC takes it, leaves the
+            // configuration's file to be read as TLC reads it, a second input.
+            Ok(parsed)
+                if (parsed.positionals.is_empty() && !args.is_empty())
+                    || (parsed.has("-config") && parsed.positionals.len() > 1)
+                    || parsed
+                        .options
+                        .iter()
+                        .any(|(_, values)| values.iter().any(|value| value == "-config")) =>
+            {
+                Self::parse_options(args, true)
+            }
+            Err(reason) => match Self::parse_options(args, true) {
+                // TLC may reject the second input before it reaches a later invalid option.
+                Err(error @ Stop::Error { .. }) => Err(error),
+                _ => Err(reason),
+            },
+            other => other,
+        }
+    }
+
+    fn parse_options(args: &[String], is_tlc: bool) -> Result<Self, Stop> {
         let mut parsed = Self::default();
+        match Self::read_options(args, is_tlc, &mut parsed) {
+            // TLC prints the notice of an absolute -fpmem before it reports a later option.
+            Err(Stop::Error { .. } | Stop::Usage) if parsed.is_fpmem_absolute() => Err(
+                Stop::NotNative("an error in the command line after -fpmem's notice".into()),
+            ),
+            Err(stop) => Err(stop),
+            Ok(()) => Ok(parsed),
+        }
+    }
+
+    /// The codes every time the option is given lists.
+    /// The codes of SANY's an option names, kept apart from TLC's.
+    pub fn get_sany_codes(&self, name: &str) -> Vec<u32> {
+        self.options
+            .iter()
+            .filter(|(option, _)| option == name)
+            .flat_map(|(_, values)| {
+                values
+                    .iter()
+                    .filter_map(|code| code.strip_prefix(SANY_CODE)?.parse().ok())
+            })
+            .collect()
+    }
+
+    pub fn get_codes(&self, name: &str) -> Vec<u32> {
+        self.options
+            .iter()
+            .filter(|(option, _)| option == name)
+            .flat_map(|(_, values)| values.iter().filter_map(|code| code.parse().ok()))
+            .collect()
+    }
+
+    /// How many times an -fpmem gives an absolute memory size, whose deprecation TLC prints each
+    /// time it reads such an option.
+    pub fn count_fpmem_absolute(&self) -> usize {
+        self.options
+            .iter()
+            .filter(|(option, values)| {
+                option == "-fpmem" && values.get(1).is_some_and(|v| v == "true")
+            })
+            .count()
+    }
+
+    /// Whether an -fpmem gives an absolute memory size.
+    pub fn is_fpmem_absolute(&self) -> bool {
+        self.count_fpmem_absolute() > 0
+    }
+
+    fn read_options(args: &[String], is_tlc: bool, parsed: &mut Self) -> Result<(), Stop> {
         let mut index = 0;
         while index < args.len() {
             let arg = args[index].as_str();
@@ -206,10 +338,13 @@ impl Parsed {
             }
             let values = match arg {
                 "-modelcheck"
+                | "-terse"
+                | "-view"
                 | "-deadlock"
                 | "-nowarning"
                 | "-continue"
                 | "-tool"
+                | "-difftrace"
                 | "-noGenerateSpecTE"
                 | "-noGenerateSpecTEBin" => Vec::new(),
                 "-generateSpecTE" => {
@@ -225,11 +360,23 @@ impl Parsed {
                         "expect a strategy such as final for -lncheck option.",
                         is_tool,
                     )?;
-                    // With off, TLC checks no temporal property (LiveCheck.java:238).
-                    if strategy.eq_ignore_ascii_case("off") {
-                        return Err(Stop::NotNative("-lncheck off".into()));
-                    }
                     vec![strategy]
+                }
+                // `Paths.get` of the path, which fails on a NUL alone.
+                "-teSpecOutDir" => {
+                    let path = take(
+                        args,
+                        &mut index,
+                        "expected a path for -teSpecOutDir option.",
+                        is_tool,
+                    )?;
+                    if path.contains('\0') {
+                        return Err(error(
+                            format!("Error: invalid path for -teSpecOutDir option: {path}"),
+                            is_tool,
+                        ));
+                    }
+                    vec![path]
                 }
                 "-metadir" => vec![take(
                     args,
@@ -264,17 +411,24 @@ impl Parsed {
                 }
                 // TLC takes the next argument as the simulation's settings when it names one:
                 // `num=`, `file=`, `stats=` or `sched`, separated by commas. It ignores any other.
-                "-simulate" => {
+                // -generate simulates too, generating one successor of an action at random
+                // (`Tool.probabilistic`), and takes the same settings.
+                "-simulate" | "-generate" => {
+                    if arg == "-generate" {
+                        parsed.options.push((arg.into(), Vec::new()));
+                    }
                     let Some(settings) = args.get(index).filter(|next| {
                         ["stats=", "file=", "num=", "sched"]
                             .iter()
                             .any(|setting| next.contains(setting))
                     }) else {
-                        parsed.options.push((arg.into(), Vec::new()));
+                        parsed.options.push(("-simulate".into(), Vec::new()));
                         continue;
                     };
                     index += 1;
                     let mut values = Vec::new();
+                    let mut file = None;
+                    let mut unsupported = None;
                     for setting in settings.split(',') {
                         if let Some(number) = setting.strip_prefix("num=") {
                             // `Long.parseLong` of the setting without each `num=` in it, which
@@ -284,14 +438,39 @@ impl Parsed {
                                 return Err(Stop::NotNative(format!("-simulate {setting}")));
                             }
                             values = vec![number];
-                        } else if setting.starts_with("file=")
-                            || ["stats=basic", "stats=full", "sched=rl", "sched=rlaction"]
-                                .contains(&setting)
+                        } else if setting.starts_with("file=") {
+                            file = Some(setting);
+                        } else if ["stats=basic", "stats=full", "sched=rl", "sched=rlaction"]
+                            .contains(&setting)
                         {
-                            return Err(Stop::NotNative(format!("-simulate {setting}")));
+                            unsupported.get_or_insert(setting);
                         }
                     }
-                    values
+                    // TLC writes each trace to a file only of a bounded number of them, and
+                    // rejects the command line otherwise once it has read the settings. The
+                    // number is `TLC.traceNum`, which an earlier -simulate's `num=` set and a
+                    // later one without it keeps.
+                    let number = values.first().or_else(|| {
+                        parsed
+                            .options
+                            .iter()
+                            .rev()
+                            .filter(|(option, _)| option == "-simulate")
+                            .find_map(|(_, values)| values.first())
+                    });
+                    if file.is_some()
+                        && number.is_none_or(|number| number.parse::<i64>() == Ok(i64::MAX))
+                    {
+                        return Err(error(
+                            "Error: You need to specify a 'num' argument when using the 'file' argument, for example: '\"num=5,file=test.txt\"'.".into(),
+                            is_tool,
+                        ));
+                    }
+                    if let Some(setting) = file.or(unsupported) {
+                        return Err(Stop::NotNative(format!("-simulate {setting}")));
+                    }
+                    parsed.options.push(("-simulate".into(), values));
+                    continue;
                 }
                 "-depth" => {
                     let depth = take(args, &mut index, "trace length required.", is_tool)?;
@@ -357,6 +536,9 @@ impl Parsed {
                         "coverage report interval required.",
                         is_tool,
                     )?;
+                    if !minutes.is_ascii() {
+                        return Err(Stop::NotNative(format!("-coverage {minutes:?}")));
+                    }
                     let Ok(number) = minutes.parse::<i32>() else {
                         return Err(error(
                             format!(
@@ -372,6 +554,32 @@ impl Parsed {
                         ));
                     }
                     vec![minutes]
+                }
+                "-dfid" => {
+                    let limit = take(
+                        args,
+                        &mut index,
+                        "expect a nonnegative integer for -dfid option.",
+                        is_tool,
+                    )?;
+                    if !limit.is_ascii() {
+                        return Err(Stop::NotNative(format!("-dfid {limit:?}")));
+                    }
+                    let Ok(number) = limit.parse::<i32>() else {
+                        return Err(error(
+                            format!(
+                                "Error: expect a nonnegative integer for -dfid option. But encountered {limit}"
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    if number < 0 {
+                        return Err(error(
+                            "Error: expect a nonnegative integer for -dfid option.".into(),
+                            is_tool,
+                        ));
+                    }
+                    vec![limit]
                 }
                 "-fp" => {
                     let polynomial = take(
@@ -402,12 +610,193 @@ impl Parsed {
                     }
                     vec![polynomial]
                 }
+                // TLC splits the list at commas and trims each code before `Integer.parseInt`,
+                // whose exception it reports, and sorts each code as its own or SANY's
+                // (`classifyMessageCode`).
+                "-suppressMessages" | "-messagesAsErrors" => {
+                    let Some(list) = args.get(index) else {
+                        return Err(error(
+                            format!(
+                                "Error: {arg} requires a comma-separated list of message codes."
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    index += 1;
+                    let mut codes = Vec::new();
+                    for item in split_like_java(list) {
+                        let item = item.trim_matches(|c: char| c <= ' ');
+                        // `Integer.parseInt` reads a decimal digit of any script.
+                        if !item.is_ascii() {
+                            return Err(Stop::NotNative(format!("{arg} {item:?}")));
+                        }
+                        let Ok(code) = item.parse::<i32>() else {
+                            return Err(error(
+                                format!("Error: For input string: \"{item}\""),
+                                is_tool,
+                            ));
+                        };
+                        // EC's codes lie between UNIT_TEST and TLC_MODULE_OVERRIDE_STDOUT, and
+                        // SANY's between them too; the only other negative one is UNKNOWN, -1
+                        // (`EC.isKnownCode` reads every static int of EC).
+                        if !(-123456..=20000).contains(&code) || (-123456 < code && code < -1) {
+                            return Err(error(
+                                format!("Error: unknown message code: {code}"),
+                                is_tool,
+                            ));
+                        }
+                        // `classifyMessageCode`: a code EC doesn't know is one of SANY's
+                        // `ErrorCode`s, of which -suppressMessages rejects an error's at once.
+                        if let Some((_, is_error)) = crate::messages::get_sany_code(code) {
+                            if arg == "-suppressMessages" && is_error {
+                                return Err(error(
+                                    format!(
+                                        "Error: code {code} is an error and cannot be suppressed."
+                                    ),
+                                    is_tool,
+                                ));
+                            }
+                            codes.push(format!("{SANY_CODE}{code}"));
+                            continue;
+                        }
+                        if !crate::messages::is_controlled_code(code) {
+                            return Err(Stop::NotNative(format!("{arg} {code}")));
+                        }
+                        codes.push(code.to_string());
+                    }
+                    codes
+                }
+                // The states directory TLC deletes, and the files it compresses, are none the
+                // binary reads; TLC deletes `states` in the working directory, which the binary
+                // leaves alone (check.rs).
+                "-cleanup" | "-gzip" => Vec::new(),
+                // `Integer.parseInt(minutes) * 1000 * 60`, which overflows as Java's ints do. A
+                // duration other than zero checkpoints, which the binary doesn't.
+                "-checkpoint" => {
+                    let minutes = take(args, &mut index, "checkpoint interval required.", is_tool)?;
+                    if !minutes.is_ascii() {
+                        return Err(Stop::NotNative(format!("-checkpoint {minutes:?}")));
+                    }
+                    let Ok(number) = minutes.parse::<i32>() else {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for checkpoint interval is required. But encountered {minutes}"
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    let duration = number.wrapping_mul(1000).wrapping_mul(60);
+                    if duration < 0 {
+                        return Err(error(
+                            "Error: expect a nonnegative integer for -checkpoint option.".into(),
+                            is_tool,
+                        ));
+                    }
+                    if duration != 0 {
+                        return Err(Stop::NotNative(format!("-checkpoint {minutes}")));
+                    }
+                    vec![minutes]
+                }
+                // The fingerprint set's memory, which changes nothing TLC prints but the notice of
+                // an absolute amount (TLC.java:1105), which TLC prints as it reads the option.
+                // `Double.parseDouble` reads what Rust's parser does of a plain decimal, and
+                // fails on text with no digit that spells neither NaN nor Infinity; the binary
+                // declines other text.
+                "-fpmem" => {
+                    let size = take(args, &mut index, "fpset memory size required.", is_tool)?;
+                    let is_decimal = {
+                        let unsigned = size.strip_prefix(['+', '-']).unwrap_or(&size);
+                        let (mantissa, exponent) = unsigned
+                            .split_once(['e', 'E'])
+                            .map_or((unsigned, None), |(mantissa, exponent)| {
+                                (mantissa, Some(exponent))
+                            });
+                        let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+                        (!whole.is_empty() || !fraction.is_empty())
+                            && whole.bytes().all(|byte| byte.is_ascii_digit())
+                            && fraction.bytes().all(|byte| byte.is_ascii_digit())
+                            && exponent.is_none_or(|exponent| {
+                                let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+                                !digits.is_empty()
+                                    && digits.bytes().all(|byte| byte.is_ascii_digit())
+                            })
+                    };
+                    let rejected = error(
+                        format!(
+                            "Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered {size}"
+                        ),
+                        is_tool,
+                    );
+                    if !is_decimal {
+                        if !size.bytes().any(|byte| byte.is_ascii_digit())
+                            && !size.contains("NaN")
+                            && !size.contains("Infinity")
+                        {
+                            return Err(rejected);
+                        }
+                        return Err(Stop::NotNative(format!("-fpmem {size}")));
+                    }
+                    let Ok(number) = size.parse::<f64>() else {
+                        return Err(Stop::NotNative(format!("-fpmem {size}")));
+                    };
+                    if number < 0.0 {
+                        return Err(rejected);
+                    }
+                    parsed
+                        .options
+                        .push((arg.into(), vec![size, (number > 1.0).to_string()]));
+                    continue;
+                }
+                // How many fingerprint sets TLC divides its memory into, which changes nothing it
+                // prints for few; the binary declines more, where the Java heap's size decides
+                // whether TLC can allocate them (MultiFPSet.getNestedFPSets).
+                "-fpbits" => {
+                    let bits = take(args, &mut index, "fpbits required.", is_tool)?;
+                    if !bits.is_ascii() {
+                        return Err(Stop::NotNative(format!("-fpbits {bits:?}")));
+                    }
+                    let Ok(number) = bits.parse::<i32>() else {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for fpbits required. But encountered {bits}"
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    if !(0..=30).contains(&number) {
+                        return Err(error(
+                            format!(
+                                "Error: Value in interval [0, 30] for fpbits required. But encountered {bits}"
+                            ),
+                            is_tool,
+                        ));
+                    }
+                    if number > MODELLED_FP_BITS {
+                        return Err(Stop::NotNative(format!("-fpbits {bits}")));
+                    }
+                    vec![bits]
+                }
                 // TLC takes a format only when the next argument starts with dot and a file
                 // follows, and throws where nothing follows -dump.
                 "-dump" => {
                     let rest = &args[index..];
-                    if rest.is_empty() || rest[0].starts_with("class,") {
+                    if rest.is_empty() {
                         return Err(Stop::NotNative("-dump".into()));
+                    }
+                    // `Class.forName` of a class that implements `IStateWriter`, which only
+                    // TLC's own classes do in the jar: TLC rejects any other, unless the class
+                    // path holds more (check.rs).
+                    if let Some(class) = rest[0].strip_prefix("class,") {
+                        if class.starts_with("tlc2.") {
+                            return Err(Stop::NotNative("-dump class,".into()));
+                        }
+                        return Err(error(
+                            format!(
+                                "Trying to instantiate a custom IStateWriter implementation {}.",
+                                rest[0].replace("class,", "")
+                            ),
+                            is_tool,
+                        ));
                     }
                     let count = if rest.len() > 1 && rest[0].starts_with("dot") {
                         2
@@ -416,6 +805,141 @@ impl Parsed {
                     };
                     index += count;
                     rest[..count].to_vec()
+                }
+                // TLC rejects a bound that isn't a positive int (`TLCGlobals.isValidSetSize`); the
+                // binary declines a valid one, whose bound it doesn't model.
+                "-maxSetSize" => {
+                    let bound = take(args, &mut index, "maxSetSize required.", is_tool)?;
+                    if !bound.is_ascii() {
+                        return Err(Stop::NotNative(format!("-maxSetSize {bound:?}")));
+                    }
+                    let Ok(number) = bound.parse::<i32>() else {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for maxSetSize required. But encountered {bound}"
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    if number < 1 {
+                        return Err(error(
+                            format!(
+                                "Error: Value in interval [0, {}] for maxSetSize required. But encountered {bound}",
+                                i32::MAX
+                            ),
+                            is_tool,
+                        ));
+                    }
+                    return Err(Stop::NotNative(format!("the TLC option {arg}")));
+                }
+                // `Integer.parseInt` of the level, where TLC throws past the last argument; the
+                // binary declines a valid one, whose runtime invariant it doesn't model.
+                "-invlevel" => {
+                    let Some(level) = args.get(index) else {
+                        return Err(Stop::NotNative(format!("the TLC option {arg}")));
+                    };
+                    if !level.is_ascii() {
+                        return Err(Stop::NotNative(format!("-invlevel {level:?}")));
+                    }
+                    if level.parse::<i32>().is_err() {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for -invlevel required. But encountered {level}"
+                            ),
+                            is_tool,
+                        ));
+                    }
+                    // TLC pastes the level as written into an expression of the modules TLC and
+                    // Naturals, which it adds to the root module's EXTENDS; a sign there is
+                    // Integers' or nobody's.
+                    if !level.bytes().all(|byte| byte.is_ascii_digit()) {
+                        return Err(Stop::NotNative(format!("-invlevel {level}")));
+                    }
+                    index += 1;
+                    parsed.options.push((
+                        INVARIANT.into(),
+                        vec![
+                            format!(
+                                "LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet(\"level\"), {level})"
+                            ),
+                            "TLC".into(),
+                            "Naturals".into(),
+                        ],
+                    ));
+                    continue;
+                }
+                // An invariant TLC parses in a module of its own that extends the root module,
+                // adding to the root module's EXTENDS each module the expression names after
+                // INSTANCE (`TLC.handleParameters`, `RuntimeInvariantTemplate`); TLC throws where
+                // no expression follows.
+                "-inv" => {
+                    let Some(expression) = args.get(index) else {
+                        return Err(Stop::NotNative(format!("the TLC option {arg}")));
+                    };
+                    index += 1;
+                    let mut values = vec![expression.clone()];
+                    let mut rest = expression.as_str();
+                    while let Some(at) = rest.find("INSTANCE") {
+                        rest = &rest[at + "INSTANCE".len()..];
+                        let name: String = rest
+                            .trim_start_matches(|character: char| character.is_ascii_whitespace())
+                            .chars()
+                            .take_while(|&character| {
+                                character.is_ascii_alphanumeric() || character == '_'
+                            })
+                            .collect();
+                        let is_spaced =
+                            rest.starts_with(|character: char| character.is_ascii_whitespace());
+                        if is_spaced && !name.is_empty() && !values[1..].contains(&name) {
+                            values.push(name);
+                        }
+                    }
+                    parsed.options.push((INVARIANT.into(), values));
+                    continue;
+                }
+                // TLC takes `module!operator` in any case of the flag and checks its form before
+                // it reads the next option.
+                _ if arg.eq_ignore_ascii_case("-postCondition") => {
+                    let rejected = |message: String| Err(error(message, is_tool));
+                    let Some(module_bang_op) = args.get(index) else {
+                        return rejected(
+                            "Error: Module!Operator for postCondition required.".into(),
+                        );
+                    };
+                    if !module_bang_op.contains('!') {
+                        return rejected(format!(
+                            "Module!Operator for postCondition required. Encountered: {module_bang_op}"
+                        ));
+                    }
+                    // `String.split("!")`, which drops the empty pieces at the end.
+                    let mut parts: Vec<&str> = module_bang_op.split('!').collect();
+                    while parts.last().is_some_and(|part| part.is_empty()) {
+                        parts.pop();
+                    }
+                    let [module, def] = parts[..] else {
+                        return rejected(format!(
+                            "Module!Operator for postCondition must be of the form module!operator. Encountered: {module_bang_op}"
+                        ));
+                    };
+                    if module.is_empty() {
+                        return rejected(format!(
+                            "Module name for postCondition required. Encountered: {module_bang_op}"
+                        ));
+                    }
+                    if module.contains('.') {
+                        return rejected(format!(
+                            "Module name for postCondition must not contain a dot. Encountered: {module}"
+                        ));
+                    }
+                    if def.contains('.') {
+                        return rejected(format!(
+                            "Operator name for postCondition must not contain a dot. Encountered: {def}"
+                        ));
+                    }
+                    let values = vec![module.to_string(), def.to_string()];
+                    index += 1;
+                    parsed.options.push((POST_CONDITION.into(), values));
+                    continue;
                 }
                 _ if arg.eq_ignore_ascii_case("-noTE") => {
                     parsed
@@ -454,11 +978,41 @@ impl Parsed {
                         .push((DUMP_TRACE.into(), vec![format.into(), file.clone()]));
                     continue;
                 }
-                _ if UNMODELLED.contains(&arg)
-                    || UNMODELLED_IN_ANY_CASE
-                        .iter()
-                        .any(|option| arg.eq_ignore_ascii_case(option)) =>
-                {
+                "-help" | "-h" => return Err(Stop::Usage),
+                // The directory of the checkpoint to recover from, which TLC reads as it starts
+                // (`UniqueString.internTbl.recover`).
+                "-recover" => vec![take(
+                    args,
+                    &mut index,
+                    "need to specify the metadata directory for recovery.",
+                    is_tool,
+                )?],
+                // The file Print and PrintT write to in place of the console, which TLC creates as
+                // it reads the option (check.rs creates it).
+                "-userFile" => vec![take(
+                    args,
+                    &mut index,
+                    "need to specify the full qualified file.",
+                    is_tool,
+                )?],
+                // TLC takes a format and a file, and knows the format in any case; the binary
+                // declines the trace's constraint a known one adds.
+                _ if arg.eq_ignore_ascii_case("-loadTrace") => {
+                    let [format, _] = args.get(index..index + 2).unwrap_or_default() else {
+                        return Err(error(
+                            "Error: A format and a file name for loading traces required.".into(),
+                            is_tool,
+                        ));
+                    };
+                    if !format.eq_ignore_ascii_case("tlc") && !format.eq_ignore_ascii_case("json") {
+                        return Err(error(
+                            format!("Error: Unknown format {format} given to -loadTrace."),
+                            is_tool,
+                        ));
+                    }
+                    return Err(Stop::NotNative(format!("the TLC option {arg}")));
+                }
+                _ if UNMODELLED.contains(&arg) => {
                     return Err(Stop::NotNative(format!("the TLC option {arg}")));
                 }
                 _ if arg.starts_with('-') => {
@@ -480,13 +1034,94 @@ impl Parsed {
             };
             parsed.options.push((arg.into(), values));
         }
+        // TLC rejects -nowarning with codes to suppress, and a code both suppressed and made an
+        // error, after it reads every option (`handleParameters`).
+        let suppressed = parsed.get_codes("-suppressMessages");
+        let sany_suppressed = parsed.get_sany_codes("-suppressMessages");
+        if parsed.has("-nowarning") && !(suppressed.is_empty() && sany_suppressed.is_empty()) {
+            return Err(error(
+                "Error: -nowarning already suppresses all warnings, making -suppressMessages \
+                 redundant. Remove -nowarning to suppress only the specified messages, or remove \
+                 -suppressMessages to suppress all warnings."
+                    .into(),
+                parsed.has("-tool"),
+            ));
+        }
+        let mut both: Vec<u32> = parsed
+            .get_codes("-messagesAsErrors")
+            .into_iter()
+            .filter(|code| suppressed.contains(code))
+            .collect();
+        both.sort_unstable();
+        both.dedup();
+        match both[..] {
+            [] => {}
+            // A HashSet's order, which the binary follows for one code.
+            [code] => {
+                return Err(error(
+                    format!(
+                        "Error: The following codes were set to both -suppressMessages and -messagesAsErrors: [{code}]"
+                    ),
+                    parsed.has("-tool"),
+                ));
+            }
+            _ => {
+                return Err(Stop::NotNative(
+                    "several codes both suppressed and made errors".into(),
+                ));
+            }
+        }
+        // Then SANY's codes, named as `ErrorCode` names them.
+        let mut both: Vec<u32> = parsed
+            .get_sany_codes("-messagesAsErrors")
+            .into_iter()
+            .filter(|code| sany_suppressed.contains(code))
+            .collect();
+        both.sort_unstable();
+        both.dedup();
+        match both[..] {
+            [] => {}
+            [code] => {
+                let (name, _) =
+                    crate::messages::get_sany_code(code as i32).expect("a code SANY names");
+                return Err(error(
+                    format!(
+                        "Error: The following codes were set to both -suppressMessages and -messagesAsErrors: [{name}]"
+                    ),
+                    parsed.has("-tool"),
+                ));
+            }
+            _ => {
+                return Err(Stop::NotNative(
+                    "several codes both suppressed and made errors".into(),
+                ));
+            }
+        }
+        // What SANY suppresses or fails with is followed for its linter's warning alone, whose
+        // code no message of its parser or semantic analysis has.
+        let is_lint_code = |code: &u32| *code == tla_front::report::RECORD_FIELD_NAME_CLASH;
+        if !(sany_suppressed.iter().all(is_lint_code)
+            && parsed
+                .get_sany_codes("-messagesAsErrors")
+                .iter()
+                .all(is_lint_code))
+        {
+            return Err(Stop::NotNative(
+                "SANY's message codes of -suppressMessages or -messagesAsErrors".into(),
+            ));
+        }
+        // `MP.printWarning` fails with a code of -messagesAsErrors even under -nowarning, where
+        // the binary doesn't compute the warnings.
+        if parsed.has("-nowarning") && !parsed.get_codes("-messagesAsErrors").is_empty() {
+            return Err(Stop::NotNative("-messagesAsErrors with -nowarning".into()));
+        }
         if is_tlc && parsed.positionals.is_empty() {
             return Err(error(
                 "Error: Missing input TLA+ module.".into(),
                 parsed.has("-tool"),
             ));
         }
-        Ok(parsed)
+        Ok(())
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -735,25 +1370,198 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_dfid_limits() {
+        for (args, message) in [
+            (
+                &["-dfid"][..],
+                "Error: expect a nonnegative integer for -dfid option.",
+            ),
+            (
+                &["-dfid", "-1", "Spec"][..],
+                "Error: expect a nonnegative integer for -dfid option.",
+            ),
+            (
+                &["-dfid", "x", "Spec"][..],
+                "Error: expect a nonnegative integer for -dfid option. But encountered x",
+            ),
+            (
+                &["-dfid", "2147483648", "Spec"][..],
+                "Error: expect a nonnegative integer for -dfid option. But encountered 2147483648",
+            ),
+        ] {
+            assert_eq!(get_error(args), message);
+        }
+    }
+
+    #[test]
+    fn rejects_a_trace_file_without_a_number_of_traces() {
+        let message = "Error: You need to specify a 'num' argument when using the 'file' argument, for example: '\"num=5,file=test.txt\"'.";
+        for args in [
+            &["-simulate", "file=trace", "Spec"][..],
+            &["-simulate", "file=trace,stats=basic", "Spec"],
+            &["-simulate", "num=9223372036854775807,file=trace", "Spec"],
+            &[
+                "-simulate",
+                "num=1",
+                "-simulate",
+                "num=9223372036854775807,file=t",
+                "Spec",
+            ],
+            &["-simulate", "file=trace", "-simulate", "num=1", "Spec"],
+        ] {
+            assert_eq!(get_error(args), message);
+        }
+    }
+
+    #[test]
+    fn reads_dfid_depth() {
+        let parsed = parse(&["-dfid", "3", "Spec"]).expect("valid depth");
+        assert_eq!(parsed.first("-dfid"), Some("3"));
+    }
+
+    #[test]
     fn declines_what_it_does_not_model() {
         for args in [
-            &["-difftrace", "Spec"][..],
-            &["-generate", "Spec"],
+            &["-debug", "Spec"][..],
             &["-simulate", "num=3,file=trace", "Spec"],
+            // An earlier -simulate's number of traces holds for a later one's file.
+            &["-simulate", "num=1", "-simulate", "file=trace", "Spec"],
+            &[
+                "-simulate",
+                "num=1",
+                "-simulate",
+                "-simulate",
+                "file=trace",
+                "Spec",
+            ],
             &["-simulate", "stats=basic", "Spec"],
             &["-simulate", "num=x", "Spec"],
             &["-maxSetSize", "10", "Spec"],
-            &["-dfid", "3", "Spec"],
+            &["-invlevel", "+3", "Spec"],
+            &["-invlevel"],
+            &["-inv"],
+            &["-loadTrace", "json", "trace.json", "Spec"],
+            &["-dump", "class,tlc2.util.NoopStateWriter", "Spec"],
             &["-DUMPTRACE", "dot", "out.dot", "Spec"],
             &["-dumpTrace", "TLCTESPEC", "out.tla", "Spec"],
-            &["-lncheck", "OFF", "Spec"],
             &["-dump"],
-            &["-dump", "class,Writer", "Spec"],
             &["", "Spec"],
             &["-noTEB\u{131}n", "Spec"],
         ] {
             assert!(matches!(parse(args), Err(Stop::NotNative(_))), "{args:?}");
         }
+    }
+
+    #[test]
+    fn rejects_the_values_tlc_rejects() {
+        for (args, message) in [
+            (
+                &["-maxSetSize", "0"][..],
+                "Error: Value in interval [0, 2147483647] for maxSetSize required. But encountered 0",
+            ),
+            (
+                &["-maxSetSize", "2147483648"],
+                "Error: An integer for maxSetSize required. But encountered 2147483648",
+            ),
+            (&["-maxSetSize"], "Error: maxSetSize required."),
+            (
+                &["-invlevel", "x"],
+                "Error: An integer for -invlevel required. But encountered x",
+            ),
+            (
+                &["-POSTCONDITION", "Op"],
+                "Module!Operator for postCondition required. Encountered: Op",
+            ),
+            (
+                &["-postCondition", "a!b!c"],
+                "Module!Operator for postCondition must be of the form module!operator. Encountered: a!b!c",
+            ),
+            (
+                &["-postCondition", "!"],
+                "Module!Operator for postCondition must be of the form module!operator. Encountered: !",
+            ),
+            (
+                &["-postCondition", "!b"],
+                "Module name for postCondition required. Encountered: !b",
+            ),
+            (
+                &["-postCondition", "a.b!c"],
+                "Module name for postCondition must not contain a dot. Encountered: a.b",
+            ),
+            (
+                &["-postCondition", "a!b.c"],
+                "Operator name for postCondition must not contain a dot. Encountered: b.c",
+            ),
+            (
+                &["-postCondition"],
+                "Error: Module!Operator for postCondition required.",
+            ),
+            (
+                &["-teSpecOutDir"],
+                "Error: expected a path for -teSpecOutDir option.",
+            ),
+        ] {
+            assert_eq!(get_error(args), message, "{args:?}");
+        }
+        // `String.split` drops the empty pieces at the end.
+        let parsed = parse(&["-postCondition", "a!b!", "Spec"]).expect("options");
+        assert_eq!(
+            parsed.get(POST_CONDITION),
+            Some(&["a".to_string(), "b".to_string()][..])
+        );
+        assert_eq!(
+            get_error(&["-dump", "class,Writer", "Spec"]),
+            "Trying to instantiate a custom IStateWriter implementation Writer."
+        );
+        assert_eq!(
+            get_error(&["-loadTrace", "xml", "in.xml", "Spec"]),
+            "Error: Unknown format xml given to -loadTrace."
+        );
+        assert_eq!(
+            get_error(&["-userFile"]),
+            "Error: need to specify the full qualified file."
+        );
+        assert_eq!(
+            get_error(&["-recover"]),
+            "Error: need to specify the metadata directory for recovery."
+        );
+        assert!(matches!(
+            parse(&["-deadlock", "-help", "-bogus"]),
+            Err(Stop::Usage)
+        ));
+    }
+
+    #[test]
+    fn reads_the_options_tlc_reads_as_it_reads_them() {
+        let parsed = parse(&[
+            "-terse",
+            "-view",
+            "-generate",
+            "num=2",
+            "-inv",
+            "LET S == INSTANCE Sequences IN S!Len(<<>>) = 0",
+            "-invlevel",
+            "4",
+            "Spec",
+        ])
+        .expect("options");
+        assert!(parsed.has("-terse") && parsed.has("-view") && parsed.has("-generate"));
+        assert_eq!(parsed.get("-simulate"), Some(&["2".to_string()][..]));
+        let invariants: Vec<_> = parsed
+            .options
+            .iter()
+            .filter(|(option, _)| option == INVARIANT)
+            .map(|(_, values)| values.clone())
+            .collect();
+        assert_eq!(invariants[0][1..], ["Sequences".to_string()]);
+        assert_eq!(
+            invariants[1],
+            [
+                "LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet(\"level\"), 4)",
+                "TLC",
+                "Naturals"
+            ]
+        );
     }
 
     #[test]
@@ -810,5 +1618,77 @@ mod tests {
                 .positionals
                 .is_empty()
         );
+    }
+}
+
+#[cfg(test)]
+mod origin_profile_tests {
+    use super::*;
+    use tla_front::model::JavaProfile;
+
+    #[test]
+    fn parsed_launch_profile_separates_known_options_from_unknown_lookup() {
+        for (arguments, expected) in [
+            (
+                vec!["-cp", "tla2tools.jar", "tlc2.TLC", "M"],
+                JavaProfile::Default,
+            ),
+            (
+                vec![
+                    "-Xss2m",
+                    "-XX:+UseParallelGC",
+                    "-cp",
+                    "tla2tools.jar",
+                    "tlc2.TLC",
+                    "M",
+                ],
+                JavaProfile::Default,
+            ),
+            (
+                vec!["-cp", "extra:tla2tools.jar", "tlc2.TLC", "M"],
+                JavaProfile::Opaque,
+            ),
+            (
+                vec!["-Djava.class.path=extra:tla2tools.jar", "tlc2.TLC", "M"],
+                JavaProfile::Opaque,
+            ),
+            (
+                vec![
+                    "-Xmx4g",
+                    "-Xms1g",
+                    "-Xss4m",
+                    "-XX:+UseG1GC",
+                    "-cp",
+                    "tla2tools.jar",
+                    "tlc2.TLC",
+                    "M",
+                ],
+                JavaProfile::Default,
+            ),
+            (
+                vec![
+                    "-XX:VMOptionsFile=options",
+                    "-cp",
+                    "tla2tools.jar",
+                    "tlc2.TLC",
+                    "M",
+                ],
+                JavaProfile::Opaque,
+            ),
+            (
+                vec![
+                    "-Xbootclasspath/a:extra",
+                    "-cp",
+                    "tla2tools.jar",
+                    "tlc2.TLC",
+                    "M",
+                ],
+                JavaProfile::Opaque,
+            ),
+        ] {
+            let arguments: Vec<_> = arguments.into_iter().map(String::from).collect();
+            let launch = get_java_launch(&arguments, Platform::NATIVE).unwrap();
+            assert_eq!(launch.java.origin_profile(Some("tla2tools.jar")), expected);
+        }
     }
 }

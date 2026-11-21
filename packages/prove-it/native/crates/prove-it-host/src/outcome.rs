@@ -60,6 +60,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         return Err("the settings must hold nine numbers".into());
     };
     Ok(Settings {
+        dfid: None,
         compile: Options {
             is_memo_off: memo_off != 0,
             is_epoch_checked: epoch_checked != 0,
@@ -90,6 +91,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         large_region_advice: None,
         // The interpreter reads and writes the Json module's files.
         json_files: JsonFiles::Declined,
+        adopter: None,
     })
 }
 
@@ -265,6 +267,24 @@ pub fn get_outcome(outcome: &SearchOutcome) -> HostValue {
     };
     match outcome {
         SearchOutcome::Declined(reason) => declined(reason),
+        SearchOutcome::DfidInitialIncomplete { .. } => {
+            declined("DFID is not requested through this host")
+        }
+        SearchOutcome::DfidIncomplete { .. } => declined("DFID is not requested through this host"),
+        SearchOutcome::DfidActionFailure(_) => declined("DFID is not requested through this host"),
+        SearchOutcome::DfidInitialFailure(_) => declined("DFID is not requested through this host"),
+        SearchOutcome::DfidInitialInvariantFailure(_) => {
+            declined("DFID is not requested through this host")
+        }
+        SearchOutcome::DfidInvariantFailure(_) => {
+            declined("DFID is not requested through this host")
+        }
+        SearchOutcome::DfidNextFailure(_) => declined("DFID is not requested through this host"),
+        SearchOutcome::DfidViolation(_) => declined("DFID is not requested through this host"),
+        SearchOutcome::DfidUnsupported { .. } => {
+            declined("DFID is not requested through this host")
+        }
+        SearchOutcome::DfidLimited { .. } => declined("DFID is not requested through this host"),
         // The search doesn't report violations here, so it declines an assumption that fails to
         // evaluate rather than report it.
         SearchOutcome::AssumptionFailed { .. } => {

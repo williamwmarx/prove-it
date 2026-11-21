@@ -1,0 +1,22 @@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (<date>)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2106:1 @!@!@
+State is not completely specified by the initial predicate:
+/\ x = 0
+/\ y = null
+/\ z = null
+
+@!@!@ENDMSG 2106 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in <time>
+@!@!@ENDMSG 2186 @!@!@

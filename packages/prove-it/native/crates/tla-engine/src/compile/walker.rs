@@ -29,7 +29,7 @@ use super::{
     eval, leaf, lookup, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
+use crate::machine::{Continue, Eval, Machine, Member, Printed, RuntimeWarning, Step, UNASSIGNED};
 
 /// What ENABLED's walk stops with at its first successor (`FOUND` in `action.ts`).
 const FOUND: &str = "ENABLED found a successor";
@@ -123,6 +123,23 @@ pub(super) struct Ordered {
 }
 
 impl Ordered {
+    /// The enumeration of a bound, which fails where TLC's of the set fails
+    /// (`Compiled::check_enumerated`).
+    fn checked(self, set: Compiled) -> Ordered {
+        let (inner, is_ordered) = (self.eval, self.is_ordered);
+        Ordered {
+            eval: eval(move |machine| {
+                let id = inner(machine)?;
+                if is_ordered || machine.store.kind_of(id) == KIND_SET {
+                    let size = machine.store.size_of(id);
+                    set.check_enumerated(machine, id, size)?;
+                }
+                Ok(id)
+            }),
+            is_ordered,
+        }
+    }
+
     pub(super) fn size(&self, machine: &Machine<'_>, id: Id) -> Outcome<u32> {
         if self.is_ordered || machine.store.kind_of(id) == KIND_SET {
             Ok(machine.store.size_of(id))
@@ -151,11 +168,25 @@ const UNSET: u8 = 0;
 const SET: u8 = 1;
 const EITHER: u8 = 2;
 
-/// What the walk knows of each variable on a path, the variables past `states` being `beyond`.
+/// What the walk knows of each variable on a path, the variables past `states` being `beyond`,
+/// and, for a variable a Print or PrintT reads, how the assignment that gave it its value on the
+/// path built that value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Known {
     states: Vec<u8>,
     beyond: u8,
+    sources: Vec<(u32, Assigned)>,
+}
+
+/// How the first assignment of a variable on a path built its value: TLC binds the variable to
+/// the very value an expression built (`x' = e`), or to the element of the set it enumerates
+/// (`x' \in S`, and `x' \subseteq S`, an element of SUBSET S), which a print of the variable later
+/// in the conjunction prints as TLC built it (`Tool.getInitStates`, `Tool.getNextStates`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Assigned {
+    Value(NodeId),
+    Element(NodeId),
+    Subset(NodeId),
 }
 
 /// Whether TLC's shortcut past the rest of a conjunction applies on a path, which it does where
@@ -172,6 +203,7 @@ impl Known {
         Known {
             states: Vec::new(),
             beyond: UNSET,
+            sources: Vec::new(),
         }
     }
 
@@ -180,6 +212,7 @@ impl Known {
         Known {
             states: Vec::new(),
             beyond: EITHER,
+            sources: Vec::new(),
         }
     }
 
@@ -197,7 +230,25 @@ impl Known {
             known.states.resize(index + 1, known.beyond);
         }
         known.states[index] = state;
+        known.sources.retain(|&(assigned, _)| assigned != variable);
         known
+    }
+
+    /// The variable assigned on the path, by an assignment that built its value so.
+    fn with_source(&self, variable: u32, source: Option<Assigned>) -> Known {
+        let mut known = self.with(variable, SET);
+        if let Some(source) = source {
+            known.sources.push((variable, source));
+        }
+        known
+    }
+
+    /// How the assignment on the path built the variable's value, where the walk knows it.
+    pub(crate) fn source(&self, variable: u32) -> Option<Assigned> {
+        self.sources
+            .iter()
+            .find(|&&(assigned, _)| assigned == variable)
+            .map(|&(_, source)| source)
     }
 
     /// After a walk the compiler doesn't follow: what was assigned still is, and the rest may be.
@@ -209,6 +260,8 @@ impl Known {
                 .map(|&state| if state == SET { SET } else { EITHER })
                 .collect(),
             beyond: EITHER,
+            // A variable assigned before stays as that assignment built it.
+            sources: self.sources.clone(),
         }
     }
 
@@ -305,6 +358,7 @@ enum Op {
     Assign(u32, Source),
     /// An assignment of a variable assigned on the path: an equality test.
     Test(u32, Source),
+    Unchanged(u32, NodeId),
     /// TLC's shortcut passes a conjunct it would walk (`shortcuts.isPastWalk`).
     PastWalk,
 }
@@ -361,6 +415,23 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
                 let value = read_source(machine, source, *variable)?;
                 let current = target(machine, IS_INIT)[*variable as usize];
                 Ok(current == value || machine.store.equals(current, value)?)
+            }
+            Op::Unchanged(variable, node) => {
+                let current = machine.next[*variable as usize];
+                let previous = machine.cur[*variable as usize];
+                let equal = current == previous || machine.store.equals(current, previous)?;
+                if !equal {
+                    if machine.guarding_atom_warnings {
+                        return Err(Bail(super::ATOM_WARNING));
+                    }
+                    machine
+                        .output
+                        .push(Printed::Warning(RuntimeWarning::Unchanged {
+                            node: *node,
+                            variable: *variable,
+                        }));
+                }
+                Ok(equal)
             }
             Op::PastWalk => {
                 machine.is_past_walk = true;
@@ -468,7 +539,13 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
 
 // An assignment of a variable that may or may not be assigned on the path: it assigns or tests,
 // as the run-time check decides.
-fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step {
+fn either_step(
+    variable: u32,
+    source: Source,
+    rest: Rest,
+    is_init: bool,
+    warning: Option<NodeId>,
+) -> Step {
     let index = variable as usize;
     step(move |machine, on_complete| {
         let value = read_source(machine, &source, variable)?;
@@ -484,6 +561,17 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
         }
         if current == value || machine.store.equals(current, value)? {
             return run_rest(&rest, machine, on_complete);
+        }
+        if let Some(node) = warning {
+            if machine.guarding_atom_warnings {
+                return Err(Bail(super::ATOM_WARNING));
+            }
+            machine
+                .output
+                .push(Printed::Warning(RuntimeWarning::Unchanged {
+                    node,
+                    variable,
+                }));
         }
         Ok(())
     })
@@ -518,7 +606,7 @@ fn deferred_eval(deferred: Deferred) -> Eval {
 #[derive(Clone)]
 enum Shape {
     Assign(u32, NodeId),
-    Unchanged(Rc<[u32]>),
+    Unchanged(Rc<[(u32, NodeId)]>),
     Guard,
     Branch,
 }
@@ -693,6 +781,15 @@ fn get_bound_slots(scope: &Option<Rc<Scope>>, slots: &mut Vec<u32>, seen: &mut H
     }
 }
 
+/// A guard the walk compiles, with what the walk knows on its path where the guard is a Print or
+/// PrintT (`Compiler::print_sources`).
+#[derive(Clone)]
+pub(crate) struct PrintSources {
+    pub(crate) item: NodeId,
+    pub(crate) is_init: bool,
+    pub(crate) known: Known,
+}
+
 impl<'a> Compiler<'a> {
     fn walk_depth(&mut self) -> Compiling<()> {
         if self.depth > super::MAXIMUM_EXPANSION {
@@ -734,6 +831,18 @@ impl<'a> Compiler<'a> {
                     && let Some(found) = lookup(&context.scope, name.text)
                 {
                     return Ok(match &found.binding {
+                        // A name whose expression reads no state and may reach a startup
+                        // definition that failed as TLC started compiles as the name
+                        // (`compile_binding`), whose read declines where evaluating that
+                        // definition again has an effect (`guard_retried_effects`): TLC's
+                        // `getInitStatesAppl` and `getNextStates` evaluate the expression again
+                        // at each read of the name.
+                        Binding::Argument(argument)
+                            if self.is_stateless_argument(argument, 0)
+                                && self.reaches_startup_definition(argument) =>
+                        {
+                            None
+                        }
                         Binding::Argument(argument) => Some((
                             argument.expression,
                             super::argument_context(argument)
@@ -785,6 +894,12 @@ impl<'a> Compiler<'a> {
                     return Ok(None);
                 };
                 if definition.flags & Definition::RECURSIVE != 0 && !is_recursive_taken {
+                    return Ok(None);
+                }
+                // IOUtils's Serialize, which `Json.textSerialize` overrides: TLC evaluates the
+                // Java method as the action's guard (`getNextStatesApplEvalAppl`), and walks no
+                // body.
+                if self.is_text_serialized(self.ir.definitions[index as usize], params.len()) {
                     return Ok(None);
                 }
                 let callee = self.bind_arguments(
@@ -944,9 +1059,12 @@ impl<'a> Compiler<'a> {
         node: NodeId,
         context: &Context,
         depth: u32,
-    ) -> Compiling<Option<Vec<u32>>> {
+    ) -> Compiling<Option<Vec<(u32, NodeId)>>> {
         if depth > 50 {
             return Ok(None);
+        }
+        if let Some(variable) = self.get_assignable(node, context, false, depth)? {
+            return Ok(Some(vec![(variable, node)]));
         }
         match self.node(node).1 {
             NodeKind::Tuple(elements) => {
@@ -963,7 +1081,7 @@ impl<'a> Compiler<'a> {
                 if !name.is_local
                     && let Resolution::Variable(index) = name.resolution
                 {
-                    return Ok(Some(vec![index]));
+                    return Ok(Some(vec![(index, node)]));
                 }
                 match self.resolve_action(node, context)? {
                     Some((body, inner)) => self.get_unchanged_indices(body, &inner, depth + 1),
@@ -981,6 +1099,69 @@ impl<'a> Compiler<'a> {
     }
 
     // Whether an expression is a guard, which TLC evaluates rather than walks.
+    // A guard of the walk, compiled with what the walk knows on its path, which a Print or PrintT
+    // that is the guard itself reads of the variables it prints (`print_sources`).
+    fn compile_printing(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+    ) -> Compiling<Compiled> {
+        let sources = PrintSources {
+            item: node,
+            is_init: options.is_init,
+            known: known.clone(),
+        };
+        let outer = self.print_sources.replace(sources);
+        let compiled = self.compile(node, context);
+        self.print_sources = outer;
+        compiled
+    }
+
+    /// Whether a Print or PrintT reads the variable in its arguments, so that the walk notes how
+    /// its assignments build its value.
+    pub(crate) fn is_printed_variable(&self, variable: u32) -> bool {
+        self.printed_variables
+            .get_or_init(|| {
+                let arena = &self.ir.nodes.arena;
+                let mut variables = HashSet::new();
+                let mut pending: Vec<NodeId> = arena
+                    .iter()
+                    .filter_map(|node| match &node.kind {
+                        NodeKind::Apply { name, args }
+                            if !name.is_local
+                                && matches!(name.resolution, Resolution::Builtin(index)
+                                if matches!(
+                                    &*self.ir.texts[self.ir.builtins[index as usize].name as usize],
+                                    "Print" | "PrintT"
+                                )) =>
+                        {
+                            Some(args.clone())
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                let mut seen = HashSet::new();
+                while let Some(node) = pending.pop() {
+                    if !seen.insert(node) {
+                        continue;
+                    }
+                    let kind = &arena[node as usize].kind;
+                    if let NodeKind::Identifier(name) = kind
+                        && !name.is_local
+                        && let Resolution::Variable(variable) = name.resolution
+                    {
+                        variables.insert(variable);
+                    }
+                    pending.extend(kind.children());
+                }
+                variables
+            })
+            .contains(&variable)
+    }
+
     fn is_guard(&mut self, node: NodeId, context: &Context, is_init: bool) -> Compiling<bool> {
         match self.node(node).1 {
             NodeKind::Label { .. }
@@ -998,7 +1179,7 @@ impl<'a> Compiler<'a> {
             NodeKind::Identifier(_) => Ok(self.resolve_action(node, context)?.is_none()),
             NodeKind::Apply { name, args } => {
                 let operator = self.text(name.text);
-                if operator == "=>" {
+                if operator == "=>" || (!name.is_local && operator == "$Nop") {
                     return Ok(false);
                 }
                 if matches!(operator, "=" | "\\in" | "\\subseteq") && !args.is_empty() {
@@ -1371,10 +1552,16 @@ impl<'a> Compiler<'a> {
                             Binding::Argument(Rc::new(Argument {
                                 expression: argument,
                                 is_each_use_alike: false,
+                                is_read_once: false,
+                                reaches_startup: std::cell::Cell::new(false),
                                 is_kept: false,
                                 context: argument_context.clone(),
                                 compiled: RefCell::new([None, None]),
                                 own_scope: RefCell::new(std::rc::Weak::new()),
+                                once_slot: None,
+                                is_applied_function: false,
+                                is_named_once: false,
+                                is_built_alike: false,
                             }))
                         }
                         None => {
@@ -1693,7 +1880,7 @@ impl<'a> Compiler<'a> {
                         NodeKind::SetEnumeration(sets) => parts(&mut sets.iter().copied(), false),
                         _ => parts(&mut args.iter().copied(), false),
                     },
-                    "TLCEval" => parts(&mut args.iter().copied(), is_itself),
+                    "$Nop" | "TLCEval" => parts(&mut args.iter().copied(), is_itself),
                     "Print" | "PrintT" => parts(&mut args.last().into_iter().copied(), is_itself),
                     _ => true,
                 },
@@ -1969,6 +2156,27 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    // Whether a walk reaches a constant definition whose value TLC keeps from startup, and every
+    // use reads (`Compiler::adopted_definition`): `Tool.getNextStates` and `getInitStates` look
+    // the name up and, finding a value rather than the definition, test it as a boolean, where
+    // they walk the body of one TLC failed on as it started.
+    fn is_adopted_reference(&mut self, node: NodeId, context: &Context) -> bool {
+        let NodeKind::Identifier(name) = self.node(node).1 else {
+            return false;
+        };
+        let Resolution::Definition(index) = name.resolution else {
+            return false;
+        };
+        if name.is_local || self.adopter.is_none() {
+            return false;
+        }
+        let definition = self.ir.definitions[index as usize];
+        if self.definition(definition).flags & Definition::NORMALIZED == 0 {
+            return false;
+        }
+        self.compile(node, context).is_ok() && self.adopted.contains(&definition)
+    }
+
     fn guard_step(
         &mut self,
         node: NodeId,
@@ -2004,7 +2212,13 @@ impl<'a> Compiler<'a> {
                 self.walk_conjunction(operands, context, options, known, then)
             }
             NodeKind::Or(operands) => {
-                self.walk_disjunction(operands, context, options, known, then)
+                // A disjunction of more than two the IR doesn't say how is written may be a
+                // nest of binary ones or not, which TLC generating draws for differently.
+                let is_nested = match self.ir.nodes.junctions.get(&node) {
+                    Some(junction) => Some(!junction.is_bulleted),
+                    None => (operands.len() <= 2).then_some(false),
+                };
+                self.walk_disjunction(operands, is_nested, context, options, known, then)
             }
             NodeKind::Exists { bounds, body } => {
                 let depth = self.binders.len();
@@ -2024,7 +2238,9 @@ impl<'a> Compiler<'a> {
                     }
                     let set = self.compile(bound.set, &inner)?;
                     let unsorted = set.unsorted_first.clone();
-                    let set = self.order(set, bound.set, &inner, false)?;
+                    let set = self
+                        .order(set.clone(), bound.set, &inner, false)?
+                        .checked(set);
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     if let Some(unsorted) = unsorted {
                         self.unsorted_slots.insert(binder.slots[0], unsorted);
@@ -2090,6 +2306,10 @@ impl<'a> Compiler<'a> {
                     None => None,
                 };
                 Ok(Some(step(move |machine, on_complete| {
+                    // TLC generating throws an UnsupportedOperationException at a CASE.
+                    if machine.generate.is_some() {
+                        return Err(Bail("unsupported: a CASE TLC fails to generate from"));
+                    }
                     for (condition, body) in &compiled {
                         let value = condition(machine)?;
                         if value == TRUE {
@@ -2236,12 +2456,18 @@ impl<'a> Compiler<'a> {
                     run_rest(&walk, machine, on_complete)
                 })))
             }
+            NodeKind::Identifier(_) if self.is_adopted_reference(node, context) => {
+                self.guard_step(node, context, known, then)
+            }
             NodeKind::Identifier(_) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, options, known, then),
                 None => self.guard_step(node, context, known, then),
             },
             NodeKind::Apply { name, args } => {
                 let operator = self.text(name.text);
+                if !name.is_local && operator == "$Nop" && args.len() == 1 {
+                    return self.walk(args[0], context, options, known, then);
+                }
                 if !name.is_local && matches!(operator, "=" | "\\in" | "\\subseteq") {
                     if let Some(variable) = self.get_assignable_index(args[0], context, is_init)? {
                         return match operator {
@@ -2287,7 +2513,7 @@ impl<'a> Compiler<'a> {
                     return self.walk_conjunction(args, context, options, known, then);
                 }
                 if !name.is_local && operator == "\\/" {
-                    return self.walk_disjunction(args, context, options, known, then);
+                    return self.walk_disjunction(args, Some(true), context, options, known, then);
                 }
                 if let Some((body, inner)) = self.resolve_action(node, context)? {
                     return self.walk(body, &inner, options, known, then);
@@ -2324,7 +2550,9 @@ impl<'a> Compiler<'a> {
         for (position, bound) in bounds.iter().enumerate() {
             let set = self.compile(bound.set, &inner)?;
             let unsorted = set.unsorted_first.clone();
-            let set = self.order(set, bound.set, &inner, false)?;
+            let set = self
+                .order(set.clone(), bound.set, &inner, false)?
+                .checked(set);
             let binder = self.bind_bound(&bound.pattern, &inner);
             if let (Some(unsorted), false) = (unsorted, binder.tuple) {
                 self.unsorted_slots.insert(binder.slots[0], unsorted);
@@ -2353,9 +2581,12 @@ impl<'a> Compiler<'a> {
         Ok(Some(exists_step(levels, body, reject)))
     }
 
+    // `is_nested` where SANY nests the disjunction as binary ones, as it does an infix chain
+    // `A \/ B \/ C`, which it parses as `(A \/ B) \/ C`; a bulleted list is one of many.
     fn walk_disjunction(
         &mut self,
         operands: &[NodeId],
+        is_nested: Option<bool>,
         context: &Context,
         options: WalkOptions,
         known: &Known,
@@ -2367,10 +2598,19 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|&operand| self.walk(operand, context, options, known, &mut then))
             .collect::<Compiling<Vec<Rest>>>()?;
-        if let Some(switch) = self.switch(&branches) {
-            return Ok(Some(switch));
-        }
+        let switch = self.switch(&branches);
         Ok(Some(step(move |machine, on_complete| {
+            if machine.generate.is_some() {
+                let Some(is_nested) = is_nested else {
+                    return Err(Bail(
+                        "unsupported: generating from a disjunction of unknown nesting",
+                    ));
+                };
+                return generated_disjunction(&branches, is_nested, machine, on_complete);
+            }
+            if let Some(switch) = &switch {
+                return switch(machine, on_complete);
+            }
             for branch in &branches {
                 run_rest(branch, machine, on_complete)?;
             }
@@ -2462,18 +2702,22 @@ impl<'a> Compiler<'a> {
             NodeKind::Tuple(elements) => {
                 return self.walk_unchanged_elements(elements, context, options, known, then);
             }
-            NodeKind::Identifier(name) if name.is_local => {
+            NodeKind::Identifier(_) => {
                 if let Some((body, inner)) = self.resolve_action(expression, context)? {
-                    return self.walk_unchanged(body, &inner, options, known, then);
+                    self.depth += 1;
+                    let result = self
+                        .walk_depth()
+                        .and_then(|()| self.walk_unchanged(body, &inner, options, known, then));
+                    self.depth -= 1;
+                    return result;
                 }
             }
             _ => {}
         }
-        let evaluate = self
-            .wrap_compile(|compiler| {
-                compiler.compile_unchanged(expression, &context.without_print())
-            })?
-            .eval;
+        let evaluate =
+            deferred_eval(deferred(self.wrap_compile(|compiler| {
+                compiler.compile_unchanged(expression, context)
+            })));
         let rest = then(self, known)?;
         Ok(Some(step(move |machine, on_complete| {
             let value = evaluate(machine)?;
@@ -2571,12 +2815,13 @@ impl<'a> Compiler<'a> {
                 match known.shortcut(width) {
                     Shortcut::Never => {}
                     Shortcut::Always => {
-                        ops.extend(self.shortcut_guards(items, context, options, index)?);
+                        ops.extend(self.shortcut_guards(items, context, options, index, &known)?);
                         let rest = then(self, &known)?;
                         return Ok(self.led(segment(ops, rest, is_init), leading, &first_guard));
                     }
                     Shortcut::Maybe => {
-                        let guards = self.shortcut_guards(items, context, options, index)?;
+                        let guards =
+                            self.shortcut_guards(items, context, options, index, &known)?;
                         let mut shared = Shared::new(then);
                         let guarded = shared.call(self, &known)?;
                         let guarded = segment(guards, guarded, is_init);
@@ -2607,7 +2852,7 @@ impl<'a> Compiler<'a> {
             let item = &items[index];
             match &item.shape {
                 Shape::Guard => {
-                    let compiled = self.compile(item.node, context)?;
+                    let compiled = self.compile_printing(item.node, context, options, &known)?;
                     if index == 0 && ops.is_empty() {
                         leading = Leading::of(&compiled);
                         first_guard = compiled.predicate.as_deref().cloned();
@@ -2632,6 +2877,9 @@ impl<'a> Compiler<'a> {
                 }
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
+                    let source = self
+                        .is_printed_variable(variable)
+                        .then_some(Assigned::Value(*value));
                     let compiled = self.compile(*value, context)?;
                     self.is_lazy_set_held |= !compiled.is_normalized;
                     let value = match self.held_streams.get(variable as usize) {
@@ -2643,7 +2891,7 @@ impl<'a> Compiler<'a> {
                     match known.get(variable) {
                         UNSET => {
                             ops.push(Op::Assign(variable, value));
-                            known = known.with(variable, SET);
+                            known = known.with_source(variable, source);
                         }
                         SET => ops.push(Op::Test(variable, value)),
                         _ => {
@@ -2657,7 +2905,7 @@ impl<'a> Compiler<'a> {
                                 after,
                                 then,
                             )?;
-                            let either = either_step(variable, value, rest, is_init);
+                            let either = either_step(variable, value, rest, is_init, None);
                             return Ok(self.led(
                                 segment(ops, Some(either), is_init),
                                 leading,
@@ -2667,11 +2915,18 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 Shape::Unchanged(variables) => {
-                    for (position, &variable) in variables.iter().enumerate().skip(first_variable) {
+                    for (position, &(variable, node)) in
+                        variables.iter().enumerate().skip(first_variable)
+                    {
                         match known.get(variable) {
                             UNSET => {
                                 ops.push(Op::Assign(variable, Source::Current));
                                 known = known.with(variable, SET);
+                            }
+                            SET if self.ir.model.is_warning_enabled => {
+                                self.is_warning = true;
+                                self.is_unchanged_warning = true;
+                                ops.push(Op::Unchanged(variable, node));
                             }
                             SET => ops.push(Op::Test(variable, Source::Current)),
                             _ => {
@@ -2685,7 +2940,11 @@ impl<'a> Compiler<'a> {
                                     after,
                                     then,
                                 )?;
-                                let either = either_step(variable, Source::Current, rest, is_init);
+                                let warning = self.ir.model.is_warning_enabled.then_some(node);
+                                self.is_warning |= warning.is_some();
+                                self.is_unchanged_warning |= warning.is_some();
+                                let either =
+                                    either_step(variable, Source::Current, rest, is_init, warning);
                                 return Ok(self.led(
                                     segment(ops, Some(either), is_init),
                                     leading,
@@ -2783,6 +3042,7 @@ impl<'a> Compiler<'a> {
         context: &Context,
         options: WalkOptions,
         index: usize,
+        known: &Known,
     ) -> Compiling<Vec<Op>> {
         let mut guards = Vec::with_capacity(items.len() - index + 1);
         if !options.is_init
@@ -2805,7 +3065,7 @@ impl<'a> Compiler<'a> {
                 Shape::Guard | Shape::Unchanged(_) => {}
             }
             guards.push(match &item.shape {
-                Shape::Guard => guard(self.compile(item.node, context)?),
+                Shape::Guard => guard(self.compile_printing(item.node, context, options, known)?),
                 _ => Op::Check(
                     deferred_eval(deferred(self.compile(item.node, context))),
                     "a conjunct that isn't a boolean",
@@ -2875,6 +3135,7 @@ impl<'a> Compiler<'a> {
         }
         // `x' \subseteq S` enumerates SUBSET S, which isn't empty where S is.
         let is_covered = !is_power_set && self.is_membership_covered(set, &mut HashSet::new());
+        let set_node = set;
         let (set, unsorted) = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);
@@ -2890,8 +3151,15 @@ impl<'a> Compiler<'a> {
             Some((unsorted, Arc::clone(is_streamed)))
         });
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
+        let source = self
+            .is_printed_variable(variable)
+            .then_some(if is_power_set {
+                Assigned::Subset(set_node)
+            } else {
+                Assigned::Element(set_node)
+            });
         let mut shared = Shared::new(then);
-        let assigned = shared.call(self, &known.with(variable, SET))?;
+        let assigned = shared.call(self, &known.with_source(variable, source))?;
         let guarded = match guard {
             Some(_) => shared.call(self, known)?,
             None => None,
@@ -2924,6 +3192,29 @@ impl<'a> Compiler<'a> {
                 }
                 _ => None,
             };
+            // TLC generating takes the elements in an order it draws until one keeps a
+            // successor, and failing that, all of them again as it does otherwise
+            // (`Tool.getNextStates`, OPCODE_in and OPCODE_subseteq).
+            if machine.generate.is_some() {
+                if held.is_some() || (set.is_ordered && !is_power_set) {
+                    return Err(Bail(GENERATED_LAZY));
+                }
+                let positions = draw_positions(machine, size);
+                machine.assigned += 1;
+                for position in positions {
+                    let element = element_at(machine, id, position);
+                    target(machine, is_init)[index] = element;
+                    machine.note_assigned(index, element);
+                    let result = run_rest(&assigned, machine, on_complete);
+                    if result.is_err() || has_generated(machine) {
+                        target(machine, is_init)[index] = UNASSIGNED;
+                        machine.assigned -= 1;
+                        return result;
+                    }
+                }
+                target(machine, is_init)[index] = UNASSIGNED;
+                machine.assigned -= 1;
+            }
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
@@ -3016,7 +3307,10 @@ impl<'a> Compiler<'a> {
                     next.resize(width, UNASSIGNED);
                     let outer = std::mem::replace(&mut machine.next, next);
                     let assigned = std::mem::replace(&mut machine.assigned, 0);
+                    // TLC's ENABLED walks every successor, even as it generates (`Tool.enabled`).
+                    let generate = machine.generate.take();
                     let result = walk(machine, &mut |_: &mut Machine<'_>| Err(Bail(FOUND)));
+                    machine.generate = generate;
                     let inner = std::mem::replace(&mut machine.next, outer);
                     machine.spare_states.push(inner);
                     machine.assigned = assigned;
@@ -3036,6 +3330,147 @@ impl<'a> Compiler<'a> {
 type Level = (Ordered, Vec<u32>, bool);
 
 fn exists_step(levels: Vec<Level>, body: Rest, reject: Option<Reject>) -> Step {
+    let enumerated = enumerated_exists_step(levels.clone(), body.clone(), reject);
+    step(move |machine, on_complete| {
+        if machine.generate.is_some() {
+            generated_exists(&levels, &body, machine, on_complete)
+        } else {
+            enumerated(machine, on_complete)
+        }
+    })
+}
+
+/// A disjunction as TLC generating walks it (`Tool.getNextStates`, OPCODE_dl and OPCODE_lor):
+/// from a disjunct the worker's generator draws, striding by a prime it draws, until one keeps a
+/// successor. A nested disjunction draws again for each binary one, from the outermost.
+fn generated_disjunction(
+    branches: &[Rest],
+    is_nested: bool,
+    machine: &mut Machine<'_>,
+    on_complete: &mut Continue<'_>,
+) -> Outcome<()> {
+    if is_nested && branches.len() > 2 {
+        let (last, first) = branches.split_last().expect("disjuncts");
+        let mut index = draw_disjunct(machine, 2)?;
+        let stride = draw_stride(machine)?;
+        for _ in 0..2 {
+            if index == 0 {
+                generated_disjunction(first, true, machine, on_complete)?;
+            } else {
+                run_rest(last, machine, on_complete)?;
+            }
+            if has_generated(machine) {
+                return Ok(());
+            }
+            index = (index + stride) % 2;
+        }
+        return Ok(());
+    }
+    let count = branches.len();
+    let mut index = draw_disjunct(machine, count)?;
+    let stride = draw_stride(machine)?;
+    for _ in 0..count {
+        run_rest(&branches[index], machine, on_complete)?;
+        if has_generated(machine) {
+            return Ok(());
+        }
+        index = (index + stride) % count;
+    }
+    Ok(())
+}
+
+// `(int) Math.floor(rng.nextDouble() * alen)` of the worker's generator.
+fn draw_disjunct(machine: &mut Machine<'_>, count: usize) -> Outcome<usize> {
+    let generate = machine.generate.as_mut().ok_or(Bail(NOT_GENERATING))?;
+    Ok(generate.random.next_index(count))
+}
+
+// `rng.nextPrime()` of the worker's generator.
+fn draw_stride(machine: &mut Machine<'_>) -> Outcome<usize> {
+    let generate = machine.generate.as_mut().ok_or(Bail(NOT_GENERATING))?;
+    Ok(tla_values::random::next_prime(&mut generate.random) as usize)
+}
+
+const NOT_GENERATING: &str = "a generated walk without the worker's generator";
+
+/// Whether the walk of an action TLC generates kept a successor, past which each disjunction,
+/// `\E` and `x' \in S` stops (`SimulationWorker.hasStates`).
+fn has_generated(machine: &Machine<'_>) -> bool {
+    machine
+        .generate
+        .as_ref()
+        .is_some_and(|generate| generate.has_states)
+}
+
+/// The positions in which TLC generating takes the elements of a set of `size` elements, of a set
+/// it holds in its normalized order (`Enumerable.elements(Ordering.RANDOMIZED)`, an
+/// `EnumerableValue.SubsetEnumerator` of all of them): drawn from the generator RandomElement
+/// draws from, and nothing for an empty set.
+fn draw_positions(machine: &mut Machine<'_>, size: u32) -> Vec<u32> {
+    tla_values::random::get_subset_indices(
+        u64::from(size),
+        u64::from(size),
+        &mut machine.random,
+        false,
+    )
+    .into_iter()
+    .map(|position| position as u32)
+    .collect()
+}
+
+/// `\E` as TLC generating walks it (`Tool.getNextStates`, OPCODE_be): `Tool.contexts` evaluates
+/// each bound's set and draws its order in turn, then the bindings go with the first bound
+/// varying fastest, each enumerator starting its order over once it runs out, until one keeps a
+/// successor.
+fn generated_exists(
+    levels: &[Level],
+    body: &Rest,
+    machine: &mut Machine<'_>,
+    on_complete: &mut Continue<'_>,
+) -> Outcome<()> {
+    let mut orders = Vec::with_capacity(levels.len());
+    for (set, ..) in levels {
+        let id = (set.eval)(machine)?;
+        let size = set.size(machine, id)?;
+        if set.is_ordered {
+            return Err(Bail(GENERATED_LAZY));
+        }
+        orders.push((id, draw_positions(machine, size)));
+    }
+    if orders.iter().any(|(_, positions)| positions.is_empty()) {
+        return Ok(());
+    }
+    let mut at = vec![0usize; levels.len()];
+    loop {
+        for (level, (_, slots, tuple)) in levels.iter().enumerate() {
+            let (id, positions) = &orders[level];
+            let element = element_at(machine, *id, positions[at[level]]);
+            assign_bound(machine, slots, *tuple, element)?;
+        }
+        run_rest(body, machine, on_complete)?;
+        if has_generated(machine) {
+            return Ok(());
+        }
+        let mut level = 0;
+        while level < levels.len() {
+            at[level] += 1;
+            if at[level] < orders[level].1.len() {
+                break;
+            }
+            at[level] = 0;
+            level += 1;
+        }
+        if level == levels.len() {
+            return Ok(());
+        }
+    }
+}
+
+/// What a walk of an action TLC generates stops at where it draws from a set TLC keeps lazy,
+/// whose order the engine doesn't follow.
+const GENERATED_LAZY: &str = "unsupported: generating from a set TLC keeps lazy";
+
+fn enumerated_exists_step(levels: Vec<Level>, body: Rest, reject: Option<Reject>) -> Step {
     if let [(set, slots, tuple)] = &levels[..] {
         let (set, slots, tuple) = (set.clone(), slots.clone(), *tuple);
         return step(move |machine, on_complete| {
@@ -3135,10 +3570,16 @@ impl<'a> Compiler<'a> {
                 Binding::Argument(Rc::new(super::Argument {
                     expression: *expression,
                     is_each_use_alike: false,
+                    is_read_once: false,
+                    reaches_startup: std::cell::Cell::new(false),
                     is_kept: false,
                     context,
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(std::rc::Weak::new()),
+                    once_slot: None,
+                    is_applied_function: false,
+                    is_named_once: false,
+                    is_built_alike: false,
                 }))
             }
             ScopeBinding::Closure {
@@ -3198,16 +3639,95 @@ impl<'a> Compiler<'a> {
         let context = Context {
             is_init,
             can_print: options.can_print,
+            is_walked: true,
             ..context
         };
-        self.compile_step(
+        let outer = if is_init {
+            let mut predicates = HashSet::new();
+            self.collect_init_predicates(node, &mut predicates);
+            std::mem::replace(&mut self.init_predicates, predicates)
+        } else {
+            HashSet::new()
+        };
+        let step = self.compile_step(
             node,
             &context,
             WalkOptions {
                 is_init,
                 is_shortcut,
             },
-        )
+        );
+        if is_init {
+            self.init_predicates = outer;
+        }
+        step
+    }
+
+    // The nodes TLC may compute the initial states from (`Tool.getInitStates`): the predicate,
+    // the operands of a conjunction, a disjunction or an implication, the bodies of quantifiers,
+    // LETs and labels, an IF's or a CASE's arms, the body of an operator it applies (and its
+    // arguments, which it may reach as `LazyValue`s) and of a LET's definition, and the body of a
+    // constructor it applies, together with the function of each application among them
+    // (OPCODE_fa). It is a superset: the engine only keeps from applying these lazily.
+    fn collect_init_predicates(&self, node: NodeId, predicates: &mut HashSet<NodeId>) {
+        let (node, kind) = self.node(node);
+        if !predicates.insert(node) {
+            return;
+        }
+        let mut next: Vec<NodeId> = Vec::new();
+        match kind {
+            NodeKind::And(operands) | NodeKind::Or(operands) => next.extend(operands),
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => next.extend([*consequent, *alternative]),
+            NodeKind::Case { arms, other } => {
+                next.extend(arms.iter().map(|&(_, arm)| arm));
+                next.extend(other);
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => {
+                next.push(*body);
+                next.extend(definitions.iter().map(|&each| self.definition(each).body));
+            }
+            NodeKind::Exists { body, .. }
+            | NodeKind::Forall { body, .. }
+            | NodeKind::Label { body, .. }
+            | NodeKind::Lambda { body, .. } => next.push(*body),
+            NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
+                if let Resolution::Definition(index) = name.resolution {
+                    next.push(self.definition(self.ir.definitions[index as usize]).body);
+                }
+            }
+            NodeKind::Apply { name, args } => match name.resolution {
+                Resolution::Builtin(index) => {
+                    if matches!(
+                        self.builtin_name(index),
+                        "=>" | "$Nop" | "\\/" | "/\\" | "\\lor" | "\\land"
+                    ) {
+                        next.extend(args);
+                    }
+                }
+                Resolution::Definition(index) => {
+                    next.push(self.definition(self.ir.definitions[index as usize]).body);
+                    next.extend(args);
+                }
+                _ => next.extend(args),
+            },
+            NodeKind::FunctionApplication { function, .. } => {
+                let (function, kind) = self.node(*function);
+                predicates.insert(function);
+                if let NodeKind::FunctionConstruction { body, .. } = kind {
+                    next.push(*body);
+                }
+            }
+            _ => {}
+        }
+        for each in next {
+            self.collect_init_predicates(each, predicates);
+        }
     }
 
     /// Compiles a root of the model in the scope of the instance it comes from, as a property

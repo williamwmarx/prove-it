@@ -1,0 +1,24 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module EvalTupleInvariant
+Linting of module TLCExt
+Linting of module EvalTupleInvariant
+Computing initial states...
+Error: Attempted to check equality of the function <<>> with the value:
+1
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in EvalTupleInvariant
+1. Line 6, column 8 to line 6, column 24 in EvalTupleInvariant
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

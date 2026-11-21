@@ -1,0 +1,14 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Json
+Semantic processing of module JsonFraction
+Linting of module Json
+Linting of module JsonFraction
+Error: Evaluating assumption line 4, col 8 to line 4, col 54 of module JsonFraction failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,
+but it produced the following error:
+Cannot convert value: expected a 32-bit integer JSON number, but found 1.5

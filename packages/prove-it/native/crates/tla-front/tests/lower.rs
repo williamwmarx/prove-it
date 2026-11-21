@@ -10,6 +10,8 @@ use tla_ir::{Ir, Junction, Model, NodeKind, Resolution, Startup};
 fn lower(source: &str, name: &str) -> Ir {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     let environment = create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &|_| None,
         config: &config,
@@ -58,6 +60,7 @@ fn lower(source: &str, name: &str) -> Ir {
             // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
             random_seed: 0,
             fingerprint_index: 0,
+            root_module_name: None,
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),
@@ -67,6 +70,7 @@ fn lower(source: &str, name: &str) -> Ir {
             instance_actions: Vec::new(),
             instance_names: Vec::new(),
             tlc_spec: None,
+            evaluated_definitions: Vec::new(),
         })
         .expect("an IR")
 }
@@ -121,4 +125,43 @@ fn records_how_each_junction_is_written() {
             prefix_ends: vec![(5, 11), (5, 16)],
         }
     );
+}
+
+#[test]
+fn selections_retain_the_actual_nop_and_its_call_location() {
+    let ir = lower(
+        "---- MODULE M ----\nVARIABLES x,y\nV == L::<<x,y>>\nS == V!L\n====",
+        "S",
+    );
+    let selected = ir.nodes.arena.iter().find(|node| matches!(&node.kind,
+        NodeKind::Apply { name, args } if matches!(name.resolution,
+            Resolution::Builtin(index) if &*ir.texts[ir.builtins[index as usize].name as usize] == "$Nop") && args.len() == 1)).expect("the actual selector wrapper");
+    assert_eq!(selected.line, 4);
+    let NodeKind::Apply { args, .. } = &selected.kind else {
+        unreachable!()
+    };
+    assert_eq!(ir.nodes.arena[args[0] as usize].line, 3);
+}
+
+#[test]
+fn direct_labels_and_parameterized_selections_do_not_invent_nops() {
+    for (source, name) in [
+        ("---- MODULE M ----\nVARIABLE x\nV == L::x\n====", "V"),
+        ("---- MODULE M ----\nV(p) == L::p\nS == V(1)!L\n====", "S"),
+        (
+            "---- MODULE M ----\nAp(F(_),x)==F(x)\nOp==Ap(LAMBDA x:x=1,1)\nS==Ap(Op!1,1)\n====",
+            "S",
+        ),
+        (
+            "---- MODULE M ----\nVARIABLE x\nV==LET A==x IN A\nS==V!:!A\n====",
+            "S",
+        ),
+    ] {
+        let ir = lower(source, name);
+        assert!(
+            !ir.builtins
+                .iter()
+                .any(|builtin| &*ir.texts[builtin.name as usize] == "$Nop")
+        );
+    }
 }

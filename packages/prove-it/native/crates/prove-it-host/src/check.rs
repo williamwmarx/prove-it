@@ -87,6 +87,17 @@ impl SourcesHost {
 }
 
 impl Host for SourcesHost {
+    fn modeled_parent_runtime(&self, is_java_launch: bool) -> tla_front::model::ParentRuntime {
+        // The CLI's bare command line runs the TLC the binary models, as the binary's does, and
+        // the library's Java-shaped property arguments describe that same runtime. A Java launch
+        // on the CLI names a JVM and a jar the host can't attribute.
+        if is_java_launch && !self.is_library {
+            tla_front::model::ParentRuntime::Unknown
+        } else {
+            tla_front::model::ParentRuntime::ModeledTlcMasterJdk21
+        }
+    }
+
     // The library names its files by the spec's name alone. The CLI answers for paths: what is
     // there, its bytes and its real path, which the check reads next of a file it finds, so they
     // come in the same round.
@@ -172,10 +183,38 @@ impl Host for SourcesHost {
 
     fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
         if self.is_library {
+            if self.class_origin(directories, name) == tla_front::model::ClassOrigin::Absent {
+                return None;
+            }
             let bytes = self.sources.get_bytes(format!("class:{name}"))?;
             return Some((PathBuf::from(format!("{name}.class")), bytes));
         }
+        if self.class_origin(directories, name) == tla_front::model::ClassOrigin::Absent {
+            return None;
+        }
         resolve::load_class(self, directories, name)
+    }
+
+    fn class_origin(&self, directories: &[&Path], name: &str) -> tla_front::model::ClassOrigin {
+        use tla_front::model::ClassOrigin;
+        if self.is_library {
+            return match self.get("class-space".to_owned()).as_deref() {
+                Some("absent") => ClassOrigin::Absent,
+                _ => ClassOrigin::Unknown,
+            };
+        }
+        let mut found = ClassOrigin::Absent;
+        for directory in directories {
+            let path = self
+                .platform()
+                .join(&directory.to_string_lossy(), &format!("{name}.class"));
+            match self.get(format!("class-origin:{path}")).as_deref() {
+                Some("present") => return ClassOrigin::Present,
+                Some("absent") => {}
+                _ => found = ClassOrigin::Unknown,
+            }
+        }
+        found
     }
 
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {
@@ -186,11 +225,18 @@ impl Host for SourcesHost {
         Box::new(move |name, origin| describer.describe(name, origin))
     }
 
+    // The CLI's JavaScript passes the PROVE_IT_ settings with the machine; the variables the JVM
+    // reads, which make a launch's classes opaque, it answers as a key (`variable:<name>`).
     fn get_variable(&self, name: &str) -> Option<String> {
-        self.variables
+        let passed = self
+            .variables
             .iter()
             .find(|(variable, _)| variable == name)
-            .map(|(_, value)| value.clone())
+            .map(|(_, value)| value.clone());
+        if passed.is_some() || self.is_library || !prove_it_check::JVM_VARIABLES.contains(&name) {
+            return passed;
+        }
+        self.get(format!("variable:{name}"))
     }
 
     fn now(&self) -> SystemTime {
@@ -719,5 +765,80 @@ mod tests {
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));
         assert!(host.now() > first && first >= UNIX_EPOCH);
+    }
+    #[test]
+    fn parent_runtime_is_modeled_but_for_a_java_launch_on_the_cli() {
+        use tla_front::model::ParentRuntime;
+        for is_library in [false, true] {
+            let host = host(&[], Vec::new(), is_library);
+            for java_launch in [false, true] {
+                assert_eq!(
+                    host.modeled_parent_runtime(java_launch),
+                    if java_launch && !is_library {
+                        ParentRuntime::Unknown
+                    } else {
+                        ParentRuntime::ModeledTlcMasterJdk21
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_cli_reads_the_jvm_variables_as_keys() {
+        let passed = vec![("PROVE_IT_X".to_owned(), "1".to_owned())];
+        let cli = host(&[], passed.clone(), false);
+        assert_eq!(cli.get_variable("PROVE_IT_X").as_deref(), Some("1"));
+        assert_eq!(cli.get_variable("TZ"), None);
+        assert!(!cli.sources.has_needed());
+        assert_eq!(cli.get_variable("CLASSPATH"), None);
+        assert!(cli.sources.has_needed());
+        let cli = host(
+            &[
+                ("variable:CLASSPATH", "/lib"),
+                ("variable:JAVA_TOOL_OPTIONS", "-Dx=1"),
+            ],
+            passed.clone(),
+            false,
+        );
+        assert_eq!(cli.get_variable("CLASSPATH").as_deref(), Some("/lib"));
+        assert_eq!(
+            cli.get_variable("JAVA_TOOL_OPTIONS").as_deref(),
+            Some("-Dx=1")
+        );
+        let library = host(&[], passed, true);
+        assert_eq!(library.get_variable("CLASSPATH"), None);
+        assert!(!library.sources.has_needed());
+    }
+
+    fn host(
+        answers: &[(&str, &str)],
+        variables: Vec<(String, String)>,
+        is_library: bool,
+    ) -> SourcesHost {
+        let values = answers
+            .iter()
+            .map(|(key, value)| {
+                HostValue::Array(vec![HostValue::text(key), HostValue::text(value)])
+            })
+            .collect();
+        SourcesHost {
+            sources: Sources::new(&HostValue::Array(values)).unwrap(),
+            machine: Machine {
+                system: String::new(),
+                release: String::new(),
+                arch: String::new(),
+                cores: 1,
+                memory_megabytes: 1,
+                pid: 1,
+            },
+            now: UNIX_EPOCH,
+            started: Instant::now(),
+            zone: Zone::UTC,
+            variables,
+            is_library,
+            writes: RefCell::default(),
+            files: RefCell::default(),
+        }
     }
 }

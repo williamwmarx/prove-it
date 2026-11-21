@@ -15,8 +15,9 @@ use std::sync::OnceLock;
 
 use crate::TlcVersion;
 use crate::ast::{
-    Assumed, Bound, BoundPattern, DefinitionUnit, Expr, Expression, ExpressionKind, Fact, Location,
-    Module, ModuleUnit, Position, Proof, ProofKind, Statement, StepBody, SymbolLevel,
+    Assumed, Bound, BoundPattern, Definition, DefinitionKind, DefinitionUnit, Expr, Expression,
+    ExpressionKind, Fact, Location, Module, ModuleUnit, Position, Proof, ProofKind, Statement,
+    StepBody, SymbolLevel,
 };
 use crate::hash::{FastMap, FastSet};
 use crate::levels::TEMPORAL_LEVEL;
@@ -316,14 +317,43 @@ fn is_parameter_free(graph: &Graph, module: NodeId) -> bool {
     })
 }
 
-/// `getLetInstances`: the modules the LET instances of an expression instantiate.
+/// `getInstances`: ParseUnit.getInstances walks the syntax tree of a unit in preorder and takes
+/// the module of each N_NonLocalInstance it meets, before the substitutions of its WITH, which may
+/// hold a LET with an INSTANCE. A LET's definitions and instances are walked in the order they
+/// are written, and a function definition's bounds before its body.
 fn get_let_instances(expression: &Expr, found: &mut Vec<Name>) {
     if let ExpressionKind::Let {
-        instances: Some(instances),
+        definitions,
+        instances,
+        body,
         ..
     } = &expression.kind
     {
-        found.extend(instances.iter().map(|instance| instance.module.clone()));
+        let mut units: Vec<(u32, u32, DefinitionUnit)> = definitions
+            .iter()
+            .map(|definition| {
+                let location = &definition.location;
+                (
+                    location.line,
+                    location.column,
+                    DefinitionUnit::Definition(definition.clone()),
+                )
+            })
+            .chain(instances.iter().flatten().map(|instance| {
+                let location = &instance.location;
+                (
+                    location.line,
+                    location.column,
+                    DefinitionUnit::Instance(instance.clone()),
+                )
+            }))
+            .collect();
+        units.sort_by_key(|(line, column, _)| (*line, *column));
+        for (_, _, unit) in &units {
+            get_definition_unit_instances(unit, found);
+        }
+        get_let_instances(body, found);
+        return;
     }
     expression
         .children()
@@ -331,11 +361,41 @@ fn get_let_instances(expression: &Expr, found: &mut Vec<Name>) {
         .for_each(|child| get_let_instances(child, found));
 }
 
-/// `getStatementInstances`: those of a theorem or assumption's statement.
+/// Those of an INSTANCE: its module, then the expressions it substitutes.
+fn get_instance_instances(instance: &crate::ast::Instance, found: &mut Vec<Name>) {
+    found.push(instance.module.clone());
+    for substitution in &instance.substitutions {
+        get_let_instances(&substitution.expression, found);
+    }
+}
+
+/// Those of a definition: a function's bounds, then its body.
+fn get_definition_instances(definition: &Definition, found: &mut Vec<Name>) {
+    if let DefinitionKind::Function { bounds } = &definition.kind {
+        bounds
+            .iter()
+            .for_each(|bound| get_let_instances(&bound.set, found));
+    }
+    get_let_instances(&definition.body, found);
+}
+
+fn get_definition_unit_instances(unit: &DefinitionUnit, found: &mut Vec<Name>) {
+    match unit {
+        DefinitionUnit::Definition(definition) => get_definition_instances(definition, found),
+        DefinitionUnit::Instance(instance) => get_instance_instances(instance, found),
+    }
+}
+
+/// `getStatementInstances`: those of a theorem or assumption's statement, the set of a NEW
+/// symbol's bound among them.
 fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
     match assumed {
         Assumed::Expression(expression) => get_let_instances(expression, found),
-        Assumed::NewSymbol(_) => {}
+        Assumed::NewSymbol(symbol) => {
+            if let Some(set) = &symbol.set {
+                get_let_instances(set, found);
+            }
+        }
         Assumed::AssumeProve(assume_prove)
         | Assumed::Label {
             body: assume_prove, ..
@@ -349,77 +409,72 @@ fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
     }
 }
 
-/// The modules the proofs of the theorems of the module and of the modules within it instantiate:
-/// ParseUnit.getInstances finds them, which SANY loads and analyzes, and `getDependencies`
-/// doesn't.
-pub(crate) fn get_proof_instances(module: &Module) -> Vec<Name> {
-    fn get_fact_instances(facts: &[Fact], found: &mut Vec<Name>) {
-        for fact in facts {
-            if let Fact::Expression(expression) = fact {
-                get_let_instances(expression, found);
-            }
+fn get_statement_instances(statement: &Statement, found: &mut Vec<Name>) {
+    match statement {
+        Statement::Expression(expression) => get_let_instances(expression, found),
+        Statement::AssumeProve(assume_prove) => {
+            get_assumed_instances(&Assumed::AssumeProve(assume_prove.clone()), found)
         }
     }
-    fn get_instances(proof: &Proof, found: &mut Vec<Name>) {
-        match &proof.kind {
-            ProofKind::Obvious { .. } | ProofKind::Omitted { .. } => {}
-            ProofKind::By { facts, defs, .. } => {
-                get_fact_instances(facts, found);
-                get_fact_instances(defs, found);
-            }
-            ProofKind::Steps { steps, .. } => {
-                for step in steps {
-                    match &step.body {
-                        StepBody::Instance(instance) => found.push(instance.module.clone()),
-                        StepBody::Define { definitions, .. } => {
-                            for definition in definitions {
-                                match definition {
-                                    DefinitionUnit::Instance(instance) => {
-                                        found.push(instance.module.clone())
-                                    }
-                                    DefinitionUnit::Definition(definition) => {
-                                        get_let_instances(&definition.body, found)
-                                    }
-                                }
-                            }
-                        }
-                        StepBody::UseOrHide(use_or_hide) => {
-                            get_fact_instances(&use_or_hide.facts, found);
-                            get_fact_instances(&use_or_hide.defs, found);
-                        }
-                        StepBody::Have(expression) | StepBody::Case(expression) => {
-                            get_let_instances(expression, found)
-                        }
-                        StepBody::Witness(expressions) => expressions
-                            .iter()
-                            .for_each(|expression| get_let_instances(expression, found)),
-                        StepBody::Take { bounds, .. } => bounds
-                            .iter()
-                            .for_each(|bound| get_let_instances(&bound.set, found)),
-                        StepBody::Pick { bounds, body, .. } => {
-                            bounds
-                                .iter()
-                                .for_each(|bound| get_let_instances(&bound.set, found));
-                            get_let_instances(body, found);
-                        }
-                        StepBody::Assert { statement, .. } => match statement {
-                            Statement::Expression(expression) => {
-                                get_let_instances(expression, found)
-                            }
-                            Statement::AssumeProve(assume_prove) => get_assumed_instances(
-                                &Assumed::AssumeProve(assume_prove.clone()),
-                                found,
-                            ),
-                        },
-                        StepBody::Qed => {}
+}
+
+/// The modules the expressions of facts instantiate in LETs.
+fn get_fact_instances(facts: &[Fact], found: &mut Vec<Name>) {
+    for fact in facts {
+        if let Fact::Expression(expression) = fact {
+            get_let_instances(expression, found);
+        }
+    }
+}
+
+/// The modules a proof instantiates, in the order ParseUnit.getInstances walks its tree.
+fn get_instances(proof: &Proof, found: &mut Vec<Name>) {
+    match &proof.kind {
+        ProofKind::Obvious { .. } | ProofKind::Omitted { .. } => {}
+        ProofKind::By { facts, defs, .. } => {
+            get_fact_instances(facts, found);
+            get_fact_instances(defs, found);
+        }
+        ProofKind::Steps { steps, .. } => {
+            for step in steps {
+                match &step.body {
+                    StepBody::Instance(instance) => get_instance_instances(instance, found),
+                    StepBody::Define { definitions, .. } => definitions
+                        .iter()
+                        .for_each(|unit| get_definition_unit_instances(unit, found)),
+                    StepBody::UseOrHide(use_or_hide) => {
+                        get_fact_instances(&use_or_hide.facts, found);
+                        get_fact_instances(&use_or_hide.defs, found);
                     }
-                    if let Some(proof) = &step.proof {
-                        get_instances(proof, found);
+                    StepBody::Have(expression) | StepBody::Case(expression) => {
+                        get_let_instances(expression, found)
                     }
+                    StepBody::Witness(expressions) => expressions
+                        .iter()
+                        .for_each(|expression| get_let_instances(expression, found)),
+                    StepBody::Take { bounds, .. } => bounds
+                        .iter()
+                        .for_each(|bound| get_let_instances(&bound.set, found)),
+                    StepBody::Pick { bounds, body, .. } => {
+                        bounds
+                            .iter()
+                            .for_each(|bound| get_let_instances(&bound.set, found));
+                        get_let_instances(body, found);
+                    }
+                    StepBody::Assert { statement, .. } => get_statement_instances(statement, found),
+                    StepBody::Qed => {}
+                }
+                if let Some(proof) = &step.proof {
+                    get_instances(proof, found);
                 }
             }
         }
     }
+}
+
+/// The modules the proofs of the theorems of the module and of the modules within it instantiate:
+/// ParseUnit.getInstances finds them, which SANY loads and analyzes, as `getDependencies` does.
+pub(crate) fn get_proof_instances(module: &Module) -> Vec<Name> {
     let mut found = Vec::new();
     for unit in &module.units {
         if let ModuleUnit::Theorem(theorem) = unit
@@ -432,6 +487,124 @@ pub(crate) fn get_proof_instances(module: &Module) -> Vec<Name> {
         found.extend(get_proof_instances(inner));
     }
     found
+}
+
+/// Whether a function definition of the module, at any depth, has a bound that holds a LET. The
+/// LET's `==` is the first that TLAplusParser.belchDEF meets after the definition before, so it
+/// puts the DEFBREAK that begins a definition before the LET's definition and not before the
+/// function's name, and SANY's parser rejects the module where the front end's accepts it.
+pub(crate) fn has_let_in_function_bound(module: &Module) -> bool {
+    fn has_let(expression: &Expr) -> bool {
+        matches!(expression.kind, ExpressionKind::Let { .. })
+            || expression.children().iter().any(has_let)
+    }
+    fn is_in_definition(definition: &Definition) -> bool {
+        matches!(&definition.kind, DefinitionKind::Function { bounds }
+            if bounds.iter().any(|bound| has_let(&bound.set)))
+    }
+    fn is_in_expression(expression: &Expr) -> bool {
+        if let ExpressionKind::Let { definitions, .. } = &expression.kind
+            && definitions
+                .iter()
+                .any(|definition| is_in_definition(definition))
+        {
+            return true;
+        }
+        expression.children().iter().any(is_in_expression)
+    }
+    fn is_in_assumed(assumed: &Assumed) -> bool {
+        match assumed {
+            Assumed::Expression(expression) => is_in_expression(expression),
+            Assumed::NewSymbol(symbol) => symbol.set.as_ref().is_some_and(is_in_expression),
+            Assumed::AssumeProve(assume_prove)
+            | Assumed::Label {
+                body: assume_prove, ..
+            } => {
+                assume_prove.assumptions.iter().any(is_in_assumed)
+                    || is_in_expression(&assume_prove.conclusion)
+            }
+        }
+    }
+    fn is_in_statement(statement: &Statement) -> bool {
+        match statement {
+            Statement::Expression(expression) => is_in_expression(expression),
+            Statement::AssumeProve(assume_prove) => {
+                assume_prove.assumptions.iter().any(is_in_assumed)
+                    || is_in_expression(&assume_prove.conclusion)
+            }
+        }
+    }
+    fn is_in_facts(facts: &[Fact]) -> bool {
+        facts.iter().any(
+            |fact| matches!(fact, Fact::Expression(expression) if is_in_expression(expression)),
+        )
+    }
+    fn is_in_instance(instance: &crate::ast::Instance) -> bool {
+        instance
+            .substitutions
+            .iter()
+            .any(|substitution| is_in_expression(&substitution.expression))
+    }
+    fn is_in_full_definition(definition: &Definition) -> bool {
+        is_in_definition(definition)
+            || match &definition.kind {
+                DefinitionKind::Function { bounds } => {
+                    bounds.iter().any(|bound| is_in_expression(&bound.set))
+                }
+                DefinitionKind::Operator { .. } => false,
+            }
+            || is_in_expression(&definition.body)
+    }
+    fn is_in_proof(proof: &Proof) -> bool {
+        match &proof.kind {
+            ProofKind::Obvious { .. } | ProofKind::Omitted { .. } => false,
+            ProofKind::By { facts, defs, .. } => is_in_facts(facts) || is_in_facts(defs),
+            ProofKind::Steps { steps, .. } => steps.iter().any(|step| {
+                (match &step.body {
+                    StepBody::Instance(instance) => is_in_instance(instance),
+                    StepBody::Define { definitions, .. } => {
+                        definitions.iter().any(|unit| match unit {
+                            DefinitionUnit::Definition(definition) => {
+                                is_in_full_definition(definition)
+                            }
+                            DefinitionUnit::Instance(instance) => is_in_instance(instance),
+                        })
+                    }
+                    StepBody::UseOrHide(use_or_hide) => {
+                        is_in_facts(&use_or_hide.facts) || is_in_facts(&use_or_hide.defs)
+                    }
+                    StepBody::Have(expression) | StepBody::Case(expression) => {
+                        is_in_expression(expression)
+                    }
+                    StepBody::Witness(expressions) => expressions.iter().any(is_in_expression),
+                    StepBody::Take { bounds, .. } => {
+                        bounds.iter().any(|bound| is_in_expression(&bound.set))
+                    }
+                    StepBody::Pick { bounds, body, .. } => {
+                        bounds.iter().any(|bound| is_in_expression(&bound.set))
+                            || is_in_expression(body)
+                    }
+                    StepBody::Assert { statement, .. } => is_in_statement(statement),
+                    StepBody::Qed => false,
+                }) || step.proof.as_deref().is_some_and(is_in_proof)
+            }),
+        }
+    }
+    module.units.iter().any(|unit| match unit {
+        ModuleUnit::Definition(definition) => is_in_full_definition(definition),
+        ModuleUnit::Instance(instance) => is_in_instance(instance),
+        ModuleUnit::Assumption(assumption) => is_in_expression(&assumption.expression),
+        ModuleUnit::Theorem(theorem) => {
+            is_in_statement(&theorem.statement) || theorem.proof.as_ref().is_some_and(is_in_proof)
+        }
+        ModuleUnit::Use(use_or_hide) => {
+            is_in_facts(&use_or_hide.facts) || is_in_facts(&use_or_hide.defs)
+        }
+        ModuleUnit::Module(inner) => has_let_in_function_bound(inner),
+        ModuleUnit::Constants { .. } | ModuleUnit::Variables { .. } | ModuleUnit::Recursive(_) => {
+            false
+        }
+    })
 }
 
 /// `isInternalInstance`: SpecObj.instanceResolvesToInternalModule, SANY finds a module that the
@@ -498,11 +671,12 @@ struct LabelScope {
 /// `getDependencies`: ParseUnit.calculateContextWithinParseUnit lets a module know the inner
 /// modules defined before it in the modules enclosing it and the inner modules of the modules it
 /// extends, but not itself. SANY looks at a module's own EXTENDS and INSTANCEs before those of its
-/// inner modules.
+/// inner modules, and finds a module's INSTANCEs with ParseUnit.getInstances, which walks every
+/// unit of it: definitions, INSTANCEs and their substitutions, ASSUMEs, THEOREMs with their
+/// proofs, and USEs and HIDEs.
 pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
     fn visit(
         current: &Rc<Module>,
-        is_root: bool,
         context: &FastMap<Name, Rc<Module>>,
         dependencies: &mut ModuleDependencies,
     ) -> DependencyScope {
@@ -541,20 +715,22 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
         let mut instances = Vec::new();
         for unit in &current.units {
             match unit {
-                ModuleUnit::Instance(instance) => instances.push(instance.module.clone()),
+                ModuleUnit::Instance(instance) => get_instance_instances(instance, &mut instances),
                 ModuleUnit::Definition(definition) => {
-                    get_let_instances(&definition.body, &mut instances)
+                    get_definition_instances(definition, &mut instances)
                 }
-                ModuleUnit::Theorem(theorem) if is_root => match &theorem.statement {
-                    Statement::Expression(expression) => {
-                        get_let_instances(expression, &mut instances)
+                ModuleUnit::Theorem(theorem) => {
+                    get_statement_instances(&theorem.statement, &mut instances);
+                    // ParseUnit.getInstances walks the theorem's proof after its statement.
+                    if let Some(proof) = &theorem.proof {
+                        get_instances(proof, &mut instances);
                     }
-                    Statement::AssumeProve(assume_prove) => get_assumed_instances(
-                        &Assumed::AssumeProve(assume_prove.clone()),
-                        &mut instances,
-                    ),
-                },
-                ModuleUnit::Assumption(assumption) if is_root => {
+                }
+                ModuleUnit::Use(use_or_hide) => {
+                    get_fact_instances(&use_or_hide.facts, &mut instances);
+                    get_fact_instances(&use_or_hide.defs, &mut instances);
+                }
+                ModuleUnit::Assumption(assumption) => {
                     get_let_instances(&assumption.expression, &mut instances)
                 }
                 _ => {}
@@ -594,14 +770,14 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
                 }
             }
             add_extended_inner_modules(inner, &mut extenders, &mut inner_context);
-            let inner_scope = visit(inner, false, &inner_context, dependencies);
+            let inner_scope = visit(inner, &inner_context, dependencies);
             scope.inners.push(inner_scope);
             peers.insert(inner.name.clone(), inner.clone());
         }
         scope
     }
     let mut dependencies = ModuleDependencies::default();
-    dependencies.scope = visit(module, true, &FastMap::default(), &mut dependencies);
+    dependencies.scope = visit(module, &FastMap::default(), &mut dependencies);
     dependencies
 }
 

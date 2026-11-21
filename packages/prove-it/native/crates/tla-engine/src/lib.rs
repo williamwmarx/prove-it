@@ -6,6 +6,7 @@
 pub mod clock;
 pub mod compile;
 pub mod context;
+pub mod dfid;
 pub mod footprint;
 pub mod live;
 mod log_file;
@@ -17,5 +18,7 @@ pub mod simulate;
 pub mod symmetry;
 
 pub use compile::{CompileError, Compiled, Compiler, Options, Root};
-pub use machine::{Continue, Eval, Machine, Printed, Prints, Program, Registers, Step, UNASSIGNED};
+pub use machine::{
+    Continue, Eval, Machine, Printed, Prints, Program, Registers, RuntimeWarning, Step, UNASSIGNED,
+};
 pub use tla_values::on_nesting_stack;

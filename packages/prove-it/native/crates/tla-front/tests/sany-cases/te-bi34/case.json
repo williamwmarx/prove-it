@@ -1,6 +1,5 @@
 {
   "root": "Spec",
   "version": "master",
-  "mode": "default",
-  "declines": "a module SANY's parser accepts"
+  "mode": "default"
 }

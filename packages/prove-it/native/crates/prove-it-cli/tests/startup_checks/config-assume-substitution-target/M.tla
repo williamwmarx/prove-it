@@ -1,0 +1,6 @@
+---- MODULE M ----
+EXTENDS TLC
+CONSTANT F
+ASSUME A == TRUE
+ASSUME PrintT(1)
+====

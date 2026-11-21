@@ -1,0 +1,31 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: In evaluation, the identifier y is either undefined or not an operator.
+line 7, col 28 to line 7, col 28 of module M
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 4, col 9 to line 4, col 37 of module M>
+/\ x = 1
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 8, column 8 to line 8, column 15 in M
+1. Line 7, column 9 to line 7, column 38 in M
+2. Line 7, column 9 to line 7, column 28 in M
+3. Line 7, column 18 to line 7, column 28 in M
+4. Line 7, column 28 to line 7, column 28 in M
+
+
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

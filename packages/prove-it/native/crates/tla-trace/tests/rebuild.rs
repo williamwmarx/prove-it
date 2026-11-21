@@ -303,7 +303,8 @@ fn rebuild_violation<T: Send>(
             | ViolationKind::ActionProperty(_)
             | ViolationKind::InitialInvariant(_)
             | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
-            ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
+            ViolationKind::Lasso { loop_start, .. }
+            | ViolationKind::SimulatedLasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
             ViolationKind::Accepted { .. } => (Ending::Lasso, None),
             ViolationKind::NoNextState | ViolationKind::Error { .. } => {
                 panic!("{path}: a stop with no trace")
@@ -361,7 +362,9 @@ fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
                 .filter(|character| !character.is_whitespace())
                 .collect()
         };
+        assert!(aliases.output.iter().all(Vec::is_empty));
         Ok(aliases
+            .values
             .into_iter()
             .zip(&trace.states)
             .map(|(alias, state)| match alias {
@@ -408,17 +411,17 @@ fn checks_a_postcondition_on_the_counter_example() {
     .expect("a golden IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     let check = |count: usize| {
-        let trace = Trace {
-            states: (0..count)
+        let trace = Trace::new(
+            (0..count)
                 .map(|position| TraceState {
                     values: vec![Value::Bool(position % 2 == 1)],
                     action: (position > 0).then_some(0),
                     printed: Vec::new(),
                 })
                 .collect(),
-            trace_output: Vec::new(),
-            is_successor_lost: false,
-        };
+            Vec::new(),
+            false,
+        );
         Rebuilder::new(&ir)?.postcondition(
             0,
             &PostconditionInputs {

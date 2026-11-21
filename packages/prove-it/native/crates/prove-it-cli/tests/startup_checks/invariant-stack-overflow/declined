@@ -1,1 +1,1 @@
-the engine declined: recursion too deep
+the engine stopped: recursion too deep: a recursion that overflows TLC's stack as it computes the initial states

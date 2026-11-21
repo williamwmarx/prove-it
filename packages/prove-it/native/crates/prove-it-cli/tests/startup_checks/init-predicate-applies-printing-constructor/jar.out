@@ -1,0 +1,30 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+1
+Error: In evaluation, the identifier x is either undefined or not an operator.
+line 5, col 32 to line 5, col 32 of module M
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 38 in M
+2. Line 5, column 27 to line 5, column 37 in M
+3. Line 4, column 12 to line 4, column 37 in M
+4. Line 4, column 30 to line 4, column 30 in M
+5. Line 5, column 32 to line 5, column 36 in M
+6. Line 5, column 32 to line 5, column 32 in M
+
+
+Reason:
+In evaluation, the identifier x is either undefined or not an operator.
+line 5, col 32 to line 5, col 32 of module M
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

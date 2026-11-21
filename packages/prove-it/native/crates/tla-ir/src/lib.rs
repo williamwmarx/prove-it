@@ -40,7 +40,11 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 16;
+pub const IR_VERSION: u32 = 17;
+
+/// The version before the startup's dependents (`Startup::dependents`), which an IR without any
+/// is still written as, so that what was written then reads as it did.
+pub const IR_VERSION_WITHOUT_DEPENDENTS: u32 = 16;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -49,6 +53,13 @@ pub const MAGIC: u32 = 0x5249_4950;
 pub type TextId = u32;
 /// An index into [`Nodes::arena`].
 pub type NodeId = u32;
+/// A warning raised while TLC evaluates the model, kept in evaluation order with Print.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuntimeWarning {
+    Except { node: NodeId },
+    Unchanged { node: NodeId, variable: u32 },
+}
+
 /// An index into [`Ir::definitions`], [`Ir::scopes`], [`Ir::constants`] or [`Ir::builtins`].
 pub type Index = u32;
 
@@ -59,6 +70,124 @@ impl Ir {
             || self.texts[text as usize].encode_utf16().collect(),
             |units| units.to_vec(),
         )
+    }
+
+    /// Whether the IR may apply TLC's TLCGet to `key`: wherever it names the builtin but where
+    /// it applies it to a string literal other than `key`.
+    pub fn may_read_tlc_get(&self, key: &str) -> bool {
+        let is_tlc_get = |name: &Name| {
+            !name.is_local
+                && matches!(name.resolution, Resolution::Builtin(index)
+                    if self.builtins.get(index as usize).is_some_and(|builtin|
+                        &*self.texts[builtin.name as usize] == "TLCGet"))
+        };
+        self.nodes.arena.iter().any(|node| match &node.kind {
+            NodeKind::Apply { name, args } => {
+                is_tlc_get(name)
+                    && !args.first().is_some_and(|&arg| {
+                        matches!(&self.nodes.arena[arg as usize].kind,
+                            NodeKind::String(text) if &*self.texts[*text as usize] != key)
+                    })
+            }
+            NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => is_tlc_get(name),
+            _ => false,
+        })
+    }
+
+    /// A node, through the references that stand for it.
+    fn resolve(&self, node: NodeId) -> (NodeId, &NodeKind) {
+        let mut id = node;
+        loop {
+            match &self.nodes.arena[id as usize].kind {
+                NodeKind::Reference(target) => id = *target,
+                kind => return (id, kind),
+            }
+        }
+    }
+
+    /// How many of the ranked texts TLC numbers as the IR ranks them, which the fingerprint of a
+    /// model value of that name shows (`UniqueString.tok`): those TLC interns first, the texts of
+    /// the configuration's values (`ModelConfig`), and then those it interns as it starts, up to
+    /// the last of them, "@". The texts of the modules come after, which TLC numbers otherwise.
+    pub fn get_numbered_rank_count(&self) -> i32 {
+        let ranked = &self.texts[..(self.ranked_count as usize).min(self.texts.len())];
+        ranked
+            .iter()
+            .position(|ranked| &**ranked == "@")
+            .map_or(0, |position| position as i32 + 1)
+    }
+
+    /// The rank of the root module's name where TLC numbers it as the IR ranks it
+    /// (`UniqueString.tok`), past those of [`Ir::get_numbered_rank_count`]: the texts of the root
+    /// module rank in the order TLC interns them, from the separator of its header, which TLC
+    /// interns with the `MODULE` after it as one number, and so the name after them has TLC's
+    /// number where neither the separator nor `MODULE` ranks among those TLC interns first, nor
+    /// the name. The texts after it TLC numbers otherwise.
+    pub fn get_root_name_rank(&self) -> Option<i32> {
+        let numbered = self.get_numbered_rank_count();
+        let name = self.model.root_module_name?;
+        let ranked = &self.texts[..(self.ranked_count as usize).min(self.texts.len())];
+        let is_separator = |text: &str| text.len() >= 4 && text.bytes().all(|byte| byte == b'-');
+        let is_first_after_separator = numbered > 0
+            && ranked
+                .get(numbered as usize)
+                .is_some_and(|text| is_separator(text))
+            && name as i64 == i64::from(numbered) + 1
+            && ranked[..numbered as usize]
+                .iter()
+                .all(|text| !is_separator(text) && &**text != "MODULE");
+        is_first_after_separator.then_some(name as i32)
+    }
+
+    /// Whether the function of an application or the record of a field, other than an
+    /// application of TestRandomSetOfSubsets itself, may reach TestRandomSetOfSubsets, which TLC
+    /// evaluates there with `EvalControl.KeepLazy`: through a definition (its body, and a
+    /// function's bounds), a filter's bound set, or a name bound to an argument or a LET's
+    /// definition, which may be one, whether applied, named or passed as an operator. A
+    /// subexpression selector, which names what it reaches by text, may reach anything.
+    pub fn may_keep_test_draws_lazy(&self) -> bool {
+        let is_test = |name: &Name| {
+            !name.is_local
+                && matches!(name.resolution, Resolution::Builtin(index)
+                    if self.builtins.get(index as usize).is_some_and(|builtin|
+                        &*self.texts[builtin.name as usize] == "TestRandomSetOfSubsets"))
+        };
+        let reaches = |start: NodeId| {
+            let mut visited = std::collections::HashSet::new();
+            let mut pending = vec![start];
+            while let Some(node) = pending.pop() {
+                let (node, kind) = self.resolve(node);
+                if !visited.insert(node) {
+                    continue;
+                }
+                match kind {
+                    NodeKind::Subexpression(_) => return true,
+                    NodeKind::Identifier(name)
+                    | NodeKind::OperatorReference(name)
+                    | NodeKind::Apply { name, .. } => {
+                        if name.is_local || is_test(name) {
+                            return true;
+                        }
+                        if let Resolution::Definition(index) = name.resolution {
+                            pending.push(self.definitions[index as usize]);
+                        }
+                    }
+                    NodeKind::SetFilter { bound, .. } => pending.push(bound.set),
+                    _ => {}
+                }
+                pending.extend(kind.children());
+            }
+            false
+        };
+        self.nodes.arena.iter().any(|node| match &node.kind {
+            NodeKind::FunctionApplication { function, args } => {
+                let is_applied_test = args.len() == 1
+                    && matches!(self.resolve(*function).1, NodeKind::Apply { name, .. } if is_test(name));
+                !is_applied_test && reaches(*function)
+            }
+            NodeKind::FieldAccess { record, .. } => reaches(*record),
+            _ => false,
+        })
     }
 }
 
@@ -100,6 +229,13 @@ impl Builtin {
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
     pub const TABLE: i32 = 8;
+    /// The frontend modeled this actual configuration table object and all declared receivers
+    /// which initialize it, before startup effects. Missing/failed lazy row data stays at eval.
+    pub const TABLE_PHASE_KNOWN: i32 = 16384;
+    /// Existing source-resolver reads proved every actual standard shortcut and dependency
+    /// absent from external source paths or byte-identical to this pinned reference profile.
+    /// Only the new Json replay/Array/Object paths consume this source-prefix certificate.
+    pub const PINNED_STANDARD_SOURCES: i32 = 32768;
     /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
     /// Integers names itself.
     pub const NATURALS_GEQ: i32 = 16;
@@ -110,6 +246,24 @@ impl Builtin {
     /// them: one a configuration substitute, or a constant definition or an assumption TLC
     /// computes as it starts, reaches.
     pub const DECLINED: i32 = 64;
+    /// This exact numeral or string Expr was not visited by TLC's processConstants.
+    pub const UNINITIALIZED_LITERAL: i32 = 2048;
+    /// The standard-module linker installed TLCExt's TLCDefer with the packaged Java
+    /// implementation selected under a closed resolver and override-index context.
+    pub const PACKAGED_TLC_DEFER: i32 = 4096;
+    /// The environment found an external Java class for this builtin's module or an override
+    /// index that may replace it. Optimizations assuming the packaged method keep their prior path.
+    pub const EXTERNAL_CLASS: i32 = 256;
+    /// The frontend proved the complete Java producer context closed for this model.
+    pub const CLOSED_JAVA_CONTEXT: i32 = 8192;
+    /// With `DECLINED`, a definition a method a `tlc2.overrides.TLCOverrides` index lists
+    /// replaces (`processModuleOverrides`): the engine declines where it computes it, and only
+    /// there, since TLC never calls the method where it doesn't.
+    pub const INDEX_REPLACED: i32 = 65536;
+    /// On TLCGet: the spec reads `TLCGet("stats")` only through its domain and its fields other
+    /// than its duration, and `TLCGet("revision")` only through its domain, so the values TLC
+    /// alone knows, the time it has run and its build, show nowhere.
+    pub const RUN_UNKNOWNS_UNREAD: i32 = 131072;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +493,11 @@ pub struct Model {
     /// IR's encoding doesn't hold it: an IR decodes with 0, which JavaScript checks with, and the
     /// command line sets it.
     pub fingerprint_index: usize,
+    /// The text of the root module's name, which TLC numbers as the IR ranks it where it is the
+    /// first text of the root module TLC interns after those it interns as it starts
+    /// (`Ir::get_root_name_rank`). The IR's encoding doesn't hold it: an IR decodes without it,
+    /// and the command line sets it.
+    pub root_module_name: Option<TextId>,
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,
@@ -360,8 +519,23 @@ pub struct Model {
     /// TLCGet("spec"), the record of the specification as TLC processed it, by its position in
     /// the IR's values, where an expression reads it (`TLCGetSet.TLCGetStringValue`).
     pub tlc_spec: Option<u32>,
+    /// What `TLCExt.tlcDefByName` finds in the root module for each name a TLCEvalDefinition is
+    /// written with (`ModuleNode.getOpDef`), by the name's text. A name it doesn't list is one
+    /// the front end didn't look up.
+    pub evaluated_definitions: Vec<(TextId, EvaluatedDefinition)>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
+}
+
+/// What `ModuleNode.getOpDef` of the root module gives TLCEvalDefinition for a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvaluatedDefinition {
+    /// A definition without parameters, by index, whose body TLC evaluates as written.
+    Body(Index),
+    /// A definition with parameters, by its signature (`OpDefNode.getSignature`).
+    Signature(TextId),
+    /// No definition of the root module's by that name.
+    Missing,
 }
 
 /// What TLC evaluates when it starts, in the order the engine evaluates it: each substitute,
@@ -372,14 +546,41 @@ pub struct Startup {
     /// constant's name and the 0-ary definition substituted for it, whose level bound is above
     /// constant.
     pub substitutes: Vec<(TextId, Index)>,
+    /// The 0-ary definitions of constant level substituted for declared constants that may
+    /// recurse: TLC evaluates each as it starts and swallows the EvalException it throws, but not
+    /// the StackOverflowError of a recursion without end, which ends the startup
+    /// (`processConstantDefns`). The engine evaluates each only to find one too deep for it.
+    pub recursive_substitutes: Vec<Index>,
     /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
     /// the value it computes.
     pub definitions: Vec<Index>,
+    /// The constant definitions without effects of their own that TLC computes as it starts and
+    /// that name one of `definitions`, as written or through the definitions they name: each
+    /// with how many of `definitions` TLC computes before it. Where one of those fails, TLC
+    /// swallows it and evaluates it again inside each, with its effects
+    /// (`processConstantDefns`).
+    pub dependents: Vec<(u32, Index)>,
+    /// The constant definitions that reach TLCSet, which TLC computes as it starts, before it
+    /// has a checker, so that TLCSet of a number throws there, where the front end can't tell
+    /// whether TLC fails or completes before any effect. The engine computes each there, after
+    /// `definitions`, and stops at its TLCSet: one that fails, or completes to a boolean, a
+    /// number or a string, without any effect before, TLC swallows or keeps, and the engine
+    /// computes at each use alike; at any other end the engine declines.
+    pub register_probes: Vec<Index>,
+    /// Whether the one register probe is a definition only the first assumption reads, once, by
+    /// its name alone, after a startup in which nothing else has an effect: TLC computes it as it
+    /// starts, with its effects, and keeps the value where it reaches no TLCSet, which the engine,
+    /// computing it at the assumption from the same generator, shows alike.
+    pub is_probe_assumed_once: bool,
     /// The constant definitions the configuration names, which TLC evaluates as it reads the
     /// configuration (`getConstantValue`) and rejects for their value, in TLC's order.
     pub predicates: Vec<StartupPredicate>,
     /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
     pub symmetry: Option<Symmetry>,
+    /// Whether `Tool.getActions`, which follows the symmetry as TLC builds its `Tool`, fails first
+    /// casting the declaration of a constant the configuration substitutes a definition for
+    /// (`C <- Op`) to OpDefNode, which the engine declines.
+    pub is_next_constant_cast: bool,
     /// The assumptions that aren't axioms, each with the name TLC reports it by.
     pub assumptions: Vec<(NodeId, TextId)>,
 }
@@ -393,6 +594,11 @@ pub struct StartupPredicate {
     pub kind: TextId,
     pub name: TextId,
     pub definition: Index,
+    /// Whether `getLevelBound` takes it for a state's, as it names a name spelled as a variable,
+    /// so that TLC doesn't compute it as it starts but checks it in each state: the engine,
+    /// computing it, answers only where that computation reads the same (a failure, or TRUE but
+    /// for an invariant) and has no effect.
+    pub is_state_level: bool,
 }
 
 /// How TLC rejects a constant definition the configuration names.
@@ -437,6 +643,9 @@ pub struct Nodes {
     pub top: Vec<NodeId>,
     /// How each junction that is a bulleted list or an infix chain is written, by its node.
     pub junctions: HashMap<NodeId, Junction>,
+    /// How each numeral written otherwise than its value in decimal (`007`, `\b101`, `\h1F`) is
+    /// written, by its node: SANY's `NumeralNode.toString`, its image.
+    pub numerals: HashMap<NodeId, TextId>,
 }
 
 /// How a junction is written: as a bulleted list, or as an infix chain such as A /\ B /\ C, which
@@ -545,6 +754,10 @@ impl Definition {
     pub const SELF_REFERENTIAL: i32 = 4;
     pub const REPEATED_EFFECT: i32 = 8;
     pub const SUBSTITUTED: i32 = 16;
+    /// A copy an INSTANCE with substitutions makes of a definition that is itself such a copy,
+    /// made by an INSTANCE in the module instantiated: TLC's copy's body is a `SubstInNode` over
+    /// the copied definition's, which is one too.
+    pub const NESTED_SUBSTITUTION: i32 = 1024;
     /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
     pub const NORMALIZED: i32 = 32;
     /// An operator definition whose body is a numeral or a string, which TLC holds as the value it
@@ -554,6 +767,22 @@ impl Definition {
     /// (`processConstantDefns`); the front end counts any name but a declared constant of the root
     /// module as one.
     pub const LITERAL: i32 = 64;
+    /// A copy of a constant definition TLC computes as it starts, which a name the configuration
+    /// substitutes it for reads: that name's lookup finds the definition's OpDefNode, not the
+    /// value `processConstantDefns` kept, and `Tool.evalAppl` evaluates the body as written.
+    pub const CONFIGURED_SUBSTITUTE: i32 = 2048;
+    /// A constant definition with effects the engine computes as TLC starts, which another
+    /// constant definition TLC computes there (`processConstantDefns`), one the engine computes
+    /// only where it is used or never, names, as written or through the definitions it names:
+    /// TLC evaluates it again there, with its prints and draws, where it fails. The front end
+    /// lists those others (`Startup::dependents`), and writes it for a definition the
+    /// configuration substitutes for another definition, which TLC computes again where it
+    /// reaches that one, whatever came of computing it before, and for one that a drawing
+    /// INSTANCE substitute read more than once in one evaluation of the copy names, which TLC
+    /// computes again at the substitute's first read only, where it failed.
+    pub const NAMED_AT_STARTUP: i32 = 4096;
+    /// Startup evaluates this definition only to preserve its EXCEPT warnings; it has no other effects.
+    pub const STARTUP_WARNING_ONLY: i32 = 256;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -602,6 +831,8 @@ pub enum NodeKind {
     },
     UnboundedQuantifier {
         is_forall: bool,
+        /// `\EE` or `\AA`, a temporal quantifier, rather than `\E x :` or `\A x :`.
+        is_temporal: bool,
         names: Vec<TextId>,
         body: NodeId,
     },

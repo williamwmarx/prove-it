@@ -86,7 +86,14 @@ pub fn describe(
         let init = part(name, &definition.body);
         describer.description.inits.push(init);
     }
-    for name in &config.invariants {
+    // `-inv` and `-invlevel` invariants (`__DebuggerExpr__…`) are added through
+    // `ParameterizedSpecObj`'s `RuntimeInvariantTemplate`s, not the config, so
+    // `getSpecDescription` never lists them.
+    for name in config
+        .invariants
+        .iter()
+        .filter(|name| !crate::spec::is_command_line_invariant(name))
+    {
         if let Some(definition) = describer.get_operator_definition(name)? {
             let invariant = part(name, &definition.body);
             describer.description.invariants.push(invariant);
@@ -211,6 +218,7 @@ impl Describer<'_> {
                         params,
                         body,
                         scope,
+                        ..
                     },
                 )) => Some(Closure {
                     name: name.clone(),

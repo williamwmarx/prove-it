@@ -1,0 +1,4 @@
+---- MODULE M ----
+LOCAL INSTANCE Naturals
+ASSUME TRUE
+====

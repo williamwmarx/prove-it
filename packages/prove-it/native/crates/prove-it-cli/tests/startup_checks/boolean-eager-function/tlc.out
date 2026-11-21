@@ -1,0 +1,6 @@
+exit 10
+Semantic processing of module M
+Linting of module M
+Error: Evaluating assumption line 2, col 8 to line 2, col 49 of module M failed.
+A non-boolean expression (a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)) was used as the condition of an IF.
+line 2, col 8 to line 2, col 49 of module M

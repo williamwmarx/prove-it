@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module CardinalityTupleUnsortable
+Linting of module CardinalityTupleUnsortable
+Error: Evaluating assumption line 6, col 8 to line 6, col 36 of module CardinalityTupleUnsortable failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1

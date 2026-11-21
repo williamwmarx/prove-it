@@ -979,24 +979,16 @@ describe("the CLI takes the TLC that -Dtla-ts.tlc names", () => {
 // one it hasn't, a set enumeration's, element by element with equals. The .out files are TLC's
 // output at TLC_COMMIT.
 describe("the CLI fails a membership where TLC does", () => {
-  it("fails SearchedTuple as TLC does", () => {
-    const result = runCliWith("membership", ["-nowarning", "SearchedTuple.tla"]);
-    expect(result.status).toBe(75);
-    expect(getSteadyLines(result.stdout)).toEqual(
-      readFileSync(join(FIXTURES, "membership", "SearchedTuple.out"), "utf8").split("\n"),
-    );
-  });
-
-  it.each([
-    ["SearchedRecord", "the engine stopped: record compared with a function"],
-    [
-      "EnumeratedTuple",
-      "the engine stopped: values TLC can't compare: evaluating the failure again: a set TLC leaves unnormalized",
-    ],
-    ["EnumeratedModels", "the engine declined: typed model value"],
-  ])("declines %s", (name, reason) => {
-    expectDeclined(runCliWith("membership", ["-nowarning", `${name}.tla`]), reason);
-  });
+  it.each(["SearchedTuple", "EnumeratedModels", "SearchedRecord", "EnumeratedTuple"])(
+    "fails %s as TLC does",
+    (name) => {
+      const result = runCliWith("membership", ["-nowarning", `${name}.tla`]);
+      expect(result.status).toBe(75);
+      expect(getSteadyLines(result.stdout)).toEqual(
+        readFileSync(join(FIXTURES, "membership", `${name}.out`), "utf8").split("\n"),
+      );
+    },
+  );
 });
 
 describe("the CLI takes several specs and globs", () => {
@@ -1014,8 +1006,9 @@ describe("the CLI takes several specs and globs", () => {
   it("rejects -config with several specs", () => {
     const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe(
-      "Error: -config applies to one specification, but several were given.\n",
+    expect(result.stderr).toBe("");
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "cli-output", "SeveralConfigured.out"), "utf8").split("\n"),
     );
   });
 });

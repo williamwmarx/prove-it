@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module M
+Linting of module M
+Warning: The invariant I is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
+(Use the -nowarning option to disable this warning.)
+Error: The configuration file did not specify the initial state predicate.

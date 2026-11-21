@@ -2,10 +2,14 @@
 //! the same bytes.
 
 use crate::{
-    AtomKind, Bound, Builtin, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
-    LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
-    Selector, SourceRange, Value, code, tag,
+    AtomKind, Bound, Builtin, ConfigName, DefinitionForm, EnabledActions, EvaluatedDefinition,
+    IR_VERSION, IR_VERSION_WITHOUT_DEPENDENTS, Ir, Junction, LiveTerm, MAGIC, Name, NodeId,
+    NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, Selector, SourceRange, Value,
+    code, tag,
 };
+
+/// The bit of a startup predicate's form word that holds `StartupPredicate::is_state_level`.
+pub(crate) const STATE_LEVEL_PREDICATE: i32 = 1 << 8;
 
 /// Encodes an IR.
 pub fn encode(ir: &Ir) -> Vec<u8> {
@@ -26,7 +30,11 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
 
     let mut words = vec![
         MAGIC as i32,
-        IR_VERSION as i32,
+        if ir.model.startup.dependents.is_empty() {
+            IR_VERSION_WITHOUT_DEPENDENTS
+        } else {
+            IR_VERSION
+        } as i32,
         0,
         0,
         ir.ranked_count as i32,
@@ -204,6 +212,18 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     }
     words.extend(range_words(model.specification));
     let startup = &model.startup;
+    // The substitutes of constant level that may recurse, where there are any, come before the
+    // substitutes as their count below -1, which that count never is, so a blob without them
+    // reads as before.
+    if !startup.recursive_substitutes.is_empty() {
+        words.push(-2 - startup.recursive_substitutes.len() as i32);
+        words.extend(
+            startup
+                .recursive_substitutes
+                .iter()
+                .map(|&definition| definition as i32),
+        );
+    }
     words.push(startup.substitutes.len() as i32);
     for &(name, definition) in &startup.substitutes {
         words.extend([name as i32, definition as i32]);
@@ -215,14 +235,43 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             .iter()
             .map(|&definition| definition as i32),
     );
+    if !startup.dependents.is_empty() {
+        words.push(startup.dependents.len() as i32);
+        for &(position, definition) in &startup.dependents {
+            words.extend([position as i32, definition as i32]);
+        }
+    }
+    // The register probes, where there are any, come before the predicates as their count below
+    // -1, which the predicates' count never is, so a blob without them reads as before. A probe
+    // the first assumption reads once (`is_probe_assumed_once`) is written as -1 - its index.
+    if !startup.register_probes.is_empty() {
+        words.push(-2 - startup.register_probes.len() as i32);
+        words.extend(startup.register_probes.iter().map(|&definition| {
+            if startup.is_probe_assumed_once {
+                -1 - definition as i32
+            } else {
+                definition as i32
+            }
+        }));
+    }
     words.push(startup.predicates.len() as i32);
     for predicate in &startup.predicates {
         words.extend([
-            predicate.form as i32,
+            predicate.form as i32
+                | if predicate.is_state_level {
+                    STATE_LEVEL_PREDICATE
+                } else {
+                    0
+                },
             predicate.kind as i32,
             predicate.name as i32,
             predicate.definition as i32,
         ]);
+    }
+    // A next-state relation TLC fails splitting at a substituted constant comes before the
+    // symmetry as -2, which that word never is, so a blob without it reads as before.
+    if startup.is_next_constant_cast {
+        words.push(-2);
     }
     match &startup.symmetry {
         None => words.push(-1),
@@ -249,6 +298,18 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     words.push(model.instance_names.len() as i32);
     for &(definition, name) in &model.instance_names {
         words.extend([definition as i32, name as i32]);
+    }
+    // TLCEvalDefinition's lookups, where there are any, come before TLCGet("spec") as their
+    // count below -1, which that word never is, so a blob without them reads as before.
+    if !model.evaluated_definitions.is_empty() {
+        words.push(-2 - model.evaluated_definitions.len() as i32);
+        for &(name, found) in &model.evaluated_definitions {
+            words.extend(match found {
+                EvaluatedDefinition::Body(definition) => [name as i32, 0, definition as i32],
+                EvaluatedDefinition::Signature(signature) => [name as i32, 1, signature as i32],
+                EvaluatedDefinition::Missing => [name as i32, 2, -1],
+            });
+        }
     }
     words.push(model.tlc_spec.map_or(-1, |value| value as i32));
     words.push(ir.definitions.len() as i32);
@@ -332,11 +393,25 @@ impl<'a> NodeWriter<'a> {
         self.offsets[id as usize] = self.words.len() as i32;
         if let NodeKind::Reference(target) = node.kind {
             let target = self.offsets[target as usize];
-            self.words.extend([tag::REFERENCE, target]);
+            // A reference placed where it is written, as a use of an INSTANCE's substitute is,
+            // carries its place after its target.
+            match node.range {
+                None => self.words.extend([tag::REFERENCE, target]),
+                Some(_) => {
+                    self.words
+                        .extend([tag::REFERENCE | tag::FLAG, target, node.line, node.column]);
+                    self.words.extend(range_words(node.range));
+                }
+            }
             return;
         }
         let flag = |is_set: bool| if is_set { tag::FLAG } else { 0 };
         let tag_word = match &node.kind {
+            // A numeral written otherwise than its value in decimal sets the flag's next bit, and
+            // its image follows its value.
+            NodeKind::Number(_) if self.ir.nodes.numerals.contains_key(&id) => {
+                tag::NUMBER | tag::FLAG << 1
+            }
             NodeKind::Number(_) => tag::NUMBER,
             NodeKind::WideNumber(_) => tag::NUMBER | tag::FLAG,
             NodeKind::Decimal(_) => tag::DECIMAL,
@@ -355,8 +430,16 @@ impl<'a> NodeWriter<'a> {
             NodeKind::Let { .. } => tag::LET,
             NodeKind::Forall { .. } => tag::FORALL,
             NodeKind::Exists { .. } => tag::EXISTS,
-            NodeKind::UnboundedQuantifier { is_forall, .. } => {
-                tag::UNBOUNDED_QUANTIFIER | flag(*is_forall)
+            // A temporal quantifier sets the flag's next bit, which IR files written before it
+            // leave clear.
+            NodeKind::UnboundedQuantifier {
+                is_forall,
+                is_temporal,
+                ..
+            } => {
+                tag::UNBOUNDED_QUANTIFIER
+                    | flag(*is_forall)
+                    | if *is_temporal { tag::FLAG << 1 } else { 0 }
             }
             NodeKind::Choose { .. } => tag::CHOOSE,
             NodeKind::SetEnumeration(_) => tag::SET_ENUMERATION,
@@ -391,7 +474,12 @@ impl<'a> NodeWriter<'a> {
         self.words.extend([tag_word, node.line, node.column]);
         self.words.extend(range_words(node.range));
         match &node.kind {
-            NodeKind::Number(value) => self.words.push(*value),
+            NodeKind::Number(value) => {
+                self.words.push(*value);
+                if let Some(&image) = self.ir.nodes.numerals.get(&id) {
+                    self.words.push(image as i32);
+                }
+            }
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {
                 self.words.push(*text as i32)
             }

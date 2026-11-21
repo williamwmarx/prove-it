@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -197,6 +198,7 @@ describe("checkSources", () => {
       mkdirSync(join(directory, "out"));
       const getRounds = (args: string[]) => {
         const addon = getAddon();
+        const files = readdirSync(directory).sort();
         const rounds: string[] = [];
         const result = checkAllSources(
           {
@@ -212,6 +214,7 @@ describe("checkSources", () => {
           (key) => readKey(directory, key),
         );
         expect(result.kind).toBe("checked");
+        expect(readdirSync(directory).sort()).toEqual(files);
         return rounds.length;
       };
       expect(getRounds(options)).toBe(getRounds(["-noGenerateSpecTE"]));

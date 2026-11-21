@@ -1,0 +1,6 @@
+exit 151
+Semantic processing of module module_overrides_fixture
+Semantic processing of module rhs_only_in_target_module
+Linting of module module_overrides_fixture
+Linting of module rhs_only_in_target_module
+Error: The configuration file substitutes for K with the undefined identifier Get.

@@ -1,0 +1,17 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Json
+Semantic processing of module Integers
+Semantic processing of module M
+Linting of module Json
+Linting of module M
+"x"
+"x"
+Error: Evaluating assumption line 4, col 8 to line 4, col 11 of module M failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException,
+but it produced the following error:
+Cannot convert value: unsupported value type tlc2.value.impl.UserValue

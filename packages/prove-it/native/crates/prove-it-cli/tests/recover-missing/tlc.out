@@ -1,0 +1,7 @@
+exit 255
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.io.FileNotFoundException
+: nope/vars.chkpt (No such file or directory)
+Finished in {time}

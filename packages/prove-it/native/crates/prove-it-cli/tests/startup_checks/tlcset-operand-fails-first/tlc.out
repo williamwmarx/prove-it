@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+4
+Error: Evaluating assumption line 10, col 8 to line 10, col 27 of module M failed.
+Attempted to apply the operator DOMAIN to a non-function
+(a Boolean value)
+line 5, col 7 to line 5, col 57 of module M

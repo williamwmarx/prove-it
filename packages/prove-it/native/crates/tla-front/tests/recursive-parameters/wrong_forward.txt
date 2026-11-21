@@ -1,0 +1,6 @@
+line 8, col 44 to line 8, col 44 of module wrong_forward
+Lambda expression with arity 1 used as argument 1 of operator `R', 
+but an operator of arity 2 is required.
+line 8, col 44 to line 8, col 63 of module wrong_forward
+Argument number 1 to operator 'R' 
+should be a 2-parameter operator.

@@ -22,6 +22,7 @@ use crate::sany::GENERATOR_EXCEPTION;
 use crate::sany::UNLINTED_MODULES;
 use crate::sany::generator::{
     DependencyScope, ModuleDependencies, get_dependencies, get_proof_instances,
+    has_let_in_function_bound,
 };
 use crate::sany::messages::{Generated, get_generator_messages};
 use crate::sany::source::get_unboxed_source;
@@ -102,7 +103,21 @@ pub struct ReportOptions<'a> {
     /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
     /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
     pub is_xml_export: bool,
+    /// What -suppressMessages and -messagesAsErrors make of the linter's warnings.
+    pub lint_codes: LintCodes,
 }
+
+/// `SANY.filterVisibleMessages` and `isMessageElevated` of the linter's warnings, all of which
+/// are `RECORD_CONSTRUCTOR_FIELD_NAME_CLASH` (4802): suppressed, or printed as errors after the
+/// others, which fails the spec.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LintCodes {
+    pub is_suppressed: bool,
+    pub is_elevated: bool,
+}
+
+/// SANY's `ErrorCode` of the linter's warning.
+pub const RECORD_FIELD_NAME_CLASH: u32 = 4802;
 
 /// The deepest nesting the report writes, where a square bracket counts twice: SANY's recursive
 /// descent overflows Java's default stack between 1,500 and 1,600 parentheses, braces or angle
@@ -135,7 +150,7 @@ fn get_nesting_depth(text: &str) -> usize {
 
 /// SANY's character stream ends a line at a carriage return alone too, which the front end reads
 /// as the line feed it stands for, keeping each offset.
-fn end_lines_at_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
+pub fn end_lines_at_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
     let bytes = text.as_bytes();
     let is_lone = |index: usize| bytes[index] == b'\r' && bytes.get(index + 1) != Some(&b'\n');
     if !(0..bytes.len()).any(is_lone) {
@@ -300,6 +315,13 @@ impl Loader<'_> {
                 get_sany_parse_error(&raw, self.options.version)
                     .ok_or_else(|| not_yet("a module SANY's parser accepts"))?,
             ),
+            // SANY's parser rejects a function definition whose bound holds a LET, which the
+            // front end's accepts (`has_let_in_function_bound`).
+            (None, Ok(module)) if has_let_in_function_bound(module) => Some(
+                get_sany_parse_error(&raw, self.options.version).ok_or_else(|| {
+                    not_yet("a function definition whose bound holds a LET SANY's parser accepts")
+                })?,
+            ),
             (None, Ok(_)) => None,
         };
         if let Some(parse_error) = parse_error {
@@ -337,8 +359,9 @@ impl Loader<'_> {
         }
         let module = Rc::new(module);
         let mut dependencies = get_dependencies(&module);
-        // SANY loads the modules a proof instantiates, which the front end doesn't yet, unless
-        // the module depends on them otherwise.
+        // SANY loads the modules a proof instantiates, which `get_dependencies` takes among the
+        // module's dependencies as ParseUnit.getInstances finds them; the front end declines any
+        // it would miss.
         let mut inner_names = Vec::new();
         get_inner_names(&module, &mut inner_names);
         if get_proof_instances(&module).iter().any(|name| {
@@ -1239,6 +1262,8 @@ fn link_messages(
         Some(error) => Err(error),
         None => get_sany_messages(
             &EnvironmentOptions {
+                linked_extendees: &[],
+                origin: None,
                 source: &end_lines_at_carriage_returns(loader.source),
                 load_module: &|name| loader.read_text(name),
                 config: &config,
@@ -1554,12 +1579,22 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         for name in linted {
             loader.lines.push(format!("Linting of module {name}\n"));
         }
-        for warning in warnings {
-            loader.is_warned = true;
-            loader.lines.push(format!(
-                "{}\n\n{}\n\n\n\n",
-                warning.location, warning.message
-            ));
+        if !options.lint_codes.is_suppressed {
+            for warning in warnings {
+                if options.lint_codes.is_elevated {
+                    loader.is_failed = true;
+                    loader.lines.push(format!(
+                        "Warning treated as error: {}\n\n{}\n\n\n\n",
+                        warning.location, warning.message
+                    ));
+                } else {
+                    loader.is_warned = true;
+                    loader.lines.push(format!(
+                        "{}\n\n{}\n\n\n\n",
+                        warning.location, warning.message
+                    ));
+                }
+            }
         }
     }
     Ok(())

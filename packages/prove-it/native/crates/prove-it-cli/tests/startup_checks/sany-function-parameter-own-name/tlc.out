@@ -1,0 +1,12 @@
+exit 150
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 2, col 1 to line 2, col 17 of module M
+
+Function name `f' already defined or declared.
+
+
+Error: Parsing or semantic analysis failed.

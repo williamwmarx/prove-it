@@ -1,0 +1,16 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module Trace028
+Linting of module TLCExt
+Linting of module Trace028
+Error: Evaluating assumption line 9, col 8 to line 9, col 11 of module Trace028 failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.Value tlc2.module.TLCExt.lassoOrdinal(tlc2.value.impl.Value),
+but it produced the following error:
+Attempted to compare string "a" with non-string:
+1

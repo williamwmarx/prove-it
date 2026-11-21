@@ -19,11 +19,15 @@
 //!   undefined or defined at a deeper LET;
 //! - a LET with RECURSIVE declarations has no INSTANCE and no other LET with RECURSIVE declarations
 //!   within it;
-//! - a module nested in another declares nothing RECURSIVE at its own level;
-//! - after a module-level declaration, no INSTANCE without a name adds names to the module.
+//! - after a module-level declaration, an INSTANCE without a name instances only a module nested
+//!   before the declaration that extends nothing, instances nothing without a name and mentions N
+//!   nowhere;
+//! - a definition whose parameters take arguments has k parameters, the last taking none, and
+//!   nothing between the declaration and the definition names N.
 //!
 //! The resolver checks the rest: that N isn't bound where the declaration appears.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::{
@@ -39,7 +43,7 @@ type Result<T> = std::result::Result<T, FrontError>;
 
 /// How a part of a module mentions a name: as a reference, as a binding other than a definition,
 /// and in how many LET definitions.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Mentions {
     is_referenced: bool,
     is_bound: bool,
@@ -350,6 +354,122 @@ fn get_definition_mentions(definition: &Definition, name: &str) -> Mentions {
     parts.get_mentions(name)
 }
 
+// Index exactly the mentions counted by `get_mentions`, once per module unit.  In particular,
+// a reference to A!B counts as a reference to both A and A!B; a subexpression's first
+// selector counts only by its exact name.
+#[derive(Default)]
+struct MentionIndex(HashMap<String, Mentions>);
+
+impl MentionIndex {
+    fn add(&mut self, name: &str, mention: Mentions) {
+        let entry = self.0.entry(name.to_owned()).or_default();
+        *entry = entry.add(mention);
+    }
+
+    fn bound(&mut self, name: &str) {
+        self.add(name, Mentions::bound(true));
+    }
+
+    fn reference(&mut self, name: &str, qualified: bool) {
+        let reference = Mentions {
+            is_referenced: true,
+            ..Mentions::default()
+        };
+        self.add(name, reference);
+        if qualified {
+            for (index, _) in name.match_indices('!') {
+                self.add(&name[..index], reference);
+            }
+        }
+    }
+
+    fn expression(&mut self, expression: &Expression) {
+        match &expression.kind {
+            ExpressionKind::Subexpression { selectors, .. } => {
+                if let Some(Selector::Name { name, .. }) = selectors.first() {
+                    self.reference(name, false);
+                }
+            }
+            _ => {
+                if let Some(name) = expression.reference() {
+                    self.reference(&name, true);
+                }
+            }
+        }
+        match &expression.kind {
+            ExpressionKind::Quantified { bounds, .. }
+            | ExpressionKind::FunctionConstruction { bounds, .. }
+            | ExpressionKind::SetMap { bounds, .. } => {
+                for bound in bounds {
+                    for name in bound.pattern.names() {
+                        self.bound(name);
+                    }
+                }
+            }
+            ExpressionKind::SetFilter { bound, .. } => {
+                for name in bound.pattern.names() {
+                    self.bound(name);
+                }
+            }
+            ExpressionKind::UnboundedQuantifier { names, .. }
+            | ExpressionKind::Lambda { params: names, .. } => {
+                for name in names {
+                    self.bound(name);
+                }
+            }
+            ExpressionKind::Choose { pattern, .. } => {
+                for name in pattern.names() {
+                    self.bound(name);
+                }
+            }
+            ExpressionKind::Let {
+                definitions,
+                instances,
+                recursive,
+                ..
+            } => {
+                let mut parts = Parts::default();
+                for instance in instances.iter().flatten() {
+                    parts.add_instance(instance);
+                }
+                self.parts(&parts);
+                for definition in definitions {
+                    self.add(
+                        &definition.name,
+                        Mentions {
+                            definitions: 1,
+                            ..Mentions::default()
+                        },
+                    );
+                    for name in get_bound_names(definition) {
+                        self.bound(&name);
+                    }
+                }
+                for declaration in recursive {
+                    self.bound(&declaration.name);
+                }
+            }
+            _ => {}
+        }
+        for child in expression.children() {
+            self.expression(&child);
+        }
+    }
+
+    fn parts(&mut self, parts: &Parts) {
+        for name in &parts.names {
+            self.bound(name);
+        }
+        for expression in &parts.expressions {
+            self.expression(expression);
+        }
+    }
+
+    fn get(&self, name: &str) -> Mentions {
+        self.0.get(name).copied().unwrap_or_default()
+    }
+}
+
 /// Whether the definition is of the shape `processOperator` or `processFunction` completes a
 /// declaration with `arity` arguments with: SANY gives the declared operator's parameters the
 /// arities of the definition's only when it reaches the definition.
@@ -364,8 +484,85 @@ fn has_higher_order_params(definition: &Definition) -> bool {
     matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.iter().any(|param| param.arity != 0))
 }
 
+/// Whether an INSTANCE without a name after the declaration at `index` may add a symbol named
+/// `name` to the module. The front end follows only an INSTANCE of a module nested before the
+/// declaration that extends nothing, instances nothing without a name, and mentions the name
+/// nowhere: `Generator.generateInstance` adds only the instanced module's own non-LOCAL symbols.
+fn is_instancing_unsure(units: &[ModuleUnit], index: usize, name: &str) -> bool {
+    units[index + 1..].iter().any(|unit| {
+        let ModuleUnit::Instance(instance) = unit else {
+            return false;
+        };
+        if instance.name.is_some() {
+            return false;
+        }
+        let instanced = units[..index].iter().find_map(|unit| match unit {
+            ModuleUnit::Module(inner) if inner.name == instance.module => Some(inner),
+            _ => None,
+        });
+        instanced.is_none_or(|inner| {
+            !inner.extends.is_empty()
+                || inner
+                    .units
+                    .iter()
+                    .any(|unit| matches!(unit, ModuleUnit::Instance(inner) if inner.name.is_none()))
+                || Parts::of_unit(&ModuleUnit::Module(inner.clone()))
+                    .get_mentions(name)
+                    .is_any()
+        })
+    })
+}
+
+/// Whether a module-level declaration's definition takes operator arguments in a shape the front
+/// end doesn't follow. `processOperator` compares only the arity of the definition's last
+/// parameter with the declaration's (its loop overwrites `paramsMatch` each round), and then gives
+/// the declared node the definition's parameters, so a definition with as many parameters whose
+/// last takes no arguments completes the declaration with its own operator parameters. Before the
+/// definition, the declared node still has the declaration's parameters, so any mention of the
+/// name before it stays declined.
+fn is_higher_order_unsure(
+    after: &[ModuleUnit],
+    definitions: &[&Definition],
+    name: &str,
+    arity: usize,
+) -> bool {
+    let Some(definition) = definitions.first() else {
+        return false;
+    };
+    if !has_higher_order_params(definition) {
+        return false;
+    }
+    let DefinitionKind::Operator { params, .. } = &definition.kind else {
+        return true;
+    };
+    let position = after.iter().position(
+        |unit| matches!(unit, ModuleUnit::Definition(own) if std::ptr::eq(&**own, *definition)),
+    );
+    params.len() != arity
+        || params.last().is_none_or(|param| param.arity != 0)
+        || position.is_none_or(|position| {
+            after[..position]
+                .iter()
+                .any(|unit| Parts::of_unit(unit).get_mentions(name).is_any())
+        })
+}
+
 /// Checks each RECURSIVE declaration of the module, of the modules within it, and of their LETs.
 pub fn check_recursive(module: &Module) -> Result<()> {
+    let has_recursive = module
+        .units
+        .iter()
+        .any(|unit| matches!(unit, ModuleUnit::Recursive(_)));
+    let indexes: Vec<MentionIndex> = module
+        .units
+        .iter()
+        .filter(|_| has_recursive)
+        .map(|unit| {
+            let mut index = MentionIndex::default();
+            index.parts(&Parts::of_unit(unit));
+            index
+        })
+        .collect();
     for (index, unit) in module.units.iter().enumerate() {
         match unit {
             ModuleUnit::Recursive(declarations) => {
@@ -379,22 +576,16 @@ pub fn check_recursive(module: &Module) -> Result<()> {
                     ));
                 }
                 for declaration in declarations {
-                    check_module_declaration(module, index, &declaration.name, declaration.arity)?;
+                    check_module_declaration(
+                        module,
+                        &indexes,
+                        index,
+                        &declaration.name,
+                        declaration.arity,
+                    )?;
                 }
             }
-            ModuleUnit::Module(inner) => {
-                if let Some(ModuleUnit::Recursive(declarations)) = inner
-                    .units
-                    .iter()
-                    .find(|unit| matches!(unit, ModuleUnit::Recursive(_)))
-                {
-                    return Err(not_yet(
-                        "a module nested in another that declares RECURSIVE",
-                        &declarations[0].name,
-                    ));
-                }
-                check_recursive(inner)?;
-            }
+            ModuleUnit::Module(inner) => check_recursive(inner)?,
             _ => {}
         }
     }
@@ -406,7 +597,76 @@ pub fn check_recursive(module: &Module) -> Result<()> {
         .try_for_each(|expression| check_lets(&expression, false))
 }
 
-fn check_module_declaration(module: &Module, index: usize, name: &str, arity: usize) -> Result<()> {
+fn check_module_declaration(
+    module: &Module,
+    indexes: &[MentionIndex],
+    index: usize,
+    name: &str,
+    arity: usize,
+) -> Result<()> {
+    let units = &module.units;
+    let ModuleUnit::Recursive(declarations) = &units[index] else {
+        return Ok(());
+    };
+    let is_redeclared = declarations
+        .iter()
+        .filter(|declaration| &*declaration.name == name)
+        .count()
+        > 1;
+    if is_redeclared || indexes[..index].iter().any(|unit| unit.get(name).is_any()) {
+        return Err(not_yet(
+            "a RECURSIVE declaration of a name a module binds or names before it:",
+            name,
+        ));
+    }
+    let after = &units[index + 1..];
+    let definitions: Vec<&Definition> = after
+        .iter()
+        .filter_map(|unit| match unit {
+            ModuleUnit::Definition(definition) if &*definition.name == name => Some(&**definition),
+            _ => None,
+        })
+        .collect();
+    let mentions = sum(after
+        .iter()
+        .zip(&indexes[index + 1..])
+        .map(|(unit, index)| match unit {
+            ModuleUnit::Definition(definition) if &*definition.name == name => {
+                get_definition_mentions(definition, name)
+            }
+            _ => index.get(name),
+        }));
+    let is_instanced = is_instancing_unsure(units, index, name);
+    if definitions.len() > 1
+        || mentions.is_bound
+        || mentions.definitions != 0
+        || is_instanced
+        || is_higher_order_unsure(after, &definitions, name, arity)
+    {
+        return Err(not_yet(
+            "a module-level RECURSIVE declaration that something else binds, or an INSTANCE may:",
+            name,
+        ));
+    }
+    let is_complete = definitions
+        .first()
+        .is_some_and(|definition| is_completing(definition, arity));
+    if !is_complete && mentions.is_referenced {
+        return Err(not_yet(
+            "a reference to an operator declared RECURSIVE and left undefined or defined otherwise:",
+            name,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn old_check_module_declaration(
+    module: &Module,
+    index: usize,
+    name: &str,
+    arity: usize,
+) -> Result<()> {
     let units = &module.units;
     let ModuleUnit::Recursive(declarations) = &units[index] else {
         return Ok(());
@@ -440,16 +700,12 @@ fn check_module_declaration(module: &Module, index: usize, name: &str, arity: us
         }
         _ => Parts::of_unit(unit).get_mentions(name),
     }));
-    let is_instanced = after
-        .iter()
-        .any(|unit| matches!(unit, ModuleUnit::Instance(instance) if instance.name.is_none()));
+    let is_instanced = is_instancing_unsure(units, index, name);
     if definitions.len() > 1
         || mentions.is_bound
         || mentions.definitions != 0
         || is_instanced
-        || definitions
-            .first()
-            .is_some_and(|definition| has_higher_order_params(definition))
+        || is_higher_order_unsure(after, &definitions, name, arity)
     {
         return Err(not_yet(
             "a module-level RECURSIVE declaration that something else binds, or an INSTANCE may:",
@@ -584,4 +840,88 @@ fn check_let_declaration(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use crate::parser::parse_module;
+
+    #[test]
+    fn index_agrees_with_original_walk() {
+        let expressions = [
+            "A",
+            "A!B",
+            "A!B!C",
+            r"\A x \in {A, B} : x = C",
+            "LET A == B IN A",
+            "LET RECURSIVE F(_) F(x) == x + A IN F(B)",
+            r"[x \in {A} |-> B]",
+            "CHOOSE A : A = B",
+            "{A, B, C}",
+        ];
+        let names = ["A", "B", "C", "A!B", "A!B!C", "F", "G", "x", "absent"];
+        let mut random = 0x1234_5678_u32;
+        for _ in 0..200 {
+            random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+            let a = expressions[random as usize % expressions.len()];
+            random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+            let b = expressions[random as usize % expressions.len()];
+            let before = if random & 4 == 0 {
+                "Before == F(1)\n"
+            } else {
+                "Before == A\n"
+            };
+            let after = if random & 8 == 0 {
+                "After == LET F(x) == x IN F(1)\n"
+            } else {
+                "After == F(1)\n"
+            };
+            let source = format!(
+                "---- MODULE Test ----\n{before}RECURSIVE F(_), G(_)\nF(x) == <<{a}, {b}>>\nG(x) == x\n{after}===="
+            );
+            let module = parse_module(&source).expect("generated module parses");
+            let indexes: Vec<MentionIndex> = module
+                .units
+                .iter()
+                .map(|unit| {
+                    let mut index = MentionIndex::default();
+                    index.parts(&Parts::of_unit(unit));
+                    index
+                })
+                .collect();
+            for (i, unit) in module.units.iter().enumerate() {
+                if let ModuleUnit::Recursive(declarations) = unit {
+                    for declaration in declarations {
+                        let old = old_check_module_declaration(
+                            &module,
+                            i,
+                            &declaration.name,
+                            declaration.arity,
+                        );
+                        let new = check_module_declaration(
+                            &module,
+                            &indexes,
+                            i,
+                            &declaration.name,
+                            declaration.arity,
+                        );
+                        assert_eq!(format!("{old:?}"), format!("{new:?}"), "{source}");
+                    }
+                }
+            }
+            for unit in &module.units {
+                let parts = Parts::of_unit(unit);
+                let mut index = MentionIndex::default();
+                index.parts(&parts);
+                for name in names {
+                    assert_eq!(
+                        index.get(name),
+                        parts.get_mentions(name),
+                        "{source}, {name}"
+                    );
+                }
+            }
+        }
+    }
 }

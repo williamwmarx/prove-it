@@ -88,9 +88,9 @@ impl ModuleGenerator<'_> {
                 let params = generator.get_params(definition_params, params_span, true);
                 let existing = generator.resolve_symbol(&name);
                 match existing {
-                    Some(pending) if generator.is_pending_recursive(pending) => {
+                    Some(pending_id) if generator.is_pending_recursive(pending_id) => {
                         let graph = &generator.spec.graph;
-                        let pending = graph.op_def(pending).expect("a definition");
+                        let pending = graph.op_def(pending_id).expect("a definition");
                         // SANY compares only the arity of the last parameter.
                         let is_matching = pending.params.as_ref().map(Vec::len)
                             == Some(params.len())
@@ -103,13 +103,22 @@ impl ModuleGenerator<'_> {
                                 &location,
                                 format!("Recursive operator {name} defined at wrong LET/IN level."),
                             );
-                        } else if !is_matching {
-                            generator.add_error(
-                                &location,
-                                format!(
-                                    "Definition of {pending_name} has different arity than its RECURSIVE declaration."
-                                ),
-                            );
+                        } else {
+                            if !is_matching {
+                                generator.add_error(
+                                    &location,
+                                    format!(
+                                        "Definition of {pending_name} has different arity than its RECURSIVE declaration."
+                                    ),
+                                );
+                            }
+                            // Generator sets the parameter nodes before generating recursive calls.
+                            generator
+                                .spec
+                                .graph
+                                .op_def_mut(pending_id)
+                                .expect("a definition")
+                                .params = Some(params.clone());
                         }
                     }
                     Some(_) => generator.add_error(
@@ -135,10 +144,8 @@ impl ModuleGenerator<'_> {
                     == self.state.cur_level
         });
         if let Some(recursive) = recursive {
-            // OpDefNode.setParams keeps the arity of the RECURSIVE declaration.
             let count = params.len();
             let node = self.spec.graph.op_def_mut(recursive).expect("a definition");
-            node.params = Some(params);
             node.weights = vec![0; count];
             node.max_levels = vec![TEMPORAL_LEVEL; count];
             node.is_leibniz_arg = Some(vec![true; count]);
@@ -204,7 +211,9 @@ impl ModuleGenerator<'_> {
         let (bounds, context) = self.with_context(LocalContext::default(), |generator| {
             generator.generate_bounds(bounds, name_index + 1)
         })?;
-        let existing = self.resolve_symbol(&definition.name);
+        let (existing, context) = self.with_context(context, |generator| {
+            Ok(generator.resolve_symbol(&definition.name))
+        })?;
         let (recursion_param, context) = self.with_context(context, |generator| {
             Ok(generator.create_formal_param(
                 definition.name.clone(),
@@ -438,6 +447,15 @@ impl ModuleGenerator<'_> {
             let is_expression = declaration.decl_kind == VARIABLE_DECL_KIND
                 || (declaration.decl_kind == CONSTANT_DECL_KIND && declaration.arity == 0);
             let expr = if is_expression {
+                // OpApplNode's constructor matches the operator against no arguments
+                // (`OpDefNode.match`, `OpDeclNode.match`).
+                match self.spec.graph.kind(symbol) {
+                    NodeKind::OpDecl(resolved) if resolved.arity != 0 => self.add_error(
+                        location,
+                        "Operator used with the wrong number of arguments.".to_owned(),
+                    ),
+                    _ => self.match_arguments(symbol, &[], location),
+                }
                 self.create_op_appl(
                     symbol,
                     Vec::<NodeId>::new(),

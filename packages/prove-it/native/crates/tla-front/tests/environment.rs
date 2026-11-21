@@ -24,6 +24,8 @@ fn link_model(
             .map(|module| module.1.to_owned())
     };
     create_environment(&EnvironmentOptions {
+        linked_extendees: &[],
+        origin: None,
         source,
         load_module: &load_module,
         config: &model,
@@ -32,6 +34,18 @@ fn link_model(
         is_level_checked: false,
         load_class: None,
     })
+}
+
+#[test]
+fn quoted_substitution_target_does_not_resolve_an_unquoted_operator() {
+    let source = "---- MODULE Main ----\nCONSTANT N\nFoo == 1\nASSUME N = 1\n====";
+    assert_eq!(
+        link_model(source, &[], Some("CONSTANT N <- \"Foo\"")).err(),
+        Some(FrontError::Config(
+            "The configuration file substitutes for N with the undefined identifier \"Foo\"."
+                .to_owned()
+        ))
+    );
 }
 
 fn keys(environment: &Environment) -> Vec<String> {
@@ -184,11 +198,19 @@ fn selects_the_labeled_part_of_a_definition() {
     )
     .expect("an environment");
     let part = environment.definitions.get("Part").expect("Part");
-    let ExpressionKind::Apply { args, .. } = &part.body.kind else {
-        panic!("the selected sum, not {:?}", part.body.kind);
+    let ExpressionKind::Label {
+        name, params, body, ..
+    } = &part.body.kind
+    else {
+        panic!("the selected label, not {:?}", part.body.kind);
+    };
+    assert_eq!(name.as_ref(), "lab");
+    assert!(params.is_empty());
+    let ExpressionKind::Apply { args, .. } = &body.kind else {
+        panic!("the selected sum, not {:?}", body.kind);
     };
     assert_eq!(args.len(), 2);
-    assert_eq!(part.body.reference().as_deref(), Some("+"));
+    assert_eq!(body.reference().as_deref(), Some("+"));
 }
 
 #[test]

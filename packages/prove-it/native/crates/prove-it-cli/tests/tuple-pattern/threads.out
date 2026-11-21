@@ -1,0 +1,46 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Bags
+Semantic processing of module M
+Linting of module M
+Starting... (<date>)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Computed 64 initial states...
+Computed 128 initial states...
+Computed 256 initial states...
+Finished computing initial states: 400 distinct states generated at <date>.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Argument mismatch in operator application.%1
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 337
+/\ y = {}
+/\ z = <<1, 2>>
+
+State 2: <Next2 line 7, col 13 to line 7, col 103 of module M>
+/\ x = 337
+/\ y = {<<1, 2>>}
+/\ z = <<1, 2>>
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 8, column 13 to line 8, column 75 in M
+1. Line 8, column 13 to line 8, column 50 in M
+2. Line 8, column 13 to line 8, column 18 in M
+3. Line 8, column 24 to line 8, column 49 in M
+
+
+1136 states generated, 800 distinct states found, 63 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in <time> at (<date>)

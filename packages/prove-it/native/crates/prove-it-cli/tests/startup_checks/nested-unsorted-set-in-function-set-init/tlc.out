@@ -1,0 +1,27 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to compare the set {2} with the value:
+1
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 53 in M
+1. Line 4, column 14 to line 4, column 52 in M
+2. Line 4, column 35 to line 4, column 52 in M
+3. Line 4, column 41 to line 4, column 52 in M
+4. Line 4, column 23 to line 4, column 30 in M
+5. Line 4, column 27 to line 4, column 29 in M
+
+
+Reason:
+Attempted to compare the set {2} with the value:
+1
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

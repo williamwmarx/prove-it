@@ -1,0 +1,12 @@
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = {}
+/\ y = {}
+/\ pc = 0
+
+State 2: <Next line 5, col 12 to line 8, col 69 of module SetsOfSets>
+/\ x = {{5}, {1, 9}, {2, 8}, {3, 7}, {4, 6}}
+/\ y = {{}, {{}}, {{1, 2}}, {{3}, {1, 2}}}
+/\ pc = 1
+

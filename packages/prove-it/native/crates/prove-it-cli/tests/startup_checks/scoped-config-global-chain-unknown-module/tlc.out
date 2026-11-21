@@ -1,0 +1,4 @@
+exit 151
+Semantic processing of module Probe
+Linting of module Probe
+Error: In the configuration file, the module name Nope is not a module in the specification.

@@ -1,0 +1,6 @@
+---- MODULE Probe ----
+EXTENDS TLC, Integers
+INSTANCE Base WITH C <- 7
+CONSTANT K
+ASSUME TRUE
+====

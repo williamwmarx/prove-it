@@ -1,0 +1,9 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module module_overrides_fixture
+Semantic processing of module rhs_also_overridden_in_module
+Linting of module module_overrides_fixture
+Linting of module rhs_also_overridden_in_module
+Error: In the configuration file, the identifier B appears
+on the right-hand side of a <- after already appearing on the
+left-hand side of one.

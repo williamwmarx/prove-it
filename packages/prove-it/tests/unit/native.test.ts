@@ -181,7 +181,7 @@ describe("the native engine", () => {
   );
 
   // The engine as WebAssembly stops a recursion at 1,000 calls, where the addon and the binary go on
-  // to 20,000 (fallback.md, "WebAssembly's stack"): the library's check answers these models with
+  // to 3,000 (fallback.md, "WebAssembly's stack"): the library's check answers these models with
   // the addon, and rejects them with WebAssemblyStackError as WebAssembly, whether the engine stops
   // as it searches, as it starts on a constant invariant, or under -continue.
   it.if(WASM !== undefined && ADDON !== undefined)(

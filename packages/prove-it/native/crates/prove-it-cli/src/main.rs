@@ -15,6 +15,8 @@ fn main() {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    // A user who stops the run while its output is held gets what TLC would have printed.
+    prove_it_check::flush_held_on_interrupt();
     let status = std::thread::Builder::new()
         .stack_size(RUN_STACK_BYTES)
         .spawn(move || {

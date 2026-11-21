@@ -5,7 +5,9 @@
 //! fail on the initial state, function definitions that fail as TLC builds them, memberships whose
 //! comparison fails in a set nested in the one tested, constant definitions TLC can't normalize at
 //! startup, ALIASes TLC holds as values, state checks that fail after the initial predicate's last
-//! enumeration, and sets of functions over Nat TLC fails to enumerate. Each cell must print what
+//! enumeration, sets of functions over Nat TLC fails to enumerate, and memberships, EXCEPTs,
+//! comparisons and enumerations of values TLC keeps lazy or unnormalized, and checks of initial
+//! states that print again as TLC replays the initial states. Each cell must print what
 //! TLC printed, byte for byte, with TLC's exit code, at -workers 1 and 4, or be one the binary
 //! declines and that `DECLINED` lists.
 //!
@@ -22,16 +24,6 @@ const DECLINED: &[&str] = &[
     // A constraint that is a literal, which TLC computes as it starts and then fails to cast to a
     // value ("OpDefNode cannot be cast"), a failure the binary leaves to TLC.
     "Init == x = 0 /\\ y \\in {0}: Con == 1",
-    // TLC compares a record with a function with the record's compareTo, but the engine's store,
-    // which can't tell a record from a function over strings, stops there at a limit of its own.
-    "S == {[i \\in 0..1 |-> 5]}: [a |-> x] \\notin S",
-    // TLC's messages for the `equals` of a function, a tuple or a record with a value of another
-    // kind, which the evaluator doesn't word yet.
-    "({<<1>>} \\cup {2}) = {}",
-    "2 \\in {<<1>>}",
-    "Init == x = [a |-> 1]: x = {}",
-    "Init == x = \"a\" :> 1: x = {}",
-    "Init == x = \"a b\" :> 1: x = {}",
     // An ALIAS the configuration assigns a value where the spec defines none.
     "no ALIAS definition, CONSTANT Alias = 3",
     "no ALIAS definition, CONSTANT Alias = 3, deadlock",
@@ -45,6 +37,12 @@ const DECLINED: &[&str] = &[
     "THEOREM Alias == 3",
     "THEOREM Alias == \"a\"",
     "THEOREM Alias == 3, CONSTANT Alias = 4",
+    // A membership in a union of a set enumeration TLC can't sort, whose FingerprintException
+    // holds the sources of the set and of the element TLC sorts in, which the replay doesn't
+    // follow.
+    "1 \\in UNION {Nat, {2}} in the next-state relation",
+    // An ALIAS whose fingerprint TLC fails as it prints the trace.
+    "Alias == [x |-> [i \\in Nat |-> i + x], y |-> y]",
 ];
 
 // The lines that differ from run to run or between TLC and the binary, as the script drops them.
@@ -120,7 +118,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 214, "the recorded cells");
+    assert_eq!(cells.len(), 251, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {

@@ -1,0 +1,11 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Error: Evaluating assumption line 5, col 8 to line 5, col 10 of module M failed.
+A non-function (a special set constant) was applied as a function.
+line 4, col 15 to line 4, col 22 of module M

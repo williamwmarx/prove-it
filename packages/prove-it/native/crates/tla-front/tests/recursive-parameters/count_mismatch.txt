@@ -1,0 +1,4 @@
+line 8, col 1 to line 8, col 44 of module count_mismatch
+Definition of R has different arity than its RECURSIVE declaration.
+line 8, col 37 to line 8, col 44 of module count_mismatch
+The operator R requires 1 arguments.

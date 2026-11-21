@@ -38,12 +38,24 @@ pub const KIND_LAZY_FUNCTION: u8 = 7;
 /// is [`NAT`], [`INT`] or [`STRINGS`]. The store tests membership in one and compares two as TLC
 /// does. It can't fingerprint or print one, as TLC can't.
 pub const KIND_INFINITE_SET: u8 = 8;
+/// TLC's singleton AnySet.ANY, which cannot be compared, sized or fingerprinted.
+pub const KIND_ANY: u8 = 10;
+pub const ANY_COMPARISON: Bail = Bail("unsupported: comparing ANY");
 pub const NAT: i32 = 0;
 pub const INT: i32 = 1;
 pub const STRINGS: i32 = 2;
 
 /// Why the store stops at a function TLC keeps lazy, an engine limit.
 pub const LAZY_FUNCTION: Bail = Bail("unsupported: comparing a function TLC keeps lazy");
+
+/// Why the store stops comparing a function TLC keeps lazy over a value that isn't a set, as
+/// `[e \in <<2>> |-> e]`: TLC fails there (`FcnLambdaValue.equals` builds the function, and an
+/// integer's, a string's or a set's `equals` fails on a function), which the replay words, as it
+/// does where the engine stopped building such a function.
+pub const NON_SET_LAZY_FUNCTION: Bail = Bail("a function over a non-set");
+
+// The bit of a lazy function's payload that marks one over a value that isn't a set.
+const LAZY_OVER_NON_SET: u32 = 1 << 30;
 
 /// Why the store stops comparing a function over a run of integers with one over an untyped
 /// model value, where TLC fails if it holds the first over an interval.
@@ -93,6 +105,8 @@ const HOLDS_LAZY: u8 = 4;
 // A tuple that TLC built somewhere as a function (`FcnRcdValue` or `FcnLambdaValue`) and not as a
 // `TupleValue`. Equal ids don't tell TLC's classes apart, so the mark stays once made.
 const BUILT_AS_FUNCTION: u8 = 8;
+// Whether a composite holds ANY, whose equality fails even against the identical object.
+const HOLDS_ANY: u8 = 32;
 
 /// What the store keeps of each id: one 16-byte read finds its kind, size and payload.
 #[derive(Clone, Copy)]
@@ -207,6 +221,9 @@ pub struct Store {
     marked: Vec<Id>,
     // How many of the base's marks the overlay has copied.
     marks_copied: usize,
+    // Whether the empty sequence the store holds may be TLC's empty record, which TLC prints and
+    // writes apart from it: the store then writes neither.
+    is_empty_tuple_ambiguous: bool,
 }
 
 impl Default for Store {
@@ -250,6 +267,7 @@ impl Store {
             shapes: shapes::Shapes::default(),
             marked: Vec::new(),
             marks_copied: 0,
+            is_empty_tuple_ambiguous: false,
         }
     }
 
@@ -296,11 +314,24 @@ impl Store {
         self.copied = Some((base.serial, base.generation));
         // The strings the base ranked since it froze its order compare with no other here either.
         self.unordered_rank = base.unordered_rank;
+        self.is_empty_tuple_ambiguous = base.is_empty_tuple_ambiguous;
         self.small_ints.clone_from(&base.small_ints);
         self.table.fill([0, EMPTY_SLOT]);
         self.string_ids.clear();
         self.model_ids.clear();
         self.base = Some(base);
+    }
+
+    /// Notes that the empty sequence the store holds may be TLC's empty record
+    /// (`RecordValue.EmptyRcd`), as TLCGet of a simulation's run gives it, which TLC prints `[]`
+    /// and writes `{}`: the store then writes no empty sequence.
+    pub fn set_empty_tuple_ambiguous(&mut self) {
+        self.is_empty_tuple_ambiguous = true;
+    }
+
+    /// Whether the empty sequence may be TLC's empty record (`set_empty_tuple_ambiguous`).
+    pub fn is_empty_tuple_ambiguous(&self) -> bool {
+        self.is_empty_tuple_ambiguous
     }
 
     /// Marks a value TLC builds as a function (`FcnRcdValue` or `FcnLambdaValue`), which over
@@ -358,7 +389,7 @@ impl Store {
                     .collect();
                 self.intern_block(meta.kind, &words, meta.size)
             }
-            KIND_BOOL | KIND_INT | KIND_LAZY_FUNCTION | KIND_INFINITE_SET => {
+            KIND_BOOL | KIND_INT | KIND_LAZY_FUNCTION | KIND_INFINITE_SET | KIND_ANY => {
                 self.intern_scalar(meta.kind, meta.payload)
             }
             kind => unreachable!("an overlay holds a value of no kind the store makes: {kind}"),
@@ -644,6 +675,16 @@ impl Store {
         meta.kind == KIND_LAZY_FUNCTION || meta.flags & HOLDS_LAZY != 0
     }
 
+    pub fn holds_any(&self, id: Id) -> bool {
+        let meta = self.meta(id);
+        meta.kind == KIND_ANY || meta.flags & HOLDS_ANY != 0
+    }
+
+    /// Whether equality or ordering can fail even for two copies of the same interned id.
+    pub fn comparison_can_fail(&self, id: Id) -> bool {
+        self.is_kept_lazy(id) || self.holds_any(id)
+    }
+
     fn get_flags(&self, kind: u8, offset: usize, size: usize) -> u8 {
         let keys = self.words(offset, size);
         let is_record =
@@ -666,9 +707,14 @@ impl Store {
             .words(offset, length)
             .iter()
             .any(|&word| self.is_kept_lazy(word));
+        let holds_any = self
+            .words(offset, length)
+            .iter()
+            .any(|&word| self.holds_any(word));
         (if is_record { IS_RECORD } else { 0 })
             | (if is_run { IS_INT_RUN } else { 0 })
-            | if holds_lazy { HOLDS_LAZY } else { 0 }
+            | (if holds_lazy { HOLDS_LAZY } else { 0 })
+            | if holds_any { HOLDS_ANY } else { 0 }
     }
 
     // The id of the value with this hash that `is_match` accepts: an overlay looks in its base's
@@ -842,12 +888,19 @@ impl Store {
     /// numbers the TypeScript store does, not only their signs. A tuple's keys are interned as
     /// they are compared, as they are there.
     pub fn compare(&mut self, left: Id, right: Id) -> Outcome<i32> {
-        if left == right && !self.is_kept_lazy(left) {
+        if left == right && !self.comparison_can_fail(left) {
             return Ok(0);
         }
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
+        if left_meta.kind == KIND_ANY {
+            return if right_meta.kind == KIND_MODEL {
+                Ok(1)
+            } else {
+                Err(ANY_COMPARISON)
+            };
+        }
         if left_meta.kind == KIND_LAZY_FUNCTION || right_meta.kind == KIND_LAZY_FUNCTION {
-            return Err(LAZY_FUNCTION);
+            return Err(self.lazy_comparison(left, right));
         }
         if left_meta.kind == right_meta.kind {
             return match left_meta.kind {
@@ -958,7 +1011,7 @@ impl Store {
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
             let right_key = self.key_of(&right_meta, index);
-            if left_key == right_key && !self.is_kept_lazy(left_key) {
+            if left_key == right_key && !self.comparison_can_fail(left_key) {
                 continue;
             }
             let comparison = self.compare(left_key, right_key)?;
@@ -969,7 +1022,7 @@ impl Store {
         for index in 0..size {
             let left_value = self.range_value_of(&left_meta, index);
             let right_value = self.range_value_of(&right_meta, index);
-            if left_value == right_value && !self.is_kept_lazy(left_value) {
+            if left_value == right_value && !self.comparison_can_fail(left_value) {
                 continue;
             }
             let comparison = self.compare(left_value, right_value)?;
@@ -1044,8 +1097,12 @@ impl Store {
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
             // TLC builds a function it kept lazy to compare it, with itself too.
-            if self.is_kept_lazy(left) {
-                return Err(LAZY_FUNCTION);
+            if self.comparison_can_fail(left) {
+                return Err(if self.holds_any(left) {
+                    ANY_COMPARISON
+                } else {
+                    self.lazy_comparison(left, right)
+                });
             }
             return Ok(true);
         }
@@ -1091,8 +1148,15 @@ impl Store {
     #[inline(never)]
     fn equals_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_kind, right_kind) = (self.kind_of(left), self.kind_of(right));
+        if left_kind == KIND_ANY {
+            return if right_kind == KIND_MODEL {
+                Ok(false)
+            } else {
+                Err(ANY_COMPARISON)
+            };
+        }
         if left_kind == KIND_LAZY_FUNCTION || right_kind == KIND_LAZY_FUNCTION {
-            return Err(LAZY_FUNCTION);
+            return Err(self.lazy_comparison(left, right));
         }
         if left_kind == right_kind {
             return match left_kind {
@@ -1137,7 +1201,7 @@ impl Store {
         for index in 0..size {
             let left_element = self.word((left_offset + index) as usize);
             let right_element = self.word((right_offset + index) as usize);
-            if left_element != right_element || self.is_kept_lazy(left_element) {
+            if left_element != right_element || self.comparison_can_fail(left_element) {
                 return self.equals(left_element, right_element);
             }
         }
@@ -1159,14 +1223,14 @@ impl Store {
         for index in 0..size {
             let left_key = self.key_of(&left_meta, index);
             let right_key = self.key_of(&right_meta, index);
-            if left_key != right_key || self.is_kept_lazy(left_key) {
+            if left_key != right_key || self.comparison_can_fail(left_key) {
                 return self.equals(left_key, right_key);
             }
         }
         for index in 0..size {
             let left_value = self.range_value_of(&left_meta, index);
             let right_value = self.range_value_of(&right_meta, index);
-            if left_value != right_value || self.is_kept_lazy(left_value) {
+            if left_value != right_value || self.comparison_can_fail(left_value) {
                 return self.equals(left_value, right_value);
             }
         }
@@ -1183,6 +1247,9 @@ impl Store {
         }
         if length == 1 {
             return Ok(self.intern_block(KIND_SET, elements, 1));
+        }
+        if elements.iter().any(|&element| self.holds_any(element)) {
+            return self.set_of_range(elements);
         }
         let mut is_sorted = true;
         for index in 1..length {
@@ -1216,6 +1283,34 @@ impl Store {
 
     // Sorts the set of words[..length], duplicates and all, and interns it.
     fn intern_sorted_set(&mut self, words: &mut [u32], length: usize) -> Outcome<Id> {
+        if words[..length].iter().any(|&word| self.holds_any(word)) {
+            // UserValue.compareTo accepts a typed model as its argument, whose reverse
+            // comparison fails. ValueVec.sort asks the inserted element as the receiver.
+            let mut unique = usize::from(length > 0);
+            for index in 1..length {
+                let element = words[index];
+                let (mut low, mut high, mut position, mut order) = (0, unique, 0, 0);
+                while low < high {
+                    position = low + (high - low) / 2;
+                    order = self.compare(element, words[position])?;
+                    if order == 0 {
+                        break;
+                    }
+                    if order < 0 {
+                        high = position;
+                    } else {
+                        low = position + 1;
+                    }
+                }
+                if order != 0 {
+                    let at = if order < 0 { position } else { position + 1 };
+                    words.copy_within(at..unique, at + 1);
+                    words[at] = element;
+                    unique += 1;
+                }
+            }
+            return Ok(self.intern_block(KIND_SET, &words[..unique], unique as u32));
+        }
         self.sort_words(words, length)?;
         let mut unique = 1;
         for index in 1..length {
@@ -1297,13 +1392,60 @@ impl Store {
 
     pub fn is_member(&mut self, element: Id, set: Id) -> Outcome<bool> {
         match self.kind_of(set) {
+            KIND_ANY => return Ok(true),
             KIND_INFINITE_SET => return self.is_member_of_infinite(element, set),
             KIND_SET => {}
             _ => return Err(Bail("membership in a non-set")),
         }
         // TLC compares the element with the set's, which builds a function it kept lazy.
-        if self.size_of(set) > 0 && (self.is_kept_lazy(element) || self.is_kept_lazy(set)) {
-            return Err(LAZY_FUNCTION);
+        if self.size_of(set) > 0 {
+            if self.is_kept_lazy(element) || self.is_kept_lazy(set) {
+                // A function kept lazy over a value that isn't a set, tested in a set of values
+                // none of which is a model value or holds a lazy function or ANY, fails as TLC
+                // compares it with the set's first element.
+                let is_failing = self.is_lazy_over_non_set(element)
+                    && !self.is_kept_lazy(set)
+                    && !self.holds_any(set)
+                    && self
+                        .set_elements(set)
+                        .iter()
+                        .all(|&value| self.kind_of(value) != KIND_MODEL);
+                return Err(if is_failing {
+                    NON_SET_LAZY_FUNCTION
+                } else {
+                    LAZY_FUNCTION
+                });
+            }
+            if self.holds_any(element) || self.holds_any(set) {
+                let kind = self.kind_of(element);
+                let models = kind == KIND_ANY
+                    && self
+                        .set_elements(set)
+                        .iter()
+                        .all(|&value| self.kind_of(value) == KIND_MODEL);
+                let any = kind == KIND_MODEL
+                    && self
+                        .set_elements(set)
+                        .iter()
+                        .all(|&value| self.kind_of(value) == KIND_ANY);
+                if models || any {
+                    let untyped = if models {
+                        self.set_elements(set)
+                            .iter()
+                            .all(|&value| self.get_model_type(value) == 0)
+                    } else {
+                        self.get_model_type(element) == 0
+                    };
+                    return if untyped {
+                        Ok(false)
+                    } else {
+                        Err(Bail(
+                            "unsupported: ANY membership without its normalization phase",
+                        ))
+                    };
+                }
+                return Err(ANY_COMPARISON);
+            }
         }
         // Where no comparison can fail, the set holds the element if it holds its id: a short set
         // is scanned, and a run of integers or a long set searched.
@@ -1404,7 +1546,7 @@ impl Store {
         while left_index < left_size && right_index < right_size {
             let left_element = self.word(left_offset + left_index);
             let right_element = self.word(right_offset + right_index);
-            if left_element == right_element && !self.is_kept_lazy(left_element) {
+            if left_element == right_element && !self.comparison_can_fail(left_element) {
                 if keep != Merge::Difference {
                     merged[length] = left_element;
                     length += 1;
@@ -1465,7 +1607,7 @@ impl Store {
         if left_size == 0 {
             return Ok(right);
         }
-        if right_size == 0 || left == right && !self.is_kept_lazy(left) {
+        if right_size == 0 || left == right && !self.comparison_can_fail(left) {
             return Ok(left);
         }
         let single = match (left_size, right_size) {
@@ -1523,7 +1665,7 @@ impl Store {
 
     pub fn intersection(&mut self, left: Id, right: Id) -> Outcome<Id> {
         let (left_size, right_size) = (self.size_of(left), self.size_of(right));
-        if left_size == 0 || left == right && !self.is_kept_lazy(left) {
+        if left_size == 0 || left == right && !self.comparison_can_fail(left) {
             return Ok(left);
         }
         if right_size == 0 {
@@ -1538,7 +1680,7 @@ impl Store {
         if left_size == 0 || right_size == 0 {
             return Ok(left);
         }
-        if left == right && !self.is_kept_lazy(left) {
+        if left == right && !self.comparison_can_fail(left) {
             return Ok(EMPTY_SET);
         }
         let (merged, length) = self.merge(left, right, left_size as usize, Merge::Difference)?;
@@ -1546,10 +1688,7 @@ impl Store {
     }
 
     pub fn is_subset(&mut self, left: Id, right: Id) -> Outcome<bool> {
-        if left == right {
-            if self.is_kept_lazy(left) {
-                return Err(LAZY_FUNCTION);
-            }
+        if left == right && !self.comparison_can_fail(left) {
             return Ok(true);
         }
         let left_size = self.size_of(left);
@@ -1571,7 +1710,7 @@ impl Store {
         let mut is_inserted = false;
         for index in 0..size {
             let current = self.word(offset + index);
-            if current == element && !self.is_kept_lazy(element) {
+            if current == element && !self.comparison_can_fail(element) {
                 self.scratch = merged;
                 return Ok(set);
             }
@@ -1826,8 +1965,13 @@ impl Store {
         let key_meta = *self.meta(key);
         // TLC compares a key that is or holds a function it keeps lazy, which fails, where the
         // store would find it by its id.
-        if size > 0 && self.is_kept_lazy(key) {
-            return Err(LAZY_FUNCTION);
+        if size > 0 {
+            if self.is_kept_lazy(key) {
+                return Err(LAZY_FUNCTION);
+            }
+            if self.holds_any(key) {
+                return Err(ANY_COMPARISON);
+            }
         }
         // A block of consecutive integers, such as 0..n, finds its key by subtraction.
         if meta.flags & IS_INT_RUN != 0 && key_meta.kind == KIND_INT {
@@ -2082,6 +2226,10 @@ impl Store {
     }
 
     /// Nat, Int or STRING as a value, by [`NAT`], [`INT`] or [`STRINGS`].
+    pub fn any(&mut self) -> Id {
+        self.intern_scalar(KIND_ANY, 0)
+    }
+
     pub fn infinite_set(&mut self, name: i32) -> Id {
         self.intern_scalar(KIND_INFINITE_SET, name)
     }
@@ -2121,9 +2269,33 @@ impl Store {
         self.intern_scalar(KIND_LAZY_FUNCTION, index as i32)
     }
 
+    /// A function TLC keeps lazy over a value that isn't a set, by its number among those a
+    /// machine keeps.
+    pub fn lazy_function_over_non_set(&mut self, index: u32) -> Id {
+        self.intern_scalar(KIND_LAZY_FUNCTION, (index | LAZY_OVER_NON_SET) as i32)
+    }
+
     /// The number among those a machine keeps of a function TLC keeps lazy.
     pub fn lazy_index_of(&self, id: Id) -> u32 {
-        self.meta(id).payload as u32
+        self.meta(id).payload as u32 & !LAZY_OVER_NON_SET
+    }
+
+    /// Whether a value is a function TLC keeps lazy over a value that isn't a set.
+    pub fn is_lazy_over_non_set(&self, id: Id) -> bool {
+        let meta = self.meta(id);
+        meta.kind == KIND_LAZY_FUNCTION && meta.payload as u32 & LAZY_OVER_NON_SET != 0
+    }
+
+    // Why comparing two values stops where one is a function TLC keeps lazy: TLC's failure where
+    // one is over a value that isn't a set and the other no model value (`ModelValue.equals`
+    // answers FALSE), the engine's limit otherwise.
+    fn lazy_comparison(&self, left: Id, right: Id) -> Bail {
+        let is_non_set = self.is_lazy_over_non_set(left) || self.is_lazy_over_non_set(right);
+        if is_non_set && self.kind_of(left) != KIND_MODEL && self.kind_of(right) != KIND_MODEL {
+            NON_SET_LAZY_FUNCTION
+        } else {
+            LAZY_FUNCTION
+        }
     }
 
     /// Whether a value holds a function TLC keeps lazy, or Nat, Int or STRING as a value, at any
@@ -2131,12 +2303,58 @@ impl Store {
     pub fn holds_lazy_function(&self, id: Id) -> bool {
         let meta = self.meta(id);
         let length = match meta.kind {
-            KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return true,
+            KIND_LAZY_FUNCTION | KIND_INFINITE_SET | KIND_ANY => return true,
             KIND_SET | KIND_TUPLE => meta.size as usize,
             KIND_FUNCTION => 2 * meta.size as usize,
             _ => return false,
         };
         (0..length).any(|index| self.holds_lazy_function(self.word(meta.payload as usize + index)))
+    }
+
+    /// Whether a value holds, below itself, a record of more than one field among its elements,
+    /// keys or values, as far as the store enumerates it.
+    pub fn holds_inner_record(&self, id: Id) -> bool {
+        let meta = self.meta(id);
+        let length = match meta.kind {
+            KIND_SET | KIND_TUPLE => meta.size as usize,
+            KIND_FUNCTION => 2 * meta.size as usize,
+            _ => return false,
+        };
+        (0..length).any(|index| {
+            let inner = self.word(meta.payload as usize + index);
+            (self.is_record(inner) && self.meta(inner).size > 1) || self.holds_inner_record(inner)
+        })
+    }
+
+    /// Whether a value, or a value it holds among its elements, keys or values as far as the store
+    /// enumerates it, is one `is_found` finds.
+    pub fn holds_found(&self, id: Id, is_found: &dyn Fn(Id) -> bool) -> bool {
+        if is_found(id) {
+            return true;
+        }
+        let meta = self.meta(id);
+        let length = match meta.kind {
+            KIND_SET | KIND_TUPLE => meta.size as usize,
+            KIND_FUNCTION => 2 * meta.size as usize,
+            _ => return false,
+        };
+        (0..length)
+            .any(|index| self.holds_found(self.word(meta.payload as usize + index), is_found))
+    }
+
+    /// Whether a value is `needle` or holds it among its elements, keys or values, as far as the
+    /// store enumerates it.
+    pub fn holds_value(&self, id: Id, needle: Id) -> bool {
+        if id == needle {
+            return true;
+        }
+        let meta = self.meta(id);
+        let length = match meta.kind {
+            KIND_SET | KIND_TUPLE => meta.size as usize,
+            KIND_FUNCTION => 2 * meta.size as usize,
+            _ => return false,
+        };
+        (0..length).any(|index| self.holds_value(self.word(meta.payload as usize + index), needle))
     }
 
     /// The elements of a tuple from position `from` up to `to`, as Tail takes them.
@@ -2230,7 +2448,7 @@ pub fn infinite_set_name(name: i32) -> &'static str {
 
 /// Whether a value of this kind is a set the store tests membership in.
 pub fn is_tested_set_kind(kind: u8) -> bool {
-    kind == KIND_SET || kind == KIND_INFINITE_SET
+    kind == KIND_SET || kind == KIND_INFINITE_SET || kind == KIND_ANY
 }
 
 pub fn is_function_kind(kind: u8) -> bool {
@@ -2240,6 +2458,35 @@ pub fn is_function_kind(kind: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_membership_does_not_imply_reflexive_equality() {
+        let mut store = Store::new();
+        let any = store.any();
+        let one = store.int(1).unwrap();
+        assert_eq!(store.is_member(one, any), Ok(true));
+        assert_eq!(store.is_member(any, any), Ok(true));
+        let tuple = store.tuple_of(&[any]);
+        let function = store.function_of_sorted(&[one], &[any]);
+        let set = store.set_of(&[any]).unwrap();
+        for value in [any, tuple, function, set] {
+            assert!(store.equals(value, value).is_err());
+            assert!(store.compare(value, value).is_err());
+        }
+        assert_eq!(crate::print::format_value(&store, any).unwrap(), "ANY");
+    }
+
+    #[test]
+    fn any_set_normalization_uses_the_inserted_values_comparison() {
+        let mut store = Store::new();
+        let any = store.any();
+        let model = store.model(&"A_x".encode_utf16().collect::<Vec<_>>());
+        assert_eq!(store.equals(any, model), Ok(false));
+        assert!(store.equals(model, any).is_err());
+        assert!(store.set_of(&[any, model]).is_err());
+        let set = store.set_of(&[model, any]).unwrap();
+        assert_eq!(store.set_elements(set), &[model, any]);
+    }
 
     // An overlay's intern table holds only its own values, so a large base doesn't make it grow.
     #[test]

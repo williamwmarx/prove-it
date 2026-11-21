@@ -1,0 +1,27 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Json
+Semantic processing of module M
+*** Warnings: 1
+
+line 4, col 1 to line 4, col 27 of module M
+
+Multiple declarations or definitions for symbol ToJsonObject.  
+This duplicates the one at line 66, col 1 to line 73, col 43 of module Json.
+
+
+
+Semantic errors:
+
+*** Errors: 1
+
+line 4, col 1 to line 4, col 27 of module M
+
+Operator ToJsonObject already defined or declared.
+
+
+Error: Parsing or semantic analysis failed.

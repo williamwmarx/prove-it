@@ -215,12 +215,10 @@ pub fn get_numeral_value(text: &str) -> f64 {
 /// `MonolithSpecExtractor.module`: a module that no file defines can follow the root module in the
 /// root module's file, from its `---- MODULE` line to the next `====` line.
 pub fn extract_module(source: &str, name: &str) -> Option<String> {
-    // JavaScript's split(/\r?\n/).
-    let mut lines: Vec<&str> = source.split('\n').collect();
-    let last = lines.len() - 1;
-    lines[..last]
-        .iter_mut()
-        .for_each(|line| *line = line.strip_suffix('\r').unwrap_or(line));
+    let lines: Vec<&str> = source
+        .split_terminator('\n')
+        .flat_map(|line| line.strip_suffix('\r').unwrap_or(line).split('\r'))
+        .collect();
     let is_header = |line: &str| {
         let after_dashes = line.trim_start_matches('-');
         if line.len() - after_dashes.len() < 4 {
@@ -295,6 +293,10 @@ struct Parser {
     /// rather than failing at the first: a DEF clause entry that isn't a definition, which SANY
     /// leaves out, and a HIDE of what isn't a fact.
     sany_errors: Option<Vec<SanyError>>,
+    /// How many WF_ or SF_ subscripts the parser is in. SANY's `NoOpExtension` keeps the
+    /// arguments of a subscript's last name in its `FairnessHook`, which only a fairness
+    /// expression reattaches.
+    fairness_subscripts: usize,
 }
 
 /// The punctuation tlapm names by its text alone when it fails at it.
@@ -726,6 +728,17 @@ impl Parser {
                 ranges: vec![range],
             });
         }
+        // SANY's parser takes `<<>>` for a tuple of no names, where the generator takes every
+        // other token of the tuple from its second for a name (`Generator.processQuantBound`),
+        // which is the `>>`: a tuple of one name, `>>`, that no expression can name.
+        if self.is_at(">>", 0) {
+            let start = self.index;
+            self.index += 1;
+            return Ok(BoundPattern::Tuple {
+                names: vec![Rc::from(">>")],
+                ranges: vec![self.get_range(start)],
+            });
+        }
         let (names, ranges) = self.names()?;
         self.expect(">>")?;
         Ok(BoundPattern::Tuple { names, ranges })
@@ -780,10 +793,30 @@ impl Parser {
                 },
                 location,
             );
-            return Ok(self.with_range(identifier, start));
+            let identifier = self.with_range(identifier, start);
+            // SANY's `ReducedExpression` after ]_ or >>_ reads the arguments of the last name
+            // (`OpArgs` in `NoOpExtension`) and leaves them out of the tree, so that only the name
+            // remains: [A]_V(x) is [A]_V.
+            if self.fairness_subscripts == 0 && !self.is_tlapm() && self.is_at("(", 0) {
+                self.parse_arguments()?;
+            }
+            return Ok(identifier);
         }
-        if self.is_at("<<", 0) || self.is_at("(", 0) {
+        // SANY's node of a tuple subscript has the tuple's place, which TLC's call stack prints.
+        if self.is_at("<<", 0) {
+            let start = self.index;
+            let tuple = self.parse_primary(None)?;
+            return Ok(self.with_range(tuple, start));
+        }
+        if self.is_at("(", 0) {
             return self.parse_primary(None);
+        }
+        // SANY's `ReducedExpression` also takes `BraceCases` and `SBracketCases`: a set, a
+        // function, a record, a set of functions or records, an EXCEPT, or a [A]_v.
+        if !self.is_tlapm() && (self.is_at("{", 0) || self.is_at("[", 0)) {
+            let start = self.index;
+            let expression = self.parse_primary(None)?;
+            return Ok(self.with_range(expression, start));
         }
         Err(self.unexpected(&format!(
             "Expected a subscript but found {}",
@@ -1081,6 +1114,9 @@ impl Parser {
                                 parser.describe(&token)
                             )));
                         }
+                        if &*token.text == "@" {
+                            return Err(parser.unexpected("@ used in !.@"));
+                        }
                         path.push(ExceptPathStep::Field(parser.advance()?.text));
                         continue;
                     }
@@ -1299,6 +1335,33 @@ impl Parser {
         ))
     }
 
+    /// Whether a selector follows, after the arguments in parentheses, if any.
+    fn is_selector_after_arguments(&self) -> bool {
+        if !self.is_at("(", 0) {
+            return self.is_selector_ahead();
+        }
+        let mut depth = 0usize;
+        let mut offset = 0;
+        while self.index + offset < self.tokens.len() {
+            match &*self.raw(offset).text {
+                "(" => depth += 1,
+                ")" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let next = self.raw(offset + 1);
+                        let after = self.raw(offset + 2);
+                        return &*next.text == "!"
+                            && (matches!(after.kind, TokenKind::Identifier | TokenKind::Number)
+                                || matches!(&*after.text, "<<" | ">>" | ":" | "@" | "("));
+                    }
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
+        false
+    }
+
     fn is_selector_ahead(&self) -> bool {
         let next = self.peek(1);
         self.is_at("!", 0)
@@ -1307,7 +1370,11 @@ impl Parser {
                 || (next.kind == TokenKind::Operator
                     && (is_infix(&next.text)
                         || is_postfix(&next.text)
-                        || is_prefix_operator_reference(&next.text))))
+                        || is_prefix_operator_reference(&next.text)))
+                // SANY's parser reads a prefix operator or the prime as a selector's name too,
+                // which names no operator a module defines.
+                || (next.kind != TokenKind::String
+                    && (is_definable_prefix(&next.text) || &*next.text == "'")))
     }
 
     fn parse_selector(&mut self) -> Parsed<(Selector, Option<Range>)> {
@@ -1386,6 +1453,114 @@ impl Parser {
             _ => current,
         };
         Some(Rc::from(format!("<{level}>{label}")))
+    }
+
+    /// The rest of a name SANY reads as a primary expression: its arguments, and the selectors
+    /// after it.
+    fn parse_name_rest(
+        &mut self,
+        name: Name,
+        start: usize,
+        location: Location,
+    ) -> Parsed<Expression> {
+        let has_arguments = self.is_at("(", 0);
+        if &*name == "@" && !has_arguments && !self.is_selector_ahead() {
+            return Ok(located(ExpressionKind::ExceptAt, location));
+        }
+        let (args, arguments_range) = if has_arguments {
+            let (args, range) = self.parse_arguments()?;
+            (args, Some(range))
+        } else {
+            (Vec::new(), None)
+        };
+        if !self.is_selector_ahead() {
+            return Ok(located(
+                if has_arguments {
+                    ExpressionKind::Apply {
+                        operator: name,
+                        spelling: None,
+                        args,
+                        argument_counts: None,
+                        arguments_range,
+                        selector_ranges: None,
+                        argument_ranges: None,
+                    }
+                } else {
+                    ExpressionKind::Identifier {
+                        name,
+                        spelling: None,
+                        selector_ranges: None,
+                    }
+                },
+                location,
+            ));
+        }
+        let mut argument_ranges = vec![arguments_range];
+        let mut selectors = vec![Selector::Name { name, args }];
+        let mut selector_ranges = vec![self.get_range_between(start, start)];
+        while self.is_selector_ahead() {
+            self.advance()?;
+            selector_ranges.push(self.get_range_between(self.index, self.index));
+            let (selector, range) = self.parse_selector()?;
+            selectors.push(selector);
+            argument_ranges.push(range);
+        }
+        let names: Vec<&str> = selectors
+            .iter()
+            .filter_map(|selector| match selector {
+                Selector::Name { name, .. } => Some(&**name),
+                _ => None,
+            })
+            .collect();
+        if names.len() < selectors.len() {
+            return Ok(located(
+                ExpressionKind::Subexpression {
+                    selectors,
+                    selector_ranges,
+                    argument_ranges,
+                },
+                location,
+            ));
+        }
+        let operator: Name = Rc::from(names.join("!"));
+        let qualified_args: Vec<Expr> = selectors
+            .iter()
+            .flat_map(|selector| selector.args().iter().cloned())
+            .collect();
+        if qualified_args.is_empty() {
+            return Ok(located(
+                ExpressionKind::Identifier {
+                    name: operator,
+                    spelling: None,
+                    selector_ranges: Some(selector_ranges),
+                },
+                location,
+            ));
+        }
+        let argument_counts: Vec<usize> = selectors
+            .iter()
+            .map(|selector| selector.args().len())
+            .collect();
+        let has_inner_arguments = argument_counts[..argument_counts.len() - 1]
+            .iter()
+            .any(|count| *count > 0);
+        let arguments_range = argument_ranges
+            .last()
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| self.get_range(start));
+        Ok(located(
+            ExpressionKind::Apply {
+                operator,
+                spelling: None,
+                args: qualified_args,
+                argument_counts: has_inner_arguments.then_some(argument_counts),
+                arguments_range: Some(arguments_range),
+                selector_ranges: Some(selector_ranges),
+                argument_ranges: Some(argument_ranges),
+            },
+            location,
+        ))
     }
 
     fn parse_primary(&mut self, preceding: Option<Precedence>) -> Parsed<Expression> {
@@ -1488,101 +1663,42 @@ impl Parser {
                     location,
                 ));
             }
-            let has_arguments = self.is_at("(", 0);
-            if &*name == "@" && !has_arguments && !self.is_selector_ahead() {
-                return Ok(located(ExpressionKind::ExceptAt, location));
+            return self.parse_name_rest(name, start, location);
+        }
+        // SANY reads the prime as a primary expression too: `'(e)` is `e'`, and the prime alone
+        // or given other arguments is its generator's error of the prime's arity.
+        if token.kind == TokenKind::Operator && &*token.text == "'" && !self.is_tlapm() {
+            if self.is_selector_after_arguments() {
+                return self.parse_name_rest(token.text, start, location);
             }
-            let (args, arguments_range) = if has_arguments {
-                let (args, range) = self.parse_arguments()?;
-                (args, Some(range))
-            } else {
-                (Vec::new(), None)
-            };
-            if !self.is_selector_ahead() {
-                return Ok(located(
-                    if has_arguments {
-                        ExpressionKind::Apply {
-                            operator: name,
-                            spelling: None,
-                            args,
-                            argument_counts: None,
-                            arguments_range,
-                            selector_ranges: None,
-                            argument_ranges: None,
-                        }
-                    } else {
-                        ExpressionKind::Identifier {
-                            name,
-                            spelling: None,
-                            selector_ranges: None,
-                        }
-                    },
-                    location,
-                ));
-            }
-            let mut argument_ranges = vec![arguments_range];
-            let mut selectors = vec![Selector::Name { name, args }];
-            let mut selector_ranges = vec![self.get_range_between(start, start)];
-            while self.is_selector_ahead() {
-                self.advance()?;
-                selector_ranges.push(self.get_range_between(self.index, self.index));
-                let (selector, range) = self.parse_selector()?;
-                selectors.push(selector);
-                argument_ranges.push(range);
-            }
-            let names: Vec<&str> = selectors
-                .iter()
-                .filter_map(|selector| match selector {
-                    Selector::Name { name, .. } => Some(&**name),
-                    _ => None,
-                })
-                .collect();
-            if names.len() < selectors.len() {
-                return Ok(located(
-                    ExpressionKind::Subexpression {
-                        selectors,
-                        selector_ranges,
-                        argument_ranges,
-                    },
-                    location,
-                ));
-            }
-            let operator: Name = Rc::from(names.join("!"));
-            let qualified_args: Vec<Expr> = selectors
-                .iter()
-                .flat_map(|selector| selector.args().iter().cloned())
-                .collect();
-            if qualified_args.is_empty() {
+            if !self.is_at("(", 0) {
                 return Ok(located(
                     ExpressionKind::Identifier {
-                        name: operator,
-                        spelling: None,
-                        selector_ranges: Some(selector_ranges),
+                        name: token.text,
+                        spelling: token.spelling,
+                        selector_ranges: None,
                     },
                     location,
                 ));
             }
-            let argument_counts: Vec<usize> = selectors
-                .iter()
-                .map(|selector| selector.args().len())
-                .collect();
-            let has_inner_arguments = argument_counts[..argument_counts.len() - 1]
-                .iter()
-                .any(|count| *count > 0);
-            let arguments_range = argument_ranges
-                .last()
-                .cloned()
-                .flatten()
-                .unwrap_or_else(|| self.get_range(start));
+            let (mut args, range) = self.parse_arguments()?;
+            if args.len() == 1
+                && !matches!(
+                    args[0].kind,
+                    ExpressionKind::OperatorReference { .. } | ExpressionKind::Lambda { .. }
+                )
+            {
+                return Ok(located(ExpressionKind::Prime(args.remove(0)), location));
+            }
             return Ok(located(
                 ExpressionKind::Apply {
-                    operator,
-                    spelling: None,
-                    args: qualified_args,
-                    argument_counts: has_inner_arguments.then_some(argument_counts),
-                    arguments_range: Some(arguments_range),
-                    selector_ranges: Some(selector_ranges),
-                    argument_ranges: Some(argument_ranges),
+                    operator: token.text,
+                    spelling: token.spelling,
+                    args,
+                    argument_counts: None,
+                    arguments_range: Some(range),
+                    selector_ranges: None,
+                    argument_ranges: None,
                 },
                 location,
             ));
@@ -1590,8 +1706,33 @@ impl Parser {
         // SANY reads an infix or postfix operator as a primary expression, with or without
         // arguments.
         let is_operator_name = token.kind == TokenKind::Operator && is_operator_name(&token.text);
+        // A selector after an operator's name, with its arguments or without, which SANY's
+        // generator takes as it takes one after an identifier.
+        if is_operator_name && !self.is_tlapm() && self.is_selector_after_arguments() {
+            return self.parse_name_rest(token.text, start, location);
+        }
         if is_operator_name && self.is_at("(", 0) {
-            let (args, _) = self.parse_arguments()?;
+            let (args, range) = self.parse_arguments()?;
+            // \land(A, B) and \lor(A, B) are SANY's node of the infix A /\ B and A \/ B.
+            if matches!(&*token.text, "/\\" | "\\/")
+                && args.len() == 2
+                && args.iter().all(|arg| {
+                    !matches!(
+                        arg.kind,
+                        ExpressionKind::OperatorReference { .. } | ExpressionKind::Lambda { .. }
+                    )
+                })
+            {
+                return Ok(located(
+                    ExpressionKind::Junction {
+                        is_and: &*token.text == "/\\",
+                        operands: args,
+                        is_bulleted: false,
+                        prefix_ends: Some(vec![range.end]),
+                    },
+                    location,
+                ));
+            }
             return Ok(located(
                 ExpressionKind::Apply {
                     operator: token.text,
@@ -1664,7 +1805,11 @@ impl Parser {
                         recursive.extend(self.declare_recursive()?.into_iter().map(Rc::new));
                         continue;
                     }
-                    match self.parse_definition(false)? {
+                    // SANY's LetDefinitions takes OperatorOrFunctionDefinition, LOCAL included.
+                    let start = self.index;
+                    let is_local = !self.is_tlapm() && self.accept("LOCAL");
+                    let unit = self.parse_definition_unit(is_local)?;
+                    match self.with_unit_range(unit, start) {
                         DefinitionUnit::Instance(instance) => instances.push(instance),
                         DefinitionUnit::Definition(definition) => definitions.push(definition),
                     }
@@ -1696,7 +1841,10 @@ impl Parser {
                 ))
             }
             "WF_" | "SF_" => {
-                let subscript = Rc::new(self.parse_subscript()?);
+                self.fairness_subscripts += 1;
+                let subscript = self.parse_subscript();
+                self.fairness_subscripts -= 1;
+                let subscript = Rc::new(subscript?);
                 let action = Rc::new(self.with_bracket_layout(|parser| {
                     parser.expect("(")?;
                     let expression = parser.parse_expression(0)?;
@@ -1772,7 +1920,12 @@ impl Parser {
         let preceding = self.preceding.take();
         let token = self.peek(0);
         let location = self.peek_location();
-        if token.kind == TokenKind::Operator && matches!(&*token.text, "/\\" | "\\/") {
+        // SANY's lexer reads only /\ and \/ (and their Unicode forms) as the AND and OR that start
+        // a junction list; \land and \lor are the infix operators op_23 and op_27.
+        if token.kind == TokenKind::Operator
+            && matches!(&*token.text, "/\\" | "\\/")
+            && !matches!(self.raw(0).spelling.as_deref(), Some("\\land" | "\\lor"))
+        {
             return self.parse_junction_list();
         }
         if matches!(token.kind, TokenKind::Operator | TokenKind::Keyword) {
@@ -2001,7 +2154,31 @@ impl Parser {
         if !self.accept("(") {
             return Ok(Vec::new());
         }
+        let start = self.index;
         let params = self.parse_declarations()?;
+        // SANY names a prefix operator parameter of a definition by its image as written
+        // (`getUS` in `Generator.processOperator`, which resolves the synonyms of infix ones
+        // only), so that `~ _`, `\neg _`, `¬ _`, `□ _` and `◇ _` declare names other than the
+        // front end's. The front end follows only `\lnot _`, `[] _` and `<> _`.
+        if !self.is_tlapm()
+            && let Some(position) = self.tokens[start..self.index].windows(2).position(|pair| {
+                let (operator, placeholder) = (&pair[0], &pair[1]);
+                operator.kind == TokenKind::Operator
+                    && &*placeholder.text == "_"
+                    && match &*operator.text {
+                        "~" => operator.spelling.as_deref() != Some("\\lnot"),
+                        "[]" | "<>" => operator.spelling.is_some(),
+                        _ => false,
+                    }
+            })
+        {
+            let operator = &self.tokens[start + position];
+            return Err(self.error_at(
+                "A prefix operator parameter SANY names otherwise",
+                operator.line,
+                operator.column,
+            ));
+        }
         self.expect(")")?;
         Ok(params
             .into_iter()
@@ -2102,8 +2279,10 @@ impl Parser {
         }
         let is_prefix_definition =
             token.kind != TokenKind::String && is_definable_prefix(&token.text);
-        let is_postfix_definition =
-            token.kind == TokenKind::Identifier && is_postfix(&next.text) && self.is_at("==", 2);
+        // SANY's parser reads a definition of the prime too, which its generator rejects.
+        let is_postfix_definition = token.kind == TokenKind::Identifier
+            && (is_postfix(&next.text) || &*next.text == "'")
+            && self.is_at("==", 2);
         if is_prefix_definition || is_postfix_definition {
             let operator = if is_prefix_definition {
                 token.text.clone()
@@ -2221,7 +2400,11 @@ impl Parser {
                 location,
             });
         }
-        if self.peek_kind(0) == TokenKind::Operator && self.is_at("_", 1) {
+        // A keyword such as SUBSET is a prefix operator SANY's parser reads here too, which its
+        // generator rejects as a built-in.
+        let is_prefix_keyword =
+            self.peek_kind(0) == TokenKind::Keyword && is_definable_prefix(&self.peek(0).text);
+        if (self.peek_kind(0) == TokenKind::Operator || is_prefix_keyword) && self.is_at("_", 1) {
             if !is_definable_prefix(&self.peek(0).text) {
                 return Err(self.error("Expected a prefix operator"));
             }
@@ -3253,6 +3436,20 @@ fn parse_collecting(
         Some(tokens) => tokens.to_vec(),
         None => tokenize(source)?,
     };
+    // belchDEF scans keyword tokens even when they name a record field. When a
+    // field can stop that scan, consult the SANY grammar for its definition markers.
+    let keyword_field = tokens.windows(2).any(|pair| {
+        matches!(&*pair[0].text, "." | "[" | ",")
+            && matches!(
+                &*pair[1].text,
+                "THEOREM" | "PROPOSITION" | "LEMMA" | "COROLLARY" | "ASSUMPTION" | "AXIOM"
+            )
+    });
+    // A leading tuple in braces is parsed speculatively as an IdentifierTuple by
+    // SANY, which can reject malformed binders before ordinary expression parsing.
+    let set_tuple = tokens
+        .windows(2)
+        .any(|pair| &*pair[0].text == "{" && &*pair[1].text == "<<");
     let end: Rc<str> = Rc::from("");
     // SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only
     // alone, and tlapm's as itself.
@@ -3283,12 +3480,19 @@ fn parse_collecting(
         version,
         unit_start: 0,
         sany_errors: is_collecting.then(Vec::new),
+        fairness_subscripts: 0,
     };
     let module = parser.parse_module_body()?;
     // SANY's lexer marks where each definition begins before its parser runs, which can split a
     // module's name from a keyword that the parser would take for one. That check is SANY's own
     // parser, which a later milestone ports.
-    if parser.is_keyword_module_name {
+    // A standard module's text is one SANY's parser accepts (`standard_modules_parse`), so
+    // Bags, whose `{<<` would ask it, doesn't run it on every check that extends Bags.
+    if parser.is_keyword_module_name
+        || (mode != Mode::Tlapm
+            && (keyword_field || set_tuple)
+            && !crate::standard_modules::is_standard_text(source))
+    {
         return match get_sany_parse_error(source, version) {
             Some(message) => Err(SyntaxError {
                 message,

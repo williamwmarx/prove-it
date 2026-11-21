@@ -45,7 +45,7 @@ pub struct CounterExample<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Checked {
     pub verdict: Verdict,
-    pub printed: Vec<Vec<String>>,
+    pub printed: Vec<crate::OutputEvent>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,20 +59,132 @@ pub enum Verdict {
     },
 }
 
+/// `EC.TLC_EXPECTED_VALUE`.
+const EXPECTED_VALUE: u32 = 2215;
+
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
     Err(Unsupported(format!("a postcondition {reason}")))
 }
 
+// `_Possible._Counts`: the count TLC took of each `_POSSIBLE` predicate it evaluated, by name,
+// a function of the names TLC sorts as it prints it. Where `_Track` counted in the register
+// "s:_possible" of TLC's one worker, the counts it holds, in the order `_Possible.counts`
+// gives them: it merges each worker's normalized function into a `java.util.HashMap`, and
+// builds the function from the map's entries as it iterates them, which it doesn't normalize.
+fn possible_counts(
+    evaluator: &Evaluator<'_>,
+    possible: &[(String, i64)],
+) -> Result<Value, Unsupported> {
+    let register: Vec<u16> = "s:_possible".encode_utf16().collect();
+    let tracked =
+        evaluator.registers.named.iter().find(
+            |(name, _)| matches!(name, Value::Str(text) if *text.units == *register.as_slice()),
+        );
+    if let Some((_, tracked)) = tracked {
+        if possible.iter().any(|(_, count)| *count >= 0) {
+            return unsupported("reading _POSSIBLE's counts and _Track's at once");
+        }
+        let Some(function) = tracked.as_function() else {
+            return unsupported("reading a register _Track set that isn't a function");
+        };
+        let polynomial =
+            tla_values::fingerprint::Polynomial::get(evaluator.ir.model.fingerprint_index);
+        // `rec.normalize()`: the names in TLC's order of strings, the order it interned them in.
+        let mut order = Vec::with_capacity(function.domain.len());
+        for (position, name) in function.domain.iter().enumerate() {
+            let Value::Str(text) = name else {
+                return unsupported("reading a count _Track took of a name that isn't a string");
+            };
+            if text.rank < 0 {
+                return unsupported(
+                    "reading a count _Track took of a name TLC made as it searched",
+                );
+            }
+            if !matches!(function.range[position], Value::Int(_)) {
+                return unsupported("reading a count _Track took that isn't an integer");
+            }
+            order.push((text.rank, position));
+        }
+        order.sort_unstable();
+        // `HashMap.merge` of each name, in that order, into a map of 16 buckets: before it adds
+        // a name it doubles the map where it holds more than three quarters of its buckets, and
+        // it puts the name at the head of its bucket (`newNode(hash, key, value, first)`).
+        let mut buckets: Vec<Vec<(i32, usize)>> = vec![Vec::new(); 16];
+        for &(_, position) in &order {
+            let Value::Str(text) = &function.domain[position] else {
+                return unsupported("reading a count _Track took of a name that isn't a string");
+            };
+            // `Value.hashCode`: the fingerprint's halves, xored.
+            let fingerprint = polynomial.extend_int(
+                polynomial.extend_byte(polynomial.value(), tla_values::fingerprint::STRING_VALUE),
+                text.units.len() as i32,
+            );
+            let fingerprint = text.units.iter().fold(fingerprint, |fingerprint, &unit| {
+                polynomial.extend_byte(fingerprint, unit as u8)
+            });
+            let hash = ((fingerprint >> 32) as i32) ^ (fingerprint as i32);
+            let index = |hash: i32, capacity: usize| {
+                let hash = hash as u32;
+                ((hash ^ (hash >> 16)) as usize) & (capacity - 1)
+            };
+            let size: usize = buckets.iter().map(Vec::len).sum();
+            if size > buckets.len() * 3 / 4 {
+                // `HashMap.resize` keeps each bucket's order in the two it splits into.
+                let capacity = buckets.len() * 2;
+                let mut grown = vec![Vec::new(); capacity];
+                for &(hash, position) in buckets.iter().flatten() {
+                    grown[index(hash, capacity)].push((hash, position));
+                }
+                buckets = grown;
+            }
+            let at = index(hash, buckets.len());
+            buckets[at].insert(0, (hash, position));
+            // A bucket of eight names Java resizes or makes a tree of (`treeifyBin`).
+            if buckets[at].len() >= 8 {
+                return unsupported("reading counts _Track took in a crowded bucket");
+            }
+        }
+        let (names, counts) = buckets
+            .iter()
+            .flatten()
+            .map(|&(_, position)| {
+                (
+                    function.domain[position].clone(),
+                    function.range[position].clone(),
+                )
+            })
+            .unzip();
+        return run(crate::value::written_function(names, counts, Class::Plain));
+    }
+    let mut names = Vec::new();
+    let mut counts = Vec::new();
+    for (name, count) in possible.iter().filter(|(_, count)| *count >= 0) {
+        let Ok(count) = i32::try_from(*count) else {
+            return unsupported("reading a count past an int");
+        };
+        names.push(Value::Str(evaluator.text_of(name.encode_utf16().collect())));
+        counts.push(Value::Int(count));
+    }
+    run(sorted_function(names, counts, Class::Plain))
+}
+
 impl Rebuilder<'_> {
-    /// Evaluates the model's postcondition at `index` as TLC checks it.
-    pub fn postcondition(
+    /// What `_CheckName` prints as TLC finds a `_POSSIBLE` predicate the search didn't witness:
+    /// `_Counts`, as PrintT prints it (`_Possible.tla`).
+    pub fn possible_counts_printed(
         &mut self,
-        index: usize,
+        possible: &[(String, i64)],
+    ) -> Result<crate::OutputEvent, Unsupported> {
+        let counts = possible_counts(self.evaluator(), possible)?;
+        Ok(crate::OutputEvent::Print(vec![
+            crate::print::format_printed(&counts),
+        ]))
+    }
+
+    fn prepare_postconditions(
+        &mut self,
         inputs: &PostconditionInputs<'_>,
-    ) -> Result<Checked, Unsupported> {
-        // TLC builds a safety violation's counterexample from the ALIAS of each state, the last
-        // state's with itself as the next (`Worker.doPostCondition`, `evalAlias`), and a
-        // liveness checker's lasso from the states.
+    ) -> Result<(Option<Value>, Vec<crate::OutputEvent>), Unsupported> {
         let aliases = match &inputs.counter_example {
             Some(counter_example) if counter_example.cycle.is_none() => {
                 self.alias(counter_example.trace, None, None, false)?
@@ -88,6 +200,88 @@ impl Rebuilder<'_> {
             )?),
             None => None,
         };
+        let printed = aliases
+            .as_ref()
+            .into_iter()
+            .flat_map(|aliases| aliases.output.iter().flatten())
+            .cloned()
+            .collect();
+        Ok((counter_example, printed))
+    }
+
+    /// Evaluates one postcondition, preparing its counterexample once.
+    pub fn postcondition(
+        &mut self,
+        index: usize,
+        inputs: &PostconditionInputs<'_>,
+    ) -> Result<Checked, Unsupported> {
+        let (counter_example, printed) = self.prepare_postconditions(inputs)?;
+        self.postcondition_prepared(index, inputs, counter_example, printed)
+    }
+
+    /// TLC evaluates ALIAS once before checking the postconditions against their shared counterexample.
+    pub fn postconditions(
+        &mut self,
+        inputs: &PostconditionInputs<'_>,
+    ) -> Result<Vec<Checked>, Unsupported> {
+        let count = self.evaluator().ir.model.postconditions.len();
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let (counter_example, mut printed) = self.prepare_postconditions(inputs)?;
+        let mut results = Vec::new();
+        for index in 0..count {
+            let checked = self.postcondition_prepared(
+                index,
+                inputs,
+                counter_example.clone(),
+                std::mem::take(&mut printed),
+            )?;
+            let stops = checked.verdict != Verdict::Holds;
+            results.push(checked);
+            if stops {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Checks against the ALIAS values already evaluated for this worker counterexample.
+    pub fn postconditions_using_aliases(
+        &mut self,
+        inputs: &PostconditionInputs<'_>,
+        aliases: Option<&[Alias]>,
+    ) -> Result<Vec<Checked>, Unsupported> {
+        let count = self.evaluator().ir.model.postconditions.len();
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let counter_example = match &inputs.counter_example {
+            Some(counter_example) => {
+                Some(self.counter_example_value(counter_example, aliases, false, false)?)
+            }
+            None => None,
+        };
+        let mut results = Vec::new();
+        for index in 0..count {
+            let checked =
+                self.postcondition_prepared(index, inputs, counter_example.clone(), Vec::new())?;
+            let stops = checked.verdict != Verdict::Holds;
+            results.push(checked);
+            if stops {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    fn postcondition_prepared(
+        &mut self,
+        index: usize,
+        inputs: &PostconditionInputs<'_>,
+        counter_example: Option<Value>,
+        mut prefix: Vec<crate::OutputEvent>,
+    ) -> Result<Checked, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(definition) = ir
@@ -137,40 +331,29 @@ impl Rebuilder<'_> {
         ))?;
         // The named registers, each the tuple of one worker's value: those TLCSet set, and each
         // `_POSSIBLE` count TLC took, by name.
-        let counted: Vec<_> = inputs
-            .possible
-            .iter()
-            .filter(|(_, count)| *count >= 0)
-            .collect();
+        let possible_counts = possible_counts(evaluator, inputs.possible)?;
         let (mut names, mut values): (Vec<_>, Vec<_>) = evaluator
             .registers
             .named
             .iter()
             .map(|(name, value)| (name.clone(), Value::tuple(vec![value.clone()])))
             .unzip();
-        let possible_counts = if counted.is_empty() {
-            run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?
-        } else {
-            let mut counts = Vec::with_capacity(counted.len());
-            for (_, count) in &counted {
-                let Ok(count) = int(*count) else {
-                    return unsupported("reading a count past an int");
-                };
-                counts.push(count);
-            }
-            let counted_names = counted.iter().map(|(name, _)| text(name)).collect();
-            let counts = run(sorted_function(counted_names, counts, Class::Plain))?;
+        if inputs.possible.iter().any(|(_, count)| *count >= 0) {
             names.push(text("s:_possible"));
-            values.push(Value::tuple(vec![counts.clone()]));
-            counts
-        };
+            values.push(Value::tuple(vec![possible_counts.clone()]));
+        }
         let named = run(sorted_function(names, values, Class::Plain))?;
         let counter_example = match counter_example {
             Some(counter_example) => counter_example,
-            None => run(record(vec![
-                ("action", Value::empty_set()),
-                ("state", Value::empty_set()),
-            ]))?,
+            None => run(Value::counter_example(
+                vec![
+                    ("action", Value::empty_set()),
+                    ("state", Value::empty_set()),
+                ]
+                .into_iter()
+                .map(|(name, value)| (evaluator.counterexample_field(name, false), value))
+                .collect(),
+            ))?,
         };
         let body = evaluator
             .definition(ir.definitions[definition as usize])
@@ -188,11 +371,41 @@ impl Rebuilder<'_> {
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;
-        let printed = std::mem::take(&mut evaluator.printed);
+        prefix.append(&mut evaluator.printed);
+        let printed = prefix;
+        // TLCGet("stats").duration counts the seconds since TLC started (`AbstractChecker`),
+        // which the JVM's own start makes longer than the checker's; a postcondition that shows
+        // the record words a time the checker can't give as TLC does.
+        let is_timed = |text: &str| text.contains("duration |-> ");
+        if printed.iter().any(|event| {
+            matches!(event, crate::OutputEvent::Print(texts) if texts.iter().any(|text| is_timed(text)))
+        })
+            || matches!(&result, Err(error) if error.message.as_ref().is_some_and(|message| is_timed(&message.text)))
+        {
+            return unsupported("that shows how long TLC ran");
+        }
         let verdict = match result {
             Ok(Value::Bool(true)) => Verdict::Holds,
             Ok(Value::Bool(false)) => Verdict::False,
-            Ok(_) => return unsupported("that isn't a boolean"),
+            // `Tool.isValid` fails on a value that is no boolean, naming the body as SANY's
+            // `toString` does: a numeral by its image, else by where it is written.
+            Ok(_) => match evaluator.describe_node(body) {
+                Some(written) => {
+                    let message = crate::value::TlcMessage {
+                        text: format!(
+                            "TLC expected a boolean value, but did not find one. {written}"
+                        ),
+                        code: Some(EXPECTED_VALUE),
+                        is_eval_exception: false,
+                        inner: None,
+                    };
+                    Verdict::Failed {
+                        tool_text: crate::failure::nested(&message),
+                        text: message.text,
+                    }
+                }
+                None => return unsupported("that isn't a boolean"),
+            },
             Err(error) => match error.message {
                 Some(message) => Verdict::Failed {
                     tool_text: crate::failure::nested(&message),
@@ -373,10 +586,16 @@ impl Rebuilder<'_> {
             };
             steps.push(Value::tuple(vec![last.clone(), closing, first.clone()]));
         }
-        run(record(vec![
+        let fields = vec![
             ("action", run(set_of(steps))?),
             ("state", run(set_of(states))?),
-        ]))
+        ];
+        run(Value::counter_example(
+            fields
+                .into_iter()
+                .map(|(name, value)| (evaluator.counterexample_field(name, is_dumped), value))
+                .collect(),
+        ))
     }
 }
 

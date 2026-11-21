@@ -51,10 +51,13 @@ fn stop(path: &str) -> (ErrorSite, usize, Failure, [u64; OUT_DEGREE_BUCKETS]) {
             ErrorSite::Next => Site::Next,
             ErrorSite::Invariant(position) => Site::Invariant(position),
             ErrorSite::ActionConstraint(position) => Site::ActionConstraint(position),
+            ErrorSite::Constraint(position) => Site::Constraint(position),
+            ErrorSite::ActionProperty(position) => Site::ActionProperty(position),
             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
             ErrorSite::NextAtom { atom, is_extra } => Site::NextAtom { atom, is_extra },
             ErrorSite::InitialAtom { atom, replayed } => Site::InitialAtom { atom, replayed },
             ErrorSite::InitialConstraint(_)
+            | ErrorSite::InitialView
             | ErrorSite::InitialInvariant(_)
             | ErrorSite::InitialPredicate(_) => {
                 panic!("{path}: a failure on an initial state, which the rebuilder doesn't take")

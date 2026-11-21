@@ -1,0 +1,7 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module module_overrides_fixture
+Semantic processing of module constant_decl_not_allowed
+Linting of module module_overrides_fixture
+Linting of module constant_decl_not_allowed
+Error: In the configuration file, the identifier N does not appear in the specification.

@@ -785,7 +785,41 @@ impl ModuleGenerator<'_> {
             }
             ExpressionKind::Choose { .. } => self.generate_choose(expression),
             ExpressionKind::SetEnumeration(elements) => {
-                let nodes = self.generate_expressions(elements)?;
+                let mut nodes = Vec::with_capacity(elements.len());
+                for (index, element) in elements.iter().enumerate() {
+                    if index == 0
+                        && !self.is_parenthesized(self.get_operand_span(element))
+                        && let ExpressionKind::Apply { operator, args, .. } = &element.kind
+                        && &**operator == "\\in"
+                        && let [left, right] = args.as_slice()
+                        && let ExpressionKind::Tuple(parts) = &left.kind
+                        && parts
+                            .iter()
+                            .all(|part| matches!(part.kind, ExpressionKind::Identifier { .. }))
+                        && !self.is_parenthesized(self.get_operand_span(left))
+                    {
+                        // SANY parses this as an IdentifierTuple used as a selector,
+                        // not as a tuple expression; it does not visit the tuple names.
+                        let tuple = get_span_location(&file, get_expression_span(&file, left));
+                        self.add_error(&tuple, "Unexpected token found.");
+                        self.add_error(
+                            &tuple,
+                            "Need name or step number here, not `N_IdentifierTuple'.",
+                        );
+                        let left = self.create_null_node();
+                        let right = self.generate_expression(right)?;
+                        let element_location =
+                            get_span_location(&file, get_expression_span(&file, element));
+                        nodes.push(self.apply_builtin(
+                            "\\in",
+                            [left, right],
+                            element_location,
+                            OpApplBinding::default(),
+                        ));
+                    } else {
+                        nodes.push(self.generate_expression(element)?);
+                    }
+                }
                 Ok(self.apply_builtin("$SetEnumerate", nodes, location, OpApplBinding::default()))
             }
             ExpressionKind::Tuple(elements) => {

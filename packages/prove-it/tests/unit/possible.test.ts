@@ -17,27 +17,71 @@ const getPostconditionModule = (kind: string, body: string) => ({
   config: `SPECIFICATION Spec\nPOSTCONDITION Never\n${kind}`,
 });
 
-describe("_POSSIBLE matches TLC", () => {
-  it.each([
-    "PossibleFailStateTest",
-    "PossibleFailActionTest",
-    "PossibleFailMixedTest",
-    "PossibleFailNoTransTest",
-  ])("declines the unwitnessed predicate of %s", async (configName) => {
-    await expectDeclined(
-      {
-        source: readFileSync(join(DIRECTORY, "PossibleFail.tla"), "utf8"),
-        config: `${readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8")}\nCHECK_DEADLOCK FALSE`,
-      },
-      "a _POSSIBLE predicate the search didn't witness",
-    );
-  });
+// TLC's report of the first _POSSIBLE predicate the search didn't witness, after it prints the
+// record of how often it witnessed each.
+const getUnwitnessed = (name: string, location: string) =>
+  `The _POSSIBLE predicate ${name} at ${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`;
 
-  it("declines predicates no state witnesses", async () => {
-    await expectDeclined(
-      getModule("Zeta == x = 5\nAlpha == x = 6\nMid == x = 7", "_POSSIBLE Mid Alpha Zeta"),
-      "a _POSSIBLE predicate the search didn't witness",
-    );
+const checkPrinting = async (options: { source: string; config: string }) => {
+  const printed: string[] = [];
+  const result = await checkOnEngine({ ...options, onPrint: (text) => printed.push(text) });
+  return [
+    result.status,
+    result.violations[0]?.headline,
+    [result.generatedStates, result.distinctStates],
+    printed,
+  ];
+};
+
+describe("_POSSIBLE matches TLC", () => {
+  it.each<[string, [string, string], number[], string]>([
+    [
+      "PossibleFailStateTest",
+      ["Unreachable", "line 12, col 16 to line 12, col 20"],
+      [4, 3],
+      "[Unreachable |-> 0]",
+    ],
+    [
+      "PossibleFailActionTest",
+      ["BigJump", "line 16, col 15 to line 16, col 24"],
+      [4, 3],
+      "[BigJump |-> 0]",
+    ],
+    [
+      "PossibleFailMixedTest",
+      ["Unreachable", "line 12, col 16 to line 12, col 20"],
+      [4, 3],
+      "[AtOne |-> 1, AllDone |-> 1, Unreachable |-> 0, WrapAround |-> 1, BigJump |-> 0]",
+    ],
+    ["PossibleFailNoTransTest", ["BigJump", "line 16, col 15 to line 16, col 24"], [1, 1], "<<>>"],
+  ])(
+    "reports the unwitnessed predicate of %s like TLC",
+    async (configName, [name, location], counts, record) => {
+      expect(
+        await checkPrinting({
+          source: readFileSync(join(DIRECTORY, "PossibleFail.tla"), "utf8"),
+          config: `${readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8")}\nCHECK_DEADLOCK FALSE`,
+        }),
+      ).toEqual([
+        "postcondition-violation",
+        getUnwitnessed(name, `${location} of module PossibleFail`),
+        counts,
+        [record],
+      ]);
+    },
+  );
+
+  it("reports the first of the predicates no state witnesses in the order TLC lists them", async () => {
+    expect(
+      await checkPrinting(
+        getModule("Zeta == x = 5\nAlpha == x = 6\nMid == x = 7", "_POSSIBLE Mid Alpha Zeta"),
+      ),
+    ).toEqual([
+      "postcondition-violation",
+      getUnwitnessed("Mid", "line 8, col 8 to line 8, col 12 of module M"),
+      [4, 3],
+      ["[Zeta |-> 0, Alpha |-> 0, Mid |-> 0]"],
+    ]);
   });
 
   it("declines _POSSIBLE after a violation", async () => {
@@ -81,7 +125,7 @@ describe("_POSSIBLE matches TLC", () => {
     [
       "PROPERTY P",
       "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x",
-      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+      "the engine stopped: division by zero: a failure with a POSTCONDITION or -dumpTrace",
     ],
     [
       "INVARIANT P",
@@ -123,12 +167,21 @@ describe("_POSSIBLE matches TLC", () => {
         "Temporal",
         "The possible of Temporal is equal to a temporal formula; only state- and action-level predicates are supported",
       ],
-      ["AtOne AtOne", "_POSSIBLE lists AtOne more than once"],
     ];
     for (const [possible, message] of cases) {
       await expect(checkOnEngine(getModule(body, `_POSSIBLE ${possible}`))).rejects.toThrow(
         new TlaConfigError(message),
       );
     }
+  });
+
+  // TLC fails the semantic analysis of the module it generates for the predicates, which defines
+  // one twice, with "Parsing or semantic analysis failed._POSSIBLE: semantic analysis of generated
+  // module failed" (exit 150), after it has checked every name the configuration lists.
+  it("declines a predicate listed twice", async () => {
+    await expectDeclined(
+      getModule("AtOne == x = 1", "_POSSIBLE AtOne AtOne"),
+      "a _POSSIBLE predicate listed more than once",
+    );
   });
 });

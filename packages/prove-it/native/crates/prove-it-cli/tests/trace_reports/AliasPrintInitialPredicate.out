@@ -1,0 +1,14 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module AliasPrintInitialPredicate
+Linting of module AliasPrintInitialPredicate
+Computing initial states...
+<<"init", 0>>
+<<"alias", 0>>
+Error: Property Q is violated by the initial state:
+/\ x = 0
+/\ p = TRUE
+

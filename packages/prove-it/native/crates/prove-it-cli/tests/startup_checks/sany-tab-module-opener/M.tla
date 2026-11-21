@@ -1,0 +1,3 @@
+----	MODULE M ----
+ASSUME TRUE
+====

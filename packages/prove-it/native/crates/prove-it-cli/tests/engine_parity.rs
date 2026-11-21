@@ -8,9 +8,80 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+// TLC's output but the lines that name its version, the machine and where its jar unpacks the
+// standard modules, with each date and duration masked and without the rates of progress.
+fn get_untimed_text(text: &str) -> String {
+    let mut result = String::new();
+    for line in text.lines() {
+        if ["TLC2 Version", "Running ", "Parsing file "]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        {
+            continue;
+        }
+        let line = match line.strip_prefix("Finished in ") {
+            Some(rest) => format!(
+                "Finished in <time>{}",
+                &rest[rest.find(' ').unwrap_or(rest.len())..]
+            ),
+            None => line.to_owned(),
+        };
+        result.push_str(&mask_dates(&drop_rates(&line)));
+        result.push('\n');
+    }
+    result
+}
+
+// A progress report without the rates it computes from the time, as ` (12 s/min)`.
+fn drop_rates(line: &str) -> String {
+    let mut line = line.to_owned();
+    while let Some(end) = line.find("s/min)") {
+        let start = line[..end].rfind(" (").expect("a rate's parenthesis");
+        line.replace_range(start..end + "s/min)".len(), "");
+    }
+    line
+}
+
+// The text with each `yyyy-mm-dd hh:mm:ss` as `<date>`.
+fn mask_dates(line: &str) -> String {
+    let shape = b"0000-00-00 00:00:00";
+    let bytes = line.as_bytes();
+    let mut result = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let is_date = bytes.len() - at >= shape.len()
+            && shape.iter().zip(&bytes[at..]).all(|(shape, byte)| {
+                if *shape == b'0' {
+                    byte.is_ascii_digit()
+                } else {
+                    byte == shape
+                }
+            });
+        if is_date {
+            result.push_str("<date>");
+            at += shape.len();
+        } else {
+            let character = line[at..].chars().next().expect("a character");
+            result.push(character);
+            at += character.len_utf8();
+        }
+    }
+    result
+}
+
 // Checks M, its definitions after its variable x, on one thread and on four, plainly and with
 // -tool, giving each run's flags and output.
 fn check_on_threads(test: &str, definitions: &str, config: &str) -> Vec<(String, Output)> {
+    check_on_threads_with(test, definitions, config, &[])
+}
+
+// As `check_on_threads`, with more options of TLC's command line.
+fn check_on_threads_with(
+    test: &str,
+    definitions: &str,
+    config: &str,
+    options: &[&str],
+) -> Vec<(String, Output)> {
     let directory =
         std::env::temp_dir().join(format!("prove-it-parity-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -27,6 +98,7 @@ fn check_on_threads(test: &str, definitions: &str, config: &str) -> Vec<(String,
         for flags in [&[][..], &["-tool"][..]] {
             let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
                 .arg("-noGenerateSpecTE")
+                .args(options)
                 .args(flags)
                 .arg("M")
                 .current_dir(&directory)
@@ -115,119 +187,145 @@ fn stops_where_tlcs_sort_seq_fails() {
 }
 
 #[test]
-fn declines_a_tuple_pattern_over_a_tuple_tlc_built_as_a_function() {
+fn reports_or_declines_a_tuple_pattern_over_a_tuple_tlc_built_as_a_function() {
     // TLC binds a tuple of names in `\E`, `\A`, a set of all, a set filter and a function's
     // construction only to a `TupleValue` (`ContextEnumerator`, `Tool.evalImpl`), which a function
     // over 1..n it built otherwise isn't, while CHOOSE and Append take one as a tuple (`toTuple`).
-    // Where TLC at d8fb231 fails, with the first line it prints here, the engine declines.
+    // Where TLC at d8fb231 fails, the replay prints what it prints, plainly and with -tool, or
+    // declines; where it binds the tuple, the check prints what it prints.
+    // `tests/tuple-pattern/<name>.out` and `<name>.tool.out` hold TLC's exit code and output at
+    // `-fp 0 -noGenerateSpecTE`, run as `java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC`, as
+    // `get_untimed_text` has it.
     let config = "INIT Init\nNEXT Next\n";
-    let mismatch = "Error: Argument mismatch in operator application.%1\n";
-    let cast = "Error: class tlc2.value.impl.FcnRcdValue cannot be cast to class tlc2.value.impl.TupleValue (tlc2.value.impl.FcnRcdValue and tlc2.value.impl.TupleValue are in unnamed module of loader 'app')\n";
-    let thrown = "Error: TLC threw an unexpected exception.\n";
     let action = "INIT Init\nNEXT Next2\n";
+    let invariant = "INIT Init\nNEXT Next\nINVARIANT Inv\n";
     let failing: [(&str, &str, &str); 14] = [
         (
+            "exists",
             "Init == x = 0 /\\ \\E <<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1",
             config,
-            mismatch,
         ),
         (
+            "forall",
             "Init == x = (\\A <<a, b>> \\in {[k \\in {1, 2} |-> k]} : a = 1)",
             config,
-            mismatch,
         ),
         (
+            "set-of-all",
             "Init == x = {a + b : <<a, b>> \\in {[k \\in 1..2 |-> k]}}",
             config,
-            mismatch,
         ),
         (
+            "filter",
             "Init == x = {<<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1}",
             config,
-            cast,
         ),
         (
+            "function",
             "Init == x = [<<a, b>> \\in {[k \\in 1..2 |-> k]} |-> a]",
             config,
-            cast,
         ),
         (
+            "action",
             "Init == x = [k \\in 1..2 |-> k]\nNext2 == \\E <<a, b>> \\in {x} : x' = x",
             action,
-            thrown,
         ),
         (
+            "invariant",
             "Init == x = [k \\in 1..2 |-> k]\nInv == \\E <<a, b>> \\in {x} : a = 1",
-            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
-            mismatch,
+            invariant,
         ),
         (
+            "except",
             "Init == x = (\\E <<a, b>> \\in {[[k \\in 1..2 |-> k] EXCEPT ![1] = 3]} : a = 3)",
             config,
-            mismatch,
         ),
         (
+            "single",
             "Init == x = (\\E <<a>> \\in {1 :> 7} : a = 7)",
             config,
-            mismatch,
         ),
         (
+            "at-at",
             "Init == x = (\\E <<a, b>> \\in {[k \\in 1..2 |-> k] @@ <<>>} : a = 1)",
             config,
-            mismatch,
         ),
         (
+            "function-set",
             "Init == x = (\\E <<a, b>> \\in [1..2 -> {7}] : a = 7)",
             config,
-            mismatch,
         ),
         (
+            "permutations",
             "Init == x = (\\E <<a, b>> \\in Permutations({1, 2}) : a = 1)",
             config,
-            mismatch,
         ),
         (
+            "bag",
             "Init == x = (\\E <<a, b>> \\in {SetToBag({1, 2})} : a = 1)",
             config,
-            mismatch,
         ),
         // A thread builds the function that another binds, where it is a tuple the store held
         // already.
         (
+            "threads",
             "VARIABLE y, z\nInit == x \\in 1..400 /\\ y = {} /\\ z = <<1, 2>>\nNext2 == \\/ y = {} /\\ y' = (IF x = 337 THEN {[k \\in 1..2 |-> k]} ELSE {<<x, x>>}) /\\ UNCHANGED <<x, z>>\n         \\/ y # {} /\\ (\\A <<a, b>> \\in y : a <= b) /\\ UNCHANGED <<x, y, z>>",
             action,
-            thrown,
         ),
     ];
-    for (definitions, config, failure) in failing {
-        for (run, output) in check_on_threads("tuple-pattern", definitions, config) {
-            let text = stdout(&output);
-            assert!(
-                !text.contains("No error has been found"),
-                "{definitions} on {run}:\n{text}"
+    let bound = [
+        (
+            "tuple",
+            "Init == x = (\\E <<a, b>> \\in {<<1, 2>>} : a = 1)",
+        ),
+        (
+            "except-tuple",
+            "Init == x = (\\E <<a, b>> \\in {[<<1, 2>> EXCEPT ![1] = 3]} : a = 3)",
+        ),
+        (
+            "choose",
+            "Init == x = CHOOSE <<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1",
+        ),
+        (
+            "append",
+            "Init == x = (\\E <<a, b>> \\in {Append([k \\in 1..1 |-> k], 2)} : a = 1)",
+        ),
+    ];
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/tuple-pattern");
+    let runs = failing
+        .into_iter()
+        .map(|(name, definitions, config)| (name, definitions, config, true))
+        .chain(
+            bound
+                .into_iter()
+                .map(|(name, definitions)| (name, definitions, config, false)),
+        );
+    for (name, definitions, config, may_decline) in runs {
+        for (run, output) in
+            check_on_threads_with("tuple-pattern", definitions, config, &["-fp", "0"])
+        {
+            let file = if run.ends_with("[]") {
+                format!("{name}.out")
+            } else {
+                format!("{name}.tool.out")
+            };
+            let expected = std::fs::read_to_string(fixtures.join(&file)).expect("TLC's output");
+            let actual = format!(
+                "exit {}\n{}",
+                output.status.code().unwrap_or(-1),
+                get_untimed_text(&stdout(&output))
             );
-            if run.ends_with("[]") && text.contains(failure) {
+            if actual == expected {
                 continue;
             }
             assert!(
-                String::from_utf8_lossy(&output.stderr).contains(
-                    "not native yet: the engine stopped: unsupported: a tuple pattern bound to a tuple TLC may hold as a function"
-                ),
-                "{definitions} on {run}:\n{text}"
-            );
-        }
-    }
-    for definitions in [
-        "Init == x = (\\E <<a, b>> \\in {<<1, 2>>} : a = 1)",
-        "Init == x = (\\E <<a, b>> \\in {[<<1, 2>> EXCEPT ![1] = 3]} : a = 3)",
-        "Init == x = CHOOSE <<a, b>> \\in {[k \\in 1..2 |-> k]} : a = 1",
-        "Init == x = (\\E <<a, b>> \\in {Append([k \\in 1..1 |-> k], 2)} : a = 1)",
-    ] {
-        for (run, output) in check_on_threads("tuple-pattern-bound", definitions, config) {
-            let text = stdout(&output);
-            assert!(
-                text.contains("Model checking completed. No error has been found.\n"),
-                "{definitions} on {run}:\n{text}"
+                may_decline
+                    && output.stdout.is_empty()
+                    && output.status.code() == Some(1)
+                    && String::from_utf8_lossy(&output.stderr).contains(
+                        "not native yet: the engine stopped: unsupported: a tuple pattern bound to a tuple TLC may hold as a function"
+                    ),
+                "{name} on {run}:\n{actual}\nTLC printed:\n{expected}"
             );
         }
     }

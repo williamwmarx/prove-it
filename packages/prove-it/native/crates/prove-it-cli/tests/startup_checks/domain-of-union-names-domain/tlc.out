@@ -1,0 +1,33 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare the set {2} with the value:
+1
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = TRUE
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 55 in M
+1. Line 5, column 15 to line 5, column 54 in M
+2. Line 5, column 15 to line 5, column 49 in M
+3. Line 5, column 35 to line 5, column 42 in M
+4. Line 5, column 39 to line 5, column 41 in M
+
+
+Reason:
+Attempted to compare the set {2} with the value:
+1
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

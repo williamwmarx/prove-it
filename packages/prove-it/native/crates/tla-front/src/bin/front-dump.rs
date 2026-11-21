@@ -126,6 +126,8 @@ fn link_checked(
         .map_err(|error| FrontError::Config(error.message))
         .and_then(|model| {
             create_environment(&EnvironmentOptions {
+                linked_extendees: &[],
+                origin: None,
                 source,
                 load_module: &load_module,
                 config: &model,
@@ -199,6 +201,7 @@ fn lower_definitions(
         // TLC's default seed.
         random_seed: 0,
         fingerprint_index: 0,
+        root_module_name: None,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
@@ -208,6 +211,7 @@ fn lower_definitions(
         instance_actions: Vec::new(),
         instance_names: Vec::new(),
         tlc_spec: None,
+        evaluated_definitions: Vec::new(),
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }
@@ -251,6 +255,8 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 .get_string_order(&model)?;
             let texts: Vec<Rc<str>> = strings.iter().map(|text| Rc::from(text.as_str())).collect();
             let environment = create_environment(&EnvironmentOptions {
+                linked_extendees: &[],
+                origin: None,
                 source: &source,
                 load_module: &load_module,
                 config: &model,

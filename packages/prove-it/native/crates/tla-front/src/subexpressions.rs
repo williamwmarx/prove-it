@@ -3,6 +3,7 @@
 //! selected, under the LETs it is in, applied to the arguments the name gives the operators and
 //! labels it passes through.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::ast::*;
@@ -57,10 +58,20 @@ fn find_label(
     }
 }
 
+/// The selected part under the LETs it is in. SANY's selection has no node for them, so
+/// `CallStackTool` pushes no frame of theirs: they have no range.
 fn wrap_lets(body: Expr, lets: &[Vec<Rc<Definition>>], location: &Location) -> Expr {
+    let unranged = unranged(location);
     lets.iter().rev().fold(body, |inner, definitions| {
-        let_expression(definitions.clone(), inner, location)
+        let_expression(definitions.clone(), inner, &unranged)
     })
+}
+
+fn unranged(location: &Location) -> Location {
+    Location {
+        range: None,
+        ..location.clone()
+    }
 }
 
 fn local_name(name: Name, location: &Location) -> Expr {
@@ -69,11 +80,15 @@ fn local_name(name: Name, location: &Location) -> Expr {
     expression
 }
 
-fn create_application(selection: &Selection, body: Expr) -> Result<Expr> {
+fn create_application(selection: &Selection, body: Expr) -> Result<(Expr, bool)> {
     let location = &selection.location;
+    let is_operator_argument = matches!(
+        body.kind,
+        ExpressionKind::Lambda { .. } | ExpressionKind::OperatorReference { .. }
+    );
     let wrapped = wrap_lets(body, &selection.lets, location);
     if selection.params.is_empty() {
-        return Ok(wrapped);
+        return Ok((wrapped, !is_operator_argument));
     }
     if selection.args.is_empty() {
         if selection.params.iter().any(|param| param.arity > 0) {
@@ -82,19 +97,22 @@ fn create_application(selection: &Selection, body: Expr) -> Result<Expr> {
                 location,
             ));
         }
-        return Ok(Rc::new(Expression::new(
-            ExpressionKind::Lambda {
-                params: selection
-                    .params
-                    .iter()
-                    .map(|param| param.name.clone())
-                    .collect(),
-                param_ranges: None,
-                body: wrapped,
-                operator: None,
-            },
-            location.clone(),
-        )));
+        return Ok((
+            Rc::new(Expression::new(
+                ExpressionKind::Lambda {
+                    params: selection
+                        .params
+                        .iter()
+                        .map(|param| param.name.clone())
+                        .collect(),
+                    param_ranges: None,
+                    body: wrapped,
+                    operator: None,
+                },
+                location.clone(),
+            )),
+            false,
+        ));
     }
     if selection.args.len() != selection.params.len() {
         return Err(create_error(
@@ -115,10 +133,15 @@ fn create_application(selection: &Selection, body: Expr) -> Result<Expr> {
     );
     let call = apply(Rc::from(SELECTION_NAME), selection.args.clone(), location);
     call.resolved.is_local.set(true);
-    Ok(let_expression(vec![Rc::new(definition)], call, location))
+    // SANY's node is the LAMBDA's application alone (`Generator.selectorToNode`), which
+    // `CallStackTool` pushes once: the LET that defines it here has no range, and no frame.
+    Ok((
+        let_expression(vec![Rc::new(definition)], call, &unranged(location)),
+        false,
+    ))
 }
 
-fn apply_definition(definition: &Definition, selection: Selection) -> Result<Expr> {
+fn apply_definition(definition: &Definition, selection: Selection) -> Result<(Expr, bool)> {
     let location = selection.location.clone();
     let params: Vec<OperatorParam> = match &definition.kind {
         DefinitionKind::Operator { params, .. } => params
@@ -153,6 +176,7 @@ fn apply_definition(definition: &Definition, selection: Selection) -> Result<Exp
         },
         reference,
     )
+    .map(|(expression, _)| (expression, false))
 }
 
 fn get_argument_ranges(expression: &Expression) -> Option<&[Option<Range>]> {
@@ -189,6 +213,7 @@ struct Selector<'a> {
     index: usize,
     current: Option<Expr>,
     is_failed: bool,
+    origins: Rc<RefCell<Vec<Rc<Definition>>>>,
 }
 
 impl Selector<'_> {
@@ -306,6 +331,7 @@ impl Selector<'_> {
                 &self.reference.location,
             ));
         };
+        self.origins.borrow_mut().push(definition.clone());
         self.selection.params.extend(params.iter().cloned());
         self.selection.args.extend(args);
         self.current = Some(definition.body.clone());
@@ -342,7 +368,11 @@ impl Selector<'_> {
                 .params
                 .extend(params.iter().map(|name| param(name.clone(), 0)));
             self.selection.args.extend(args.iter().cloned());
-            self.current = Some(body.clone());
+            self.current = Some(if self.index + 1 == self.selectors.len() {
+                label.clone()
+            } else {
+                body.clone()
+            });
             self.index += 1;
         }
         Ok(())
@@ -446,10 +476,10 @@ impl Selector<'_> {
         Ok(())
     }
 
-    fn select(mut self) -> Result<Expr> {
+    fn select(mut self) -> Result<(Expr, bool)> {
         let first = self.enter_definition(None)?;
         if self.is_failed {
-            return Ok(self.reference.clone());
+            return Ok((self.reference.clone(), false));
         }
         if let Some(first) = first {
             let selection = Selection {
@@ -479,7 +509,7 @@ impl Selector<'_> {
                 self.selection.lets.push(definitions.clone());
                 let last = self.enter_definition(Some(&definitions))?;
                 if self.is_failed {
-                    return Ok(self.reference.clone());
+                    return Ok((self.reference.clone(), false));
                 }
                 if let Some(last) = last {
                     let mut args = self.selection.args.clone();
@@ -497,7 +527,7 @@ impl Selector<'_> {
             self.index += 1;
         }
         if self.is_failed {
-            return Ok(self.reference.clone());
+            return Ok((self.reference.clone(), false));
         }
         let Some(current) = self.current.clone() else {
             return Err(create_error(
@@ -639,7 +669,8 @@ fn resolve_subexpressions(
     {
         return Ok(mapped);
     }
-    let selected = Selector {
+    let origins = Rc::new(RefCell::new(Vec::new()));
+    let (selected, is_nop) = Selector {
         selectors: &selectors,
         lookup,
         reference: &mapped,
@@ -654,10 +685,19 @@ fn resolve_subexpressions(
         index: 0,
         current: None,
         is_failed: false,
+        origins: origins.clone(),
     }
     .select()?;
+    let selected = if origins.borrow().is_empty() || Rc::ptr_eq(&selected, &mapped) {
+        selected
+    } else {
+        let copy = Rc::new((*selected).clone());
+        tables.carry_substitution(&selected, &copy);
+        copy
+    };
     if !Rc::ptr_eq(&selected, &mapped) {
-        tables.add_selection(&selected);
+        tables.set_selection_origins(&selected, origins.borrow().clone());
+        tables.add_selection(&selected, &mapped.location, is_nop);
     }
     Ok(selected)
 }

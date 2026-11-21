@@ -1,0 +1,7 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module module_overrides_fixture
+Semantic processing of module undefined_rhs
+Linting of module module_overrides_fixture
+Linting of module undefined_rhs
+Error: The configuration file substitutes for K with the undefined identifier Nope.

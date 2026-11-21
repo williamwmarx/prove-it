@@ -1,0 +1,12 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Json
+Semantic processing of module M
+Linting of module Json
+Linting of module M
+Loading ToJsonArray operator override from file:{directory}/Json.class with signature: <Java Method: public static tlc2.value.impl.Value Json.ToJsonArray(tlc2.value.impl.Value)>.
+Loading ToJsonObject operator override from file:{directory}/Json.class with signature: <Java Method: public static tlc2.value.impl.Value Json.ToJsonObject(tlc2.value.impl.Value)>.
+Error: Assumption line 3, col 8 to line 3, col 91 of module M is false.

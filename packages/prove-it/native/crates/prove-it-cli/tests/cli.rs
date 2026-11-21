@@ -171,6 +171,35 @@ fn reads_the_command_line_as_tlc() {
     assert!(stdout(&marked).ends_with(&format!(
         "@!@!@STARTMSG 1102:1 @!@!@\nError: The number for -fp must be between 0 and 130 (inclusive).{usage}@!@!@ENDMSG 1102 @!@!@\n"
     )));
+    // Tool records from TLC d8fb231 for malformed DFID limits.
+    for (args, message) in [
+        (
+            &["-dfid"][..],
+            "expect a nonnegative integer for -dfid option.",
+        ),
+        (
+            &["-dfid", "-1", "TCommit"][..],
+            "expect a nonnegative integer for -dfid option.",
+        ),
+        (
+            &["-dfid", "x", "TCommit"][..],
+            "expect a nonnegative integer for -dfid option. But encountered x",
+        ),
+        (
+            &["-dfid", "2147483648", "TCommit"][..],
+            "expect a nonnegative integer for -dfid option. But encountered 2147483648",
+        ),
+    ] {
+        let output = run_ir(
+            &directory,
+            "TCommit",
+            &[&["tlc2.TLC", "-tool"], args].concat(),
+        );
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(stdout(&output).ends_with(&format!(
+            "@!@!@STARTMSG 1102:1 @!@!@\nError: {message}{usage}@!@!@ENDMSG 1102 @!@!@\n"
+        )));
+    }
     // TLC names the configuration file with or without its extension.
     let configured = run_ir(
         &directory,
@@ -178,9 +207,15 @@ fn reads_the_command_line_as_tlc() {
         &["tlc2.TLC", "-config", "TCommit", "TCommit"],
     );
     assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
+    // With -lncheck off TLC skips the check on the complete state graph alone.
+    let unchecked = run_ir(
+        &directory,
+        "TCommit",
+        &["tlc2.TLC", "-lncheck", "off", "TCommit"],
+    );
+    assert_eq!(unchecked.status.code(), Some(0), "{}", stdout(&unchecked));
     for (args, what) in [
-        (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
-        (&["-generate", "TCommit"], "the TLC option -generate"),
+        (&["-debug", "TCommit"][..], "the TLC option -debug"),
         (
             &["-maxSetSize", "10", "TCommit"],
             "the TLC option -maxSetSize",
@@ -189,7 +224,6 @@ fn reads_the_command_line_as_tlc() {
             &["-simulate", "-coverage", "1", "TCommit"],
             "coverage of a simulation",
         ),
-        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
         let output = run_ir(&directory, "TCommit", &[&["tlc2.TLC"], args].concat());
@@ -1896,17 +1930,30 @@ fn caches_tlccache_by_its_key_alone_as_tlc() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // TLC evaluates the key each time, where it fails; and caches nothing of an expression that
-    // reads a variable, which the engine can't tell from a constant one that reads it through an
-    // operator's argument.
+    // TLC evaluates the key each time, where it fails, as `TLCExt.tlcEval2` fails (the jar's
+    // report, exit 75).
+    let (output, directory) = run_lowered(
+        "cache-key-fails",
+        "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == TLCCache(TRUE, 1 \\div 0)\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("but it produced the following error:\nThe second argument of \\div is 0.\nWhile working on the initial state:\nx = 0\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("2. Line 6, column 23 to line 6, column 30 in Stop\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC caches nothing of an expression that reads a variable, which the engine can't tell from a
+    // constant one that reads it through an operator's argument.
     for (test, definitions) in [
         (
             "cache-violated",
             "Init == x = [i \\in {0, 1} |-> TLCCache(i, 0)]\nNext == x' = x\nInv == x[1] = 1",
-        ),
-        (
-            "cache-key-fails",
-            "Init == x = 0\nNext == x' = x\nInv == TLCCache(TRUE, 1 \\div 0)",
         ),
         (
             "cache-argument",
@@ -1937,45 +1984,86 @@ fn caches_tlccache_by_its_key_alone_as_tlc() {
 
 #[test]
 fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
-    // TLC fails on a function it keeps lazy, or on Nat, where it writes JSON, tests a bag, or
-    // reads a register. A tuple as a quantifier's bound is `words_a_value_that_isnt_a_set_as_tlc`'s.
-    for (test, definitions, config) in [
-        (
-            "json-lazy",
-            "Init == JsonSerialize(\"out.json\", <<[i \\in Nat |-> i]>>) /\\ x = 0\nNext == x' = x",
-            "",
-        ),
-        (
-            "json-nat",
-            "Init == \\E s \\in {Nat} : JsonSerialize(\"out.json\", <<s>>) /\\ x = 0\nNext == x' = x",
-            "",
-        ),
-        (
-            "bag-lazy",
-            "Init == IsABag([i \\in Nat |-> 1]) = FALSE /\\ x = 0\nNext == x' = x",
-            "",
-        ),
-        (
-            "register-lazy",
-            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, [i \\in Nat |-> i])\nPost == 3 \\in DOMAIN TLCGet(1)",
-            "POSTCONDITION Post\n",
-        ),
-    ] {
-        let spec = format!(
-            "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt, Json, Bags\nVARIABLE x\n{definitions}\n====\n"
-        );
-        let (output, directory) =
-            run_lowered(test, &spec, &format!("INIT Init\nNEXT Next\n{config}"));
+    // TLC fails on a function it keeps lazy, or on Nat, where it reads a register. Where it
+    // writes JSON, the evaluator of failures words the failure, after it opens the file as TLC
+    // does (`startup_checks/json-serialize-unconvertible-*`), and where it tests a bag, as TLC
+    // does. A tuple as a quantifier's bound is `words_a_value_that_isnt_a_set_as_tlc`'s.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt, Json, Bags\nVARIABLE x\nInit == IsABag([i \\in Nat |-> 1]) = FALSE /\\ x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("bag-lazy", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the number of elements in the overridden value Nat.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 50 in Stop\n1. Line 4, column 9 to line 4, column 41 in Stop\n2. Line 4, column 9 to line 4, column 33 in Stop\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt, Json, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, [i \\in Nat |-> i])\nPost == 3 \\in DOMAIN TLCGet(1)\n====\n";
+    let (output, directory) = run_lowered(
+        "register-lazy",
+        spec,
+        "INIT Init\nNEXT Next\nPOSTCONDITION Post\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("Model checking completed"), "{text}");
+    assert!(!text.contains("Error: "), "{text}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn opens_a_json_file_before_a_value_it_cant_convert() {
+    // `Json.ndSerialize` makes the file's directories and opens the file, emptying it, before it
+    // converts each element, and closing its writer flushes the lines before the one that fails.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\nInit == ndJsonSerialize(\"sub/o.ndjson\", <<1, \"a\", Nat>>) /\\ x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("json-unconvertible", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("but it produced the following error:\nCannot convert value: unsupported value type tlc2.value.impl.UserValue\n"),
+        "{text}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.join("sub/o.ndjson")).expect("the file"),
+        "1\n\"a\"\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn writes_ndjson_as_ioutils_serialize_does() {
+    // `Json.textSerialize` writes each element's JSON on a line of its own, opening the file as
+    // `Files.newBufferedWriter` does: APPEND with CREATE adds to it, and TLC evaluates the Java
+    // method as a guard of the action, whose definition's body it never walks.
+    let ioutils = "---- MODULE IOUtils ----\nSerialize(value, absoluteFilename, options) == <<\"fallback\">>\n====\n";
+    let spec = "---- MODULE Stop ----\nEXTENDS Json, IOUtils, TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ Serialize(<<x>>, \"out.ndjson\", [format |-> \"NDJSON\", charset |-> \"UTF-8\", openOptions |-> <<\"APPEND\", \"CREATE\">>]) /\\ x' = x + 1\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-ndjson-next-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("IOUtils.tla"), ioutils).expect("IOUtils");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("the spec");
+    std::fs::write(
+        directory.join("Stop.cfg"),
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+    )
+    .expect("the configuration");
+    for workers in ["1", "4"] {
+        let _ = std::fs::remove_file(directory.join("out.ndjson"));
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noTE", "-workers", workers, "Stop"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
         let text = stdout(&output);
-        assert!(!text.contains("Model checking completed"), "{test}: {text}");
-        assert!(!text.contains("Error: "), "{test}: {text}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("not native yet"),
-            "{test}: {text}"
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(directory.join("out.ndjson")).expect("the file"),
+            "0\n1\n2\n"
         );
-        assert!(!directory.join("out.json").exists(), "{test}");
-        std::fs::remove_dir_all(directory).expect("removed");
     }
+    std::fs::remove_dir_all(directory).expect("removed");
 }
 
 #[test]
@@ -2328,24 +2416,34 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // F[0] has an empty domain, which TLC reports applying; the engine stops there, and TLC fails
-    // to compare a lazy function even with itself, or a record that holds one. No run may report
-    // success.
-    for (test, init, reason) in [
+    // F[0] has an empty domain, which TLC reports applying; the engine stops there. TLC fails to
+    // compare a lazy function even with itself, or a record that holds one: `toFcnRcd` enumerates
+    // its domain, the filter of Nat, which the engine stops at and the trace's evaluator reports
+    // as TLC does. No run may report success.
+    let enumerated =
+        "Error: Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable\n";
+    for (test, init, reason, transcript) in [
         (
             "lazy-outside",
             "F[0][0]",
-            "applied a function outside its domain",
+            Some("applied a function outside its domain"),
+            None,
         ),
         (
             "lazy-itself",
             "LET g == F[1] IN g = g",
-            "comparing a function TLC keeps lazy",
+            None,
+            Some(format!(
+                "{enumerated}Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 34 in Stop\n1. Line 5, column 13 to line 5, column 34 in Stop\n2. Line 5, column 30 to line 5, column 34 in Stop\n\n\n0 states generated, 0 distinct states found, 0 states left on queue.\n"
+            )),
         ),
         (
             "lazy-record",
             "([a |-> F[1], b |-> 1] = [a |-> F[1], b |-> 2])",
-            "comparing a function TLC keeps lazy",
+            None,
+            Some(format!(
+                "{enumerated}Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 59 in Stop\n1. Line 5, column 14 to line 5, column 58 in Stop\n2. Line 5, column 14 to line 5, column 34 in Stop\n\n\nReason:\nAttempted to enumerate {{ x \\in S : p(x) }} when S:\nNat\nis not enumerable\n0 states generated, 0 distinct states found, 0 states left on queue.\n"
+            )),
         ),
     ] {
         let spec = format!(
@@ -2354,11 +2452,20 @@ fn tests_the_domain_of_a_function_tlc_keeps_lazy_as_it_was_built() {
         let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\n");
         let text = stdout(&output);
         assert!(!text.contains("No error has been found"), "{text}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(reason),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        if let Some(reason) = reason {
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(reason),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        if let Some(transcript) = transcript {
+            assert_eq!(output.status.code(), Some(75), "{text}");
+            assert!(
+                text.contains(&format!("Computing initial states...\n{transcript}")),
+                "{text}"
+            );
+        }
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
@@ -2442,7 +2549,10 @@ fn tests_membership_in_a_set_tlc_holds_unnormalized_element_by_element() {
 #[test]
 fn reports_a_union_with_an_operand_that_isnt_a_set_as_it_fingerprints_it() {
     // Spectacle's semantic_error1: TLC keeps {6} \cup 0 lazy, calling cup on {6}, and fails to
-    // enumerate it as it fingerprints the successor.
+    // enumerate it as it fingerprints the successor. Finding the successor again to print the
+    // trace, `Tool.getState` skips it for the same failure, so TLC fails printing the trace's
+    // second state with a NullPointerException (`currentStateInfo` is null) before the
+    // fingerprint report.
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E s \\in {6} : x' = x \\cup {s}\n====\n";
     let (output, directory) = run_lowered("cup", spec, "INIT Init\nNEXT Next\n");
     let text = stdout(&output);
@@ -2450,8 +2560,21 @@ fn reports_a_union_with_an_operand_that_isnt_a_set_as_it_fingerprints_it() {
     let reason =
         "Attempted to enumerate S \\cup T when S:\n{6}\nand T:\n0\nare not both enumerable";
     assert!(
-        text.contains(&format!("Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0) line 5, col 29 to line 5, col 38 of module Stop\n\nReason:\n{reason}\n")),
+        text.contains(&format!("State 1: <Initial predicate>\nx = 0\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0) line 5, col 29 to line 5, col 38 of module Stop\n\nReason:\n{reason}\n")),
         "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A longer trace TLC ends with the state it failed to recover from its fingerprint, which
+    // the binary leaves to TLC.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == IF x = 0 THEN x' = 5 ELSE \\E s \\in {6} : x' = x \\cup {s}\n====\n";
+    let (output, directory) = run_lowered("cup-deeper", spec, "INIT Init\nNEXT Next\n");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "a successor TLC fails to fingerprint with an error it skips finding it again"
+        ),
+        "{:?}",
+        output.stderr
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
@@ -2475,19 +2598,19 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
 }
 
 #[test]
-fn declines_an_alias_that_prints_as_it_fails() {
-    // TLC prints what the alias printed before the state whose alias fails, which the binary
-    // doesn't place.
+fn places_what_an_alias_prints_before_its_failure_as_tlc() {
+    // TLC prints the failing alias before its state, then evaluates it again for the worker.
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLES x\nInit == x = 0\nNext == x' = x + 1\nAl == [x |-> x, z |-> IF x = 0 THEN TRUE ELSE PrintT(\"hello\") /\\ Assert(FALSE, \"boom\")]\nInv == x < 1\n====\n";
     let (output, directory) = run_lowered(
         "alias-prints",
         spec,
         "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n",
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("not native yet: an ALIAS that prints"),
-        "{}",
-        stdout(&output)
+    assert_eq!(output.status.code(), Some(12), "{}", stdout(&output));
+    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
+    assert_eq!(
+        get_untimed(&stdout(&output)),
+        include_str!("alias-print-failure.txt")
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
@@ -2568,7 +2691,7 @@ fn declines_a_postcondition_after_an_initial_states_violation() {
     );
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("a POSTCONDITION after an initial state's violation"),
+            .contains("a POSTCONDITION that reads the run or writes a trace file after an initial state's violation"),
         "{}",
         stdout(&output)
     );
@@ -2914,6 +3037,28 @@ fn reports_a_fingerprint_failure_tlcs_replay_throws() {
     // stack, down to the value whose method failed.
     assert_eq!(output.status.code(), Some(75), "{text}");
     assert!(text.contains(include_str!("empty-subset-eq.txt")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn prints_sets_of_sets_in_a_trace_as_tlc() {
+    // Sets of sets the replay builds as TLC holds them unnormalized, their elements written out of
+    // order and twice, with sets of sets of sets among them, which it sorts by a stable sort, as
+    // no comparison among them fails or normalizes another set; the trace TLC prints for them at
+    // the pinned jar is beside it.
+    let spec = "---- MODULE SetsOfSets ----\nEXTENDS Integers\nVARIABLES x, y, pc\nInit == x = {} /\\ y = {} /\\ pc = 0\nNext == \\/ /\\ pc = 0\n           /\\ pc' = 1\n           /\\ x' = {{i, 10 - i} : i \\in 1..9}\n           /\\ y' = {{{2, 1}}, {{1, 2}, {3}}, {{3}, {2, 1}}, {}, {{}}}\n        \\/ pc = 1 /\\ UNCHANGED <<x, y, pc>>\nInv == pc < 1\n====\n";
+    let (output, directory) = run_front(
+        "sets-of-sets",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains(include_str!("sets-of-sets-trace.txt")),
+        "{text}"
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -3334,9 +3479,9 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
 // the successor it hadn't counted as found, then the call stack of its replay of the expansion
 // (`Worker.addElement`, `ModelChecker.doNextFailed`). A constraint that is a literal fails in TLC
 // with a ClassCastException whose message names the JVM's classes, which the binary declines.
-// So does a constant function applied outside its domain (failDom*), whose message names the
-// `FcnRcdValue` TLC computed as it started, which the evaluator doesn't build, and a constraint the
-// configuration binds to TRUE (cfg_constTrue), which the front end keeps. TLC's output at d8fb231
+// So does a constraint the configuration binds to TRUE (cfg_constTrue), which the front end keeps.
+// A constant function applied outside its domain (failDom*) names the `FcnRcdValue` TLC computed
+// as it started. TLC's output at d8fb231
 // is beside each spec, with -lncheck final and without, and the status it exits with in
 // exit-codes.txt.
 #[test]
@@ -3344,15 +3489,37 @@ fn reports_a_failing_action_constraint_as_tlc() {
     let declined = [
         "cfg_constTrue",
         "cfg_defTrueFails",
+        "failStringRes_live",
+        "failStringRes_nodl",
+        "failStringRes_plain",
+    ];
+    // Those that fail past the expansion of the one initial state: with four workers TLC's others
+    // race the stop, and the Jar prints other traces and counts than one worker's, which differ
+    // from run to run for most, so these decline there.
+    let declined_on_several = [
+        "failAssert_live",
+        "failAssert_nodl",
+        "failAssert_plain",
+        "failDivSome_live",
+        "failDivSome_nodl",
+        "failDivSome_plain",
         "failDomUnprimed_live",
         "failDomUnprimed_nodl",
         "failDomUnprimed_plain",
         "failDom_live",
         "failDom_nodl",
         "failDom_plain",
-        "failStringRes_live",
-        "failStringRes_nodl",
-        "failStringRes_plain",
+        "failNonBoolSome_live",
+        "failNonBoolSome_nodl",
+        "failNonBoolSome_plain",
+        "failSeqIdx_live",
+        "failSeqIdx_nodl",
+        "failSeqIdx_plain",
+        "failStrSome_live",
+        "failStrSome_nodl",
+        "failStrSome_plain",
+        "invBeforeFail",
+        "liveFailAC",
     ];
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/action-constraint-failures");
@@ -3379,7 +3546,9 @@ fn reports_a_failing_action_constraint_as_tlc() {
                 let (output, run) = run_front(&test, &spec, &config, &args);
                 let text = stdout(&output);
                 let error = String::from_utf8_lossy(&output.stderr).into_owned();
-                if declined.contains(&name) {
+                if declined.contains(&name)
+                    || (workers == "4" && declined_on_several.contains(&name))
+                {
                     assert!(
                         error.contains("prove-it: not native yet: "),
                         "{name}{suffix} {workers}: {text}{error}"
@@ -3390,6 +3559,74 @@ fn reports_a_failing_action_constraint_as_tlc() {
                 }
                 std::fs::remove_dir_all(run).expect("removed");
             }
+        }
+    }
+}
+
+// Under -workers 4 TLC's other workers race a stop past the expansion of a lone state: they take
+// the states left on the queue, and whichever adds a state two of a level step to first is its
+// parent in the trace, so the Jar's trace and counts vary from run to run there, and the binary
+// declines. A stop at the end of a chain, or with an empty queue and no such state on the trace,
+// prints what one worker prints, as the Jar does in each of six runs.
+#[test]
+fn declines_a_stop_several_workers_race_to() {
+    let header = "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\n";
+    let cases = [
+        (
+            "Next == x < 6 /\\ x' = x + 1\nC == x = 4 => 1 \\div 0 = 1\n",
+            "INIT Init\nNEXT Next\nCONSTRAINT C\n",
+            false,
+        ),
+        (
+            "Next == (x = 0 /\\ x' \\in {1, 2}) \\/ (x = 1 /\\ x' = 3) \\/ (x = 3 /\\ x' = 4)\n\
+             I == x # 4\n",
+            "INIT Init\nNEXT Next\nINVARIANT I\nCHECK_DEADLOCK FALSE\n",
+            false,
+        ),
+        (
+            "Next == x < 9 /\\ x' \\in {x + 1, x + 2}\nI == x < 5\n",
+            "INIT Init\nNEXT Next\nINVARIANT I\n",
+            true,
+        ),
+        (
+            "Next == (x = 0 /\\ x' \\in {1, 2}) \\/ (x \\in {1, 2} /\\ x' = 3) \\/ (x = 3 /\\ x' = 4)\n\
+             I == x # 4\n",
+            "INIT Init\nNEXT Next\nINVARIANT I\n",
+            true,
+        ),
+    ];
+    for (index, (body, config, is_raced)) in cases.iter().enumerate() {
+        let spec = format!("{header}{body}====\n");
+        let mut texts = Vec::new();
+        for workers in ["1", "4"] {
+            let test = format!("raced-{index}-{workers}");
+            let (output, run) = run_front(
+                &test,
+                &spec,
+                config,
+                &["-workers", workers, "-fp", "0", "-seed", "4"],
+            );
+            let error = String::from_utf8_lossy(&output.stderr).into_owned();
+            if workers == "4" && *is_raced {
+                assert_eq!(
+                    error,
+                    "prove-it: not native yet: the engine stopped: an invariant violated: a stop several workers race to\n",
+                    "{index}"
+                );
+            } else {
+                assert!(error.is_empty(), "{index} {workers}: {error}");
+                texts.push(
+                    get_untimed(&stdout(&output))
+                        .lines()
+                        .filter(|line| !line.contains("worker"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            std::fs::remove_dir_all(run).expect("removed");
+        }
+        if !is_raced {
+            assert_eq!(texts[0], texts[1], "{index}");
         }
     }
 }
@@ -3726,16 +3963,21 @@ fn compares_the_message_of_a_lazy_function_applied_outside_its_domain() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // A LET that names the function elsewhere may have built it first, which words the failure
-    // otherwise: the replay doesn't follow which, so the run isn't native.
+    // DOMAIN builds the cached function before AssertError applies it, so the message differs
+    // from the lazy function's message and TLC rejects the assumption.
     let twice = spec.replace("IN AssertError(", "IN DOMAIN f = {1, 3} /\\ AssertError(");
     let (output, directory) =
         run_front("assert-error-built", &twice, "INIT Init\nNEXT Next\n", &[]);
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
-        "{}",
-        stdout(&output)
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert_eq!(
+        text.lines()
+            .filter(|line| line.starts_with("Error:"))
+            .collect::<Vec<_>>(),
+        ["Error: Assumption line 4, col 8 to line 4, col 189 of module AE is false."],
+        "{text}"
     );
+    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -3766,9 +4008,11 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 
 #[test]
 fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
-    // TLC prints 1..2 as written, which the store forgets where a LET names it. The search, which
-    // never ends, stops once the print is known to differ, on one thread and on several.
-    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ LET s == 1..2 IN PrintT(s)\n====\n";
+    // TLC prints 1..2 as written, which the store forgets where a LET names it as an operator's
+    // argument too, which TLC may evaluate with KeepLazy (a name the builtins alone read is built
+    // as its expression). The search, which never ends, stops once the print is known to differ,
+    // on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nId(v) == v\nInit == x = 0\nNext == x' = x + 1 /\\ LET s == 1..2 IN PrintT(s) /\\ Id(s) # {}\n====\n";
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -3917,18 +4161,16 @@ fn checks_a_successor_in_tlc_s_order() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // TLC reports a constraint that fails on a successor with the successor in the trace, which
-    // the binary doesn't, whatever the next-state relation does after it.
+    // TLC reports a constraint that fails on a successor with the successor in the trace,
+    // whatever the next-state relation does after it (`Worker.addElement`).
     let constraint = "---- MODULE ConThenNext ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1\n        \\/ x < 3 /\\ x' = x + 10\n        \\/ x = 1 /\\ Assert(FALSE, \"next\") /\\ x' = 5\nCon == IF x = 2 THEN Assert(FALSE, \"con\") ELSE TRUE\n====\n";
     let config = "INIT Init\nNEXT Next\nCONSTRAINT Con\nCHECK_DEADLOCK FALSE\n";
     let (output, directory) = run_front("constraint-fails", constraint, config, &[]);
-    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(14), "{text}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "not native yet: the engine stopped: a constraint, a VIEW or an action property that fails on a successor"
-        ),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        text.contains("Error: The first argument of Assert evaluated to FALSE; the second argument was:\n\"con\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 12 to line 5, col 30 of module ConThenNext>\nx = 1\n\nState 3: <Next line 5, col 12 to line 5, col 30 of module ConThenNext>\nx = 2\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 8, column 8 to line 8, column 51 in ConThenNext\n1. Line 8, column 22 to line 8, column 41 in ConThenNext\n\n\n4 states generated, 3 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 2.\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
@@ -3955,13 +4197,13 @@ fn reports_the_progress_of_the_initial_states_tlc_computes_again() {
 }
 
 // TLC drops a SYMMETRY whose definition has as many arguments as permutations, counting the
-// arguments of whatever node SANY made of it, and fails on one that is no application.
+// arguments of whatever node SANY made of it, and fails on one that is no application. A set
+// enumeration's arguments are its elements (`startup_checks/symmetry-combined-function-element`).
 #[test]
 fn declines_a_symmetry_that_is_no_operator_application() {
     for definition in [
         "IF TRUE THEN Permutations(P) ELSE {}",
         "LET Q == P IN Permutations(Q)",
-        "{(a :> b) @@ (b :> a)}",
     ] {
         let spec = format!(
             "---- MODULE Shape ----\nEXTENDS TLC\nCONSTANTS a, b, P\nVARIABLE x\nSym == {definition}\nInit == x \\in P\nNext == x' \\in P\n====\n"
@@ -4513,11 +4755,13 @@ fn answers_enabled_from_the_steps_as_tlc_does() {
         ),
         (
             // The labelled search counts and orders the states as the next-state relation's walk
-            // does, which the POSTCONDITION reads.
+            // does, which the POSTCONDITION reads: each statistic but the duration, which counts
+            // the seconds since TLC's class was loaded and varies from run to run of the Jar (a
+            // POSTCONDITION that may read it declines).
             "Stats",
-            "---- MODULE Stats ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ \\A p \\in P : WF_x(Inc(p))\nDone == \\A p \\in P : []<>(x[p] = 2)\nPost == PrintT(<<TLCGet(\"stats\"), TLCGet(\"distinct\"), TLCGet(\"queue\"), TLCGet(\"level\")>>)\n====\n",
+            "---- MODULE Stats ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ \\A p \\in P : WF_x(Inc(p))\nDone == \\A p \\in P : []<>(x[p] = 2)\nPost == PrintT(<<[distinct |-> TLCGet(\"stats\").distinct, queue |-> TLCGet(\"stats\").queue, worker |-> TLCGet(\"stats\").worker, generated |-> TLCGet(\"stats\").generated, diameter |-> TLCGet(\"stats\").diameter, initial |-> TLCGet(\"stats\").initial], TLCGet(\"distinct\"), TLCGet(\"queue\"), TLCGet(\"level\")>>)\n====\n",
             "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\nPOSTCONDITION Post\n",
-            "<< [ distinct |-> 9,\n     queue |-> 0,\n     worker |-> 0,\n     duration |-> 0,\n     generated |-> 14,\n     diameter |-> 5,\n     initial |-> 1 ],\n   9,\n   0,\n   0 >>\nModel checking completed. No error has been found.\n",
+            "<< [ distinct |-> 9,\n     queue |-> 0,\n     worker |-> 0,\n     generated |-> 14,\n     diameter |-> 5,\n     initial |-> 1 ],\n   9,\n   0,\n   0 >>\nModel checking completed. No error has been found.\n",
             "14 states generated, 9 distinct states found, 0 states left on queue.\n",
         ),
     ];
@@ -5739,4 +5983,222 @@ fn exports_xml_as_sanys_xml_exporter_does() {
         "prove-it: not native yet: TLC 1.7.4\n"
     );
     std::fs::remove_dir_all(&directory).expect("removed");
+}
+
+// What the jar (`-workers 1` and `-workers 4`) printed for each, from the error to the end of
+// its report: TLCEvalDefinition of Nat evaluates Naturals' `{ }`, with that node's source; a
+// recursive operator never evaluates an argument its body doesn't name; a recursive function
+// binds a tuple pattern; a lazy filter's enumeration words a predicate that isn't a boolean; and
+// a union whose empty receiver returns the other set gives it the union's source, which Nat, one
+// object TLC shares, keeps wherever it is next.
+#[test]
+fn follows_tlc_where_it_evaluates_lazily_or_gives_a_value_a_source() {
+    let header = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n";
+    let cases = [
+        (
+            "eval-nat",
+            "Init == x = 0\nNext == x' = x\nInv == TLCEvalDefinition(\"Nat\") = 1\n",
+            75,
+            "Error: Attempted to check equality of the set {} with the value:\n1\nWhile working on the initial state:\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 4, column 9 to line 4, column 13 in Stop\n1. Line 6, column 8 to line 6, column 35 in Stop\n2. Line 14, column 14 to line 14, column 16 in Naturals\n\n\nReason:\nAttempted to check equality of the set {} with the value:\n1\n",
+        ),
+        (
+            "unused-argument",
+            "RECURSIVE R(_, _)\nR(n, junk) == IF n = 0 THEN 0 ELSE R(n - 1, 1 \\div 0)\nInit == x = 0\nNext == x' = x\nInv == R(3, 1 \\div 0) = x\n",
+            0,
+            "Model checking completed. No error has been found.\n",
+        ),
+        (
+            "recursive-tuple",
+            "F[<<a, b>> \\in (0..2) \\X (0..2)] == IF a = 0 THEN b ELSE F[<<a - 1, b>>] + 1\nInit == x = 0\nNext == x' = x\nInv == F[<<2, x + 1>>] = 3\n",
+            0,
+            "Model checking completed. No error has been found.\n",
+        ),
+        (
+            "filter-non-boolean",
+            "Init == x = 0\nNext == x' = x\nInv == {s \\in SUBSET {x} : s} # {}\n",
+            75,
+            "Error: Evaluating predicate line 6, col 28 to line 6, col 28 of module Stop yielded non-Boolean value.\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in Stop\n1. Line 6, column 8 to line 6, column 34 in Stop\n",
+        ),
+        (
+            "union-source",
+            "Init == x = 0\nNext == x' = x\nInv == ({} \\cup {x}) = 1\n",
+            75,
+            "Error: Attempted to check equality of the set {0} with the value:\n1\nWhile working on the initial state:\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 4, column 9 to line 4, column 13 in Stop\n1. Line 6, column 8 to line 6, column 24 in Stop\n2. Line 6, column 9 to line 6, column 19 in Stop\n\n\nReason:\nAttempted to check equality of the set {0} with the value:\n1\n",
+        ),
+        (
+            "shared-nat-source",
+            "Init == x = 0\nNext == x' = x\nInv == 1 \\in ({} \\cup Nat) /\\ Nat = 1\n",
+            75,
+            "Error: Attempted to compare overridden value Nat with non-overridden value:\n1\nWhile working on the initial state:\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 4, column 9 to line 4, column 13 in Stop\n1. Line 6, column 8 to line 6, column 37 in Stop\n2. Line 6, column 31 to line 6, column 37 in Stop\n3. Line 6, column 15 to line 6, column 25 in Stop\n\n\nReason:\nAttempted to compare overridden value Nat with non-overridden value:\n1\n",
+        ),
+    ];
+    for (test, definitions, code, expected) in cases {
+        let spec = format!("{header}{definitions}====\n");
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(code), "{test}: {text}");
+        assert!(text.contains(expected), "{test}: {text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// What the jar (`-workers 1` and `-workers 4`) printed for each: UNION's finiteness asks the sets it
+// unites; a recursive operator with an operator parameter passed on as written; and a simulation
+// whose initial predicate gives no state.
+#[test]
+fn follows_tlc_on_unions_operator_parameters_and_unsatisfied_simulations() {
+    let header =
+        "---- MODULE Stop ----\nEXTENDS Integers, Sequences, FiniteSets, TLC, TLCExt\nVARIABLE x\n";
+    let cases: [(&str, &str, &[&str], i32, &str); 3] = [
+        (
+            "union-finite",
+            "Init == x = 0\nNext == x' = x\nInv == ~IsFiniteSet(UNION {Nat}) /\\ IsFiniteSet(UNION {{x}})\n",
+            &[],
+            0,
+            "Model checking completed. No error has been found.\n",
+        ),
+        (
+            "recursive-operator-parameter",
+            "RECURSIVE Map(_, _)\nMap(f(_), s) == IF s = <<>> THEN <<>> ELSE <<f(Head(s))>> \\o Map(f, Tail(s))\nInit == x = 0\nNext == x' = x\nInv == Map(LAMBDA y : y + x, <<1, 2>>) = <<1, 2>>\n",
+            &[],
+            0,
+            "Model checking completed. No error has been found.\n",
+        ),
+        (
+            "simulation-unsatisfied",
+            "Init == x \\in {}\nNext == x' = x\nInv == TRUE\n",
+            &["-simulate", "num=1", "-depth", "5"],
+            255,
+            "Computed 0 initial states...\nError: There is no state satisfying the initial state predicate.\n",
+        ),
+    ];
+    for (test, definitions, args, code, expected) in cases {
+        let spec = format!("{header}{definitions}====\n");
+        let (output, directory) =
+            run_front(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n", args);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(code), "{test}: {text}");
+        assert!(text.contains(expected), "{test}: {text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// TLC adds the invariants of `-inv` and `-invlevel` through `ParameterizedSpecObj`, so
+// `TLCGet("spec").invariants` holds only the configuration's: the output the pinned jar prints.
+#[test]
+fn leaves_command_line_invariants_out_of_the_spec_description() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-spec-invariants-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("T.tla"),
+        "---- MODULE T ----\nEXTENDS TLC, Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\n\
+         Next == x < 1 /\\ x' = x + 1\nInv == PrintT(Cardinality(TLCGet(\"spec\").invariants)) /\\ x < 5\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("T.cfg"),
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    )
+    .expect("a configuration");
+    let expected = "Computing initial states...\n1\n1\nError: Deadlock reached.\n\
+        Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n\
+        State 2: <Next line 5, col 9 to line 5, col 27 of module T>\nx = 1\n\n\
+        2 states generated, 2 distinct states found, 0 states left on queue.\n\
+        The depth of the complete state graph search is 2.\n";
+    for args in [&["-inv", "x<9"][..], &["-invlevel", "1"]] {
+        let output = run(
+            &directory,
+            &[
+                args,
+                &[
+                    "-workers",
+                    "1",
+                    "-fp",
+                    "0",
+                    "-nowarning",
+                    "-noGenerateSpecTE",
+                    "T",
+                ],
+            ]
+            .concat(),
+        );
+        let text: String = stdout(&output)
+            .lines()
+            .filter(|line| {
+                ![
+                    "Parsing",
+                    "Semantic",
+                    "Linting",
+                    "TLC2 Version",
+                    "Running ",
+                    "Starting",
+                    "Finished",
+                    "SANY",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+        if args[0] == "-inv" {
+            assert_eq!(output.status.code(), Some(11), "{text}");
+            assert_eq!(text, expected);
+        } else {
+            // `-invlevel 1` adds an invariant the initial state violates, after Inv printed 1.
+            assert!(
+                text.starts_with("Computing initial states...\n1\n"),
+                "{text}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&directory).expect("removed");
+}
+
+// A termination request stops a run whose standard output nobody reads, as it stops TLC: the run's
+// thread, blocked writing to the full pipe, holds what the interrupt's print would wait for.
+#[cfg(unix)]
+#[test]
+fn a_termination_request_stops_a_run_blocked_on_its_output() {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-blocked-term-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3000000 /\\ x' = x + 1 /\\ PrintT(x)\n====\n",
+    )
+    .unwrap();
+    std::fs::write(directory.join("M.cfg"), "INIT Init\nNEXT Next\n").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-workers", "1", "-deadlock", "M"])
+        .current_dir(&directory)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Past the two seconds the output is held, the run streams into the pipe until it is full.
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let mut status = None;
+    for _ in 0..200 {
+        status = child.try_wait().unwrap();
+        if status.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    std::fs::remove_dir_all(&directory).unwrap();
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(status.and_then(|status| status.signal()), Some(15));
 }

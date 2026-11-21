@@ -71,9 +71,11 @@ describe("check with workers matches TLC", () => {
     expect(result.violations[0]?.states).toHaveLength(3);
   });
 
-  it("reports an action property violated in a level the workers expand", async () => {
+  it("declines an action property violated where workers race to stop", async () => {
+    // TLC's other workers keep expanding the level as one reports the violation, so its counts
+    // vary from run to run (32,133, 32,353 and 32,841 states in three runs of the Jar).
     const tlaTs = await loadPackage();
-    const result = await checkWithThreads(tlaTs, {
+    const result = checkWithThreads(tlaTs, {
       source: [
         "---- MODULE M ----",
         "EXTENDS Naturals",
@@ -88,9 +90,11 @@ describe("check with workers matches TLC", () => {
       config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
       workers: 4,
     });
-    expect(result.status).not.toBe("success");
-    expect(result.violations[0]?.headline).toBe("Action property Prop is violated.");
-    expect([result.generatedStates, result.distinctStates]).toEqual([32017, 32017]);
+    await expect(result).rejects.toThrow(
+      new tlaTs.TlaUnsupportedError(
+        "not native yet: the engine stopped: an action property violated: a stop several workers race to",
+      ),
+    );
   });
 
   it("prints what assumptions print once when it checks on the calling thread", async () => {
@@ -144,12 +148,15 @@ describe("check with workers matches TLC", () => {
     expect(getCounts(result)).toEqual([42, 10, 7]);
   });
 
-  it("reports the shortest invariant violation trace like one worker", async () => {
-    const result = await checkFixtureInParallel("water-jugs", "WaterJugs", 4);
-    expect(result.status).toBe("invariant-violation");
-    expect(result.violations[0]?.headline).toBe("Invariant GoalNotReached is violated.");
-    expect(result.violations[0]?.states).toHaveLength(7);
-    expect(getCounts(result)).toEqual([73, 14, 7]);
+  it("declines an invariant violation where workers race to stop", async () => {
+    // With four workers TLC prints a trace of 9 or of 7 states, 84 states generated and 16
+    // distinct, as its workers race; one worker's shortest trace of 7 isn't among them.
+    const tlaTs = await loadPackage();
+    await expect(checkFixtureInParallel("water-jugs", "WaterJugs", 4)).rejects.toThrow(
+      new tlaTs.TlaUnsupportedError(
+        "not native yet: the engine stopped: an invariant violated: a stop several workers race to",
+      ),
+    );
   });
 
   it("reports deadlock with its trace like one worker", async () => {

@@ -1,3 +1,10 @@
 # Every text file checks out with LF line ends, on Windows too: the tests compare the binary's
 # output against fixtures byte for byte, and the binary embeds the standard modules' sources.
 * text=auto eol=lf
+# SANY diagnostics retain the spaces TLC prints at the ends of message lines.
+packages/prove-it/native/crates/tla-front/tests/recursive-parameters/*.txt whitespace=-blank-at-eol
+packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sany-duplicate-variable/tlc.out whitespace=-blank-at-eol
+packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sany-monolith-carriage-returns/tlc.out whitespace=-blank-at-eol
+packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sany-monolith-missing-end/tlc.out whitespace=-blank-at-eol
+packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sany-tab-module-opener/tlc.out whitespace=-blank-at-eol
+packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/sany-monolith-carriage-returns/M.tla -text

@@ -1,0 +1,33 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module FingerprintOfNat
+Linting of module TLCExt
+Linting of module FingerprintOfNat
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to apply the operator overridden by the Java method
+public static synchronized tlc2.value.impl.IntValue tlc2.module.TLCExt.tlcFingerprint(tlc2.value.impl.Value),
+but it produced the following error:
+TLC has found a state in which the value of a variable contains Nat
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 32 in FingerprintOfNat
+1. Line 5, column 9 to line 5, column 14 in FingerprintOfNat
+2. Line 5, column 19 to line 5, column 32 in FingerprintOfNat
+3. Line 5, column 19 to line 5, column 28 in FingerprintOfNat
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

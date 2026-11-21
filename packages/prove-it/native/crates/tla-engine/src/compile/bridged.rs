@@ -3,14 +3,20 @@
 //! value arguments in order and computes what the interpreter's builtin computes, and stops
 //! wherever the interpreter's fails, which then reports TLC's error.
 
+use std::collections::HashSet;
+
+use tla_ir::NodeId;
 use tla_values::store::{
-    EMPTY_TUPLE, FALSE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
-    TRUE, is_function_kind,
+    EMPTY_TUPLE, FALSE, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, Outcome, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
 use super::builtins::Applier;
-use super::{Compiled, Compiler, Compiling, Context, Operand, eval, leaf, unsupported};
+use super::lazy::Lazy;
+use super::{
+    Compiled, Compiler, Compiling, Context, Operand, eval, leaf, reference_of, unsupported,
+};
 use crate::footprint::Footprint;
 use crate::machine::Machine;
 
@@ -19,6 +25,9 @@ const MAXIMUM_PERMUTED: usize = 10;
 /// What IsFiniteSet stops with where TLC fails asking a set it keeps lazy whether it is finite,
 /// or the engine can't tell what TLC answers.
 const LAZY_FINITE: Bail = Bail("unsupported: IsFiniteSet of a set TLC keeps lazy");
+/// What IsFiniteSet stops with where TLC may fail asking a set it keeps lazy whether it is
+/// finite (`SetCapValue.isFinite` and the like), which the evaluator of failures follows.
+const UNSURE_FINITE: Bail = Bail("IsFiniteSet of a set TLC may fail to tell finite");
 const MAXIMUM_SUB_BAGS: f64 = 1e6;
 
 type Bridged = fn(&mut Machine<'_>, &[Id], &[Applier]) -> Outcome<Id>;
@@ -31,6 +40,7 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Option<Compiled>> {
         let (arity, compute): (usize, Bridged) = match name {
+            "Warshall" | "Warshall@TransitiveClosure" => (1, warshall),
             "SubSeq" => (3, sub_seq),
             "SortSeq" => (2, sort_seq),
             "Permutations" => (1, permutations),
@@ -52,6 +62,29 @@ impl Compiler<'_> {
         if operands.len() != arity {
             return unsupported("an operator applied to the wrong number of arguments");
         }
+        // TLC's Warshall enumerates its relation, converts each element to a tuple and
+        // fingerprints its endpoints (`TransitiveClosure.Warshall`), which may evaluate what a
+        // function TLC keeps lazy holds, or print, where the engine built it before: a relation
+        // that may have an effect declines.
+        if matches!(name, "Warshall" | "Warshall@TransitiveClosure")
+            && operands.first().is_none_or(|operand| {
+                operand.is_param
+                    || self.may_have_effect_in(operand.node, &operand.context, &mut HashSet::new())
+            })
+        {
+            return unsupported("Warshall of a relation that may have an effect");
+        }
+        // A set enumeration of scalars of more than one kind, which TLC holds as written: TLC
+        // asks it whether it is finite, which it is (`SetEnumValue.isFinite`), and whether it is
+        // a function (`Bags.IsABag`, `Value.toFcnRcd`), which it isn't, normalizing nothing. The
+        // engine can't hold one, whose elements don't compare. Its scalars have no effect.
+        if matches!(name, "IsFiniteSet" | "IsABag") && self.mixed_scalar_elements(&operands[0]) {
+            let answer = if name == "IsFiniteSet" { TRUE } else { FALSE };
+            return Ok(Some(leaf(eval(move |_| Ok(answer)), Footprint::default())));
+        }
+        if name == "IsFiniteSet" && self.null_literal_elements(&operands[0]) {
+            return Ok(Some(leaf(eval(move |_| Ok(TRUE)), Footprint::default())));
+        }
         let mut footprint = Footprint::default();
         let mut values = Vec::new();
         let mut operators: Vec<Applier> = Vec::new();
@@ -61,6 +94,16 @@ impl Compiler<'_> {
                 footprint = footprint.merge(&applier.footprint);
                 operators.push(applier);
             } else {
+                if name == "IsFiniteSet"
+                    && let Some(base) = self.seq_base(operand)
+                {
+                    return self.compile_seq_finite(base, operand).map(Some);
+                }
+                if name == "IsFiniteSet"
+                    && let Some(sets) = self.union_operand(operand)
+                {
+                    return self.compile_union_finite(sets, operand).map(Some);
+                }
                 let value = self.operand(operand)?;
                 // TLC asks a set it keeps lazy whether it is finite by its parts
                 // (`SetOfFcnsValue.isFinite` and the like), where the engine would enumerate it.
@@ -76,12 +119,12 @@ impl Compiler<'_> {
                             }
                             let lazy = match &reference {
                                 Some(reference) => reference(machine)?,
-                                None => return Err(LAZY_FINITE),
+                                None => return Err(UNSURE_FINITE),
                             };
                             match lazy.is_finite(machine) {
                                 Some(true) => Ok(TRUE),
                                 Some(false) => Ok(FALSE),
-                                None => Err(LAZY_FINITE),
+                                None => Err(UNSURE_FINITE),
                             }
                         }),
                         value.footprint,
@@ -119,6 +162,172 @@ impl Compiler<'_> {
                         ids.push(value(machine)?);
                     }
                     compute(machine, &ids, &operators)
+                }),
+                footprint,
+            )
+        }))
+    }
+}
+
+impl Compiler<'_> {
+    // The S of an operand written `Seq(S)`, Sequences' Seq.
+    // S of an operand written UNION S.
+    fn union_operand(&self, operand: &Operand) -> Option<NodeId> {
+        if operand.is_param {
+            return None;
+        }
+        match self.node(operand.node).1 {
+            tla_ir::NodeKind::Apply { name, args }
+                if !name.is_local && args.len() == 1 && self.text(name.text) == "UNION" =>
+            {
+                Some(args[0])
+            }
+            _ => None,
+        }
+    }
+
+    // `IsFiniteSet(UNION S)`: TLC evaluates S and asks each set it holds whether it is finite
+    // (`UnionValue.isFinite`), where the engine can't build the union of an infinite one.
+    fn compile_union_finite(&mut self, sets: NodeId, operand: &Operand) -> Compiling<Compiled> {
+        let sets = self.operand(&Operand {
+            node: sets,
+            slot: None,
+            is_param: false,
+            context: operand.context.clone(),
+        })?;
+        let Some(reference) = reference_of(&sets) else {
+            return unsupported("IsFiniteSet of a UNION whose sets the engine doesn't hold");
+        };
+        Ok(leaf(
+            eval(move |machine| {
+                let sets = reference(machine)?;
+                match Lazy::Union(Box::new(sets)).is_finite(machine) {
+                    Some(true) => Ok(TRUE),
+                    Some(false) => Ok(FALSE),
+                    None => Err(UNSURE_FINITE),
+                }
+            }),
+            sets.footprint,
+        ))
+    }
+
+    fn seq_base(&self, operand: &Operand) -> Option<NodeId> {
+        if operand.is_param {
+            return None;
+        }
+        match self.node(operand.node).1 {
+            tla_ir::NodeKind::Apply { name, args }
+                if !name.is_local
+                    && args.len() == 1
+                    && matches!(name.resolution, tla_ir::Resolution::Builtin(index)
+                        if self.builtin_name(index) == "Seq") =>
+            {
+                Some(args[0])
+            }
+            _ => None,
+        }
+    }
+
+    // `IsFiniteSet(Seq(S))`: TLC evaluates S, and Seq(S) is finite where S is finite and empty
+    // (`Sequences.SeqValue.isFinite`), which asks S whether it is empty only where it is finite.
+    fn compile_seq_finite(&mut self, base: NodeId, operand: &Operand) -> Compiling<Compiled> {
+        let base = self.operand(&Operand {
+            node: base,
+            context: operand.context.clone(),
+            is_param: false,
+            slot: None,
+        })?;
+        let (reference, parts, evaluate) = (base.reference.clone(), base.parts.clone(), base.eval);
+        Ok(leaf(
+            eval(move |machine| {
+                let lazy = match &reference {
+                    Some(reference) => {
+                        if let Some(parts) = &parts {
+                            machine.run_parts(parts)?;
+                        }
+                        reference(machine)?
+                    }
+                    None => Lazy::Set(evaluate(machine)?),
+                };
+                match lazy.is_finite(machine) {
+                    Some(false) => Ok(FALSE),
+                    Some(true) => match lazy.printed_is_empty(machine) {
+                        Ok(true) => Ok(TRUE),
+                        Ok(false) => Ok(FALSE),
+                        Err(_) => Err(LAZY_FINITE),
+                    },
+                    None => Err(UNSURE_FINITE),
+                }
+            }),
+            base.footprint,
+        ))
+    }
+}
+
+impl Compiler<'_> {
+    /// `Seq(S) = T` and `Seq(S) # T`: TLC compares Seq(S) as the receiver (`UserValue.equals`,
+    /// `Sequences.compareTo`), with another Seq(S') by their ranges, which it compares as sets,
+    /// and as unequal to a model value. Any other T stops for the evaluator of failures, and
+    /// ranges the engine holds as other than sets or can't compare decline.
+    pub(crate) fn compile_seq_equal(
+        &mut self,
+        left: &Operand,
+        right: &Operand,
+        is_equal: bool,
+    ) -> Compiling<Option<Compiled>> {
+        let Some(base) = self.seq_base(left) else {
+            return Ok(None);
+        };
+        let base = self.operand(&Operand {
+            node: base,
+            context: left.context.clone(),
+            is_param: false,
+            slot: None,
+        })?;
+        let other = match self.seq_base(right) {
+            Some(other) => Some(self.operand(&Operand {
+                node: other,
+                context: right.context.clone(),
+                is_param: false,
+                slot: None,
+            })?),
+            None => None,
+        };
+        let right = self.operand(right)?;
+        let footprint = base.footprint.merge(&right.footprint);
+        let range = base.eval;
+        let other = other.map(|other| other.eval);
+        let evaluate_right = right.eval;
+        const UNCOMPARED: Bail =
+            Bail("unsupported: comparing Seq(S) with a value the engine doesn't");
+        Ok(Some(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    let range = range(machine)?;
+                    let is_same = match &other {
+                        Some(other) => {
+                            let other = other(machine)?;
+                            if machine.store.kind_of(range) != KIND_SET
+                                || machine.store.kind_of(other) != KIND_SET
+                            {
+                                return Err(UNCOMPARED);
+                            }
+                            machine
+                                .store
+                                .compare(range, other)
+                                .map_err(|_| UNCOMPARED)?
+                                == 0
+                        }
+                        None => {
+                            let value = evaluate_right(machine)?;
+                            if machine.store.kind_of(value) != KIND_MODEL {
+                                return Err(Bail(crate::search::SEQ_COMPARED));
+                            }
+                            false
+                        }
+                    };
+                    Ok(if is_same == is_equal { TRUE } else { FALSE })
                 }),
                 footprint,
             )
@@ -245,6 +454,65 @@ fn sort_seq(machine: &mut Machine<'_>, args: &[Id], operators: &[Applier]) -> Ou
     Ok(machine.store.tuple_of(&sorted))
 }
 
+// TLC's Warshall (`TransitiveClosure.Warshall`): a set that isn't `Enumerable` fails, as does an
+// element that isn't a pair (`toTuple`), the first TLC enumerates, which the engine leaves to the
+// evaluator of failures to find; endpoints are told apart by their fingerprints, which TLC fails
+// to take of what it can't fingerprint. TLC returns the pairs unnormalized.
+fn warshall(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
+    let relation = expect_set(machine, args[0])?;
+    let edges = machine.store.set_elements(relation).to_vec();
+    let mut nodes = Vec::new();
+    let mut pairs = Vec::new();
+    for edge in edges {
+        if machine.store.kind_of(edge) == KIND_LAZY_FUNCTION {
+            return Err(Bail("unsupported: Warshall of a function TLC keeps lazy"));
+        }
+        if machine.store.kind_of(edge) != KIND_TUPLE || machine.store.size_of(edge) != 2 {
+            return Err(Bail("Warshall of a non-pair"));
+        }
+        let mut pair = [0; 2];
+        for (i, slot) in pair.iter_mut().enumerate() {
+            let node = machine.store.get_range_value(edge, i as u32);
+            if machine.store.holds_lazy_function(node) {
+                return Err(Bail(
+                    "unsupported: Warshall of an endpoint TLC may fail to fingerprint",
+                ));
+            }
+            *slot = match nodes.iter().position(|&other| other == node) {
+                Some(position) => position,
+                None => {
+                    nodes.push(node);
+                    nodes.len() - 1
+                }
+            };
+        }
+        pairs.push(pair);
+    }
+    let mut matrix = vec![vec![false; nodes.len()]; nodes.len()];
+    for [a, b] in pairs {
+        matrix[a][b] = true;
+    }
+    for y in 0..nodes.len() {
+        let reachable = matrix[y].clone();
+        for row in &mut matrix {
+            if row[y] {
+                for (entry, &through) in row.iter_mut().zip(&reachable) {
+                    *entry |= through;
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    for i in 0..nodes.len() {
+        for j in 0..nodes.len() {
+            if matrix[i][j] {
+                result.push(machine.store.tuple_of(&[nodes[i], nodes[j]]));
+            }
+        }
+    }
+    machine.store.set_of(&result)
+}
+
 fn permutations(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
     let set = expect_set(machine, args[0])?;
     let elements = machine.store.set_elements(set).to_vec();
@@ -279,19 +547,25 @@ fn permute(
 // The engine holds only finite sets and functions; the interpreter fails on anything else.
 fn is_finite_set(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
     let kind = machine.store.kind_of(args[0]);
-    if kind == KIND_SET || is_function_kind(kind) {
+    if kind == tla_values::store::KIND_ANY {
+        Ok(FALSE)
+    } else if kind == KIND_SET || is_function_kind(kind) {
         Ok(TRUE)
     } else {
         Err(Bail("IsFiniteSet of a non-set"))
     }
 }
 
+/// What IsABag of a function TLC keeps lazy stops with, for the evaluator of failures to word.
+pub(crate) const IS_A_BAG_OF_LAZY_FUNCTION: &str =
+    "unsupported: IsABag of a function TLC keeps lazy";
+
 fn is_a_bag(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
     let bag = args[0];
     let kind = machine.store.kind_of(bag);
     // TLC fails to enumerate the domain of a function it keeps lazy (`toFcnRcd`).
     if kind == KIND_LAZY_FUNCTION {
-        return Err(Bail("unsupported: IsABag of a function TLC keeps lazy"));
+        return Err(Bail(IS_A_BAG_OF_LAZY_FUNCTION));
     }
     if !is_function_kind(kind) {
         return Ok(FALSE);

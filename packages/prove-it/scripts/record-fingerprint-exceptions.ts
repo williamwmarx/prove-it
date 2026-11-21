@@ -7,7 +7,8 @@
 // initial states that hold values TLC can't fingerprint, temporal properties that fail on the
 // initial state with an EvalException, function definitions that fail as TLC builds them,
 // ALIASes TLC holds as values, state checks that fail after the initial predicate's last
-// enumeration, and sets of functions over Nat. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
+// enumeration, sets of functions over Nat, and checks of initial states that print before the
+// replay of the initial states. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
 // its output without the lines that differ from run to run, which the test drops from the binary's
 // too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
@@ -509,6 +510,153 @@ const reviewedAliases: Cell[] = [
   },
 ];
 
+// Failures TLC reports otherwise than the FingerprintException of a value with a source: a
+// TLCEval whose argument fails in a value's method, which TLC's Java method catches and reports
+// with the nested expressions, a membership in a union of a set enumeration TLC can't sort in the
+// next-state relation, successors TLC can't fingerprint, whose trace TLC prints by finding them
+// again, a TLCEval of a CHOOSE over a set enumeration TLC can't sort, a TLCEval failing in another
+// TLCEval without a source, TLCEvals applied as functions in an assumption, and an ALIAS that
+// holds a function over Nat, which TLC fails to fingerprint as it prints the trace.
+const traceFailures: Cell[] = [
+  {
+    name: 'TLCEval({1, "a"} = {2}) in the initial predicate',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCEval({1, "a"} = {2}) = <<>>\nNext == x < 2 /\\ x\' = x + 1\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: 'TLCEval(<<{1, "a"} \\subseteq {1}>>) in an invariant',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == TLCEval(<<{1, "a"} \\subseteq {1}>>) = <<>>\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "1 \\in UNION {Nat, {2}} in the next-state relation",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ 1 \\in UNION {Nat, {2}}\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "y' = {1} \\cup Nat, a successor TLC can't fingerprint",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ y' = {1} \\cup Nat\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "y' = SUBSET SUBSET (1..32), a successor TLC can't fingerprint",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ y' = SUBSET SUBSET (1..32)\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: 'TLCEval(CHOOSE z \\in {1, "a"} : TRUE) in the initial predicate',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCEval(CHOOSE z \\in {1, "a"} : TRUE) = 1\nNext == x < 2 /\\ x\' = x + 1\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "TLCEval(TLCEval(1 \\div 0)) in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCEval(TLCEval(1 \\div 0)) = 1\nNext == x < 2 /\\ x' = x + 1\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: 'ASSUME TLCEval([z \\in {1, "a"} |-> z])[1] = 1',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCEval([z \\in {1, "a"} |-> z])[1] = 1\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: 'ASSUME TLCEval(<<[z \\in {1, "a"} |-> z]>>)[1][1] = 1',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCEval(<<[z \\in {1, "a"} |-> z]>>)[1][1] = 1\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "Alias == [x |-> [i \\in Nat |-> i + x], y |-> y]",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nInv == x # 2\nAlias == [x |-> [i \\in Nat |-> i + x], y |-> y]\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+];
+
+// Memberships in a filter TLC keeps lazy whose predicate or set fails, EXCEPTs at a key of the
+// wrong class, sets TLC holds unnormalized that fail to sort, comparisons and IsABag of functions
+// TLC keeps lazy, sets of functions over a lazy domain, and DOMAIN of a lazy function of several
+// parameters.
+const laziness: Cell[] = [
+  {
+    name: "{1, 2} \\subseteq {y \\in Nat : y \\div 0 = 1} in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0 /\\ {1, 2} \\subseteq {y \\in Nat : y \\div 0 = 1}\nNext == x < 2 /\\ x' = x + 1\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "1 \\in {y \\in Nat : y \\div 0 = 1} \\cap {1} in the next-state relation",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ 1 \\in {y \\in Nat : y \\div 0 = 1} \\cap {1}\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "1 \\in {y \\in Nat : y} in an invariant",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == 1 \\in {y \\in Nat : y}\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "1 \\in {y \\in Nat : \\b101} in an invariant",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == 1 \\in {y \\in Nat : \\b101}\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: '"a" \\in {y \\in Nat : TRUE} in the initial predicate',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0 /\\ "a" \\in {y \\in Nat : TRUE}\nNext == x < 2 /\\ x\' = x + 1\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "<<1>> \\in {<<a, b>> \\in Seq(Nat) : TRUE} in the next-state relation",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<1>> \\in {<<a, b>> \\in Seq(Nat) : TRUE}\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "[[a |-> x] EXCEPT ![1] = 0] in an invariant",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == [[a |-> x] EXCEPT ![1] = 0] # 0\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "[[a |-> <<1>>] EXCEPT !.a.b = 0] in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = [[a |-> <<1>>] EXCEPT !.a.b = 0]\nNext == x' = x\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "[[a |-> <<1>>] EXCEPT !.a = 5, !.a.b = 0] in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = [[a |-> <<1>>] EXCEPT !.a = 5, !.a.b = 0]\nNext == x' = x\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "[x EXCEPT !.a = 0] of a tuple in the next-state relation",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = <<1>>\nNext == x' = [x EXCEPT !.a = 0]\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: 'CHOOSE z \\in {1, "a"} : TRUE in the initial predicate',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = CHOOSE z \\in {1, "a"} : TRUE\nNext == x\' = x\n====',
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: '{1, "a"} = {1} in an invariant',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == {1, "a"} # {1}\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "[i \\in Nat |-> i] = [i \\in Nat |-> i] in the next-state relation",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = IF [i \\in Nat |-> i] = [i \\in Nat |-> i] THEN 1 ELSE 2\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "IsABag([i \\in Nat |-> 1]) in an invariant",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x = 0 \\/ IsABag([i \\in Nat |-> 1])\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "CHOOSE f \\in [(Nat \\ {0}) -> STRING] : TRUE in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = CHOOSE f \\in [(Nat \\ {0}) -> STRING] : TRUE\nNext == x' = x\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+  {
+    name: "PrintT(DOMAIN [a \\in Nat, b \\in {1} |-> a]) in the initial predicate",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0 /\\ PrintT(DOMAIN [a \\in Nat, b \\in {1} |-> a])\nNext == x < 2 /\\ x' = x + 1\n====",
+    config: "INIT Init\nNEXT Next",
+  },
+];
+
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
   writeFileSync(join(directory, "M.tla"), `${cell.spec}\n`);
@@ -540,6 +688,67 @@ const record = (cell: Cell, workers: number) => {
   return { exit: result.status, output: lines.join("\n").trimEnd() };
 };
 
+// Checks of initial states that print, where one fails on a later initial state or the initial
+// predicate fails after them: TLC's replay of the initial states checks each state again, the
+// duplicates and those the constraints exclude among them, and prints again what they printed.
+const initialReplays: Cell[] = [
+  {
+    name: "PrintT(x) in an invariant that fails on the second initial state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == PrintT(x) /\\ (x = 1 => 1 \\div 0 = 1)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "PrintT of a filter in an invariant that fails on the second initial state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == PrintT({y \\in 1..x : TRUE}) /\\ (x = 1 => 1 \\div 0 = 1)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "PrintT(x) in an invariant whose comparison fails on the second initial state",
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..2\nNext == UNCHANGED x\nInv == PrintT(x) /\\ (x = 1 => 1 = "a")\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "PrintT in a constraint, an invariant that fails on the second initial state",
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nC == PrintT(<<"c", x>>)\nInv == (x = 1 => 1 \\div 0 = 1)\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT C",
+  },
+  {
+    name: "PrintT in two invariants, the first fails on the second initial state",
+    spec: '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv2 == PrintT(<<"i2", x>>)\nInv == PrintT(x) /\\ (x = 1 => 1 \\div 0 = 1)\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Inv2",
+  },
+  {
+    name: "PrintT(x) in an invariant, a constraint that excludes the first initial state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nC == x = 1\nInv == PrintT(x) /\\ (x = 1 => 1 \\div 0 = 1)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT C",
+  },
+  {
+    name: "PrintT(x) in an invariant, the initial predicate fails after a state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1 /\\ (x = 1 => 1 \\div 0 = 1)\nNext == UNCHANGED x\nInv == PrintT(x)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "PrintT(x) in an invariant, the initial predicate fails after a duplicate state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == (x = 0 \\/ x = 0) \\/ (1 \\div 0 = 1 /\\ x = 1)\nNext == UNCHANGED x\nInv == PrintT(x)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "PrintT(x) in an invariant whose function fails to fingerprint on the second initial state",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == PrintT(x) /\\ (x = 1 => LET g == [y \\in 1..x |-> 1 \\div 0] IN g = g)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  },
+  {
+    name: "the initial predicate fails after a state the constraint excludes",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1 /\\ (x = 1 => 1 \\div 0 = 1)\nNext == UNCHANGED x\nC == x = 1\nInv == PrintT(x)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT C",
+  },
+  {
+    name: "the initial predicate fails after a state the constraint excludes, without printing",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, Bags\nVARIABLE x\nInit == x \\in 0..1 /\\ (x = 1 => 1 \\div 0 = 1)\nNext == UNCHANGED x\nC == x = 5\nInv == TRUE\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT C",
+  },
+];
+
 const blocks = [
   ...memberships,
   ...comparisons,
@@ -558,6 +767,9 @@ const blocks = [
   ...unprintedAliases,
   ...substitutedLiterals,
   ...reviewedAliases,
+  ...traceFailures,
+  ...laziness,
+  ...initialReplays,
 ].flatMap((cell) => [
   `### ${cell.name}`,
   "--- spec",

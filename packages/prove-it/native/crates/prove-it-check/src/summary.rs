@@ -195,6 +195,40 @@ pub fn format_count(count: u64) -> String {
     result
 }
 
+/// DFID's `MemFPIntSet.checkFPs` reconstructs the low word as a signed int and compares the
+/// resulting longs in bucket order, including Java's wrapping subtraction.
+pub fn dfid_fingerprint_distance(fingerprints: &[u64]) -> Option<u64> {
+    let mut capacity = 1usize << 16;
+    while fingerprints.len() > capacity * 20 {
+        capacity = capacity.checked_mul(2)?;
+    }
+    let mut ordered: Vec<(usize, i64)> = fingerprints
+        .iter()
+        .map(|&fp| {
+            let high = ((fp >> 32) as u32 as i32 as i64) << 32;
+            let low = fp as u32 as i32 as i64;
+            ((fp as usize) & (capacity - 1), high | low)
+        })
+        .collect();
+    ordered.sort_by_key(|&(bucket, _)| bucket);
+    let mut distance = i64::MAX;
+    for (index, &(bucket, x)) in ordered.iter().enumerate() {
+        for &(other_bucket, y) in &ordered[index + 1..] {
+            let difference = if bucket == other_bucket {
+                x.wrapping_sub(y).wrapping_abs()
+            } else if x > y {
+                x.wrapping_sub(y)
+            } else {
+                y.wrapping_sub(x)
+            };
+            if bucket == other_bucket || difference >= 0 {
+                distance = distance.min(difference);
+            }
+        }
+    }
+    (distance > 0).then_some(distance as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

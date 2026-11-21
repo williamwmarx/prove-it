@@ -1,0 +1,16 @@
+Error: TLC attempted to evaluate an unbounded CHOOSE.
+Make sure that the expression is of form CHOOSE x \in S: P(x).
+line 119, col 8 to line 119, col 22 of module TLC
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 6, column 8 to line 6, column 16 in M
+2. Line 6, column 14 to line 6, column 16 in M
+3. Line 119, column 8 to line 119, column 22 in TLC
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

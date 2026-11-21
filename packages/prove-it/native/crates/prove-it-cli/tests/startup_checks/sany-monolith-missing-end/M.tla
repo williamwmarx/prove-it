@@ -1,0 +1,6 @@
+---- MODULE M ----
+EXTENDS Other
+ASSUME A=1
+====
+---- MODULE Other ----
+A == 1

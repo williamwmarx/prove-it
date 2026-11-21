@@ -1,0 +1,22 @@
+exit 150
+Semantic processing of module sets_mistaken_set_filter_tuples_test
+Semantic errors:
+
+*** Errors: 3
+
+line 24, col 8 to line 24, col 15 of module sets_mistaken_set_filter_tuples_test
+
+Unexpected token found.
+
+
+line 24, col 8 to line 24, col 15 of module sets_mistaken_set_filter_tuples_test
+
+Need name or step number here, not `N_IdentifierTuple'.
+
+
+line 24, col 21 to line 24, col 23 of module sets_mistaken_set_filter_tuples_test
+
+Unknown operator: `Nat'.
+
+
+Error: Parsing or semantic analysis failed.

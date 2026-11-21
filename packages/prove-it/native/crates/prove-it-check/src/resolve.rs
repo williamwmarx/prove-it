@@ -71,34 +71,34 @@ pub fn find_config(
     version: TlcVersion,
 ) -> Config {
     let platform = host.platform();
-    let name = match config {
-        Some(path) => {
-            let base = path.strip_suffix(".cfg").unwrap_or(path);
-            if base.ends_with(".tla") {
-                base.to_string()
-            } else {
-                format!("{base}.cfg")
-            }
-        }
-        // TLC takes an absolute spec's directory for its user directory and the spec by its name.
-        None if platform.is_absolute(main_file) => {
-            format!("{}.cfg", platform.file_name(main_file))
-        }
-        None => format!("{main_file}.cfg"),
-    };
+    let name = config_name(platform, config, main_file);
     let found = directories
         .iter()
         .map(|directory| PathBuf::from(platform.join(directory, &name)))
         .find(|path| host.is_file(path));
     if let Some(module) = name.strip_suffix(".tla")
-        && (found.is_some()
-            || !platform.has_separator(module) && get_standard_module(module, version).is_some())
+        && found.is_none()
+        && !platform.has_separator(module)
+        && get_standard_module(module, version).is_some()
     {
         return Config::NotNative(
             "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
         );
     }
     found.map_or(Config::Missing(name), Config::Found)
+}
+
+pub fn config_name(platform: Platform, config: Option<&str>, main_file: &str) -> String {
+    let base = match config {
+        Some(path) => path.strip_suffix(".cfg").unwrap_or(path),
+        None if platform.is_absolute(main_file) => platform.file_name(main_file),
+        None => main_file,
+    };
+    if base.ends_with(".tla") {
+        base.to_owned()
+    } else {
+        format!("{base}.cfg")
+    }
 }
 
 /// A module's text from the first of the directories that has its file, or that file where TLC
@@ -365,6 +365,8 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
         _ => ModuleOrigin::Standard,
     };
     let files = Files {
+        parent_runtime: tla_front::model::ParentRuntime::Unknown,
+        java_profile: java.origin_profile(jar),
         spec: Path::new(&spec),
         main_file,
         directories: &directories,
@@ -373,6 +375,8 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
         jar,
         is_174: version == TlcVersion::V1_7_4,
         root_extendees: &[],
+        appended: "",
+        lint_codes: Default::default(),
     };
     match FileDescriber::new(&files, host).describe(name, origin) {
         Ok(text) => Resolved::Text(text),
@@ -530,6 +534,8 @@ mod tests {
     ) -> Result<String, String> {
         let directories = strings(directories);
         let files = Files {
+            parent_runtime: tla_front::model::ParentRuntime::Unknown,
+            java_profile: tla_front::model::JavaProfile::Default,
             spec: Path::new(spec),
             main_file: spec,
             directories: &directories,
@@ -538,6 +544,8 @@ mod tests {
             jar,
             is_174: false,
             root_extendees: &[],
+            appended: "",
+            lint_codes: Default::default(),
         };
         FileDescriber::new(&files, host).describe(name, origin)
     }
@@ -726,5 +734,23 @@ mod tests {
         assert_eq!(bytes, b"class");
         let (path, _) = load_class(&host, &[Path::new("D:\\")], "M").expect("the class on D:");
         assert_eq!(path, Path::new("D:\\M.class"));
+    }
+    #[test]
+    fn config_names_follow_tlcs_extension_rules() {
+        use crate::host_path::Platform::Unix;
+        assert_eq!(
+            config_name(Unix, Some("./Other.tla.cfg"), "M"),
+            "./Other.tla"
+        );
+        assert_eq!(
+            config_name(Unix, Some("Other.tla.tla"), "M"),
+            "Other.tla.tla"
+        );
+        assert_eq!(
+            config_name(Unix, Some("Other.cfg.cfg"), "M"),
+            "Other.cfg.cfg"
+        );
+        assert_eq!(config_name(Unix, None, "/tmp/M.tla"), "M.tla");
+        assert_eq!(config_name(Unix, None, "/tmp/M"), "M.cfg");
     }
 }

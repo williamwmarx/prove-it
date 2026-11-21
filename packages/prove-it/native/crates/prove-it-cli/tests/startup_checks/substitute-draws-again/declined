@@ -1,0 +1,1 @@
+a configuration substitute with effects, which TLC computes again where it reaches the definition it replaces: K <- A

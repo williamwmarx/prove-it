@@ -1609,7 +1609,13 @@ pub(super) fn create_grammar() -> Grammar {
         set_field_name(state);
         None
     });
-    let dot = seq!(b; "<DOT>", field, "Identifier");
+    let check_at = b.action(|state| {
+        if state.lexical_error.is_none() && state.tokens[state.token].image == "@" {
+            state.parse_errors.push("@ used in !.@".to_owned());
+        }
+        None
+    });
+    let dot = seq!(b; "<DOT>", field, "Identifier", check_at);
     let rest = zero_or_more!(b; "<COMMA>", "Expression");
     let index = seq!(b; "<LSB>", "Expression", rest, "<RSB>");
     let component = choice!(b; dot, index);

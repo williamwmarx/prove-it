@@ -1,0 +1,56 @@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (<date>)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2208:0 @!@!@
+Finished computing initial states: 1 states generated, with 1 of them distinct.
+@!@!@ENDMSG 2208 @!@!@
+@!@!@STARTMSG 2205:0 @!@!@
+Starting level 2: 1 states generated, 1 distinct states found.
+@!@!@ENDMSG 2205 @!@!@
+@!@!@STARTMSG 2205:0 @!@!@
+Starting level 3: 2 states generated, 2 distinct states found.
+@!@!@ENDMSG 2205 @!@!@
+@!@!@STARTMSG 1000:1 @!@!@
+TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+The error occurred when TLC was computing the set of next states.
+The exception was a tlc2.tool.EvalException
+: @!@!@STARTMSG 2132:0 @!@!@
+The first argument of Assert evaluated to FALSE; the second argument was:
+"x is 1"
+@!@!@ENDMSG 2132 @!@!@
+@!@!@ENDMSG 1000 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2216:4 @!@!@
+1:
+x = 0
+
+@!@!@ENDMSG 2216 @!@!@
+@!@!@STARTMSG 2216:4 @!@!@
+2:
+x = 1
+
+@!@!@ENDMSG 2216 @!@!@
+@!@!@STARTMSG 2206:0 @!@!@
+Progress(-1) at <date>: 3 states generated, 2 distinct states found, -1 states left on queue.
+@!@!@ENDMSG 2206 @!@!@
+@!@!@STARTMSG 2204:0 @!@!@
+3 states generated, 2 distinct states found.
+@!@!@ENDMSG 2204 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in <time>
+@!@!@ENDMSG 2186 @!@!@

@@ -1,0 +1,28 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 7, col 40 to line 7, col 48 of module M
+(Use the -nowarning option to disable this warning.)
+"alias"  [a |-> 0]
+State 1: <Initial predicate>
+visible = [a |-> 0]
+
+Warning: The EXCEPT was applied to non-existing fields of the value at
+line 7, col 40 to line 7, col 48 of module M
+"alias"  [a |-> 1]
+State 2: <Next line 5, col 9 to line 5, col 19 of module M>
+visible = [a |-> 1]
+
+"alias"  [a |-> 0]
+"alias"  [a |-> 1]
+"post"
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

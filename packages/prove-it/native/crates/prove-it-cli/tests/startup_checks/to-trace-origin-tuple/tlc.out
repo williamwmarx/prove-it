@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module Trace022
+Linting of module TLCExt
+Linting of module Trace022
+Error: Evaluating assumption line 9, col 8 to line 9, col 11 of module Trace022 failed.
+The argument of ToTrace should be a CounterExample, but instead it is:
+<<1, 2>>

@@ -1,0 +1,12 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+"right"  {}
+Error: Evaluating assumption line 6, col 8 to line 6, col 61 of module M failed.
+Attempted to evaluate an expression of form S \subseteq T, but S was not enumerable.
+line 6, col 15 to line 6, col 60 of module M

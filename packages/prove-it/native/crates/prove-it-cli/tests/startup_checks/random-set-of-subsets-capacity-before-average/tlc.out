@@ -1,0 +1,24 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module Randomization
+Semantic processing of module sos_check_order_k_before_n
+Linting of module sos_check_order_k_before_n
+Computing initial states...
+Error: The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
+5
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+conformance_state = TRUE
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 15, column 9 to line 15, column 31 in sos_check_order_k_before_n
+1. Line 15, column 28 to line 15, column 31 in sos_check_order_k_before_n
+2. Line 12, column 9 to line 12, column 45 in sos_check_order_k_before_n
+3. Line 12, column 9 to line 12, column 40 in sos_check_order_k_before_n
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

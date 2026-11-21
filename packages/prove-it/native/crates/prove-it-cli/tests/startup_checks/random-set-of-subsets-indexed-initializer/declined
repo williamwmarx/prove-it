@@ -1,0 +1,1 @@
+a class a TLCOverrides index names with a static initializer that Class.forName runs

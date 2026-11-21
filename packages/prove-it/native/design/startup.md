@@ -127,6 +127,21 @@ argument in the place of a parameter that takes arguments is an `OpArgNode`, of 
 its spelling; and a theorem's or an assumption's name looks up to a `ThmOrAssumpDefNode`, whose
 statement `getLevelBound` never enters.
 
+Which Java value class TLC builds for such an operator, and from which method, is in
+`tla-front/src/tlc_callable_classes.tsv`, which `operator_tables.rs` reads:
+`scripts/tlc-overrides/TlcCallableClasses.java` writes its rows by reflection on the pinned jar
+(TLC at d8fb231, whose SHA-256 is `tlc.jar_sha256` in `java_parent/provenance.json`, under JDK 21):
+the legacy public static methods of the `tlc2.module` classes first, then those
+`TLCBuiltInOverrides` lists, annotated `@TLAPlusOperator` or `@Evaluation`, with the module, the
+operator, the value class (`Method`, `EagerValue` for a final method without arguments,
+`Evaluating`), the minimum level, the declaring class, the method, its arity and how TLC
+installed it; an operator two final providers claim is `Unknown`. To regenerate it, run
+`javac -cp tla2tools.jar TlcCallableClasses.java && java -cp tla2tools.jar:. TlcCallableClasses
+tla2tools.jar` in `scripts/tlc-overrides`, put the rows under the table's header, and update the
+header's `generator_sha256` and `rows_sha256`, which tla-front's test
+`callable_classes_record_the_hashes_of_their_generator_and_rows` checks against the generator
+and the rows.
+
 Over the corpus (733 models) every difference from `NORMALIZED` is of a kind the model explains:
 192 literal bodies and 155 substitutes for constants, where only Defns differs, and 23 definitions
 TLC attempts that the front end marks state-level for their Java builtins (the trace specs' JSON

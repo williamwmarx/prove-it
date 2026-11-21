@@ -1,0 +1,18 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module M
+Linting of module TLCExt
+Linting of module M
+Computing initial states...
+Computed 2 initial states...
+Error: Invariant Inv is violated by the initial state:
+x = 2
+
+[action |-> {}, state |-> {<<1, [x |-> 2]>>}]
+Error: Evaluating postcondition Post at line 7, col 9 to line 7, col 46 of module M failed.
+The second argument of \div is 0.
