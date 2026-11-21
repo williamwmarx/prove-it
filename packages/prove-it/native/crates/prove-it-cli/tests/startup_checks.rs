@@ -10,6 +10,8 @@
 //! was recorded. A `declined-4` holds a four-worker-only decline.
 //! Each runs on one thread and on four.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -97,7 +99,8 @@ fn checks_models_at_startup_as_tlc() {
                 .current_dir(&directory)
                 .output()
                 .expect("the binary runs");
-            let path = directory.to_str().expect("a path");
+            let working = common::get_working_path(&directory);
+            let path = working.to_str().expect("a path");
             let actual = format!(
                 "exit {}\n{}",
                 output.status.code().unwrap_or(-1),
@@ -114,7 +117,14 @@ fn checks_models_at_startup_as_tlc() {
             } else {
                 declined.as_ref()
             };
+            let windows = expected.filter(|_| cfg!(windows)).map(|expected| {
+                common::get_windows_expectation(&expected.lines().collect::<Vec<_>>())
+            });
             let is_same = match (expected, declined) {
+                (Some(_), None) if let Some(common::OnWindows::Declined(reason)) = windows => {
+                    stderr.starts_with(&format!("prove-it: not native yet: {reason}"))
+                        && output.status.code() == Some(1)
+                }
                 (Some(expected), None) => actual == *expected,
                 (None, Some(reason)) => {
                     stderr == format!("prove-it: not native yet: {reason}")
