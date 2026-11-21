@@ -319,10 +319,12 @@ read-only memo snapshots.
   too: each owns a range of its slots, split by the fingerprint's top bits (the home slot), and
   walks the level's candidates in (parent, step) order, probing and inserting those whose home is in
   its range. The merge then only numbers and imports the new states; a fingerprint whose probe runs
-  past its thread's range, and 0, it probes itself, in order as before. That takes a table without
+  past its thread's range, and 0, it probes itself, in order as before. That took a table without
   indices, which is the binary's (no fingerprint verification), no graph recorded, and no invariant
-  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merge serially. On 4 cores, medians
-  of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
+  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merged serially,
+  and from #369, which keeps the indices on every search with several workers, so did every
+  search, until the fill gave the indices too (merge-fill-indices, under Results). On 4 cores,
+  medians of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
   MCExactInitialSync 7.63 → 7.08 s (−7%), MCbtree 0.398 → 0.371 (−7%), MCMultiNode 2.75 → 2.62
   (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
   (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
