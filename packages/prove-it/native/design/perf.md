@@ -601,6 +601,25 @@ within noise at 4 threads (MCExactInitialSync 6.81 / 6.76 / 7.47 s, Detlefs 1.13
 MCbtree 0.370 / 0.377 / 0.368, MCLamportMutex 1.25 / 1.25 / 1.25). Not built: the store's import
 rewritten for at most 1.3×. Huge pages on the state table, which cut the kernel's part, come first.
 
+### Action properties under a VIEW or symmetry on threads (#372)
+
+Since #237 a model with an action property (`[][A]_v`) under a VIEW or SYMMETRY searched on one
+thread: a thread sharing a level deferred the step's violation as it defers an invariant's, for the
+merge to decide by the key, which is wrong where another thread had found the key, since TLC checks
+an action property on every step, seen or not (`Worker.doNextCheckImplied`). The thread now stops
+the level at that state at once, and the level's rest runs on one thread from there
+(parallel.md, "Stops"). On `depot-ubuntu-24.04-16`, medians of 3, against `main` at b7f832b9, 16
+threads (one thread is unchanged, 1.01×):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain |
+|---|---:|---:|---:|
+| MCabs | 10.63 | 1.22 | 8.7× |
+| FastPaxos | 1.45 | 0.27 | 5.4× |
+| BufferedRandomAccessFile | 1.74 | 0.22 | 7.9× |
+
+The rest of the suite is within noise, and 16 threads go from 2.6× one thread to 3.9× in geomean
+over it. On the 4-core suite, Paxos_MC (symmetry with a PROPERTY) goes 0.61 → 0.30 s on every core.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
