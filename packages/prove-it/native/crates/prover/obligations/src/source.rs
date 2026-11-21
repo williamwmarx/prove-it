@@ -15,7 +15,9 @@ use crate::expression::{
 };
 use crate::module::{Declaration, ModuleUnit, ModuleUnitCore, Mule, MutateMode};
 use crate::operators::{Fixity, lookup_operator};
-use crate::pragma::{OldMethod, Position, find_pragma, read_new_method, read_old_method};
+use crate::pragma::{
+    OldMethod, Position, find_pragma, find_suppress_pragma, read_new_method, read_old_method,
+};
 use crate::proof::{
     Counter, Omission, Proof, ProofCore, ProofProps, QedStep, Step, StepCore, StepNumber, Usable,
     UseDef, UseDefCore, get_unique,
@@ -301,6 +303,29 @@ impl Source {
             }
         }
         locus
+    }
+
+    /// Proof.Parser's `suppress`: where the suppression pragma before the keyword at `start`
+    /// opens, if there is one.
+    fn get_suppression(&self, start: &ast::Position) -> Option<Locus> {
+        let opening = find_suppress_pragma(
+            &self.lines,
+            Position {
+                line: get_index(start.line),
+                column: get_index(start.column),
+            },
+        )?;
+        Some(Locus {
+            file: self.file.clone(),
+            start_line: u32::try_from(opening.line + 1).unwrap_or(u32::MAX),
+            start_column: u32::try_from(opening.column + 1).unwrap_or(u32::MAX),
+            end_line: start.line,
+            end_column: start.column,
+        })
+    }
+
+    fn is_suppressed(&self, start: &ast::Position) -> bool {
+        self.get_suppression(start).is_some()
     }
 
     fn get_method(&self, range: Option<&ast::SourceRange>) -> Result<Option<OldMethod>> {
@@ -1308,7 +1333,10 @@ impl Source {
         Ok(match &proof.kind {
             ast::ProofKind::Obvious { keyword } => Proof {
                 core: ProofCore::Obvious,
-                props: self.with_method(keyword)?,
+                props: ProofProps {
+                    is_suppressed: self.is_suppressed(&keyword.start),
+                    ..self.with_method(keyword)?
+                },
             },
             ast::ProofKind::Omitted { keyword } => Proof {
                 core: ProofCore::Omitted(Omission::Explicit),
@@ -1331,6 +1359,7 @@ impl Source {
                         location: Some(location),
                         step: Some(StepNumber::Unnamed { level, id: 0 }),
                         method: self.get_method(proof.location.range.as_ref())?,
+                        is_suppressed: self.is_suppressed(&keyword.start),
                         ..ProofProps::default()
                     },
                 }
@@ -1414,6 +1443,7 @@ impl Source {
                 core,
                 props: ProofProps {
                     step: Some(number.clone()),
+                    is_suppressed: self.is_suppressed(&step.statement.start),
                     ..self.with_method(&step.head)?
                 },
             })
@@ -1443,6 +1473,7 @@ impl Source {
                         location,
                         step: Some(number),
                         method: self.get_method(body.location.range.as_ref())?,
+                        is_suppressed: self.is_suppressed(&body.keyword.start),
                         ..ProofProps::default()
                     },
                 })
@@ -1664,7 +1695,12 @@ impl Source {
                         },
                         usable: self.convert_usable(&use_or_hide.facts, &use_or_hide.defs)?,
                     },
-                    location: self.get_use_locus(&use_or_hide.keyword, &use_or_hide.defs),
+                    // Module.Parser reads the pragma before USE or HIDE, so its locus starts there.
+                    location: merge_loci(
+                        self.get_suppression(&use_or_hide.keyword.start).as_ref(),
+                        self.get_use_locus(&use_or_hide.keyword, &use_or_hide.defs)
+                            .as_ref(),
+                    ),
                 });
             }
             ast::ModuleUnit::Module(module) => {
@@ -2277,6 +2313,10 @@ mod tests {
         entries.push(("step", props.step.as_ref().map(step_number)));
         entries.push(("method", props.method.as_ref().map(method)));
         entries.push(("useLocation", props.use_location.as_ref().map(locus)));
+        entries.push((
+            "isSuppressed",
+            props.is_suppressed.then_some(Json::Bool(true)),
+        ));
         entries
     }
 

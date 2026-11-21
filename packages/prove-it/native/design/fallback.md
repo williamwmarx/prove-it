@@ -8349,6 +8349,25 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   obligations of the 1,507 modules tlapm accepted prints byte for byte, and the 366 modules it
   rejected decline.
 
+### Upstream conformance
+
+tla-ts, which Prove It was forked from, records tlapm b91fb6c and its backends on a suite of its
+own (`packages/conformance/test/tlapm` of aidenybai/tla-ts, at 0341dbe5 of 2026-11-21): 1,351
+tlapm command lines, run as `--strict --toolbox 0 0 --threads 1` with `-N --printallobs` or
+`--debug tempfiles` by the test's mode, and 1,398 backend inputs each decided alone, 1,042 of them
+SMT-LIB scripts from z3test recorded with Z3 5.3.2, which the SMT port declines as it reads only
+what tlapm writes. Measured with a port of its harness (`scratch/upstream` on the
+`upstream-results` branch): a run matches where its exit status and normalized transcript equal
+the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
+is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
+and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
+of integer powers; the runs those change count as wrong here until the port follows them.
+
+| main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
+|---|---|---|
+| b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
+| with suppressed proofs | 723 / 574 / 54 | 292 / 1,042 / 64 |
+
 ### Declines
 
 - **What timing decides** (`Schedule.run`): tlapm launches every decision it can, up to

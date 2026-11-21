@@ -75,6 +75,71 @@ pub fn find_pragma<Line: AsRef<[u16]>>(lines: &[Line], start: Position) -> Optio
         .then_some(position)
 }
 
+/// Where the suppression pragma before `keyword` opens, if there is one: Proof.Parser's
+/// `suppress`, a pragma holding `_` or `suppress` alone, which the lexer reads as one token, so
+/// that only blanks and line ends separate it from the keyword.
+pub fn find_suppress_pragma<Line: AsRef<[u16]>>(
+    lines: &[Line],
+    keyword: Position,
+) -> Option<Position> {
+    let closing = get_units("}*)");
+    let opening = get_units("(*{");
+    let mut position = keyword;
+    // Back over blanks and line ends to the last unit before the keyword.
+    loop {
+        let line = lines.get(position.line)?.as_ref();
+        if position.column > line.len() {
+            position.column = line.len();
+        }
+        while position.column > 0 && is_blank(line.get(position.column - 1)) {
+            position.column -= 1;
+        }
+        if position.column > 0 {
+            break;
+        }
+        position.line = position.line.checked_sub(1)?;
+        position.column = lines.get(position.line)?.as_ref().len();
+    }
+    let line = lines.get(position.line)?.as_ref();
+    let close = position.column.checked_sub(closing.len())?;
+    if line.get(close..position.column) != Some(closing.as_slice()) {
+        return None;
+    }
+    // The opening, on this line or an earlier one; the text between, all blanks aside, is `_` or
+    // `suppress`.
+    let mut text: Vec<u16> = Vec::new();
+    let mut at = Position {
+        line: position.line,
+        column: close,
+    };
+    loop {
+        let line = lines.get(at.line)?.as_ref();
+        let open = (0..=at.column.saturating_sub(opening.len()))
+            .rev()
+            .find(|&start| line.get(start..start + opening.len()) == Some(opening.as_slice()));
+        match open {
+            Some(start) => {
+                let mut inner = line[start + opening.len()..at.column].to_vec();
+                inner.extend(text);
+                text = inner;
+                at.column = start;
+                break;
+            }
+            None => {
+                let mut inner = line[..at.column].to_vec();
+                inner.push(u16::from(b'\n'));
+                inner.extend(text);
+                text = inner;
+                at.line = at.line.checked_sub(1)?;
+                at.column = lines.get(at.line)?.as_ref().len();
+            }
+        }
+    }
+    let inner = String::from_utf16_lossy(&text);
+    let inner = inner.trim_matches(|character: char| matches!(character, ' ' | '\t' | '\r' | '\n'));
+    (inner == "_" || inner == "suppress").then_some(at)
+}
+
 fn is_ascii_unit(unit: u16, predicate: impl Fn(u8) -> bool) -> bool {
     u8::try_from(unit).is_ok_and(|byte| byte.is_ascii() && predicate(byte))
 }
@@ -1040,6 +1105,31 @@ mod tests {
                 read_new_method(&lines, start).map_err(|_| ()),
                 new_method,
                 "case {index}"
+            );
+        }
+    }
+
+    /// Proof.Parser's `suppress`: the pragma just before the keyword, over blanks and line ends,
+    /// holding `_` or `suppress` alone.
+    #[test]
+    fn finds_the_suppression_pragma_before_a_keyword() {
+        type Case = (&'static str, (usize, usize), Option<(usize, usize)>);
+        let cases: [Case; 9] = [
+            ("<1> (*{_}*) WITNESS 1", (0, 12), Some((0, 4))),
+            ("  (*{ suppress }*)  BY A", (0, 20), Some((0, 2))),
+            ("(*{_}*)\n  USE A", (1, 2), Some((0, 0))),
+            ("(*{\n _ \n}*) OBVIOUS", (2, 4), Some((0, 0))),
+            ("(*{ by (smt) }*) BY A", (0, 17), None),
+            ("(*{_}*) (* c *) BY A", (0, 16), None),
+            ("<1> BY A", (0, 4), None),
+            ("(*{suppress_}*) BY", (0, 16), None),
+            ("}*) BY", (0, 4), None),
+        ];
+        for (text, (line, column), expected) in cases {
+            assert_eq!(
+                find_suppress_pragma(&get_lines(text), Position { line, column }),
+                expected.map(|(line, column)| Position { line, column }),
+                "{text:?}"
             );
         }
     }

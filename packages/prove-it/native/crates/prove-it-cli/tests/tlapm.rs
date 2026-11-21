@@ -94,10 +94,24 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 6] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
+        ),
+        // The suppression pragma before BY, OBVIOUS, USE and WITNESS (Proof.Parser's suppress):
+        // the obligations are made but not emitted, a WITNESS's side conditions aren't made, and
+        // a module-level USE emits its obligation from the pragma on.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "Suppressed.tla",
+            ],
+            "Suppressed.toolbox",
         ),
         (&["-N", "--toolbox", "0", "0", "Omit.tla"], "Omit.toolbox"),
         (
@@ -167,6 +181,14 @@ fn prints_the_notes_and_the_summary_tlapm_prints() {
     assert_eq!(
         stdout(&output),
         read_recording("obligations", "Incomplete.summary")
+    );
+    assert_eq!(stderr(&output), "");
+    // The summary counts the suppressed obligations, which Proof.Gen.obligate made.
+    let output = run("obligations", &["--summary", "Suppressed.tla"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        read_recording("obligations", "Suppressed.summary")
     );
     assert_eq!(stderr(&output), "");
     let output = run("obligations", &["-N", "Proofs.tla"]);
