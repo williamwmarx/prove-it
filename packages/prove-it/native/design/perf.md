@@ -631,6 +631,28 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Settled parts of a set
+
+A membership test in a set of records, of functions or of tuples, or in a `\cup`, `\cap` or `\`,
+first runs its set's parts in a round of their own (`Compiler::once_a_round`). That keeps a
+failure or a print where TLC's evaluation of the set would have it. On PaxosCommit, every message
+of every successor is tested against `Message` for `PCTypeOK`'s `msgs \in SUBSET Message`, and
+running `Message`'s record sets' parts again was 26% of the run: `parts_of` 10.9%, `once_a_round`
+9.1% and `once` 6.2%.
+
+Parts whose sets read nothing, neither a variable nor a bound name nor TLC's registers, and that
+print, draw or warn nothing (an empty footprint, which holds those as slots), do the same every
+time they run. So once a machine has run such a round without failing, it marks the round settled
+and runs it no more. A round that fails isn't marked, and fails again where it is next reached, as
+before.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | PaxosCommit | Geomean | Agreeing |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 23.06 (22.97–24.15) → 15.08 (14.92–15.37) | 1.03× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | — | 1.01× | 18/18 |
+
 ### Liveness (`perf-liveness`)
 
 The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
