@@ -198,6 +198,9 @@ pub struct Cache {
     sequents: HashMap<usize, (Sequent, bool)>,
     /// The soundness check's message where a frontend refused the obligation.
     refusals: HashMap<usize, String>,
+    /// What the frontends printed for an obligation whose task hasn't reached them: a probe of
+    /// its numbering normalizes it before tlapm's thunk would, and tlapm prints nothing then.
+    notes: HashMap<usize, Vec<ObligationWarning>>,
     texts: HashMap<(usize, usize, usize), (Result<String>, usize)>,
 }
 
@@ -295,9 +298,19 @@ impl Run<'_> {
         Ok(head)
     }
 
-    // Prep.normalize_expand, once per obligation: what its frontends print is kept for the caller,
-    // and a frontend's refusal is a TlaProverError, kept as well.
-    fn get_prepared(&mut self, position: usize, methods: &FoundMethods) -> Result<(Sequent, bool)> {
+    // Prep.normalize_expand, once per obligation: what its frontends print is kept for the caller
+    // where the obligation's task reaches it (`is_reached`, as Prep.ship forces its lazy
+    // normalization), else until it does; and a frontend's refusal is a TlaProverError, kept as
+    // well.
+    fn get_prepared(
+        &mut self,
+        position: usize,
+        methods: &FoundMethods,
+        is_reached: bool,
+    ) -> Result<(Sequent, bool)> {
+        if is_reached && let Some(notes) = self.cache.notes.remove(&position) {
+            self.warnings.extend(notes);
+        }
         if let Some(prepared) = self.cache.sequents.get(&position) {
             return Ok(prepared.clone());
         }
@@ -305,14 +318,19 @@ impl Run<'_> {
             return Err(ObligationError::Prover(message.clone()));
         }
         let obligation = &self.obligations[position];
-        let warnings = &mut self.warnings;
+        let mut notes = Vec::new();
         let sequent = normalize_expand(
             &obligation.sequent,
             obligation.method.as_ref(),
             Some(methods),
             obligation.locus.as_ref(),
-            &mut |warning| warnings.push(warning),
+            &mut |warning| notes.push(warning),
         );
+        if is_reached {
+            self.warnings.extend(notes);
+        } else if !notes.is_empty() {
+            self.cache.notes.insert(position, notes);
+        }
         let sequent = match sequent {
             Err(ObligationError::Prover(message)) => {
                 self.cache.refusals.insert(position, message.clone());
@@ -544,7 +562,7 @@ impl Run<'_> {
                 reuse(&mut task.attempts, prior);
                 return Ok(self.settle_proved(task, &prover));
             }
-            let sequent = match self.get_prepared(position, &methods) {
+            let sequent = match self.get_prepared(position, &methods, true) {
                 Ok((sequent, _)) => sequent,
                 Err(ObligationError::Prover(message)) => {
                     return self.refuse(task, &methods, &fingerprint, message);
@@ -565,7 +583,7 @@ impl Run<'_> {
                 )));
             }
         }
-        let (sequent, is_numbering) = self.get_prepared(position, &methods)?;
+        let (sequent, is_numbering) = self.get_prepared(position, &methods, true)?;
         let is_numbered_for = |prover: &str| is_numbering && matches!(prover, "smt" | "z3");
         while task.next < methods.provers.len() {
             let index = task.next;
@@ -811,7 +829,7 @@ impl Run<'_> {
                             self.requests.push(request);
                         }
                         let (methods, fingerprint) = self.get_head(position)?;
-                        let (_, is_numbering) = self.get_prepared(position, &methods)?;
+                        let (_, is_numbering) = self.get_prepared(position, &methods, true)?;
                         let index = task.next;
                         self.is_count_open |= is_numbering
                             && methods.provers[index..]
@@ -938,7 +956,7 @@ impl<'a> Prover<'a> {
             return Ok(false);
         }
         let (methods, _) = self.run.get_head(position)?;
-        Ok(self.run.get_prepared(position, &methods)?.1)
+        Ok(self.run.get_prepared(position, &methods, false)?.1)
     }
 
     /// The thunks of the task not evaluated yet, by index into its methods.
