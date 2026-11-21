@@ -6339,10 +6339,6 @@ these, each as main b7f832b9 prints it:
   those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
   "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
   TLC and `{"action", "zzq"}` natively.
-- `{} = x'` where `x'` holds a filter TLC keeps lazy (over `SUBSET {1}`) whose predicate fails:
-  TLC reports a FingerprintException ("TLC was unable to fingerprint", exit 75) and the binary the
-  nested expressions (exit 255), with the same frames; a filter over a set enumeration, which TLC
-  filters at once, matches.
 - An initial predicate that leaves a variable undefined after two complete initial states prints
   TLC's "Computed 2 initial states..." twice in TLC, once natively.
 - Two prints TLC makes that the binary doesn't, not yet traced: `PROPERTY Prop` with `Prop ==
