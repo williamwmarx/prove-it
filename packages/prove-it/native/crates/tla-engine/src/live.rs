@@ -179,7 +179,7 @@ impl Taken {
                 let steps =
                     graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
                 for edge in steps {
-                    answers[edge - first] = marks.taken(graph, edge, &marked) == Some(true);
+                    answers[edge - first] = marked.binary_search(&graph.edges[edge]).is_ok();
                 }
             }
         };
