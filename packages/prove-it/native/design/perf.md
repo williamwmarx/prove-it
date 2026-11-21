@@ -629,8 +629,12 @@ of a run once more, since its first message carries the hint to `-nowarning`. Th
 counts the warnings it reports, and a thread that raises one TLC may still print stops the level
 at that state, as a violation does; a warning TLC never prints again stops nothing. The suites
 pass `-nowarning`, so they show no change: on `depot-ubuntu-24.04-16` and `-4` against `main` at
-b7f832b9 every model is within noise, one thread 1.00×. Commit (`benchmarks/commit`, three
-EXCEPTs) run with warnings on, on the 4-core container: 0.47 s on one worker, 0.29 s on four.
+b7f832b9 every model is within noise, one thread 1.00×. With warnings on (`bench-suite.ts`
+without `-nowarning`, bench-suite.json on `depot-ubuntu-24.04-4`, medians of 7, against `main`
+at e63fc6c), `main` on every core was 1.04× slower than itself on one thread over the suite, and
+this is 1.5× faster: Commit 0.43 → 0.16 s, MCLamportMutex 2.57 → 0.97, MCbtree 0.94 → 0.33,
+SimpleRegular 0.68 → 0.28, MCBakery 1.00 → 0.56, MCSingleNode 0.47 → 0.24, Paxos_MC 0.64 →
+0.32, philosophers 0.14 → 0.07; one thread 1.00×.
 
 ### Membership by id (plan item 3)
 
