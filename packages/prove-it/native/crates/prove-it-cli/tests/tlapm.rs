@@ -245,7 +245,7 @@ fn declines_an_error_tlapm_ends_with() {
 
 #[test]
 fn declines_what_it_cant_do_as_tlapm_does() {
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 6] = [
         (&["-C", "Proofs.tla"], "the tlapm option -C"),
         (
             &["--printallobs", "Proofs.tla"],
@@ -257,6 +257,19 @@ fn declines_what_it_cant_do_as_tlapm_does() {
         ),
         (&["Proof*.tla"], "globs"),
         (&[], "tlapm's report of a command line without a module"),
+        // tlapm's parser reads a pragma before OBVIOUS as tokens, so `sup(* c *)press` isn't
+        // `suppress`; what it then reports isn't recorded yet.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "SplitPragma.tla",
+            ],
+            "TlaUnsupportedError: a pragma before a proof or a USE that isn't a suppression",
+        ),
     ];
     for (args, reason) in cases {
         let output = run("obligations", args);

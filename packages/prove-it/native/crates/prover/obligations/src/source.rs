@@ -16,7 +16,7 @@ use crate::expression::{
 use crate::module::{Declaration, ModuleUnit, ModuleUnitCore, Mule, MutateMode};
 use crate::operators::{Fixity, lookup_operator};
 use crate::pragma::{
-    Lexical, OldMethod, Position, find_pragma, find_suppress_pragma, read_lexical, read_new_method,
+    Lexical, OldMethod, Position, find_pragma, find_pragma_before, read_lexical, read_new_method,
     read_old_method,
 };
 use crate::proof::{
@@ -303,26 +303,35 @@ impl Source {
 
     /// Proof.Parser's `suppress`: where the suppression pragma before the keyword at `start`
     /// opens, if there is one.
-    fn get_suppression(&self, start: &ast::Position) -> Option<Locus> {
-        let opening = find_suppress_pragma(
+    fn get_suppression(&self, start: &ast::Position) -> Result<Option<Locus>> {
+        let Some((pragma, is_suppression)) = find_pragma_before(
             &self.lexical,
             &self.lines,
             Position {
                 line: get_index(start.line),
                 column: get_index(start.column),
             },
-        )?;
-        Some(Locus {
+        ) else {
+            return Ok(None);
+        };
+        if !is_suppression {
+            // What tlapm's parser makes of a pragma there isn't recorded yet.
+            return Err(ObligationError::Unsupported(
+                "a pragma before a proof or a USE that isn't a suppression".to_owned(),
+            ));
+        }
+        let opening = pragma.open;
+        Ok(Some(Locus {
             file: self.file.clone(),
             start_line: u32::try_from(opening.line + 1).unwrap_or(u32::MAX),
             start_column: u32::try_from(opening.column + 1).unwrap_or(u32::MAX),
             end_line: start.line,
             end_column: start.column,
-        })
+        }))
     }
 
-    fn is_suppressed(&self, start: &ast::Position) -> bool {
-        self.get_suppression(start).is_some()
+    fn is_suppressed(&self, start: &ast::Position) -> Result<bool> {
+        Ok(self.get_suppression(start)?.is_some())
     }
 
     fn get_method(&self, range: Option<&ast::SourceRange>) -> Result<Option<OldMethod>> {
@@ -1333,7 +1342,7 @@ impl Source {
             ast::ProofKind::Obvious { keyword } => Proof {
                 core: ProofCore::Obvious,
                 props: ProofProps {
-                    is_suppressed: self.is_suppressed(&keyword.start),
+                    is_suppressed: self.is_suppressed(&keyword.start)?,
                     ..self.with_method(keyword)?
                 },
             },
@@ -1358,7 +1367,7 @@ impl Source {
                         location: Some(location),
                         step: Some(StepNumber::Unnamed { level, id: 0 }),
                         method: self.get_method(proof.location.range.as_ref())?,
-                        is_suppressed: self.is_suppressed(&keyword.start),
+                        is_suppressed: self.is_suppressed(&keyword.start)?,
                         ..ProofProps::default()
                     },
                 }
@@ -1442,7 +1451,7 @@ impl Source {
                 core,
                 props: ProofProps {
                     step: Some(number.clone()),
-                    is_suppressed: self.is_suppressed(&step.statement.start),
+                    is_suppressed: self.is_suppressed(&step.statement.start)?,
                     ..self.with_method(&step.head)?
                 },
             })
@@ -1472,7 +1481,7 @@ impl Source {
                         location,
                         step: Some(number),
                         method: self.get_method(body.location.range.as_ref())?,
-                        is_suppressed: self.is_suppressed(&body.keyword.start),
+                        is_suppressed: self.is_suppressed(&body.keyword.start)?,
                         ..ProofProps::default()
                     },
                 })
@@ -1696,7 +1705,7 @@ impl Source {
                     },
                     // Module.Parser reads the pragma before USE or HIDE, so its locus starts there.
                     location: merge_loci(
-                        self.get_suppression(&use_or_hide.keyword.start).as_ref(),
+                        self.get_suppression(&use_or_hide.keyword.start)?.as_ref(),
                         self.get_use_locus(&use_or_hide.keyword, &use_or_hide.defs)
                             .as_ref(),
                     ),

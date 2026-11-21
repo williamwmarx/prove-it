@@ -266,38 +266,6 @@ fn skip_blanks_and_comments<Line: AsRef<[u16]>>(
     }
 }
 
-/// The units from `from` to `to`, comments left out and a line end as a line feed.
-fn collect_units<Line: AsRef<[u16]>>(
-    lexical: &Lexical,
-    lines: &[Line],
-    from: Position,
-    to: Position,
-) -> Vec<u16> {
-    let mut units = Vec::new();
-    let mut position = from;
-    while position < to {
-        if let Some(end) = lexical.get_comment_end(position) {
-            position = end;
-            continue;
-        }
-        let line = lines.get(position.line).map_or(&[][..], AsRef::as_ref);
-        match line.get(position.column) {
-            Some(&unit) => {
-                units.push(unit);
-                position.column += 1;
-            }
-            None => {
-                units.push(u16::from(b'\n'));
-                position = Position {
-                    line: position.line + 1,
-                    column: 0,
-                };
-            }
-        }
-    }
-    units
-}
-
 /// The pragma after `start`, past blanks, line ends and comments.
 pub fn find_pragma<Line: AsRef<[u16]>>(
     lexical: &Lexical,
@@ -313,14 +281,72 @@ pub fn find_pragma<Line: AsRef<[u16]>>(
         .copied()
 }
 
-/// Where the suppression pragma before `keyword` opens, if there is one: Proof.Parser's
-/// `suppress`, a pragma holding `_` or `suppress` alone, which the parser reads as tokens, so
-/// that only blanks, line ends and comments separate it from the keyword.
-pub fn find_suppress_pragma<Line: AsRef<[u16]>>(
+/// The tokens of a pragma's content as tlapm's lexer cuts them: runs of name characters, and
+/// other characters one by one, with blanks, line ends and comments between them.
+fn get_pragma_tokens<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
+    lines: &[Line],
+    from: Position,
+    to: Position,
+) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut position = from;
+    let mut is_in_name = false;
+    while position < to {
+        if let Some(end) = lexical.get_comment_end(position) {
+            position = end;
+            is_in_name = false;
+            continue;
+        }
+        let line = lines.get(position.line).map_or(&[][..], AsRef::as_ref);
+        let Some(&unit) = line.get(position.column) else {
+            position = Position {
+                line: position.line + 1,
+                column: 0,
+            };
+            is_in_name = false;
+            continue;
+        };
+        position.column += 1;
+        if is_blank(Some(&unit)) {
+            is_in_name = false;
+            continue;
+        }
+        let is_name = is_ascii_unit(unit, |byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        let character = char::from_u32(u32::from(unit)).unwrap_or(char::REPLACEMENT_CHARACTER);
+        match tokens.last_mut() {
+            Some(last) if is_name && is_in_name => last.push(character),
+            _ => tokens.push(character.to_string()),
+        }
+        is_in_name = is_name;
+    }
+    tokens
+}
+
+/// Whether a pragma is Proof.Parser's `suppress`: `(*{`, the one token `_` or `suppress`, `}*)`.
+fn is_suppression<Line: AsRef<[u16]>>(lexical: &Lexical, lines: &[Line], pragma: &Pragma) -> bool {
+    let Some(close) = pragma.close else {
+        return false;
+    };
+    let from = Position {
+        column: pragma.open.column + 3,
+        ..pragma.open
+    };
+    let to = Position {
+        column: close.column - 3,
+        ..close
+    };
+    let tokens = get_pragma_tokens(lexical, lines, from, to);
+    tokens == ["_"] || tokens == ["suppress"]
+}
+
+/// The pragma before `keyword`, if there is one, with only blanks, line ends and comments between
+/// them, and whether it is Proof.Parser's `suppress`, which the parser reads as tokens.
+pub fn find_pragma_before<Line: AsRef<[u16]>>(
     lexical: &Lexical,
     lines: &[Line],
     keyword: Position,
-) -> Option<Position> {
+) -> Option<(Pragma, bool)> {
     let mut position = keyword;
     // Back over blanks, line ends and comments to the last unit before the keyword.
     loop {
@@ -348,17 +374,19 @@ pub fn find_suppress_pragma<Line: AsRef<[u16]>>(
         .pragmas
         .iter()
         .find(|pragma| pragma.close == Some(position))?;
-    let from = Position {
-        column: pragma.open.column + 3,
-        ..pragma.open
-    };
-    let to = Position {
-        column: position.column - 3,
-        ..position
-    };
-    let inner = String::from_utf16_lossy(&collect_units(lexical, lines, from, to));
-    let inner = inner.trim_matches(|character: char| matches!(character, ' ' | '\t' | '\r' | '\n'));
-    (inner == "_" || inner == "suppress").then_some(pragma.open)
+    Some((*pragma, is_suppression(lexical, lines, pragma)))
+}
+
+/// Where the suppression pragma before `keyword` opens, if there is one.
+pub fn find_suppress_pragma<Line: AsRef<[u16]>>(
+    lexical: &Lexical,
+    lines: &[Line],
+    keyword: Position,
+) -> Option<Position> {
+    match find_pragma_before(lexical, lines, keyword)? {
+        (pragma, true) => Some(pragma.open),
+        _ => None,
+    }
 }
 
 fn is_ascii_unit(unit: u16, predicate: impl Fn(u8) -> bool) -> bool {
@@ -1342,7 +1370,7 @@ mod tests {
     #[test]
     fn finds_the_suppression_pragma_before_a_keyword() {
         type Case = (&'static str, (usize, usize), Option<(usize, usize)>);
-        let cases: [Case; 16] = [
+        let cases: [Case; 18] = [
             ("<1> (*{_}*) WITNESS 1", (0, 12), Some((0, 4))),
             ("  (*{ suppress }*)  BY A", (0, 20), Some((0, 2))),
             ("(*{_}*)\n  USE A", (1, 2), Some((0, 0))),
@@ -1358,6 +1386,8 @@ mod tests {
             ("\"(*{_}*)\" OBVIOUS", (0, 10), None),
             ("<1> BY A", (0, 4), None),
             ("(*{suppress_}*) BY", (0, 16), None),
+            ("(*{ sup(* c *)press }*) OBVIOUS", (0, 24), None),
+            ("(*{ _ _ }*) OBVIOUS", (0, 12), None),
             ("}*) BY", (0, 4), None),
         ];
         for (text, (line, column), expected) in cases {
