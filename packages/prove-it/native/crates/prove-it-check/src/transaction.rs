@@ -136,6 +136,7 @@ struct Spool<'p> {
 // standard error.
 #[derive(Default)]
 struct Held {
+    #[cfg(unix)]
     is_error: bool,
     memory: Vec<u8>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -207,13 +208,21 @@ fn spooling<R>(change: impl FnOnce() -> R) -> R {
 }
 
 impl<'p> Spool<'p> {
+    #[cfg(not(target_arch = "wasm32"))]
     const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
 
     fn new(parent: &'p mut dyn Write, is_error: bool) -> Self {
-        let held = Arc::new(Mutex::new(Held {
+        #[cfg(unix)]
+        let held = Held {
             is_error,
             ..Held::default()
-        }));
+        };
+        #[cfg(not(unix))]
+        let held = {
+            let _ = is_error;
+            Held::default()
+        };
+        let held = Arc::new(Mutex::new(held));
         spooling(|| lock(&SPOOLS).push(Arc::clone(&held)));
         Self {
             parent,

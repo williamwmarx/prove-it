@@ -1,2 +1,5 @@
 # The 1Password Environment ID in .depot/workflows/release.yml: an identifier, not a secret.
 a11be6a894ffa282e562cb90b501c84b6d106e5b:.depot/workflows/release.yml:generic-api-key:23
+# The SHA-256 of the JDK's jdk.security.auth.jmod in the generated provenance of java_parent: the
+# checksum of a public file, not a secret. Without a commit, so it holds after a squash.
+packages/prove-it/native/crates/tla-front/src/java_parent/provenance.json:generic-api-key:1114

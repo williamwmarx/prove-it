@@ -84,6 +84,11 @@ pub fn keep_file(path: &Path) -> std::io::Result<()> {
     {
         return Ok(());
     }
+    // Only a regular file has bytes to keep: a read of a pipe or a device may never end, and a
+    // write to one nothing puts back.
+    if std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() && !metadata.is_dir()) {
+        return Err(std::io::Error::other("a file that isn't a regular file"));
+    }
     let (path, before) = match std::fs::read(path) {
         Ok(bytes) => (path.to_path_buf(), Some(bytes)),
         // `read` follows a link: where the link is there and its target isn't, the run makes the
@@ -284,6 +289,18 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a_file).unwrap(), "a before");
         assert_eq!(std::fs::read_to_string(&b_file).unwrap(), "b committed");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // A device has no bytes to keep, and a read of one may never end: the journal refuses it
+    // without reading it.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_is_not_regular_is_not_kept() {
+        let mark = mark();
+        let before = held(&mark.journal);
+        assert!(keep_file(Path::new("/dev/zero")).is_err());
+        assert_eq!(held(&mark.journal), before);
+        release(mark);
     }
 
     // A thread the check starts takes its journal, and a decline puts back what that thread wrote.
