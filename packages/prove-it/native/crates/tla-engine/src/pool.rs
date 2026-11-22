@@ -18,19 +18,21 @@ use std::time::{Duration, Instant};
 const SPIN: Duration = Duration::from_micros(50);
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
+/// Where a job leaves what it gave, or its panic.
+type Slot<R> = Arc<Mutex<Option<std::thread::Result<R>>>>;
 
 #[derive(Default)]
-struct Round {
+struct Posted {
     /// The jobs of the round, each taken by the thread of its index; `None` once taken.
     jobs: Vec<Option<Job>>,
     is_stopping: bool,
 }
 
 struct Shared {
-    round: Mutex<Round>,
-    /// Which round `round` holds, so a thread knows one it hasn't seen without the lock.
+    posted: Mutex<Posted>,
+    /// Which round `posted` holds, so a thread knows one it hasn't seen without the lock.
     number: AtomicU64,
-    posted: Condvar,
+    is_posted: Condvar,
     /// How many jobs of the current round are done; the caller waits for all of them.
     done: AtomicUsize,
     finished: Condvar,
@@ -46,9 +48,9 @@ impl Pool {
     /// Starts `threads` threads, each with a stack of `stack_bytes`.
     pub fn new(threads: usize, stack_bytes: usize) -> Self {
         let shared = Arc::new(Shared {
-            round: Mutex::new(Round::default()),
+            posted: Mutex::new(Posted::default()),
             number: AtomicU64::new(0),
-            posted: Condvar::new(),
+            is_posted: Condvar::new(),
             done: AtomicUsize::new(0),
             finished: Condvar::new(),
             finished_lock: Mutex::new(()),
@@ -73,62 +75,119 @@ impl Pool {
     /// job that panics makes this panic, after the round's other jobs are done. The jobs may
     /// borrow from the caller: none outlives this call.
     pub fn run<'a, R: Send + 'a>(&self, jobs: Vec<Box<dyn FnOnce() -> R + Send + 'a>>) -> Vec<R> {
+        self.post(jobs).join()
+    }
+
+    /// Starts a round of jobs, job `i` on thread `i`, and returns it to wait for: the caller may
+    /// do its own work while the jobs run. The jobs may borrow from the caller: none outlives
+    /// the round, which waits for every job as it is joined or dropped.
+    pub fn post<'a, R: Send + 'a>(
+        &self,
+        jobs: Vec<Box<dyn FnOnce() -> R + Send + 'a>>,
+    ) -> Round<'_, R> {
         assert!(jobs.len() <= self.threads.len(), "more jobs than threads");
         let count = jobs.len();
-        let results: Vec<Mutex<Option<std::thread::Result<R>>>> =
-            (0..count).map(|_| Mutex::new(None)).collect();
+        let results: Vec<Slot<R>> = (0..count).map(|_| Arc::default()).collect();
         let posted: Vec<Option<Job>> = jobs
             .into_iter()
             .zip(&results)
             .map(|(job, slot)| {
-                let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || {
+                let slot = slot.clone();
+                let job: Box<dyn FnOnce() + Send + 'a> = Box::new(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
                     *slot
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(result);
                 });
-                // SAFETY: the job borrows from the caller and from this call's frame, and this
-                // call doesn't return until every job of the round has run to its end (`done`
-                // reaches `count` below), so nothing the job borrows is dropped while it can run.
+                // SAFETY: the job borrows from the caller for `'a`, and the round it belongs to
+                // waits for every job to run to its end before it is joined or dropped
+                // (`Round::wait`), so nothing a job borrows is dropped while it can run.
                 Some(unsafe { erase(job) })
             })
             .collect();
         self.shared.done.store(0, Ordering::Release);
         {
-            let mut round = self
+            let mut queue = self
                 .shared
-                .round
+                .posted
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            round.jobs = posted;
+            queue.jobs = posted;
             self.shared.number.fetch_add(1, Ordering::Release);
         }
-        self.shared.posted.notify_all();
-        // The caller parks rather than spins: a round's jobs run for milliseconds on every core.
-        while self.shared.done.load(Ordering::Acquire) < count {
-            let guard = self
-                .shared
-                .finished_lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if self.shared.done.load(Ordering::Acquire) < count {
-                drop(
-                    self.shared
-                        .finished
-                        .wait_timeout(guard, Duration::from_millis(1))
-                        .unwrap_or_else(std::sync::PoisonError::into_inner),
-                );
-            }
+        self.shared.is_posted.notify_all();
+        Round {
+            pool: self,
+            count,
+            results: Some(results),
         }
-        results
+    }
+}
+
+/// A round of jobs a pool runs, joined for what they gave.
+pub struct Round<'p, R> {
+    pool: &'p Pool,
+    count: usize,
+    results: Option<Vec<Slot<R>>>,
+}
+
+impl<R> Round<'_, R> {
+    /// Whether every job of the round is done.
+    pub fn is_done(&self) -> bool {
+        self.pool.shared.done.load(Ordering::Acquire) >= self.count
+    }
+
+    /// Waits for the round's jobs, at most `limit` before returning whether they are all done,
+    /// for a caller with its own work to do meanwhile.
+    pub fn wait_for(&self, limit: Duration) -> bool {
+        let shared = &self.pool.shared;
+        if self.is_done() {
+            return true;
+        }
+        let guard = shared
+            .finished_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.is_done() {
+            drop(
+                shared
+                    .finished
+                    .wait_timeout(guard, limit)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+        }
+        self.is_done()
+    }
+
+    fn wait(&self) {
+        // The caller parks rather than spins: a round's jobs run for milliseconds on every core.
+        while !self.wait_for(Duration::from_millis(1)) {}
+    }
+
+    /// What each job gave, in order, once every job is done. A job that panicked makes this
+    /// panic, after the round's other jobs are done.
+    pub fn join(mut self) -> Vec<R> {
+        self.wait();
+        self.results
+            .take()
+            .expect("the round's results, joined once")
             .into_iter()
             .map(|slot| {
-                slot.into_inner()
+                slot.lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
                     .expect("a result of each job")
                     .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
             })
             .collect()
+    }
+}
+
+impl<R> Drop for Round<'_, R> {
+    fn drop(&mut self) {
+        if self.results.is_some() {
+            self.wait();
+        }
     }
 }
 
@@ -140,15 +199,15 @@ unsafe fn erase<'b>(job: Box<dyn FnOnce() + Send + 'b>) -> Job {
 impl Drop for Pool {
     fn drop(&mut self) {
         {
-            let mut round = self
+            let mut queue = self
                 .shared
-                .round
+                .posted
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            round.is_stopping = true;
+            queue.is_stopping = true;
             self.shared.number.fetch_add(1, Ordering::Release);
         }
-        self.shared.posted.notify_all();
+        self.shared.is_posted.notify_all();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
@@ -165,26 +224,26 @@ fn serve(shared: &Shared, index: usize) {
                     std::hint::spin_loop();
                     continue;
                 }
-                let round = shared
-                    .round
+                let queue = shared
+                    .posted
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 drop(
                     shared
-                        .posted
-                        .wait_while(round, |_| shared.number.load(Ordering::Acquire) == seen)
+                        .is_posted
+                        .wait_while(queue, |_| shared.number.load(Ordering::Acquire) == seen)
                         .unwrap_or_else(std::sync::PoisonError::into_inner),
                 );
             }
-            let mut round = shared
-                .round
+            let mut queue = shared
+                .posted
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if round.is_stopping {
+            if queue.is_stopping {
                 return;
             }
             seen = shared.number.load(Ordering::Acquire);
-            round.jobs.get_mut(index).and_then(Option::take)
+            queue.jobs.get_mut(index).and_then(Option::take)
         };
         if let Some(job) = job {
             job();
@@ -271,6 +330,31 @@ mod tests {
             let scope_round = at.elapsed() / rounds;
             eprintln!("{threads} threads: pool round {pool_round:?}, scoped round {scope_round:?}");
         }
+    }
+
+    #[test]
+    fn a_posted_round_runs_while_the_caller_works() {
+        let pool = Pool::new(2, 1 << 20);
+        let counter = AtomicUsize::new(0);
+        let round = {
+            let counter = &counter;
+            let jobs: Vec<Box<dyn FnOnce() -> usize + Send + '_>> = vec![
+                Box::new(move || counter.fetch_add(1, Ordering::AcqRel) + 1),
+                Box::new(move || counter.fetch_add(10, Ordering::AcqRel) + 10),
+            ];
+            pool.post(jobs)
+        };
+        let mut own = 0;
+        while !round.wait_for(Duration::from_micros(100)) {
+            own += 1;
+        }
+        let mut given = round.join();
+        given.sort_unstable();
+        assert_eq!(counter.load(Ordering::Acquire), 11);
+        assert!(
+            given == vec![1, 11] || given == vec![10, 11],
+            "{given:?} after {own} waits"
+        );
     }
 
     #[test]
