@@ -54,6 +54,17 @@ pub struct WorkerPrints {
     pub is_raced: bool,
 }
 
+/// Why the engine stops at TLCExt's Trace where the search doesn't keep the behavior.
+pub(crate) const TRACE_UNKEPT: &str = "TLCExt's Trace, the behavior the engine doesn't keep";
+/// TLCExt's Trace of a state the initial predicate hasn't assigned every variable of, which TLC
+/// fails at (`TLCExt.getTrace`).
+pub(crate) const TRACE_OF_INCOMPLETE_STATE: &str = "Trace of a state not completely specified";
+/// TLCExt's Trace where TLC's rebuild of the trace evaluates again an initial predicate or a
+/// next-state relation that may print, draw or set a register, which the engine doesn't, or read
+/// what changes as the search goes, as TLCGet's counts, where TLC may rebuild other states or
+/// fail to find them.
+const TRACE_REBUILT_WITH_EFFECTS: &str =
+    "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change";
 /// What a search stops with once its machines evaluated as many bodies of recursive definitions
 /// as PROVE_IT_TEST_EVALUATIONS allows.
 pub const EVALUATIONS_SPENT: &str = "stopped where PROVE_IT_TEST_EVALUATIONS asked";
@@ -176,10 +187,23 @@ pub(crate) struct Recursive {
     pub domain: Option<Member>,
 }
 
+/// How the engine makes TLCExt's Trace: the shape of a state's record and the variable of each
+/// of its fields, and whether TLC's rebuild of the trace, which evaluates the initial predicate
+/// and the next-state relation again (`getTraceInfo`), may find other states or have an effect in
+/// each (`Compiler::may_change_again`).
+pub(crate) struct TraceRecord {
+    pub(crate) shape: tla_values::store::RecordShape,
+    pub(crate) order: Vec<usize>,
+    pub(crate) is_init_effectful: bool,
+    pub(crate) is_next_effectful: bool,
+}
+
 /// What a compiled program needs besides its closures.
 #[derive(Default)]
 pub struct Program {
     pub(crate) width: usize,
+    /// Where the spec reads TLCExt's Trace, how the engine makes it (`Machine::trace`).
+    pub(crate) trace_record: Option<TraceRecord>,
     pub(crate) slot_count: usize,
     /// Each memo table's width, and whether it is kept: a recursive definition's, which doesn't
     /// turn off once full (`MemoTable::kept`).
@@ -370,6 +394,12 @@ pub struct Machine<'p> {
     /// which TLC fingerprints no state, so it has cached no value a state holds as its
     /// normalized set (`DoInitFunctor.addElement`).
     pub(crate) is_before_initial_state: bool,
+    /// Where the search keeps TLCExt's Trace, the epoch of the state it expands, whose behavior
+    /// is at `TRACE_SLOT`, as a list of pairs (`Search::keep_trace`): `u64::MAX` before it
+    /// expands one, where the slot holds the empty list.
+    pub(crate) trace_epoch: Option<u64>,
+    /// The last behavior made a tuple of, and the tuple (`Machine::trace`).
+    trace_tuple: (Id, Id),
     /// Whether the machine computes the substitutes and the constant definitions as TLC does
     /// as it processes the spec (`SpecProcessor.processConstantDefns`), before it has made its
     /// checker or simulator (`TLCGlobals.mainChecker`), whose registers TLCExt reads.
@@ -490,6 +520,8 @@ impl<'p> Machine<'p> {
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
             is_before_initial_state: false,
+            trace_epoch: None,
+            trace_tuple: (UNASSIGNED, UNASSIGNED),
             generate: None,
             is_processing_constants: false,
             is_probing_registers: false,
@@ -588,6 +620,81 @@ impl<'p> Machine<'p> {
     pub fn set_next(&mut self, state: &[Id]) {
         self.next.clear();
         self.next.extend_from_slice(state);
+    }
+
+    /// TLCExt's Trace, the records of the states from an initial state to the current one
+    /// (`TLCExt.getTrace`): the behavior at `TRACE_SLOT` where the current state is the one the
+    /// search expands, and otherwise, as the search checks a successor or an initial state, that
+    /// behavior and the current state's record, which TLC gives only of a state whose variables
+    /// are all assigned.
+    pub(crate) fn trace(&mut self) -> Outcome<Id> {
+        let Some(epoch) = self.trace_epoch else {
+            return Err(Bail(TRACE_UNKEPT));
+        };
+        let behavior = self.behavior_tuple();
+        let is_expanded = self.epoch == epoch;
+        if !is_expanded && self.cur.contains(&UNASSIGNED) {
+            return Err(Bail(TRACE_OF_INCOMPLETE_STATE));
+        }
+        // TLC rebuilds the states before the one it gives the trace of, from the initial
+        // predicate on, as it found them: past the state expanded, a successor's trace is
+        // rebuilt through the state expanded, which a state constraint's needn't be, as TLC
+        // writes a successor to its trace only once the constraints hold.
+        let length = self.store.tuple_elements(behavior).len();
+        let rebuilt = if is_expanded {
+            length.saturating_sub(1)
+        } else {
+            length
+        };
+        let trace = self
+            .program
+            .trace_record
+            .as_ref()
+            .expect("a spec that reads Trace");
+        if rebuilt >= 1 && trace.is_init_effectful || rebuilt >= 2 && trace.is_next_effectful {
+            return Err(Bail(TRACE_REBUILT_WITH_EFFECTS));
+        }
+        if is_expanded {
+            return Ok(behavior);
+        }
+        let record = self.state_record(&self.cur.clone());
+        Ok(self.store.append_tuple(behavior, record))
+    }
+
+    // The behavior at `TRACE_SLOT` as the tuple of its records, made once for each behavior.
+    fn behavior_tuple(&mut self) -> Id {
+        let list = self.locals[crate::compile::TRACE_SLOT as usize];
+        if self.trace_tuple.0 == list {
+            return self.trace_tuple.1;
+        }
+        let mut records = Vec::new();
+        let mut rest = list;
+        while rest != tla_values::store::EMPTY_TUPLE {
+            let &[prefix, record] = self.store.tuple_elements(rest) else {
+                unreachable!("a behavior is a list of pairs");
+            };
+            records.push(record);
+            rest = prefix;
+        }
+        records.reverse();
+        let tuple = self.store.tuple_of(&records);
+        self.trace_tuple = (list, tuple);
+        tuple
+    }
+
+    /// A state as the record TLC makes of it for TLCExt's Trace (`RecordValue(TLCState)`).
+    pub(crate) fn state_record(&mut self, state: &[Id]) -> Id {
+        let trace = self
+            .program
+            .trace_record
+            .as_ref()
+            .expect("a spec that reads Trace");
+        let values: Vec<Id> = trace
+            .order
+            .iter()
+            .map(|&variable| state[variable])
+            .collect();
+        self.store.record_of(&trace.shape, &values)
     }
 
     /// The epoch of the current state.

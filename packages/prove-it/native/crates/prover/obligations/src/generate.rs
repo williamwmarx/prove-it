@@ -214,8 +214,8 @@ pub fn use_assertion(
     })
 }
 
-// A cited step or definition keeps the scope it was proved in, and any other fact takes the
-// current one.
+// A cited fact or step keeps the scope it was proved in, and any other fact, a declaration's
+// name included, takes the current one.
 fn get_fact_time(context: &[Hyp], fact: &ExprNode, time: Time) -> Time {
     let ExprCore::Ix { index } = fact.core else {
         return time;
@@ -226,7 +226,7 @@ fn get_fact_time(context: &[Hyp], fact: &ExprNode, time: Time) -> Time {
             where_defined: WhereDefined::Proof(time),
             ..
         }) => *time,
-        _ => Time::Always,
+        _ => time,
     }
 }
 
