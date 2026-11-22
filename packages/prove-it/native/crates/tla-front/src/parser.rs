@@ -796,7 +796,15 @@ impl Parser {
                 },
                 location,
             );
-            let identifier = self.with_range(identifier, start);
+            // tlapm's lexer reads WF_vars as the tokens WF_ and vars of one match, both at the
+            // whole word, so the name's locus starts at the WF_.
+            let is_joined = self.is_tlapm()
+                && self.fairness_subscripts > 0
+                && start > 0
+                && matches!(&*self.tokens[start - 1].text, "WF_" | "SF_")
+                && self.tokens[start - 1].line == self.tokens[start].line
+                && self.tokens[start - 1].end_column + 1 == self.tokens[start].column;
+            let identifier = self.with_range(identifier, if is_joined { start - 1 } else { start });
             // SANY's `ReducedExpression` after ]_ or >>_ reads the arguments of the last name
             // (`OpArgs` in `NoOpExtension`) and leaves them out of the tree, so that only the name
             // remains: [A]_V(x) is [A]_V.
