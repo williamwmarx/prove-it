@@ -45,6 +45,13 @@ pub(crate) const ENUMERATED_NAT: &str = "enumerated Nat";
 pub(crate) const ENUMERATED_STRING: &str = "enumerated STRING";
 pub(crate) const ENUMERATED_SEQ: &str = "enumerated Seq(S)";
 
+// Whether evaluating the expression reads no memo table keyed by a variable: a value a fused node
+// reads in place, or one of bound names alone, whose tables are as small as their sets.
+fn is_read_in_place(compiled: &Compiled) -> bool {
+    !matches!(compiled.shape, Shape::Other | Shape::SimulationRun(_))
+        || compiled.footprint.vars.is_empty() && compiled.footprint.primes.is_empty()
+}
+
 // The most entries the memo table of a membership takes once a miss was answered by scanning a
 // short set for the element's id: a longer table no longer stays in a core's own cache, and a row
 // read from memory costs more than the scan.
@@ -4126,10 +4133,14 @@ impl Compiler<'_> {
                     }
                     // A set the engine builds, short enough to scan, answers a miss by the
                     // element's id, for less than a row of a table grown past a core's cache
-                    // costs: such a miss lets its table take no more entries than that.
+                    // costs: such a miss lets its table take no more entries than that. That
+                    // holds only where neither side reads a table of its own that grows with
+                    // the states, which a hit of this one would have spared.
                     None if set.member.is_none()
                         && set.infinite.is_none()
                         && !is_interval
+                        && is_read_in_place(&element)
+                        && is_read_in_place(&set)
                         && self.takes_table(&compiled) =>
                     {
                         let table = self.program.memo_tables.len();
