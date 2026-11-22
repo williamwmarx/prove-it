@@ -6030,6 +6030,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 levels: None,
                 known: None,
                 is_distinct: false,
+                asked,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -6051,6 +6052,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // The breadth-first search keeps one state for each fingerprint, and every value
                 // of a state is one a walk assigned.
                 is_distinct: is_comparable && settings.dfid.is_none(),
+                asked,
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
@@ -6070,7 +6072,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 atoms: &context.diameter_atoms,
                 last: last_diameter,
             },
-            asked,
             &mut (0..atom_threads)
                 .filter(|_| atom_threads > 1)
                 .map(|_| Machine::new(&program, Store::new()))

@@ -66,6 +66,8 @@ pub struct LiveGraph<'g> {
     /// Whether no two of the states are equal and no comparison of two values of a variable can
     /// fail: a step then changes a tuple of every variable just where it reaches another state.
     pub is_distinct: bool,
+    /// By atom, whether the checker may read it, where it reads only some.
+    pub asked: Option<&'g [bool]>,
 }
 
 /// How a step is told to leave a subscript unchanged: by the subscript's value on each of its
@@ -770,7 +772,6 @@ pub fn answer_atoms(
     is_live_checked: bool,
     is_printing: bool,
     diameters: &Diameters<'_>,
-    asked: Option<&[bool]>,
     helpers: &mut [Machine<'_>],
 ) -> Result<Vec<Table>, &'static str> {
     let mut known = graph
@@ -810,7 +811,10 @@ pub fn answer_atoms(
             tables.push(table);
             continue;
         }
-        if asked.is_some_and(|asked| asked.get(position) != Some(&true)) {
+        if graph
+            .asked
+            .is_some_and(|asked| asked.get(position) != Some(&true))
+        {
             tables.push(Table {
                 answers: Vec::new(),
                 is_from_steps: false,
