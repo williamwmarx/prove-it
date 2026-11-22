@@ -5005,6 +5005,18 @@ matches TLC or declines exactly.
   replay now walks the body of a startup definition that failed (`resolve_action`), and these
   match.
 
+- A constant definition that names a theorem whose statement reads a variable, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `getLevelBound` looks a theorem's or an
+  assumption's name up to a `ThmOrAssumpDefNode`, whose statement it never enters, so with
+  `THEOREM T == x \in {0, 1}` TLC takes `C == PrintT("c") /\ T` as constant and computes it as it
+  starts, printing `"c"` before T fails there. The front end's definition facts carried the
+  statement's level into C (`DependencyFacts`), so the binary never computed C and printed
+  nothing. They now count a fact's name at level 0 while keeping its reads; the engine then
+  declines such a definition as one TLC computes as it starts that fails there. A fact is the
+  name the parser makes for a THEOREM or an ASSUME, not any operator without a body's range: the
+  operator an INSTANCE with parameters makes of a function (`F[i \in {0}] == x + k` through `I(k)
+  == INSTANCE N WITH k <- k`) keeps its reads of variables (`theorem-level-instance-function`,
+  `-instance-operator`). Fixtures `theorem-level-*`.
 - A definition K the configuration substitutes for a declared constant (`CONSTANT J <- K`) and
   also names as an INVARIANT, a (ACTION_)CONSTRAINT, a PROPERTY, the INIT or the SPECIFICATION.
   `processConstantDefns` takes the modules in the order SANY finishes them, each one's constants
@@ -8757,6 +8769,20 @@ proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabel
 `imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
 port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
 
+The PTL decider reads LS4's input as `ptl_to_trp -i file | ls4` reads it (`Params.ls4`):
+tlapm's `translate` (`translate/` at b91fb6c) lexes `=>` and `<=>` beside `->` and `<->`, a `;`
+comment, `not`, `until` and `unless`, `!` and `?` quantifiers over `[X]`, `True` and `False`,
+and the past `alwaysp` and `sometimep`, parses with ocamlyacc's precedences (`until` below
+`unless`, `<->`, `|`, `->` and `&`, all left associative, each prefix operator above them) and
+writes LS4 clauses by renaming (`dsnf`), with a constant inside a clause printed as the atom
+`True` or `False`, so `sometime False` is satisfiable to LS4 (tla-ts calls this a bug of
+`string_of_formula` and records `unsat` as correct; the port prints LS4's `sat`); it writes no
+clauses for a parse error, the reserved word `skolem`, a lowercase bound variable or a past
+operator (`Illegal1`), and LS4 (`Trp2Spec.cc`) rejects an atom with arguments, so each such input
+reaches no verdict (`unknown`), where the port's own reader rejected every spelling and operator
+but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/conformance/ptl`'s
+`.trp` recordings and `syntax-*.ls4`).
+
 Zenon's `subseteq_cap` and `not_subseteq_cap` rules (`ext_tla.ml`'s `newnodes_prop`) build both
 subsets from the intersection's second set, where `Zenon.thy`'s lemmas take one from each, and
 the second is unsound: Zenon proves `U \subseteq S /\ U \subseteq T => U \subseteq S \cap T`
@@ -8799,7 +8825,8 @@ header overrides the recording with `correct: unsat`, calling it a tlapm bug.
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
-| counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 319 / 1,061 / 17 |
+| with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
+| counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
 
 ### Declines
 

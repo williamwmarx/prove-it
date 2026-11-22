@@ -2269,6 +2269,7 @@ impl Parser {
             kind: DefinitionKind::Operator {
                 params,
                 body_range: Some(body_range),
+                is_fact: false,
             },
             body,
             is_local,
@@ -3206,6 +3207,7 @@ impl Parser {
                 kind: DefinitionKind::Operator {
                     params: Vec::new(),
                     body_range: None,
+                    is_fact: true,
                 },
                 body,
                 is_local: false,
@@ -3371,6 +3373,7 @@ impl Parser {
                             kind: DefinitionKind::Operator {
                                 params: Vec::new(),
                                 body_range: None,
+                                is_fact: true,
                             },
                             body: assumption.expression.clone(),
                             is_local: false,

@@ -1,0 +1,5 @@
+and([
+or([not p]),
+always(or([cc])), 
+always(or([not cc]))]).
+
