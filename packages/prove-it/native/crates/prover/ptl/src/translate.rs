@@ -38,10 +38,27 @@ pub enum Formula {
 
 use Formula::*;
 
-/// Why `ptl_to_trp` writes LS4 no clauses: a parse error, which `main.ml` catches and prints in
-/// the clauses' place, or an exception it doesn't catch, which ends it.
+/// Why the translation gives no clauses: `ptl_to_trp` writes none, on a parse error, which
+/// `main.ml` catches and prints in the clauses' place, or an exception it doesn't catch, which
+/// ends it; or the user stopped the decision, which the translation checks as it goes, since the
+/// expansion of `<->` and of a disjunction of conjunctions grows exponentially, as it does in
+/// `ptl_to_trp`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Failure(pub String);
+pub enum Failure {
+    NoClauses(String),
+    Stopped,
+}
+
+/// Whether the user stopped the decision.
+pub type Stop<'a> = &'a mut dyn FnMut() -> bool;
+
+fn check(stop: &mut Stop) -> Result<(), Failure> {
+    if stop() {
+        Err(Failure::Stopped)
+    } else {
+        Ok(())
+    }
+}
 
 /// The clause sets `main.ml` prints, each clause a list of literals, which may be `next` or
 /// `sometime` of one, or a constant printed as its name.
@@ -81,7 +98,7 @@ enum Token {
 }
 
 fn parse_error(message: &str) -> Failure {
-    Failure(format!("Parse error: {message}"))
+    Failure::NoClauses(format!("Parse error: {message}"))
 }
 
 /// `folex.mll`: a keyword wins over the identifier of the same text, and a longer identifier over
@@ -171,12 +188,13 @@ fn tokenize(text: &str) -> Result<Vec<Token>, Failure> {
 /// `%left` declares (`until` below `unless`, `<->`, `|`, `->` and `&`), each prefix operator and
 /// quantifier above them, except `alwaysp` and `sometimep`, which have no precedence, so their
 /// body extends as far as it can, since ocamlyacc shifts on the conflict.
-struct Parser {
+struct Parser<'a> {
     tokens: Vec<Token>,
     position: usize,
+    stop: Stop<'a>,
 }
 
-impl Parser {
+impl Parser<'_> {
     fn peek(&self) -> &Token {
         &self.tokens[self.position]
     }
@@ -223,6 +241,7 @@ impl Parser {
     }
 
     fn formula(&mut self, min_level: u8) -> Result<Formula, Failure> {
+        check(&mut self.stop)?;
         let mut left = self.prefix()?;
         while let Some(level) = Self::binary_level(self.peek()).filter(|&level| level >= min_level)
         {
@@ -306,10 +325,11 @@ impl Parser {
     }
 }
 
-fn parse(text: &str) -> Result<Formula, Failure> {
+fn parse(text: &str, stop: Stop) -> Result<Formula, Failure> {
     let mut parser = Parser {
         tokens: tokenize(text)?,
         position: 0,
+        stop,
     };
     let formula = parser.formula(1)?;
     parser.expect(Token::Eof)?;
@@ -423,47 +443,61 @@ fn is_temporal_free(f: &Formula) -> bool {
 }
 
 /// `Fofunctions.nnf`: implications and negations pushed to the literals.
-fn nnf(f: &Formula) -> Formula {
-    let go = |g: &Formula| Box::new(nnf(g));
-    match f {
+fn nnf(f: &Formula, stop: &mut Stop) -> Result<Formula, Failure> {
+    check(stop)?;
+    let mut go = |g: &Formula| nnf(g, stop).map(Box::new);
+    Ok(match f {
         True | False | Atom(..) | NotAtom(..) => f.clone(),
-        And(f, g) => And(go(f), go(g)),
-        Or(f, g) => Or(go(f), go(g)),
-        Implies(f, g) => Or(Box::new(negate(f)), go(g)),
-        Not(f) => negate(f),
-        Forall(v, f) => Forall(v.clone(), go(f)),
-        Exists(v, f) => Exists(v.clone(), go(f)),
-        Always(f) => Always(go(f)),
-        Sometime(f) => Sometime(go(f)),
-        AlwaysP(f) => AlwaysP(go(f)),
-        SometimeP(f) => SometimeP(go(f)),
-        Next(f) => Next(go(f)),
-        Until(f, g) => Until(go(f), go(g)),
-        Unless(f, g) => Unless(go(f), go(g)),
-    }
+        And(f, g) => And(go(f)?, go(g)?),
+        Or(f, g) => Or(go(f)?, go(g)?),
+        Implies(f, g) => {
+            let right = go(g)?;
+            Or(Box::new(negate(f, stop)?), right)
+        }
+        Not(f) => negate(f, stop)?,
+        Forall(v, f) => Forall(v.clone(), go(f)?),
+        Exists(v, f) => Exists(v.clone(), go(f)?),
+        Always(f) => Always(go(f)?),
+        Sometime(f) => Sometime(go(f)?),
+        AlwaysP(f) => AlwaysP(go(f)?),
+        SometimeP(f) => SometimeP(go(f)?),
+        Next(f) => Next(go(f)?),
+        Until(f, g) => Until(go(f)?, go(g)?),
+        Unless(f, g) => Unless(go(f)?, go(g)?),
+    })
 }
 
-fn negate(f: &Formula) -> Formula {
-    let neg = |g: &Formula| Box::new(negate(g));
-    match f {
+fn negate(f: &Formula, stop: &mut Stop) -> Result<Formula, Failure> {
+    check(stop)?;
+    let mut neg = |g: &Formula| negate(g, stop).map(Box::new);
+    Ok(match f {
         True => False,
         False => True,
         Atom(a, args) => NotAtom(a.clone(), args.clone()),
         NotAtom(a, args) => Atom(a.clone(), args.clone()),
-        And(f, g) => Or(neg(f), neg(g)),
-        Or(f, g) => And(neg(f), neg(g)),
-        Implies(f, g) => And(Box::new(nnf(f)), neg(g)),
-        Not(f) => nnf(f),
-        Forall(v, f) => Exists(v.clone(), neg(f)),
-        Exists(v, f) => Forall(v.clone(), neg(f)),
-        Always(f) => Sometime(neg(f)),
-        Sometime(f) => Always(neg(f)),
-        AlwaysP(f) => SometimeP(neg(f)),
-        SometimeP(f) => AlwaysP(neg(f)),
-        Next(f) => Next(neg(f)),
-        Until(f, g) => Unless(neg(g), Box::new(And(neg(f), neg(g)))),
-        Unless(f, g) => Until(neg(g), Box::new(And(neg(f), neg(g)))),
-    }
+        And(f, g) => Or(neg(f)?, neg(g)?),
+        Or(f, g) => And(neg(f)?, neg(g)?),
+        Implies(f, g) => {
+            let right = neg(g)?;
+            And(Box::new(nnf(f, stop)?), right)
+        }
+        Not(f) => nnf(f, stop)?,
+        Forall(v, f) => Exists(v.clone(), neg(f)?),
+        Exists(v, f) => Forall(v.clone(), neg(f)?),
+        Always(f) => Sometime(neg(f)?),
+        Sometime(f) => Always(neg(f)?),
+        AlwaysP(f) => SometimeP(neg(f)?),
+        SometimeP(f) => AlwaysP(neg(f)?),
+        Next(f) => Next(neg(f)?),
+        Until(f, g) => {
+            let (nf, ng) = (neg(f)?, neg(g)?);
+            Unless(ng.clone(), Box::new(And(nf, ng)))
+        }
+        Unless(f, g) => {
+            let (nf, ng) = (neg(f)?, neg(g)?);
+            Until(ng.clone(), Box::new(And(nf, ng)))
+        }
+    })
 }
 
 /// The initial part, the universal, step and eventuality parts of a formula's DSNF.
@@ -471,13 +505,17 @@ type Dsnf = (Formula, Vec<Formula>, Vec<Formula>, Vec<Formula>);
 
 /// The translation's state: the counter new names take, and the formulas renamed so far with
 /// their names (`seenList`), so that the same subformula is named once.
-#[derive(Default)]
-struct Translator {
+struct Translator<'a> {
     count: u32,
     seen: Vec<(Formula, Formula)>,
+    stop: Stop<'a>,
 }
 
-impl Translator {
+impl Translator<'_> {
+    fn check(&mut self) -> Result<(), Failure> {
+        check(&mut self.stop)
+    }
+
     fn new_var(&mut self, name: &str) -> String {
         self.count += 1;
         format!("{name}{}", self.count)
@@ -503,17 +541,21 @@ impl Translator {
     }
 
     /// `rename`: `always (proposition => formula)`, universally quantified over the free variables.
-    fn rename(proposition: &Formula, formula: &Formula) -> Formula {
+    fn rename(&mut self, proposition: &Formula, formula: &Formula) -> Result<Formula, Failure> {
         let vars = free_vars(formula);
-        let body = Or(Box::new(negate(proposition)), Box::new(formula.clone()));
-        if vars.is_empty() {
+        let body = Or(
+            Box::new(negate(proposition, &mut self.stop)?),
+            Box::new(formula.clone()),
+        );
+        Ok(if vars.is_empty() {
             Always(Box::new(body))
         } else {
             Always(Box::new(Forall(vars, Box::new(body))))
-        }
+        })
     }
 
     fn dsnf_wrap(&mut self, form: &Formula) -> Result<Dsnf, Failure> {
+        self.check()?;
         if is_temporal_free(form) {
             return Ok((form.clone(), Vec::new(), Vec::new(), Vec::new()));
         }
@@ -558,6 +600,7 @@ impl Translator {
     }
 
     fn dsnf(&mut self, form: &Formula) -> Result<Dsnf, Failure> {
+        self.check()?;
         if let Some(name) = self.get_seen(form) {
             return Ok((name, Vec::new(), Vec::new(), Vec::new()));
         }
@@ -589,7 +632,7 @@ impl Translator {
                     union(&ep1, &ep2),
                 ))
             }
-            Implies(..) => Err(Failure("Fofunctions.Illegal7".into())),
+            Implies(..) => Err(Failure::NoClauses("Fofunctions.Illegal7".into())),
             Forall(v, y) => {
                 let (ip, up, sp, ep) = self.dsnf(y)?;
                 Ok((Forall(v.clone(), Box::new(ip)), up, sp, ep))
@@ -602,8 +645,8 @@ impl Translator {
                 let new_p = self.new_literal(&free_vars(f));
                 let (ip, mut up, mut sp, ep) = self.dsnf(f)?;
                 self.set_seen(form.clone(), new_p.clone());
-                up.insert(0, Self::rename(&new_p, &ip));
-                sp.insert(0, Self::rename(&new_p, &Next(Box::new(new_p.clone()))));
+                up.insert(0, self.rename(&new_p, &ip)?);
+                sp.insert(0, self.rename(&new_p, &Next(Box::new(new_p.clone())))?);
                 Ok((new_p, up, sp, ep))
             }
             Next(f) => {
@@ -616,9 +659,9 @@ impl Translator {
                 let (ip, mut up, mut sp, ep) = self.dsnf(f)?;
                 self.set_seen(form.clone(), new_p.clone());
                 if !is_literal(f) {
-                    up.insert(0, Self::rename(&new_q, &ip));
+                    up.insert(0, self.rename(&new_q, &ip)?);
                 }
-                sp.insert(0, Self::rename(&new_p, &Next(Box::new(new_q))));
+                sp.insert(0, self.rename(&new_p, &Next(Box::new(new_q)))?);
                 Ok((new_p, up, sp, ep))
             }
             Sometime(f) => {
@@ -626,8 +669,8 @@ impl Translator {
                 let new_q = self.new_literal(&free_vars(f));
                 let (ip, mut up, sp, mut ep) = self.dsnf(f)?;
                 self.set_seen(form.clone(), new_p.clone());
-                up.insert(0, Self::rename(&new_q, &ip));
-                ep.insert(0, Self::rename(&new_p, &Sometime(Box::new(new_q))));
+                up.insert(0, self.rename(&new_q, &ip)?);
+                ep.insert(0, self.rename(&new_p, &Sometime(Box::new(new_q)))?);
                 Ok((new_p, up, sp, ep))
             }
             Until(f, g) | Unless(f, g) => {
@@ -643,7 +686,7 @@ impl Translator {
                     let new_p = self.new_literal(&free_vars(form));
                     let (ip, up, sp, ep) = self.dsnf(&make(new_p.clone(), (**g).clone()))?;
                     let (ip2, up2, sp2, ep2) = self.dsnf(f)?;
-                    let mut universal = vec![Self::rename(&new_p, &ip2)];
+                    let mut universal = vec![self.rename(&new_p, &ip2)?];
                     universal.extend(up);
                     universal.extend(up2);
                     return Ok((ip, universal, [sp, sp2].concat(), [ep, ep2].concat()));
@@ -652,7 +695,7 @@ impl Translator {
                     let new_q = self.new_literal(&free_vars(form));
                     let (ip, up, sp, ep) = self.dsnf(&make((**f).clone(), new_q.clone()))?;
                     let (ip2, up2, sp2, ep2) = self.dsnf(g)?;
-                    let mut universal = vec![Self::rename(&new_q, &ip2)];
+                    let mut universal = vec![self.rename(&new_q, &ip2)?];
                     universal.extend(up);
                     universal.extend(up2);
                     return Ok((ip, universal, [sp, sp2].concat(), [ep, ep2].concat()));
@@ -664,25 +707,25 @@ impl Translator {
                 self.set_seen(form.clone(), new_p.clone());
                 let f_or_g = Or(f.clone(), g.clone());
                 let mut universal = vec![
-                    Self::rename(&new_p, &f_or_g),
-                    Self::rename(&new_p, &Or(g.clone(), Box::new(new_q.clone()))),
+                    self.rename(&new_p, &f_or_g)?,
+                    self.rename(&new_p, &Or(g.clone(), Box::new(new_q.clone())))?,
                 ];
                 universal.extend(union(&up1, &up2));
                 let mut step = vec![
-                    Self::rename(&new_q, &Next(Box::new(f_or_g))),
-                    Self::rename(
+                    self.rename(&new_q, &Next(Box::new(f_or_g)))?,
+                    self.rename(
                         &new_q,
                         &Next(Box::new(Or(Box::new(new_q.clone()), g.clone()))),
-                    ),
+                    )?,
                 ];
                 step.extend(union(&sp1, &sp2));
                 let mut eventuality = union(&ep1, &ep2);
                 if is_until {
-                    eventuality.insert(0, Self::rename(&new_p, &Sometime(g.clone())));
+                    eventuality.insert(0, self.rename(&new_p, &Sometime(g.clone()))?);
                 }
                 Ok((new_p, universal, step, eventuality))
             }
-            _ => Err(Failure("Fofunctions.Illegal1".into())),
+            _ => Err(Failure::NoClauses("Fofunctions.Illegal1".into())),
         }
     }
 
@@ -693,6 +736,7 @@ impl Translator {
         form: &Formula,
         free: &[String],
     ) -> Result<Formula, Failure> {
+        self.check()?;
         Ok(match form {
             True | False | Atom(..) | NotAtom(..) => form.clone(),
             And(f, g) => And(
@@ -711,7 +755,7 @@ impl Translator {
             Next(f) => Next(Box::new(self.eliminate_quantifiers(f, free)?)),
             Sometime(f) => Sometime(Box::new(self.eliminate_quantifiers(f, free)?)),
             Always(f) => Always(Box::new(self.eliminate_quantifiers(f, free)?)),
-            _ => return Err(Failure("Fofunctions.Illegal2".into())),
+            _ => return Err(Failure::NoClauses("Fofunctions.Illegal2".into())),
         })
     }
 
@@ -726,73 +770,101 @@ impl Translator {
 }
 
 /// `cnf`: disjunctions distributed over conjunctions, under a leading `always`.
-fn cnf(f: &Formula) -> Formula {
-    match f {
-        Or(f, g) => cnf_aux(Or(Box::new(cnf(f)), Box::new(cnf(g)))),
-        And(f, g) => And(Box::new(cnf(f)), Box::new(cnf(g))),
-        Always(f) => Always(Box::new(cnf(f))),
-        _ => f.clone(),
-    }
-}
-
-fn cnf_aux(f: Formula) -> Formula {
-    match f {
-        Or(f, g) => match (*f, *g) {
-            (f, And(g, h)) => And(
-                Box::new(cnf_aux(Or(Box::new(f.clone()), g))),
-                Box::new(cnf_aux(Or(Box::new(f), h))),
-            ),
-            (And(f, g), h) => And(
-                Box::new(cnf_aux(Or(f, Box::new(h.clone())))),
-                Box::new(cnf_aux(Or(g, Box::new(h)))),
-            ),
-            (f, g) => Or(Box::new(f), Box::new(g)),
-        },
-        other => other,
-    }
-}
-
-/// `clausify`: a formula in CNF as its clauses, each a list of literals.
-fn clausify(f: &Formula) -> Result<Vec<Vec<Formula>>, Failure> {
+fn cnf(f: &Formula, stop: &mut Stop) -> Result<Formula, Failure> {
+    check(stop)?;
     Ok(match f {
-        Always(f) => clausify(f)?,
-        And(f, g) => union(&clausify(f)?, &clausify(g)?),
-        Or(..) => vec![clausify_aux(f)],
-        True => Vec::new(),
-        False => vec![Vec::new()],
-        Atom(..) | NotAtom(..) => vec![vec![f.clone()]],
-        _ => return Err(Failure("Fofunctions.Illegal3".into())),
+        Or(f, g) => {
+            let (f, g) = (cnf(f, stop)?, cnf(g, stop)?);
+            cnf_aux(Or(Box::new(f), Box::new(g)), stop)?
+        }
+        And(f, g) => {
+            let (f, g) = (cnf(f, stop)?, cnf(g, stop)?);
+            And(Box::new(f), Box::new(g))
+        }
+        Always(f) => Always(Box::new(cnf(f, stop)?)),
+        _ => f.clone(),
     })
 }
 
-fn clausify_aux(f: &Formula) -> Vec<Formula> {
-    match f {
-        Next(f) => clausify_aux2(f),
-        Or(f, g) => union(&clausify_aux(f), &clausify_aux(g)),
+fn cnf_aux(f: Formula, stop: &mut Stop) -> Result<Formula, Failure> {
+    check(stop)?;
+    Ok(match f {
+        Or(f, g) => match (*f, *g) {
+            (f, And(g, h)) => {
+                let left = cnf_aux(Or(Box::new(f.clone()), g), stop)?;
+                let right = cnf_aux(Or(Box::new(f), h), stop)?;
+                And(Box::new(left), Box::new(right))
+            }
+            (And(f, g), h) => {
+                let left = cnf_aux(Or(f, Box::new(h.clone())), stop)?;
+                let right = cnf_aux(Or(g, Box::new(h)), stop)?;
+                And(Box::new(left), Box::new(right))
+            }
+            (f, g) => Or(Box::new(f), Box::new(g)),
+        },
+        other => other,
+    })
+}
+
+/// `clausify`: a formula in CNF as its clauses, each a list of literals.
+fn clausify(f: &Formula, stop: &mut Stop) -> Result<Vec<Vec<Formula>>, Failure> {
+    check(stop)?;
+    Ok(match f {
+        Always(f) => clausify(f, stop)?,
+        And(f, g) => {
+            let (f, g) = (clausify(f, stop)?, clausify(g, stop)?);
+            union(&f, &g)
+        }
+        Or(..) => vec![clausify_aux(f, stop)?],
+        True => Vec::new(),
+        False => vec![Vec::new()],
+        Atom(..) | NotAtom(..) => vec![vec![f.clone()]],
+        _ => return Err(Failure::NoClauses("Fofunctions.Illegal3".into())),
+    })
+}
+
+fn clausify_aux(f: &Formula, stop: &mut Stop) -> Result<Vec<Formula>, Failure> {
+    check(stop)?;
+    Ok(match f {
+        Next(f) => clausify_aux2(f, stop)?,
+        Or(f, g) => {
+            let (f, g) = (clausify_aux(f, stop)?, clausify_aux(g, stop)?);
+            union(&f, &g)
+        }
         _ => vec![f.clone()],
-    }
+    })
 }
 
-fn clausify_aux2(f: &Formula) -> Vec<Formula> {
-    match f {
-        Or(f, g) => union(&clausify_aux2(f), &clausify_aux2(g)),
+fn clausify_aux2(f: &Formula, stop: &mut Stop) -> Result<Vec<Formula>, Failure> {
+    check(stop)?;
+    Ok(match f {
+        Or(f, g) => {
+            let (f, g) = (clausify_aux2(f, stop)?, clausify_aux2(g, stop)?);
+            union(&f, &g)
+        }
         _ => vec![Next(Box::new(f.clone()))],
-    }
+    })
 }
 
-fn clausify_all(formulas: &[Formula]) -> Result<Vec<Vec<Formula>>, Failure> {
+fn clausify_all(formulas: &[Formula], stop: &mut Stop) -> Result<Vec<Vec<Formula>>, Failure> {
     let mut clauses = Vec::new();
     for f in formulas.iter().rev() {
-        clauses = union(&clausify(f)?, &clauses);
+        clauses = union(&clausify(f, stop)?, &clauses);
     }
     Ok(clauses)
 }
 
-/// The clauses `ptl_to_trp` writes for the text, or why it writes none.
-pub fn translate(text: &str) -> Result<Clauses, Failure> {
-    let formula = parse(text)?;
-    let mut translator = Translator::default();
-    let (ip, up, sp, ep) = translator.dsnf_wrap(&nnf(&formula))?;
+/// The clauses `ptl_to_trp` writes for the text, or why it writes none, checking `stop` as it
+/// goes.
+pub fn translate(text: &str, mut stop: Stop) -> Result<Clauses, Failure> {
+    let formula = parse(text, &mut *stop)?;
+    let normal = nnf(&formula, &mut stop)?;
+    let mut translator = Translator {
+        count: 0,
+        seen: Vec::new(),
+        stop,
+    };
+    let (ip, up, sp, ep) = translator.dsnf_wrap(&normal)?;
     let ip = translator.eliminate_quantifiers(&ip, &[])?;
     let mut eliminate = |formulas: &[Formula]| -> Result<Vec<Formula>, Failure> {
         formulas
@@ -803,12 +875,17 @@ pub fn translate(text: &str) -> Result<Clauses, Failure> {
     let up = eliminate(&up)?;
     let sp = eliminate(&sp)?;
     let ep = eliminate(&ep)?;
-    let up: Vec<Formula> = up.iter().map(cnf).collect();
+    let stop = &mut translator.stop;
+    let up = up
+        .iter()
+        .map(|f| cnf(f, stop))
+        .collect::<Result<Vec<Formula>, Failure>>()?;
+    let ip = cnf(&ip, stop)?;
     Ok(Clauses {
-        initial: clausify(&cnf(&ip))?,
-        universal: clausify_all(&up)?,
-        step: clausify_all(&sp)?,
-        eventuality: clausify_all(&ep)?,
+        initial: clausify(&ip, stop)?,
+        universal: clausify_all(&up, stop)?,
+        step: clausify_all(&sp, stop)?,
+        eventuality: clausify_all(&ep, stop)?,
     })
 }
 

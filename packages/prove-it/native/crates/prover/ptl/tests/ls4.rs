@@ -59,15 +59,46 @@ fn translates_each_formula_as_ptl_to_trp_does() {
     for path in paths {
         let recorded = fs::read_to_string(path.with_extension("trp")).expect("ptl_to_trp's output");
         let text = fs::read_to_string(&path).expect("the formula");
-        let translation = prove_ptl::translate::translate(&text);
+        let translation = prove_ptl::translate::translate(&text, &mut || false);
         if recorded.starts_with("and([") {
             let clauses =
                 translation.unwrap_or_else(|failure| panic!("{}: {failure:?}", path.display()));
             assert_eq!(clauses.text(), recorded, "{}", path.display());
         } else {
-            assert!(translation.is_err(), "{}: {translation:?}", path.display());
+            assert!(
+                matches!(
+                    translation,
+                    Err(prove_ptl::translate::Failure::NoClauses(_))
+                ),
+                "{}: {translation:?}",
+                path.display()
+            );
         }
     }
+}
+
+/// `ptl_to_trp` expands `(p0 & q0) | (p1 & q1) | ...` to 2^n clauses, and the port with it, so a
+/// stop during the expansion has to end it: the translation checks the stop as it recurses.
+#[test]
+fn stops_the_translation_when_the_decision_is_canceled() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let text = (0..40)
+        .map(|i| format!("(p{i} & q{i})"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&polls);
+    let cancel: prove_decide::Cancel =
+        Arc::new(move || counted.fetch_add(1, Ordering::Relaxed) >= 1_000);
+    let started = std::time::Instant::now();
+    let decision = prove_ptl::decide(&text, &Limits::new(f64::INFINITY, None, Some(cancel)))
+        .expect("a decision");
+    assert_eq!(decision.verdict, Verdict::Unknown);
+    assert!(started.elapsed().as_secs() < 5, "{:?}", started.elapsed());
+    assert!(polls.load(Ordering::Relaxed) >= 1_000);
+    let translation = prove_ptl::translate::translate(&text, &mut || true);
+    assert_eq!(translation, Err(prove_ptl::translate::Failure::Stopped));
 }
 
 /// tla-ts's `backends/ls4/syntax` suite: LS4's verdict on each, `unknown` where `ptl_to_trp`

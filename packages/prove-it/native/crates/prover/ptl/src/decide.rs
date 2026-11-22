@@ -125,9 +125,12 @@ impl Builder {
 
 /// The verdict, with the steps as its one statistic, each a check of the limits.
 pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
-    let formulas = translate::translate(text)
-        .ok()
-        .and_then(|clauses| Builder::default().spec(&clauses));
+    // The translation checks the stop as it goes; the tableau's steps count against the limits.
+    let formulas = translate::translate(text, &mut || {
+        limits.is_canceled() || limits.is_past_deadline()
+    })
+    .ok()
+    .and_then(|clauses| Builder::default().spec(&clauses));
     let verdict = match formulas {
         Some(formulas) => get_satisfiability(&formulas, &mut || {
             limits.is_step_limit_reached() || limits.is_canceled() || limits.is_past_deadline()

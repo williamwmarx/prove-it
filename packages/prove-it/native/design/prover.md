@@ -1391,7 +1391,10 @@ is next.
   `backends/ls4/syntax` suite (`syntax-*.ls4`, with LS4 1.0's verdicts as the suite records them)
   and on 46 formulas that pin the names' order, the precedences and the constants; the tableau
   decides the clauses with the same verdict on every `.ls4.out`, and three of the encoder's
-  thirteen pinned inputs take other step counts (14, 15 and 40 for 16, 16 and 36).
+  thirteen pinned inputs take other step counts (14, 15 and 40 for 16, 16 and 36). The
+  translation checks the user's stop as it recurses, since the expansion of `<->` and of a
+  disjunction of conjunctions grows exponentially, as it does in `ptl_to_trp`, and a stop ends it
+  within milliseconds with no cap on the output.
 - P6d, the Rust driver alone (this entry's PR): `prove` proves with the Rust driver, and
   `PROVE_IT_PROVER_DRIVER` is gone (4c, "Selection").
   - **Deleted:** the TypeScript driver of `src/prover/prove.ts`, its encoders and Prep
