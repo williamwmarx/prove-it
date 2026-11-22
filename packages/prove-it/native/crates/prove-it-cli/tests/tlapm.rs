@@ -258,7 +258,9 @@ fn declines_what_it_cant_do_as_tlapm_does() {
         (&["Proof*.tla"], "globs"),
         (&[], "tlapm's report of a command line without a module"),
         // tlapm's parser reads a pragma before OBVIOUS as tokens, so `sup(* c *)press` isn't
-        // `suppress`; what it then reports isn't recorded yet.
+        // `suppress`: tlapm b91fb6c fails to parse the module (`Unexpected identifier press` at
+        // the pragma, `Could not parse "./SplitPragma.tla" successfully.`, its backtrace, exit
+        // 3), which the port doesn't word.
         (
             &[
                 "-N",
