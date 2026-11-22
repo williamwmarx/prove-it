@@ -420,12 +420,14 @@ impl Converter<'_> {
         // kinds, as through an IF on the state alone (`IF x = 0 THEN <>P ELSE Reach(n + 1)`),
         // which it expands again and again whatever their values. An argument above constant
         // level that becomes a constant (`F(0)` in `F(x)`) can make a guard decidable.
-        if self.recursion.iter().any(|entered| {
-            entered.is_of(&call)
-                && (self.has_same_arguments(entered, &call)
-                    || (entered.evaluations == call.evaluations
-                        && entered.has_arguments_of_kinds(&call)))
-        }) {
+        if self.repeats_entered()
+            || self.recursion.iter().any(|entered| {
+                entered.is_of(&call)
+                    && (self.has_same_arguments(entered, &call)
+                        || (entered.evaluations == call.evaluations
+                            && entered.has_arguments_of_kinds(&call)))
+            })
+        {
             return Err(FrontError::StackOverflow);
         }
         if self.recursion.len() >= OVERFLOWING_RECURSION {
@@ -473,8 +475,9 @@ impl Converter<'_> {
     }
 
     /// Whether a call has the arguments of one the translation is in: each the same expression in
-    /// the same scope, or above constant level in both, or of the same value where the body of the
-    /// call it is in read it, as TLC reads it there.
+    /// the same scope, or above constant level in both, or of the same value where the bodies of
+    /// both calls already read it. Nothing is computed to compare them: TLC computes an argument
+    /// only where the body reads it.
     fn has_same_arguments(&self, entered: &RecursiveCall, call: &RecursiveCall) -> bool {
         entered.arguments.len() == call.arguments.len()
             && (0..call.arguments.len()).all(|position| {
@@ -488,12 +491,25 @@ impl Converter<'_> {
                 ) else {
                     return false;
                 };
-                evaluator.computed_thunk(read).is_some_and(|value| {
-                    evaluator
-                        .evaluate_thunk(node)
-                        .is_ok_and(|other| other == value)
-                })
+                match (
+                    evaluator.computed_thunk(read),
+                    evaluator.computed_thunk(node),
+                ) {
+                    (Some(left), Some(right)) => left == right,
+                    _ => false,
+                }
             })
+    }
+
+    /// Whether the call the translation is in repeats one it was already in, by the arguments its
+    /// body has read since it was made.
+    fn repeats_entered(&self) -> bool {
+        let Some((last, entered)) = self.recursion.split_last() else {
+            return false;
+        };
+        entered
+            .iter()
+            .any(|entered| entered.is_of(last) && self.has_same_arguments(entered, last))
     }
 
     /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
