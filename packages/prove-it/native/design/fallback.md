@@ -3018,20 +3018,37 @@ predicate before every variable is assigned, in an assumption and in a postcondi
 naming the variables unassigned, in the order of their names, which the trace evaluator words
 as TLC does; a spec without variables has `<<[]>>` in an assumption. The engine declines Trace ("TLCExt's Trace, the behavior the engine doesn't keep")
 with more than one worker, `-dfid`, `-continue`, `-simulate`, a VIEW, SYMMETRY or temporal
-properties to check, where TLC finds the trace otherwise or the engine evaluates off the search; where TLC's record of a state, which holds its variables in TLC's order unnormalized
-and prints them so (`RecordValue(TLCState)`), differs from the engine's, in the order of their
+properties to check, where TLC finds the trace otherwise or the engine evaluates off the
+search; where TLC's record of a state, which holds its variables in TLC's order unnormalized and
+prints them so (`RecordValue(TLCState)`), differs from the engine's, in the order of their
 names ("TLCExt's Trace of variables TLC orders otherwise than their names", as `VARIABLES y, x`);
 and where TLC's rebuild evaluates again an initial predicate, or a next-state relation, that may
 print, draw or set a register ("TLCExt's Trace, whose rebuild evaluates again what may have an
 effect"): TLC prints again what they print as it rebuilds the states before the one it gives the
 trace of. The trace of an invariant's violation, which TLC rebuilds through a next-state relation
-that reads Trace, still declines ("rebuilding a trace: the builtin Trace"), as does an ALIAS that
-reads Trace in the trace TLC prints ("rebuilding a trace: Trace with an unproven Java method
-origin"). On the `tlc` suite of aidenybai/tla-ts at 0341dbe5 (72,878 runs) this answers 11 runs
-main declined, as the pinned jar does, and changes no other: TLCExtTraceTest and the
-`tlc_ext/trace_*` tests but those of a simulation (`trace_simulate`, TLCExtTraceSimTest) and of
-an ALIAS (`trace_alias`, TLCExtTraceAliasTest), which decline. `tests/trace` holds TLC's output
-beside its specs (`reads_the_behavior_as_tlc_through_trace`).
+that reads Trace, still declines ("rebuilding a trace: the builtin Trace"). On the `tlc` suite
+of aidenybai/tla-ts at 0341dbe5 (72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and
+`JDK_JAVA_OPTIONS` unset, adjudicated by the pinned jar) main answers 72,567 runs as the jar
+does, declines 311 and answers none otherwise; with Trace it answers 72,578 and declines 300. The
+11 runs are TLCExtTraceTest and the `tlc_ext/trace_*` tests but the two of a simulation
+(`trace_simulate`, TLCExtTraceSimTest), which decline. No other run changes. `tests/trace` holds TLC's output beside
+its specs (`reads_the_behavior_as_tlc_through_trace`).
+
+#### -maxSetSize
+
+`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc` suite
+above), and stays declined: TLC's limit isn't the bound alone. `ValueVec.ensureCapacity` throws
+("Attempted to construct a set with too many elements") only when a vector whose array already
+holds `setBound` elements must grow, and caps its growth at `setBound`, so a vector's real limit
+is the larger of its initial capacity and the bound: `new ValueVec()` holds 10, and a vector TLC
+sizes as it builds it never grows. `StateVec.grow` does the same for the successors of a state
+(`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61 sites, with capacities of their own
+(the default 10, the exact size of what it enumerates, `kOutOfN`, a bit count), so with a small
+bound one set of 10 elements builds and another fails. The engine's one bound of 1,000,000
+(`TLCGlobals.setBound`'s default) is exact only because at that size no site's initial capacity
+reaches it. Answering a smaller bound takes each of those sites' capacities, matched to the
+engine's set builders; a single configurable bound would answer the upstream tests that set one
+(`filter_within_default_capacity`, `presized_function_set_ignores_bound`) otherwise than TLC.
 
 #### Declines to win back
 
