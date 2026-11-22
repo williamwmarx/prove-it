@@ -3104,13 +3104,17 @@ configurable bound would answer the upstream tests that set one (`filter_within_
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
-- a temporal property through a recursion that ends between 600 and 2,000 nested calls where
-  TLC's translation overflows ("a recursive temporal formula nested more deeply than TLC's stack
-  may hold"), as `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5) /\ F(n - 1, m + 1))` with `Prop ==
-  F(1100, 0)`. Main reported TLC's overflow at 100 nested calls whatever the recursion, which
-  matched only where TLC overflows too, and not at 800 or 1,000 calls of `F(n) == IF n = 0 THEN
-  <>P ELSE F(n - 1)`, which TLC completes. Of 968 generated recursive properties run through the
-  jar, 4 such runs that main matched decline. Winning them back takes the stack each level of
+- a temporal property through a recursion that ends where the measure of TLC's stack is between
+  what TLC surely holds and twice what it was measured to complete ("a recursive temporal formula
+  nested more deeply than TLC's stack may hold"), as `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5)
+  /\ F(n - 1, m + 1))` with `Prop == F(1100, 0)`. Main reported TLC's overflow at 100 nested calls
+  whatever the recursion and completed one below, which matched only where TLC happened to agree,
+  and not at 800 or 1,000 calls of `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)`, which TLC completes,
+  nor at 35 calls with a hundred `[]`s around the call, where TLC overflows. Of 968 generated
+  recursive properties run through the jar, 4 such runs that main matched decline; of 50 with 0
+  to 100 `[]`s around the call, 15: 11 where TLC overflows past main's 100 calls and 4 where it
+  completes with 50 or 100 `[]`s below them, within where TLC's own result varies from run to
+  run. Winning them back takes the stack each level of
   TLC's translation takes. As WebAssembly, whose host's stack holds about 900 levels of the
   translation, one past that declines ("WebAssembly ran out of stack"), also where it never
   ends and TLC overflows, which main reported at 100 calls.
@@ -6752,9 +6756,31 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   and overflows at 1,100, with one `[]` around the call at 700 and 800, with five at 250 and 400
   but at 300 and not at 350, with twenty at 160 and 180, with a hundred at 30 and 35. A recursion
   whose levels take more of TLC's stack than the measure counts may overflow where the binary
-  completes it: a known wrong output, as for the evaluator's recursion. And a temporal formula nested more deeply than the translation follows ("a temporal
-  formula nested more deeply than the translation follows"), past 2,000 nested expansions other
-  than of recursive calls, which SANY's parser doesn't reach first.
+  completes it: a known wrong output, as for the evaluator's recursion.
+
+  The measure (`live.rs`, `get_stack_cost`) counts 100 for each recursive call the walk is within
+  and 31 for each conversion beyond the 2 a level of an IF and its call takes. Below 75,000 the
+  translation is trusted (`MAXIMUM_STACK_COST`); from there a recursion that ends declines; from
+  240,000 (`OVERFLOWING_STACK_COST`), or 2,000 nested calls, it overflows as TLC's does. Where TLC
+  completed and overflowed `F(n) == IF n = 0 THEN <>(x = 0) ELSE []( ... [](F(n - 1)) ... )` with
+  k `[]`s, `Prop == F(N)`, at `-Xss2m`, in calls and in the measure's units of 100:
+
+  | k   | completes at  | overflows at  | measure there  |
+  | --- | ------------- | ------------- | -------------- |
+  | 0   | 1,000         | 1,100         | 1,000 to 1,100 |
+  | 1   | 700           | 800           | 917 to 1,048   |
+  | 5   | 250, 350      | 300, 400      | 638 to 1,020   |
+  | 20  | 160           | 180           | 1,152 to 1,296 |
+  | 50  | 60            | 70            | 990 to 1,155   |
+  | 100 | 30            | 35            | 960 to 1,120   |
+
+  To fit them again, run the jar on these shapes at more k and N, read the walk's nesting where
+  each completes and overflows (2 + k conversions a level), and keep the thresholds below the
+  least overflow and twice above the most completion.
+
+  And a temporal formula nested more deeply than the translation follows ("a temporal formula
+  nested more deeply than the translation follows"), past 2,000 nested expansions other than of
+  recursive calls, which SANY's parser doesn't reach first.
 - A temporal formula through definitions nested more deeply than TLC's stack may hold ("a temporal
   formula through definitions nested more deeply than TLC's stack may hold"): a property or a
   specification whose expansion nests more than 2,250 definitions, global or of LETs. TLC's
