@@ -1027,6 +1027,20 @@ pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 
 than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
 2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
 
+### TLC's overrides table read once (overrides-once)
+
+Every lookup of an override's level, and every scan of a module's overrides as the environment
+links it, read the 165-line `tlc_overrides.tsv` again from its text, splitting the lines and the
+fields and parsing the level: 9 M of the 141 M instructions of a 2PCwithBTM run, 6.7%, between
+`Lines::next` and the closure that splits a line. The table is read once, into a static the
+lookups scan. Counted with callgrind (`-workers 1`): 2PCwithBTM 141.1 M → 125.8 M instructions,
+SyncCons 237.5 M → 223.5 M, VoucherRedeem 360.5 M → 355.7 M. Against main at d82a68e6 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 15 interleaved runs: 2PCwithBTM
+14.1 → 13.4, SyncCons 22.4 → 22.0, VoucherRedeem 24.7 → 24.2, commit 282.9 → 279.1, queue,
+test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 runs, 1.01× with
+every model within its range. The scan is a few thousand instructions a lookup, so it stays a
+scan rather than a map.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
