@@ -1382,6 +1382,13 @@ impl FingerprintSet {
         let is_resolved = is_resolved && is_indexed;
         let part_length = count.div_ceil(threads);
         let parts = split_runs(runs, part_length);
+        let debug_fill_at = Instant::now();
+        let debug = std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some();
+        let debug_scope = |name: &str| {
+            if debug {
+                eprintln!("  fill {name} at {:?}", debug_fill_at.elapsed());
+            }
+        };
 
         // Each part's fingerprints by the range of their home, and each one's range.
         let sorted: Vec<SortedPart> = std::thread::scope(|scope| {
@@ -1415,6 +1422,7 @@ impl FingerprintSet {
 
         // Each range's thread decides its fingerprints, part by part: the runs' order.
         let sorted = &sorted;
+        debug_scope("sorted");
         let mut decided: Vec<DecidedShard> = std::thread::scope(|scope| {
             let threads: Vec<_> = self
                 .fingerprints
@@ -1507,6 +1515,7 @@ impl FingerprintSet {
         // counts the new ones of the part before each.
         let mut statuses = vec![FILL_SEEN; count];
         let (decided, zeros) = (&decided, &zeros);
+        debug_scope("decided");
         let gathered: Vec<GatheredPart> = std::thread::scope(|scope| {
             let threads: Vec<_> = statuses
                 .chunks_mut(part_length)
@@ -1563,6 +1572,7 @@ impl FingerprintSet {
             .collect();
         let (gathered, firsts) = (&gathered, &firsts);
         // Each range's thread writes its new indices and reads its seen ones, in the runs' order.
+        debug_scope("gathered");
         let mut found: Vec<Vec<Vec<u32>>> = std::thread::scope(|scope| {
             let threads: Vec<_> = indices
                 .chunks_mut(span)
@@ -1641,6 +1651,7 @@ impl FingerprintSet {
         }
 
         // Each part's thread gathers its indices into the runs' order.
+        debug_scope("found");
         let mut resolved = vec![0; count];
         let (found, zero_indices) = (&found, &zero_indices);
         std::thread::scope(|scope| {
@@ -1663,6 +1674,7 @@ impl FingerprintSet {
                 });
             }
         });
+        debug_scope("resolved");
         (statuses, resolved)
     }
 }
@@ -4059,12 +4071,16 @@ impl Search<'_, States> {
                 .iter()
                 .map(|run| &expanded[run.thread].fingerprints[run.candidates..][..run.count])
                 .collect();
+            let debug_fill_at = Instant::now();
             let (statuses, indices) = self.states.set.fill(
                 &fingerprints,
                 workers.len(),
                 before_count as u32,
                 self.graph.is_some(),
             );
+            if std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some() {
+                eprintln!("  fill took {:?}", debug_fill_at.elapsed());
+            }
             (runs, statuses, indices)
         });
         let mut new_counts = vec![0u32; level.end - level.start];
@@ -4072,6 +4088,7 @@ impl Search<'_, States> {
         // states the fill told from the rest.
         let (statuses, merged) = match filled {
             Some((runs, statuses, _)) if self.graph.is_none() => {
+                let debug_add_at = Instant::now();
                 self.add_filled(
                     machine,
                     workers,
@@ -4084,6 +4101,9 @@ impl Search<'_, States> {
                     level,
                     &mut new_counts,
                 );
+                if std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some() {
+                    eprintln!("  add_filled took {:?}", debug_add_at.elapsed());
+                }
                 (None, true)
             }
             Some((_, statuses, indices)) => (Some((statuses, indices)), false),
@@ -4104,6 +4124,7 @@ impl Search<'_, States> {
         // The states in order, each run by the thread that claimed it: what each state's expansion
         // found joins the states found, unless an invariant it deferred fails of a state that is
         // new, which stops the search there.
+        let debug_merge_at = Instant::now();
         let unmerged = if merged { &[][..] } else { &owners[..] };
         'states: for &(thread, run) in unmerged {
             let found = &expanded[thread];
@@ -4315,6 +4336,9 @@ impl Search<'_, States> {
                     );
                 }
             }
+        }
+        if std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some() {
+            eprintln!("  merge took {:?}", debug_merge_at.elapsed());
         }
         self.expanding = stop;
         // The fingerprints each thread computed, of the store's values and of the values it made
@@ -6683,6 +6707,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     };
                     // A check of the temporal properties, which TLC makes as it reports its
                     // progress, waits for the level's end.
+                    let debug_level_at = Instant::now();
                     let expanded = search.expand_level(
                         &mut machine,
                         &mut workers[..threads],
@@ -6692,6 +6717,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         &mut out_degrees,
                         (!is_periodic).then_some(&mut progress_at),
                     );
+                    if debug {
+                        eprintln!("  level took {:?}", debug_level_at.elapsed());
+                        let spawn_at = Instant::now();
+                        std::thread::scope(|scope| {
+                            for _ in 0..threads {
+                                std::thread::Builder::new()
+                                    .stack_size(NESTING_STACK_BYTES)
+                                    .spawn_scoped(scope, || std::hint::black_box(0))
+                                    .expect("a thread");
+                            }
+                        });
+                        eprintln!("  spawn round took {:?}", spawn_at.elapsed());
+                    }
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
