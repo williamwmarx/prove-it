@@ -8674,8 +8674,20 @@ steps 0
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:FixedPoints.gfpMono	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1288:46f6b303
+dup #2442:d780ad39
+swapped #1816:77034d98
+dupSwapped #2970:9a7ac76e
+results
+result 0
+maxidx 1
+prop #3658:4cb6c7a3
+result 1
+maxidx 3
+prop #3609:3a6113db
+stop
+steps 4
 > dest	fact:FixedPoints.gfpMono	2000
 count 63
 internal #1694:85ed1f5d
@@ -8690,8 +8702,20 @@ prop #3609:3a6113db
 stop
 steps 9
 > intro	fact:FixedPoints.lfpGLB	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1295:f80148e5
+dup #2153:2eb81857
+swapped #1823:34c0d733
+dupSwapped #2681:b241324f
+results
+result 0
+maxidx 1
+prop #3462:1b6b4e3d
+result 1
+maxidx 3
+prop #3623:9f5b3b73
+stop
+steps 4
 > dest	fact:FixedPoints.lfpGLB	2000
 count 63
 internal #1703:d438f57b
@@ -10618,8 +10642,21 @@ steps 0
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:Integers.intInductE	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #2327:3852c4a1
+dup #3215:b05900fd
+swapped #3207:ef2e4e70
+dupSwapped #4095:6c202d1c
+results
+result 0
+maxidx 4
+tpair (?f.4:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c) =?= (?f.3:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c)
+prop #5795:3974dac9
+result 1
+maxidx 1
+prop #2537:d4503669
+stop
+steps 5
 > dest	fact:Integers.intInductE	2000
 count 63
 internal #3085:26268b15
@@ -10635,8 +10672,21 @@ prop #2537:d4503669
 stop
 steps 12
 > intro	fact:Integers.natInduct	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1105:d4a2f1f2
+dup #1823:5a70f99a
+swapped #1633:27710915
+dupSwapped #2351:38b6f723
+results
+result 0
+maxidx 4
+tpair (?f.4:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c) =?= (?f.3:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c)
+prop #2757:71560449
+result 1
+maxidx 4
+prop #5485:93dd9af7
+stop
+steps 5
 > dest	fact:Integers.natInduct	2000
 count 63
 internal #1511:bbf9f06e
@@ -10824,8 +10874,21 @@ prop #1886:b07fb4dc
 end
 steps 5
 > intro	fact:Integers.uptoInduct	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1990:ab9f6057
+dup #3208:162bd0f1
+swapped #2694:544ceb09
+dupSwapped #3912:ac9b526b
+results
+result 0
+maxidx 4
+tpair (?f.4:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c) =?= (?f.3:fun(PredicateLogic.c,PredicateLogic.c) Integers.zero::PredicateLogic.c)
+prop #3642:b40198a4
+result 1
+maxidx 4
+prop #7255:ba76caef
+stop
+steps 5
 > dest	fact:Integers.uptoInduct	2000
 count 63
 internal #2572:ad39a081
@@ -11006,8 +11069,20 @@ steps 1
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:PredicateLogic.chooseI2	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #651:92915770
+dup #1255:18789734
+swapped #1179:a19bc9d6
+dupSwapped #1783:af502138
+results
+result 0
+maxidx 2
+prop #984:8a5cec6f
+result 1
+maxidx 2
+prop #1106:7939f00f
+stop
+steps 4
 > dest	fact:PredicateLogic.chooseI2	2000
 count 63
 internal #1057:8cc3be7e
@@ -11079,10 +11154,10 @@ stop
 steps 7
 > intro	fact:PredicateLogic.condI	2000
 count 75
-internal #959:41d1a6c4
-dup #1711:8bab0de6
-swapped #1487:142a69bd
-dupSwapped #2239:100a0e3f
+internal #951:946bb87e
+dup #1703:1b9276c8
+swapped #1479:274152e7
+dupSwapped #2231:2518e7c5
 results
 result 0
 maxidx 3
@@ -11092,11 +11167,11 @@ result 1
 maxidx 3
 prop #3685:92f16f0b
 stop
-steps 5
+steps 17
 > dest	fact:PredicateLogic.condI	2000
 count 63
-internal #1368:5d0dfe11
-dup #1574:493c4cf9
+internal #1360:68ef42df
+dup #1566:bcd1a647
 results
 result 0
 maxidx 3
@@ -11106,7 +11181,7 @@ result 1
 maxidx 3
 prop #3685:92f16f0b
 stop
-steps 10
+steps 22
 > intro	fact:PredicateLogic.cond_eqLE	2000
 count 75
 internal #1413:b1b2f423
@@ -11536,7 +11611,7 @@ prop #477:ac4637b
 stop
 steps 5
 > intro	fact:Pure.equal_allI	2000
-error ERROR: Rules with meta-level premises are not supported
+error THM: RSN: no unifiers 1
 steps 0
 > dest	fact:Pure.equal_allI	2000
 count 63
@@ -11544,10 +11619,22 @@ internal #595:3b794e72
 dup #579:db93ffe5
 results
 end
-steps 5
+steps 20
 > intro	fact:Pure.meta_allE	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #245:c1bdeac2
+dup #729:9198d9ca
+swapped #905:ed1dc0ed
+dupSwapped #1257:6ed65819
+results
+result 0
+maxidx 1
+prop #955:1bcd8b00
+result 1
+maxidx 1
+prop #1723:5241d8d1
+stop
+steps 1
 > dest	fact:Pure.meta_allE	2000
 count 63
 internal #651:8eb40282
@@ -11592,7 +11679,7 @@ internal #669:75168644
 dup #871:c86d376c
 results
 end
-steps 6
+steps 11
 > intro	fact:SetTheory.INTER_def	2000
 error THM: RSN: no unifiers 1
 steps 0
@@ -11759,8 +11846,20 @@ prop #1298:b0cc2252
 stop
 steps 9
 > intro	fact:SetTheory.bExCong	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1292:d2d60eab
+dup #2548:3f863587
+swapped #1820:d19c2f71
+dupSwapped #3076:29d8da37
+results
+result 0
+maxidx 1
+prop #3587:5d464402
+result 1
+maxidx 1
+prop #5004:9920e3f6
+stop
+steps 1
 > dest	fact:SetTheory.bExCong	2000
 count 63
 internal #1700:22754057
@@ -11942,8 +12041,20 @@ steps 1
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:SetTheory.nonEmptyE	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #755:3f96976
+dup #1109:9981a994
+swapped #1283:d4a1b071
+dupSwapped #1637:378dacc7
+results
+result 0
+maxidx 1
+prop #1333:78f87480
+result 1
+maxidx 1
+prop #2479:fc963971
+stop
+steps 1
 > dest	fact:SetTheory.nonEmptyE	2000
 count 63
 internal #1163:63b1eade
@@ -11992,8 +12103,20 @@ prop #2299:d627601b
 stop
 steps 5
 > intro	fact:SetTheory.setEqualI	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1111:8e5c6cc5
+dup #1675:127f23d1
+swapped #1639:9de12456
+dupSwapped #2203:7f8d4c3a
+results
+result 0
+maxidx 1
+prop #2627:a45e3a0
+result 1
+maxidx 1
+prop #2561:35b426a0
+stop
+steps 1
 > dest	fact:SetTheory.setEqualI	2000
 count 63
 internal #1520:f2ba1d7a
@@ -12008,8 +12131,17 @@ prop #2561:35b426a0
 stop
 steps 6
 > intro	fact:SetTheory.setOfAllEqual	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1915:e0c2b67
+dup #3191:8618ba31
+swapped #2443:d153020
+dupSwapped #3719:4591f88e
+results
+result 0
+maxidx 1
+prop #6049:e163c753
+end
+steps 1
 > dest	fact:SetTheory.setOfAllEqual	2000
 count 63
 internal #2321:fe001523
@@ -12104,8 +12236,20 @@ prop #3219:79d13a7d
 stop
 steps 7
 > intro	fact:SetTheory.subsetI	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #645:c10cfc0c
+dup #926:913c130c
+swapped #997:ef99b9ce
+dupSwapped #1278:86f04242
+results
+result 0
+maxidx 1
+prop #1575:b158d430
+result 1
+maxidx 1
+prop #3031:d5766a5
+stop
+steps 1
 > dest	fact:SetTheory.subsetI	2000
 count 63
 internal #877:58b32ff6
@@ -12490,8 +12634,20 @@ steps 1
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:Tuples.compEpair	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #2263:81c0d54d
+dup #2968:1ba4248c
+swapped #3143:1b589e40
+dupSwapped #3848:e8c853f5
+results
+result 0
+maxidx 1
+prop #2841:820ca255
+result 1
+maxidx 1
+prop #4642:ddf4967e
+stop
+steps 1
 > dest	fact:Tuples.compEpair	2000
 count 63
 internal #3022:c445f12a
@@ -12764,8 +12920,17 @@ steps 1
 error ERROR: Ill-formed destruction rule
 steps 0
 > intro	fact:Tuples.reflI	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 74
+internal #905:815c2e0d
+dup #1188:1397234a
+swapped #1257:ee414b07
+dupSwapped #1540:e3dbb204
+results
+result 0
+maxidx 1
+prop #2166:845ea35d
+end
+steps 1
 > dest	fact:Tuples.reflI	2000
 error THM: dup_elim
 steps 2
@@ -12859,8 +13024,21 @@ prop #4219:6f7a69d2
 stop
 steps 6
 > intro	fact:Tuples.seqInduct	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #1519:27fc712a
+dup #2185:3a28594
+swapped #2223:b2101deb
+dupSwapped #2889:e55adb2b
+results
+result 0
+maxidx 4
+tpair (?f.4:fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c) =?= (?f.3:fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c)
+prop #3160:eb4eb440
+result 1
+maxidx 1
+prop #1913:ce01895a
+stop
+steps 5
 > dest	fact:Tuples.seqInduct	2000
 count 63
 internal #2101:a77d6a5c
@@ -12876,8 +13054,20 @@ prop #1913:ce01895a
 stop
 steps 11
 > intro	fact:Tuples.setOfPairs_cong	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #2083:b2c45c2b
+dup #4417:2d084e38
+swapped #2787:d4a8975d
+dupSwapped #5121:da63eaee
+results
+result 0
+maxidx 1
+prop #5257:1e505feb
+result 1
+maxidx 1
+prop #7545:61e39bd7
+stop
+steps 1
 > dest	fact:Tuples.setOfPairs_cong	2000
 count 63
 internal #2666:d1f2d10e
@@ -13493,8 +13683,17 @@ prop #1735:76b64aab
 stop
 steps 5
 > intro	fact:Zenon.zenon_notall	2000
-error ERROR: Rules with meta-level premises are not supported
-steps 0
+count 75
+internal #740:c7607b1
+dup #1126:5d616b81
+swapped #1268:f8b5db0e
+dupSwapped #1654:a72d1cc0
+results
+result 0
+maxidx 1
+prop #2684:b29a3855
+end
+steps 1
 > dest	fact:Zenon.zenon_notall	2000
 count 63
 internal #1146:105fcec5

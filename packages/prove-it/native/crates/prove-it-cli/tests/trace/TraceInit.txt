@@ -1,0 +1,18 @@
+Computing initial states...
+Error: Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException,
+but it produced the following error:
+In evaluating TLCExt!Trace, the state is not completely specified yet (variables q, r undefined).
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 49 in TraceInit
+1. Line 4, column 9 to line 4, column 40 in TraceInit
+2. Line 4, column 9 to line 4, column 31 in TraceInit
+3. Line 4, column 9 to line 4, column 13 in TraceInit
+4. Line 4, column 18 to line 4, column 31 in TraceInit
+5. Line 4, column 18 to line 4, column 27 in TraceInit
+6. Line 4, column 22 to line 4, column 26 in TraceInit
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.

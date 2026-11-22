@@ -8,7 +8,7 @@ use crate::expression::is_js_space;
 use crate::expression::{
     Bound, BoundDomain, Builtin, Bullet, DefnCore, ExceptPoint, Expr, ExprCore, ExprNode, Fairness,
     Hyp, HypCore, HypNode, Level, Modal, Param, ParenForm, Quantifier, Selector, Sequent, Shape,
-    Visibility, WhereDefined, get_hyp_name, to_index,
+    Time, Visibility, WhereDefined, get_hyp_name, to_index,
 };
 use crate::format::{Doc, format, format_delimited, render_doc, text};
 use crate::operators::{Fixity, get_standard_form, lookup_operator};
@@ -263,6 +263,9 @@ struct Chunk {
 struct Printer<'hyps> {
     context: Context,
     hyps: &'hyps [Hyp],
+    /// Whether to mark each fact that holds only now, as tlapm prints an obligation a temporal
+    /// method failed (`Toolbox.print_res_aux`, with `Expr.Fmt.pp_print_time`).
+    is_temporal: bool,
 }
 
 impl Printer<'_> {
@@ -1041,8 +1044,21 @@ impl Printer<'_> {
                 vec![push_name(&mut self.context, name).into()],
             )),
             HypCore::Defn { definition, .. } => self.print_definition(&definition.core),
-            HypCore::Fact { expression, .. } => {
-                let doc = format("@[<h>%a @]", vec![self.print_expr(expression)?.into()]);
+            HypCore::Fact {
+                expression, time, ..
+            } => {
+                let marker = if self.is_temporal && *time == Time::Now {
+                    "(* non-[] *)"
+                } else {
+                    ""
+                };
+                let doc = format(
+                    "@[<h>%a %s@]",
+                    vec![
+                        self.print_expr(expression)?.into(),
+                        marker.to_owned().into(),
+                    ],
+                );
                 push_name(&mut self.context, "");
                 Ok(doc)
             }
@@ -1090,6 +1106,7 @@ pub fn print_expression(hyps: &[Hyp], expression: &Expr) -> Result<Doc> {
     Printer {
         context: create_context(),
         hyps,
+        is_temporal: false,
     }
     .print_expr(expression)
 }
@@ -1098,15 +1115,21 @@ pub fn print_sequent(sequent: &Sequent) -> Result<Doc> {
     Printer {
         context: create_context(),
         hyps: &[],
+        is_temporal: false,
     }
     .print_sequent(sequent)
 }
 
-pub fn format_obligation(sequent: &Sequent) -> Result<String> {
-    let rendered = render_doc(
-        &format("@[<b0>%a@]", vec![print_sequent(sequent)?.into()]),
-        68,
-    )?;
+/// An obligation as tlapm prints it in a toolbox message: `is_temporal` where a temporal method
+/// (LS4) failed it, which marks each fact that holds only now.
+pub fn format_obligation(sequent: &Sequent, is_temporal: bool) -> Result<String> {
+    let printed = Printer {
+        context: create_context(),
+        hyps: &[],
+        is_temporal,
+    }
+    .print_sequent(sequent)?;
+    let rendered = render_doc(&format("@[<b0>%a@]", vec![printed.into()]), 68)?;
     Ok(rendered.trim_end_matches(is_js_space).to_owned())
 }
 
@@ -1772,7 +1795,7 @@ mod tests {
         for case in &cases {
             let input = case.field("input");
             let result = match case.text("mode").as_str() {
-                "obligation" => format_obligation(&to_sequent(input)),
+                "obligation" => format_obligation(&to_sequent(input), false),
                 "sequent" => print_sequent(&to_sequent(input)).and_then(|doc| render_doc(&doc, 68)),
                 _ => {
                     let hyps: Vec<Hyp> = match case.get("hyps") {

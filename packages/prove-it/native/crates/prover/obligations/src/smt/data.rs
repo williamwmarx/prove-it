@@ -245,7 +245,7 @@ pub fn get_symbol_spec(name: &str, state: &mut CollectState) -> Result<SymbolSpe
             vec![with_formula(
                 "IntExpTyping",
                 format!(
-                    "(forall ((x Idv) (y Idv)) (! (=> (and ({MEM} x {INT_SET}) ({MEM} y {INT_SET}) (or (distinct x ({CAST_INT} 0)) ({INT_LTEQ} ({CAST_INT} 1) y))) ({MEM} ({symbol} x y) {INT_SET})) :pattern (({symbol} x y))))"
+                    "(forall ((x Idv) (y Idv)) (! (=> (and ({MEM} x {INT_SET}) ({MEM} y {INT_SET}) ({INT_LTEQ} ({CAST_INT} 0) y) (or (distinct x ({CAST_INT} 0)) ({INT_LTEQ} ({CAST_INT} 1) y))) ({MEM} ({symbol} x y) {INT_SET})) :pattern (({symbol} x y))))"
                 ),
             )],
             "Idv",
@@ -898,7 +898,7 @@ mod tests {
                     .join("\n");
                 format!("{:016x}\n{picked}", get_digest(&dump))
             },
-            "0ce94363a181f0f3\n== Cup\n(declare-fun smt__TLA____Cup (Idv Idv) Idv)\nMem\nCupDef\nCupDef []\n(forall ((a Idv) (b Idv) (x Idv)) (! (= (smt__TLA____Mem x (smt__TLA____Cup a b)) (or (smt__TLA____Mem x a) (smt__TLA____Mem x b))) :pattern ((smt__TLA____Mem x (smt__TLA____Cup a b))) :pattern ((smt__TLA____Mem x a) (smt__TLA____Cup a b)) :pattern ((smt__TLA____Mem x b) (smt__TLA____Cup a b))))\n== StrLit_b\n(declare-fun smt__TLA____StrLit__b () Idv)\nMem,StrSet\nStrLitIsstr b\nStrLitIsstr [\"b\"]\n(smt__TLA____Mem smt__TLA____StrLit__b smt__TLA____StrSet)\n\nStrLitDistinct b a\nStrLitDistinct [\"b\",\"a\"]\n(distinct smt__TLA____StrLit__b smt__TLA____StrLit__a)\n== Bogus\nERR TlaUnsupportedError: the symbol Bogus\n== TIntLteq\n<none>\nIntLteq\nTyping TIntLteq\nTyping [6]\n(forall ((x1 Int) (x2 Int)) (! (= (smt__TLA____IntLteq (smt__TLA____Cast__Int x1) (smt__TLA____Cast__Int x2)) (<= x1 x2)) :pattern ((smt__TLA____IntLteq (smt__TLA____Cast__Int x1) (smt__TLA____Cast__Int x2)))))\n== Anon_foo\n(declare-fun smt__TLA____Anon__foo (Idv Idv) Idv)\n\n"
+            "390b87c08a5744ed\n== Cup\n(declare-fun smt__TLA____Cup (Idv Idv) Idv)\nMem\nCupDef\nCupDef []\n(forall ((a Idv) (b Idv) (x Idv)) (! (= (smt__TLA____Mem x (smt__TLA____Cup a b)) (or (smt__TLA____Mem x a) (smt__TLA____Mem x b))) :pattern ((smt__TLA____Mem x (smt__TLA____Cup a b))) :pattern ((smt__TLA____Mem x a) (smt__TLA____Cup a b)) :pattern ((smt__TLA____Mem x b) (smt__TLA____Cup a b))))\n== StrLit_b\n(declare-fun smt__TLA____StrLit__b () Idv)\nMem,StrSet\nStrLitIsstr b\nStrLitIsstr [\"b\"]\n(smt__TLA____Mem smt__TLA____StrLit__b smt__TLA____StrSet)\n\nStrLitDistinct b a\nStrLitDistinct [\"b\",\"a\"]\n(distinct smt__TLA____StrLit__b smt__TLA____StrLit__a)\n== Bogus\nERR TlaUnsupportedError: the symbol Bogus\n== TIntLteq\n<none>\nIntLteq\nTyping TIntLteq\nTyping [6]\n(forall ((x1 Int) (x2 Int)) (! (= (smt__TLA____IntLteq (smt__TLA____Cast__Int x1) (smt__TLA____Cast__Int x2)) (<= x1 x2)) :pattern ((smt__TLA____IntLteq (smt__TLA____Cast__Int x1) (smt__TLA____Cast__Int x2)))))\n== Anon_foo\n(declare-fun smt__TLA____Anon__foo (Idv Idv) Idv)\n\n"
         );
     }
 }
