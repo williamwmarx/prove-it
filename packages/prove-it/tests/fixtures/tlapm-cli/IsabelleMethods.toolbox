@@ -1,0 +1,142 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:30
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:6
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:simp; time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto intro: setEqualI); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:30
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:auto; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT S,
+       NEW CONSTANT T,
+       \A x : x \in S <=> x \in T ,
+       TRUE 
+PROVE  S = T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:force; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT S,
+       NEW CONSTANT T,
+       \A x : x \in S <=> x \in T ,
+       TRUE 
+PROVE  S = T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto intro: setEqualI); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:12
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./IsabelleMethods.tla", line 1, character 1 to line 9, character 4:
+[INFO]: All 6 obligations proved.
