@@ -8621,6 +8621,7 @@ tactic only (`Fpfile.query`).
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 | with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 | with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
+| with the Trivial method's untreated obligation | 766 / 574 / 11 | 319 / 1,042 / 37 |
 
 ### Declines
 
@@ -8735,6 +8736,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   limit than the method's (`Prep.already_processed`'s `success_warning`), which Prove It doesn't.
 - tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
   (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
+- The Trivial method (`BY Trivial`) ends an obligation's methods without a result
+  (`Prep.prove_with`, `Schedule.Immediate true`), so the obligation is untreated at the end of the
+  run and reported failed by `fail` with `unexpected error`, whatever its goal; the port does the
+  same, where it used to count the obligation proved.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.

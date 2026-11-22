@@ -215,3 +215,25 @@ fn a_pragma_string_reaches_the_backend_as_tlapm_lexes_it() {
         }
     );
 }
+
+// Prep.prove_with's Trivial method ends the obligation's methods without a result
+// (Schedule.Immediate true), so the obligation is untreated at the end of the run, whatever its
+// goal: tlapm reports it failed by `fail` with an unexpected error.
+#[test]
+fn the_trivial_method_leaves_the_obligation_untreated() {
+    let obligations = get_module_obligations(&get_pragma_module(
+        "THEOREM ASSUME NEW P, NEW Q, P /\\ Q PROVE Q /\\ P\n  BY ONLY Trivial",
+    ));
+    let (round, requested) = prove(&obligations, |_| decided(Verdict::Unsat));
+    assert!(requested.is_empty());
+    let reports = get_decided(&round);
+    assert_eq!(
+        (&reports[0].status, reports[0].attempts.len()),
+        (
+            &Status::Failed {
+                reason: "the Trivial method records no result".to_owned()
+            },
+            0
+        )
+    );
+}
