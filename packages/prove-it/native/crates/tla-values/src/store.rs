@@ -426,6 +426,13 @@ impl Store {
         }
     }
 
+    /// Whether a value is an overlay's own, which the overlay lets go of where it is laid again
+    /// (`attach`), rather than one of the store under it, whose id stays.
+    #[inline(always)]
+    pub fn is_own(&self, id: Id) -> bool {
+        self.base.is_some() && id >= self.id_base
+    }
+
     /// Lets go of the store under an overlay, keeping the overlay's own values to import.
     pub fn detach(&mut self) {
         self.base = None;

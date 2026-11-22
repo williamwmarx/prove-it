@@ -334,6 +334,7 @@ impl Compiler<'_> {
             vars: (0..self.ir.variables.len() as u32).collect(),
             primes: Vec::new(),
             slots: vec![super::LEVEL_SLOT, super::TRACE_SLOT],
+            through: None,
         };
         if !self.is_native {
             return leaf(eval(|_| Err(Bail(crate::machine::TRACE_UNKEPT))), footprint);
@@ -814,7 +815,7 @@ impl Compiler<'_> {
                     return Ok(super::constant(TRUE));
                 }
             };
-            let mut footprint = deferred.footprint;
+            let mut footprint = deferred.footprint.direct();
             footprint.slots.retain(|&slot| slot != super::PRINT_SLOT);
             let footprint = footprint.merge(&Footprint::slot(super::REGISTER_SLOT));
             let evaluate = deferred.eval;
