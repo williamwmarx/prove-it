@@ -388,8 +388,11 @@ pub struct Machine<'p> {
     /// normalized set (`DoInitFunctor.addElement`).
     pub(crate) is_before_initial_state: bool,
     /// Where the search keeps TLCExt's Trace, the epoch of the state it expands, whose behavior
-    /// is at `TRACE_SLOT`: `u64::MAX` before it expands one, as the slot holds no state.
+    /// is at `TRACE_SLOT`, as a list of pairs (`Search::keep_trace`): `u64::MAX` before it
+    /// expands one, where the slot holds the empty list.
     pub(crate) trace_epoch: Option<u64>,
+    /// The last behavior made a tuple of, and the tuple (`Machine::trace`).
+    trace_tuple: (Id, Id),
     /// Whether the machine computes the substitutes and the constant definitions as TLC does
     /// as it processes the spec (`SpecProcessor.processConstantDefns`), before it has made its
     /// checker or simulator (`TLCGlobals.mainChecker`), whose registers TLCExt reads.
@@ -511,6 +514,7 @@ impl<'p> Machine<'p> {
             held: vec![None; program.width],
             is_before_initial_state: false,
             trace_epoch: None,
+            trace_tuple: (UNASSIGNED, UNASSIGNED),
             generate: None,
             is_processing_constants: false,
             is_probing_registers: false,
@@ -620,7 +624,7 @@ impl<'p> Machine<'p> {
         let Some(epoch) = self.trace_epoch else {
             return Err(Bail(TRACE_UNKEPT));
         };
-        let behavior = self.locals[crate::compile::TRACE_SLOT as usize];
+        let behavior = self.behavior_tuple();
         let is_expanded = self.epoch == epoch;
         if !is_expanded && self.cur.contains(&UNASSIGNED) {
             return Err(Bail(TRACE_OF_INCOMPLETE_STATE));
@@ -648,6 +652,27 @@ impl<'p> Machine<'p> {
         }
         let record = self.state_record(&self.cur.clone());
         Ok(self.store.append_tuple(behavior, record))
+    }
+
+    // The behavior at `TRACE_SLOT` as the tuple of its records, made once for each behavior.
+    fn behavior_tuple(&mut self) -> Id {
+        let list = self.locals[crate::compile::TRACE_SLOT as usize];
+        if self.trace_tuple.0 == list {
+            return self.trace_tuple.1;
+        }
+        let mut records = Vec::new();
+        let mut rest = list;
+        while rest != tla_values::store::EMPTY_TUPLE {
+            let &[prefix, record] = self.store.tuple_elements(rest) else {
+                unreachable!("a behavior is a list of pairs");
+            };
+            records.push(record);
+            rest = prefix;
+        }
+        records.reverse();
+        let tuple = self.store.tuple_of(&records);
+        self.trace_tuple = (list, tuple);
+        tuple
     }
 
     /// A state as the record TLC makes of it for TLCExt's Trace (`RecordValue(TLCState)`).

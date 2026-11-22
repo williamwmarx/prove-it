@@ -3010,10 +3010,12 @@ the file `JsonSerialize` wrote).
 
 `TLCExt.getTrace` gives the records of the states from an initial state to the one it is
 evaluated in, which TLC rebuilds from its trace file (`getTraceInfo`) and the engine keeps as the
-search goes: as it expands a state it makes the tuple of the records of the path the search found
-it by (`Search::keep_trace`), the parents TLC writes to its trace too, which Trace is as Next and
-an action constraint read it; in a successor, as an invariant or a state constraint reads it, and
-in an initial state, Trace is that tuple and the state's record (`Machine::trace`). In the initial
+search goes: as it expands a state it keeps the path the search found it by, the parents TLC
+writes to its trace too, as a pair of the parent's path and the state's record
+(`Search::keep_trace`), in space linear in the states, and makes the tuple of the path's records
+only where Trace is evaluated, once for each state expanded. That tuple is Trace as Next and an
+action constraint read it; in a successor, as an invariant or a state constraint reads it, and in
+an initial state, Trace is that tuple and the state's record (`Machine::trace`). In the initial
 predicate before every variable is assigned, in an assumption and in a postcondition, TLC fails
 naming the variables unassigned, in the order of their names, which the trace evaluator words
 as TLC does; a spec without variables has `<<[]>>` in an assumption. The engine declines Trace ("TLCExt's Trace, the behavior the engine doesn't keep")

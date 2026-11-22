@@ -3342,7 +3342,8 @@ fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
 
 // tests/trace: TLCExt's Trace, TLC's output beside each at d8fb231: in the invariant, a state
 // constraint and an action constraint of a search with two initial states and branching steps,
-// and in its next-state relation, which reads it too; in the initial predicate before every
+// and in its next-state relation, which reads it too; in an invariant of a chain of 100,001
+// states that never evaluates it, which the search keeps in space linear in the states; in the initial predicate before every
 // variable is assigned, which fails naming those that aren't; and in assumptions, of a spec
 // without variables and with them. The engine declines where TLC's record of a state has its
 // variables in another order than their names, and where TLC's rebuild of the trace evaluates
@@ -3371,6 +3372,7 @@ fn reads_the_behavior_as_tlc_through_trace() {
         ("TraceInit", 75),
         ("TraceAssume", 0),
         ("TraceAssumeState", 10),
+        ("TraceLong", 0),
     ] {
         let (output, run) = run_front(
             &format!("trace-{name}"),

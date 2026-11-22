@@ -1599,6 +1599,8 @@ struct Search<'r, T, E = Dense> {
     // Whether the search keeps the behavior up to the state it expands for TLCExt's Trace
     // (`Machine::trace`).
     is_trace_kept: bool,
+    // Where it keeps it, each expanded state's behavior, by the state's index (`keep_trace`).
+    trace_lists: Vec<Id>,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
     is_dfid: bool,
@@ -1695,6 +1697,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             is_distinct_read,
             is_counted: false,
             is_trace_kept: false,
+            trace_lists: Vec::new(),
             is_continued: false,
             is_dfid: false,
             startup: None,
@@ -2025,17 +2028,24 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         Ok(())
     }
 
-    // The records of the states from an initial state to the one the search expands, for
-    // TLCExt's Trace: TLC's trace of the state (`getTraceInfo`), the parents the state was first
-    // found by, and the state.
-    fn keep_trace(&self, machine: &mut Machine<'_>) {
-        let behavior: Vec<Id> = self
-            .states
-            .path(self.expanding)
-            .iter()
-            .map(|state| machine.state_record(state))
-            .collect();
-        let behavior = machine.store.tuple_of(&behavior);
+    // The behavior up to the state the search expands, for TLCExt's Trace: TLC's trace of the
+    // state (`getTraceInfo`), the parents the state was first found by, and the state. The search
+    // keeps it as a list of pairs, each the list of the state's parent and the state's record, made
+    // once as it expands the state, whose parent it expanded first; `Machine::trace` makes the
+    // tuple only where Trace is evaluated.
+    fn keep_trace(&mut self, machine: &mut Machine<'_>) {
+        let parent = self.states.parent(self.expanding).unwrap_or(-1);
+        let prefix = usize::try_from(parent)
+            .ok()
+            .and_then(|parent| self.trace_lists.get(parent).copied())
+            .unwrap_or(tla_values::store::EMPTY_TUPLE);
+        let record = machine.state_record(&self.current);
+        let behavior = machine.store.tuple_of(&[prefix, record]);
+        if self.trace_lists.len() <= self.expanding {
+            self.trace_lists
+                .resize(self.expanding + 1, tla_values::store::EMPTY_TUPLE);
+        }
+        self.trace_lists[self.expanding] = behavior;
         machine.set_slot(TRACE_SLOT, behavior);
         machine.trace_epoch = Some(self.expansion_epoch);
     }
