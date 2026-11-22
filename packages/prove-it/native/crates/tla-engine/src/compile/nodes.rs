@@ -391,7 +391,8 @@ impl Compiler<'_> {
                 self.is_lambda_built |= elements
                     .iter()
                     .any(|element| element.infinite_value.is_some());
-                Ok(Self::compile_set_enumeration(&elements))
+                let set = Self::compile_set_enumeration(&elements);
+                Ok(self.folded(set, &elements.iter().collect::<Vec<_>>()))
             }
             NodeKind::Tuple(elements) => {
                 if elements.is_empty() {
@@ -405,13 +406,14 @@ impl Compiler<'_> {
                     .iter()
                     .map(|element| element.eval.clone())
                     .collect();
-                Ok(Compiled {
+                let tuple = Compiled {
                     is_costly: true,
                     ..leaf(
                         eval(move |machine| evaluate_tuple(machine, &evaluators)),
                         Footprint::merge_all(elements.iter().map(|element| &element.footprint)),
                     )
-                })
+                };
+                Ok(self.folded(tuple, &elements.iter().collect::<Vec<_>>()))
             }
             NodeKind::Record(fields) => {
                 let mut compiled = Vec::new();

@@ -326,6 +326,15 @@ impl Shape {
     }
 }
 
+/// The bounds of `a..b`.
+#[derive(Clone)]
+pub(crate) struct Interval {
+    pub low: Eval,
+    pub high: Eval,
+    /// Both bounds, where they are integers the compiler holds.
+    pub known: Option<(i32, i32)>,
+}
+
 /// A set filter's parts, for a Cardinality of it that counts without building it.
 pub(crate) struct Filter {
     pub set: Eval,
@@ -386,7 +395,7 @@ pub struct Compiled {
     pub(crate) parts: Option<Parts>,
     pub(crate) shape: Shape,
     /// For `a..b`: its bounds, which a quantifier over it counts through without the set.
-    pub(crate) interval: Option<(Eval, Eval)>,
+    pub(crate) interval: Option<Interval>,
     pub(crate) filter: Option<Arc<Filter>>,
     /// For a boolean: the fused predicate a parent can walk in place of calling it.
     pub(crate) predicate: Option<Arc<predicate::Predicate>>,
@@ -1963,9 +1972,44 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// An operator whose operands are values the compiler holds, evaluated as it compiles, so
+    /// that a fused node above it reads the value in place (`Shape::Constant`). The operator
+    /// reads nothing else and has no effect, so its value is the same wherever it is evaluated;
+    /// one that fails stays as compiled, to fail where it is evaluated.
+    pub(crate) fn folded(&mut self, compiled: Compiled, operands: &[&Compiled]) -> Compiled {
+        if !operands
+            .iter()
+            .all(|operand| matches!(operand.shape, Shape::Constant(_)))
+            || compiled.footprint.width() != 0
+            || compiled.is_printing()
+            || compiled.uses_registers()
+        {
+            return compiled;
+        }
+        let program = Program::default();
+        let mut machine = Machine::new(&program, std::mem::take(self.store));
+        let value = (compiled.eval)(&mut machine);
+        let is_quiet = machine.output.is_empty();
+        *self.store = std::mem::take(&mut machine.store);
+        match value {
+            Ok(id) if is_quiet => Compiled {
+                eval: eval(move |_| Ok(id)),
+                is_costly: false,
+                is_constant: true,
+                shape: Shape::Constant(id),
+                predicate: None,
+                ..compiled
+            },
+            _ => compiled,
+        }
+    }
+
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {
+        if matches!(compiled.shape, Shape::Constant(_)) {
+            return compiled;
+        }
         if compiled.is_printing() || compiled.uses_registers() || self.options.is_memo_off {
             return compiled;
         }
