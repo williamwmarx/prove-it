@@ -154,7 +154,7 @@ struct Counter {
 }
 
 /// `f[e]`, and ApplyVar: `f[i]` with `f` a variable and `i` a bound name, read straight from the
-/// registers.
+/// registers, or `f[c]` with `c` a constant.
 pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footprint) -> Compiled {
     if let (Shape::Current(variable), Some((slot, is_int))) =
         (function.shape, argument.shape.slot())
@@ -189,6 +189,15 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
                 footprint,
             )
         };
+    }
+    if let (Shape::Current(variable), Shape::Constant(key)) = (function.shape, argument.shape) {
+        return leaf(
+            eval(move |machine| {
+                let function = machine.read_current(variable)?;
+                machine.store.apply(function, key)
+            }),
+            footprint,
+        );
     }
     let (function, argument) = (function.eval.clone(), argument.eval.clone());
     leaf(
