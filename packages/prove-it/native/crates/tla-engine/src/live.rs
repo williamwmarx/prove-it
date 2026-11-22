@@ -65,6 +65,89 @@ enum Taken {
     Steps(Vec<bool>),
 }
 
+/// Which of the steps the search took an action atom's split or pieces mark as the action's: all
+/// of them where the action is Next or all of TLC's actions, the steps labelled with one of the
+/// actions it splits into, or the steps a walk through its pieces took; or none it can tell.
+#[derive(Clone, Copy)]
+enum Marks<'a> {
+    Unknown,
+    All,
+    Labels {
+        actions: &'a [bool],
+        labels: &'a [u32],
+    },
+    Pieces {
+        pieces: &'a [u8],
+        width: usize,
+        byte: usize,
+        mask: u8,
+    },
+}
+
+impl<'a> Marks<'a> {
+    fn of(
+        graph: &LiveGraph<'a>,
+        is_next: bool,
+        split: Option<&'a Split>,
+        piece: Option<u32>,
+    ) -> Marks<'a> {
+        if !graph.is_next_taken {
+            return Marks::Unknown;
+        }
+        if is_next || matches!(split, Some(Split::All)) {
+            return Marks::All;
+        }
+        match (split, graph.labels, piece, graph.pieces) {
+            (Some(Split::Some(actions)), Some(labels), _, _) => Marks::Labels { actions, labels },
+            (_, _, Some(bit), Some((pieces, width))) => Marks::Pieces {
+                pieces,
+                width,
+                byte: bit as usize / 8,
+                mask: 1 << (bit % 8),
+            },
+            _ => Marks::Unknown,
+        }
+    }
+
+    /// The successors the marked steps from a state reach, sorted into `marked`: TLC evaluates
+    /// the action once for each successor, so it holds of every step to a successor one marked
+    /// step reaches.
+    fn successors(&self, graph: &LiveGraph<'_>, index: usize, marked: &mut Vec<u32>) {
+        let steps = graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
+        marked.clear();
+        // A loop for each kind of mark, read once a step; where every step is marked or none can
+        // be told, `taken` reads no successors.
+        match *self {
+            Marks::Unknown | Marks::All => return,
+            Marks::Labels { actions, labels } => marked.extend(
+                steps
+                    .filter(|&edge| actions.get(labels[edge] as usize).copied().unwrap_or(false))
+                    .map(|edge| graph.edges[edge]),
+            ),
+            Marks::Pieces {
+                pieces,
+                width,
+                byte,
+                mask,
+            } => marked.extend(
+                steps
+                    .filter(|&edge| pieces[edge * width + byte] & mask != 0)
+                    .map(|edge| graph.edges[edge]),
+            ),
+        }
+        marked.sort_unstable();
+    }
+
+    /// Whether the steps answer the action on a step from the state, given its `successors`.
+    fn taken(&self, graph: &LiveGraph<'_>, edge: usize, marked: &[u32]) -> Option<bool> {
+        match self {
+            Marks::Unknown => None,
+            Marks::All => Some(true),
+            _ => Some(marked.binary_search(&graph.edges[edge]).is_ok()),
+        }
+    }
+}
+
 impl Taken {
     fn of(
         graph: &LiveGraph<'_>,
@@ -73,54 +156,27 @@ impl Taken {
         piece: Option<u32>,
         threads: usize,
     ) -> Option<Taken> {
-        if !graph.is_next_taken {
-            return None;
+        match Marks::of(graph, is_next, split, piece) {
+            Marks::Unknown => None,
+            Marks::All => Some(Taken::All),
+            marks => Some(Self::of_steps(graph, marks, threads)),
         }
-        if is_next || matches!(split, Some(Split::All)) {
-            return Some(Taken::All);
-        }
-        if let (Some(Split::Some(actions)), Some(labels)) = (split, graph.labels) {
-            return Some(Self::of_steps(
-                graph,
-                |edge| actions.get(labels[edge] as usize).copied().unwrap_or(false),
-                threads,
-            ));
-        }
-        let (bit, (pieces, width)) = (piece?, graph.pieces?);
-        let (byte, mask) = (bit as usize / 8, 1 << (bit % 8));
-        Some(Self::of_steps(
-            graph,
-            |edge| pieces[edge * width + byte] & mask != 0,
-            threads,
-        ))
     }
 
-    // TLC evaluates the action once for each successor: it holds where any step to that successor
-    // is marked. Each state's steps are read on their own, so the states are split between the
-    // threads, each writing the answers of its states' steps.
-    fn of_steps(
-        graph: &LiveGraph<'_>,
-        is_marked: impl Fn(usize) -> bool + Sync,
-        threads: usize,
-    ) -> Taken {
+    // Each state's steps are read on their own, so the states are split between the threads,
+    // each writing the answers of its states' steps.
+    fn of_steps(graph: &LiveGraph<'_>, marks: Marks<'_>, threads: usize) -> Taken {
         let mut answers = vec![false; graph.edges.len()];
         let of_states = |states: std::ops::Range<usize>, answers: &mut [bool]| {
             let first = graph.edge_offsets[states.start] as usize;
             let mut marked = Vec::new();
             for index in states {
-                let steps =
-                    graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
-                marked.clear();
-                marked.extend(
-                    steps
-                        .clone()
-                        .filter(|&edge| is_marked(edge))
-                        .map(|edge| graph.edges[edge]),
-                );
+                marks.successors(graph, index, &mut marked);
                 if marked.is_empty() {
                     continue;
                 }
-                marked.sort_unstable();
+                let steps =
+                    graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
                 for edge in steps {
                     answers[edge - first] = marked.binary_search(&graph.edges[edge]).is_ok();
                 }
@@ -153,6 +209,16 @@ impl Taken {
             Taken::Steps(answers) => answers[edge],
         }
     }
+}
+
+/// An action atom the helpers answer with the others of its subscript: its action, its subscript,
+/// what marks the steps its split or pieces take, and the ENABLED of its fairness on each state,
+/// where the checker asks about no step from a state where that is false.
+struct Member<'a> {
+    action: &'a Eval,
+    subscript: Option<&'a Eval>,
+    marks: Marks<'a>,
+    disabled: Option<&'a [u8]>,
 }
 
 /// The answers to one atom: for a state predicate or ENABLED, one per state; for an action, one
@@ -381,6 +447,8 @@ struct Run<'m, 'p, 'g> {
     unassigned: Vec<Id>,
     // A subscript's value on each state the helper evaluated it on, in the helper's store.
     subscripts: Vec<Id>,
+    // The successors a state's marked steps reach, for the action atom being answered.
+    marked: Vec<u32>,
 }
 
 impl Run<'_, '_, '_> {
@@ -552,6 +620,7 @@ fn on_helpers<T: Default + Send>(
                             epochs: vec![0; end - start],
                             unassigned: vec![UNASSIGNED; graph.width],
                             subscripts: vec![UNASSIGNED; graph.count],
+                            marked: Vec::new(),
                         };
                         let mut answers = T::default();
                         for index in start..end {
@@ -615,6 +684,8 @@ pub fn answer_atoms(
     // For each subscript the steps answer ENABLED with, its values on the states and the actions
     // that changed it from each, which atoms with the same subscript share.
     let mut changes: HashMap<SubscriptKey, Changes> = HashMap::new();
+    // The tables of the action atoms answered on the helpers with an earlier one, by position.
+    let mut pending: HashMap<usize, Table> = HashMap::new();
     let words = graph
         .labels
         .and_then(|labels| labels.iter().max())
@@ -625,6 +696,10 @@ pub fn answer_atoms(
         graph.edges[start..end].contains(&(index as u32))
     });
     for (position, atom) in atoms.iter().enumerate() {
+        if let Some(table) = pending.remove(&position) {
+            tables.push(table);
+            continue;
+        }
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
         // and left to the interpreter where the search isn't complete or the answers for every
         // diameter wouldn't fit in memory.
@@ -770,25 +845,57 @@ pub fn answer_atoms(
                     unknown: None,
                     prints,
                 },
-                Atom::Action {
-                    action,
-                    subscript,
-                    enabled,
-                    is_next,
-                    split,
-                    piece,
-                } if is_shared => {
-                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece, helpers.len());
-                    let disabled = enabled
-                        .and_then(|position| tables.get(position))
-                        .filter(|table: &&Table| table.answers.len() == graph.count)
-                        .map(|table| &table.answers[..]);
-                    let is_asked =
-                        |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
-                    let subscript = subscript.as_ref();
+                Atom::Action { key, .. } if is_shared => {
+                    // This atom and the action atoms after it whose subscripts share its values,
+                    // each with the ENABLED of its fairness answered already, in one pass of the
+                    // helpers: a helper evaluates the subscript on each of its states once for
+                    // them all, and marks the state's steps once for each.
+                    let group: Vec<usize> = (position..atoms.len())
+                        .filter(|&at| match &atoms[at] {
+                            Atom::Action {
+                                key: other,
+                                enabled,
+                                ..
+                            } => {
+                                at == position
+                                    || other == key
+                                        && enabled.is_none_or(|enabled| enabled < position)
+                                        && diameter_atoms.get(at) != Some(&true)
+                            }
+                            _ => false,
+                        })
+                        .collect();
+                    let members: Vec<Member<'_>> = group
+                        .iter()
+                        .map(|&at| {
+                            let Atom::Action {
+                                action,
+                                subscript,
+                                enabled,
+                                is_next,
+                                split,
+                                piece,
+                                ..
+                            } = &atoms[at]
+                            else {
+                                unreachable!("an action atom of the group");
+                            };
+                            let disabled = enabled
+                                .and_then(|position| tables.get(position))
+                                .filter(|table: &&Table| table.answers.len() == graph.count)
+                                .map(|table| &table.answers[..]);
+                            Member {
+                                action,
+                                subscript: subscript.as_ref(),
+                                marks: Marks::of(graph, *is_next, split.as_ref(), *piece),
+                                disabled,
+                            }
+                        })
+                        .collect();
+                    let members = &members;
                     // A state's steps and its stuttering step in one run, so that the helper
                     // evaluates the subscript on the state once for them all.
-                    let parts: Vec<(Vec<u8>, Vec<u8>)> = on_helpers(
+                    let parts: Vec<Vec<(Vec<u8>, Vec<u8>)>> = on_helpers(
                         evaluator.machine,
                         helpers,
                         graph,
@@ -800,40 +907,67 @@ pub fn answer_atoms(
                                 .map_or(0, |&end| (end - graph.edge_offsets[index]) as usize)
                                 + 1
                         },
-                        |run, index, (steps, stutters): &mut (Vec<u8>, Vec<u8>)| {
-                            if index < graph.expanded {
-                                let start = graph.edge_offsets[index] as usize;
-                                let end = graph.edge_offsets[index + 1] as usize;
-                                for edge in start..end {
-                                    steps.push(if is_asked(index) {
-                                        let next = graph.edges[edge] as usize;
-                                        let taken = taken.as_ref().map(|taken| taken.at(edge));
-                                        run.action(action, subscript, index, next, taken)
-                                    } else {
-                                        UNKNOWN
-                                    });
-                                }
+                        |run, index, answers: &mut Vec<(Vec<u8>, Vec<u8>)>| {
+                            if answers.is_empty() {
+                                answers.resize_with(members.len(), Default::default);
                             }
-                            stutters.push(if is_asked(index) {
-                                run.action(action, subscript, index, index, None)
-                            } else {
-                                UNKNOWN
-                            });
+                            for (member, (steps, stutters)) in
+                                members.iter().zip(answers.iter_mut())
+                            {
+                                let Member {
+                                    action,
+                                    subscript,
+                                    marks,
+                                    disabled,
+                                } = *member;
+                                let is_asked = disabled.is_none_or(|answers| answers[index] != 0);
+                                if index < graph.expanded {
+                                    let start = graph.edge_offsets[index] as usize;
+                                    let end = graph.edge_offsets[index + 1] as usize;
+                                    if is_asked {
+                                        marks.successors(graph, index, &mut run.marked);
+                                    }
+                                    for edge in start..end {
+                                        steps.push(if is_asked {
+                                            let next = graph.edges[edge] as usize;
+                                            let taken = marks.taken(graph, edge, &run.marked);
+                                            run.action(action, subscript, index, next, taken)
+                                        } else {
+                                            UNKNOWN
+                                        });
+                                    }
+                                }
+                                stutters.push(if is_asked {
+                                    run.action(action, subscript, index, index, None)
+                                } else {
+                                    UNKNOWN
+                                });
+                            }
                         },
                     );
-                    let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
-                    for (steps, _) in &parts {
-                        answers.extend_from_slice(steps);
+                    let mut own = None;
+                    // A helper that had no states answered nothing.
+                    for (member, &at) in group.iter().enumerate() {
+                        let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
+                        for part in parts.iter().filter_map(|part| part.get(member)) {
+                            answers.extend_from_slice(&part.0);
+                        }
+                        for part in parts.iter().filter_map(|part| part.get(member)) {
+                            answers.extend_from_slice(&part.1);
+                        }
+                        let table = Table {
+                            answers,
+                            is_from_steps: false,
+                            unknown: None,
+                            prints: Vec::new(),
+                        };
+                        if at == position {
+                            own = Some(table);
+                        } else {
+                            pending.insert(at, table);
+                        }
                     }
-                    for (_, stutters) in &parts {
-                        answers.extend_from_slice(stutters);
-                    }
-                    Table {
-                        answers,
-                        is_from_steps: false,
-                        unknown: None,
-                        prints,
-                    }
+                    own.expect("the atom's own table")
                 }
                 Atom::Action {
                     action,
@@ -842,6 +976,7 @@ pub fn answer_atoms(
                     is_next,
                     split,
                     piece,
+                    ..
                 } => {
                     let taken = Taken::of(graph, *is_next, split.as_ref(), *piece, helpers.len());
                     // The checker asks about no step from a state where the ENABLED of the action's
