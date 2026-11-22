@@ -139,6 +139,9 @@ pub const UNASSIGNED: Id = u32::MAX;
 /// TLC keeps no value of and evaluates again at each use (`Machine::constant_once`).
 pub(crate) const RETRIED_ONCE: Id = u32::MAX - 1;
 
+// How far past its place in the set that last passed `Machine::holds_all` looks for an element.
+const PASSED_WINDOW: u32 = 4;
+
 /// How deep recursive operators and functions may call themselves before the engine hands over,
 /// so that deep TLA+ recursion stops cleanly rather than overflow the native stack. WebAssembly's
 /// frames are on the host's stack, which holds about 1,500 calls of a simple recursive operator
@@ -240,6 +243,9 @@ pub struct Program {
     /// Whether the model may read TLCGet("config"), whose install the engine writes "unknown"
     /// where TLC writes where its jar is (`TLCGlobals.Version.installLocation`).
     pub(crate) reads_config: bool,
+    /// How many tests of every element of a set keep the set that last passed
+    /// (`Machine::holds_all`).
+    pub(crate) pass_count: usize,
 }
 
 impl Program {
@@ -422,6 +428,9 @@ pub struct Machine<'p> {
     /// Where the simulation generates (`-generate`), the walk of an action: the worker's
     /// generator, and whether the walk kept a successor, past which TLC's walk stops.
     pub(crate) generate: Option<Generate>,
+    /// For each test of every element of a set in a set that reads nothing, the set that last
+    /// passed (`holds_all`), or EMPTY.
+    passed: Vec<Id>,
 }
 
 /// What a walk of an action TLC generates draws from and has found (`Tool.probabilistic`).
@@ -528,6 +537,7 @@ impl<'p> Machine<'p> {
             has_probed_unset_register: false,
             is_pause_prompted: false,
             is_starting: false,
+            passed: vec![EMPTY; program.pass_count],
         }
     }
 
@@ -598,6 +608,9 @@ impl<'p> Machine<'p> {
         }
         for once in self.deep_onces.iter_mut().filter(|once| once.0 >= bound) {
             *once = (EMPTY, 0);
+        }
+        for passed in self.passed.iter_mut().filter(|passed| **passed >= bound) {
+            *passed = EMPTY;
         }
         self.spare_states.clear();
     }
@@ -1038,6 +1051,61 @@ impl<'p> Machine<'p> {
         self.settled_rounds[round] = height == 0 && self.unsettled_passes == passes;
         self.rounds[round] = self.parts_round;
         Ok(())
+    }
+
+    /// Whether `test` holds of every element of `set`, in the set's order, up to the first it
+    /// fails at or doesn't hold of, as TLC tests them (`SubsetValue.member`). `test` is
+    /// membership in a set that reads nothing, so it does the same of an element each time. The
+    /// elements of the set that last passed here, in a run that printed nothing and nested no
+    /// recursive call, a cached one's height included, pass again and leave nothing behind, so
+    /// only the others are tested: the first that fails, or doesn't hold, is the same. A set that
+    /// holds a function TLC keeps lazy, or ANY, isn't kept: equal ids say nothing of those.
+    pub(crate) fn holds_all(&mut self, pass: usize, set: Id, test: &Member) -> Outcome<bool> {
+        let passed = self.passed[pass];
+        if passed == set {
+            return Ok(true);
+        }
+        let known = if passed == EMPTY {
+            0
+        } else {
+            self.store.size_of(passed)
+        };
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let mut result = Ok(true);
+        let mut at = 0;
+        for index in 0..self.store.size_of(set) {
+            let element = self.store.element_at(set, index);
+            // Both sets are in TLC's order, so the element is at or just after `at` if the one
+            // that passed holds it; one further on is tested again, which changes nothing.
+            let found = (at..known.min(at + PASSED_WINDOW))
+                .find(|&position| self.store.element_at(passed, position) == element);
+            if let Some(position) = found {
+                if self.program.is_epoch_checked
+                    && (test(self, element) != Ok(true) || self.output.len() != output_at)
+                {
+                    panic!("an element of a set that passed doesn't pass again");
+                }
+                at = position + 1;
+                continue;
+            }
+            match test(self, element) {
+                Ok(true) => {}
+                other => {
+                    result = other;
+                    break;
+                }
+            }
+        }
+        let height = self.reached_below(outer);
+        if result == Ok(true)
+            && height == 0
+            && self.output.len() == output_at
+            && !self.store.comparison_can_fail(set)
+        {
+            self.passed[pass] = set;
+        }
+        result
     }
 
     /// Runs a set's parts in a round of their own, in which each lazy set's parts run once.

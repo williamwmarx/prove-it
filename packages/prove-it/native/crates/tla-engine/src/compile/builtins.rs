@@ -448,10 +448,18 @@ impl Compiler<'_> {
         leaf(eval(|_| Err(Bail(INDEX_REPLACED))), Footprint::default())
     }
 
+    /// A place for `Machine::holds_all` to keep the set whose elements last passed membership in
+    /// `set`, where the set reads nothing, so that the test of an element does the same each
+    /// time.
+    fn allocate_pass_in(&mut self, set: &Compiled) -> Option<usize> {
+        (set.footprint.width() == 0 && !self.options.is_memo_off).then(|| self.allocate_pass())
+    }
+
     /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
     pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
         let base_member = self.member_test(base);
         let base_parts = Self::parts_of(base);
+        let pass = self.allocate_pass_in(base);
         Compiled {
             is_normalized: false,
             subset_base: Some(Box::new(base.clone())),
@@ -479,6 +487,9 @@ impl Compiler<'_> {
                 // TLC fails on anything it can't enumerate, untyped model values included.
                 if machine.store.kind_of(element) != KIND_SET {
                     return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                if let Some(pass) = pass {
+                    return machine.holds_all(pass, element, &base_member);
                 }
                 for index in 0..machine.store.size_of(element) {
                     let value = machine.store.element_at(element, index);
@@ -1181,16 +1192,21 @@ impl Compiler<'_> {
             // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
             // the tests TLC makes as it builds T even where S is empty.
             let right_parts = Self::parts_of(right);
+            let pass = self.allocate_pass_in(right);
             eval(move |machine| {
                 let set = evaluate_set(machine, &left_eval, "expected a set")?;
                 machine.run_parts(&right_parts)?;
                 let before = machine.effects();
                 let mut is_subset = TRUE;
-                for index in 0..machine.store.size_of(set) {
-                    let element = machine.store.element_at(set, index);
-                    if !test(machine, element)? {
-                        is_subset = FALSE;
-                        break;
+                if let Some(pass) = pass {
+                    is_subset = bool_id(machine.holds_all(pass, set, &test)?);
+                } else {
+                    for index in 0..machine.store.size_of(set) {
+                        let element = machine.store.element_at(set, index);
+                        if !test(machine, element)? {
+                            is_subset = FALSE;
+                            break;
+                        }
                     }
                 }
                 // A test may evaluate T's parts again, which an effect shows.
