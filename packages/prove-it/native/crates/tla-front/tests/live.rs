@@ -276,3 +276,51 @@ fn fairness_warning_names_the_configured_property_at_its_override_location() {
             .contains("The temporal formula Fair at line 18, col 1")
     );
 }
+
+fn try_lower_spec(name: &str, spec: &str, config: &str) -> Result<LoweredModel, FrontError> {
+    let directory =
+        std::env::temp_dir().join(format!("tla-front-live-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let path = directory.join(format!("{name}.tla"));
+    std::fs::write(&path, spec).expect("the spec");
+    let options = ModelOptions {
+        libraries: &[],
+        version: None,
+        is_warning_enabled: true,
+        is_spec_described: false,
+        random_seed: 0,
+        root_extendees: &[],
+    };
+    let lowered = lower_front(&path, config, &options);
+    std::fs::remove_dir_all(&directory).expect("removed");
+    lowered
+}
+
+#[test]
+fn follows_a_recursion_whose_argument_becomes_a_constant() {
+    // The outer IF reads the state, but F(0)'s guard is constant and chooses the base case, so
+    // TLC's translation ends there; TLC's output, with four branches and a time, is no fixture's.
+    let lowered = try_lower_spec(
+        "StateToConstant",
+        "---- MODULE StateToConstant ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nRECURSIVE F(_)\nF(n) == IF n = 0 THEN <>(x = 0) ELSE F(0)\nProp == F(x)\n====\n",
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+    );
+    assert!(lowered.is_ok(), "{:?}", lowered.err());
+}
+
+#[test]
+fn overflows_on_a_recursion_whose_guard_reads_only_the_state() {
+    let lowered = try_lower_spec(
+        "Reach",
+        "---- MODULE Reach ----\nEXTENDS Naturals\nVARIABLE x\nNext == x < 2 /\\ x' = x + 1\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nRECURSIVE Reach(_)\nReach(n) == IF x = 0 THEN <>(x = 2) ELSE Reach(n + 1)\nProp == <>(x = 2) /\\ Reach(1)\n====\n",
+        "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE\n",
+    );
+    let Err(error) = lowered else {
+        panic!("TLC overflows its stack");
+    };
+    let error = match error {
+        FrontError::Warned(_, error) => *error,
+        error => error,
+    };
+    assert!(matches!(error, FrontError::StackOverflow), "{error:?}");
+}

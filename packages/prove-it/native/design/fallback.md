@@ -4845,11 +4845,14 @@ matches TLC or declines exactly.
   TLC's StackOverflowError (1005, exit 255) where TLC checks the model. It now reports the overflow
   only where TLC's recursion doesn't end: a call it is already in, with the same constant
   arguments (Github1389Loops' `bad(FALSE)`) or an argument above constant level, on which no IF
-  decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in that it reached
-  evaluating no constant expression an argument could decide, as through an IF on the state
-  alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE Reach(n + 1)`). A finite recursion it follows
+  decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in, with arguments of
+  the same kinds (constant or not), that it reached evaluating no constant expression an argument
+  could decide, as through an IF on the state alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE
+  Reach(n + 1)`). An argument above constant level that becomes a constant can make a guard
+  decidable, so `F(n) == IF n = 0 THEN <>P ELSE F(0)` with `Prop == F(x)` completes, as in TLC
+  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A finite recursion it follows
   to 600 nested calls and declines past that. Fixtures `liveness-recursion-depth-{100,200,500,900}`
-  and `liveness-recursion-state-guard`.
+  `liveness-recursion-state-guard`.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
   in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
   `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and

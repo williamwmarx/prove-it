@@ -64,6 +64,19 @@ impl RecursiveCall {
     fn is_of(&self, other: &RecursiveCall) -> bool {
         self.body == other.body && self.scope == other.scope
     }
+
+    /// Whether each argument is of the same kind in both calls, a constant's value or above
+    /// constant level, so that what the translation can decide of one it can decide of the other.
+    fn has_arguments_of_kinds(&self, other: &RecursiveCall) -> bool {
+        self.arguments.len() == other.arguments.len()
+            && self.arguments.iter().zip(&other.arguments).all(|pair| {
+                matches!(
+                    pair,
+                    (Argument::Value(_), Argument::Value(_))
+                        | (Argument::Variable, Argument::Variable)
+                )
+            })
+    }
 }
 
 /// A part of the formula (`LiveExpression`). An atom is itself: two atoms are the same just when
@@ -391,12 +404,15 @@ impl Converter<'_> {
         // TLC's translation recurses until its stack overflows (`createStackOverflowError`) on a
         // call it is already in with the same constant arguments, as on its Github1389Loops and,
         // where the argument is a state's, Github1389StateGuard; and on a call of an operator it
-        // is in that it reached evaluating nothing an argument could decide, as through an IF on
-        // the state alone (`IF x = 0 THEN <>P ELSE Reach(n + 1)`), which it expands again and
-        // again whatever the arguments.
+        // is in that it reached evaluating nothing an argument could decide, with arguments of
+        // the same kinds, as through an IF on the state alone (`IF x = 0 THEN <>P ELSE Reach(n +
+        // 1)`), which it expands again and again whatever their values. An argument above
+        // constant level that becomes a constant (`F(0)` in `F(x)`) can make a guard decidable.
         if self.recursion.iter().any(|entered| {
             entered.is_of(&call)
-                && (entered.arguments == call.arguments || entered.evaluations == call.evaluations)
+                && (entered.arguments == call.arguments
+                    || (entered.evaluations == call.evaluations
+                        && entered.has_arguments_of_kinds(&call)))
         }) {
             return Err(FrontError::StackOverflow);
         }
