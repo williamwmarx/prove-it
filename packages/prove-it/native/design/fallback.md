@@ -8494,6 +8494,14 @@ is 20 commits past the 9ed0376 these fixtures record, which changed the time of 
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
 of integer powers; the runs those change count as wrong here until the port follows them.
 
+The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
+`asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
+for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
+`Classical.flat_rule` does (`Object_Logic.atomize_prems` over each premise), where the port
+refused the rule: so `(auto intro: setEqualI)`, which `IsaWithSetExtensionality` runs and
+`AllIsa` runs third, proves `S = T` from `\A x : x \in S <=> x \in T`
+(`tests/fixtures/tlapm-cli/IsabelleMethods.tla`, recorded with b91fb6c).
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |

@@ -14,10 +14,11 @@ use super::seq::{empty_seq, single_seq};
 use super::tactical::GoalTactic;
 use super::thm::{Thm, reflexive};
 
-/// Object_Logic.atomize_prems_tac: rewrites the premises of a goal with the atomize rules, newest
-/// first as Object_Logic keeps them, which turns meta-level premises into object-level formulas.
-/// Raises where add_simps does, when the tactic is built (never with meta-equalities as rules).
-pub fn atomize_prems_tac(rules: &[Thm]) -> Res<GoalTactic> {
+/// Object_Logic.atomize_prems: the conversion that rewrites the premises of a term with the
+/// atomize rules, newest first as Object_Logic keeps them, which turns meta-level premises into
+/// object-level formulas. Raises where add_simps does, when the conversion is built (never with
+/// meta-equalities as rules).
+pub fn atomize_prems_conv(rules: &[Thm]) -> Res<Conversion> {
     let empty = SimpContext {
         simpset: empty_simpset(),
         bounds: 0,
@@ -36,13 +37,18 @@ pub fn atomize_prems_tac(rules: &[Thm]) -> Res<GoalTactic> {
         Rc::new(simple_prover),
         context,
     )));
-    let convert: Conversion = Rc::new(move |term| {
+    Ok(Rc::new(move |term| {
         if has_meta_prems(term) {
             atomize(term)
         } else {
             reflexive(term)
         }
-    });
+    }))
+}
+
+/// Object_Logic.atomize_prems_tac: CONVERSION of atomize_prems on a goal.
+pub fn atomize_prems_tac(rules: &[Thm]) -> Res<GoalTactic> {
+    let convert = atomize_prems_conv(rules)?;
     Ok(Rc::new(move |index| {
         let convert = convert.clone();
         Rc::new(
