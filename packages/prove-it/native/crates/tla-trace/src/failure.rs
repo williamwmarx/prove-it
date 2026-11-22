@@ -3033,15 +3033,22 @@ impl Rebuilder<'_> {
             let context = run(evaluator.scope_context(scope))?;
             evaluator.next = vec![None; width];
             let mut found = None;
-            run(
-                evaluator.walk(expression, &context, false, &mut |evaluator| {
-                    if evaluator.next.iter().all(Option::is_some) {
-                        return Ok(true);
-                    }
+            // TLC's `printTrace` finds the successor again in all of the action's
+            // (`Tool.getState`, through `getNextStates` into a StateVec): what fails past the
+            // incomplete one it reports in place of the successor (`printTraceAndStop`).
+            let walked = evaluator.walk(expression, &context, false, &mut |evaluator| {
+                if found.is_none() && !evaluator.next.iter().all(Option::is_some) {
                     found = Some(evaluator.next.clone());
-                    Ok(false)
-                }),
-            )?;
+                }
+                Ok(true)
+            });
+            if walked.is_err() && found.is_some() {
+                return Err(Unsupported(
+                    "an incomplete successor whose action fails as TLC evaluates it in full to print the trace"
+                        .into(),
+                ));
+            }
+            run(walked)?;
             // What the spec prints as TLC finds the successor comes before the report.
             if !evaluator.printed.is_empty() {
                 evaluator.printed.clear();
