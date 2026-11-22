@@ -573,21 +573,23 @@ fn lower(
     let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
         on_search_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
     };
-    if legacy_metadata {
-        match probe_legacy_error(sources, config_text, &options, origin) {
-            Some(error) => Err(error),
-            None => Ok(None),
+    crate::transaction::holding_through(|| {
+        if legacy_metadata {
+            match probe_legacy_error(sources, config_text, &options, origin) {
+                Some(error) => Err(error),
+                None => Ok(None),
+            }
+        } else {
+            lower_front_ranking_with_origin(
+                sources,
+                config_text,
+                &options,
+                &get_startup_texts,
+                Some(origin),
+            )
+            .map(Some)
         }
-    } else {
-        lower_front_ranking_with_origin(
-            sources,
-            config_text,
-            &options,
-            &get_startup_texts,
-            Some(origin),
-        )
-        .map(Some)
-    }
+    })
 }
 
 fn native_sany(

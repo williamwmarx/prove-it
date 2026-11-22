@@ -506,6 +506,9 @@ impl Parser {
         if is_rule(b'=') {
             return "====".to_string();
         }
+        if token.kind == TokenKind::Step && text.starts_with("<*>") {
+            return "<*>".to_string();
+        }
         if is_tlapm_punctuation(text)
             || matches!(token.kind, TokenKind::Number | TokenKind::Decimal)
         {
@@ -1622,6 +1625,16 @@ impl Parser {
                 token.line,
                 token.column,
             ));
+        }
+        // tlapm's expressions name a step by its level: `<*>` is no step reference there.
+        if is_step && token.text.as_bytes()[1] == b'*' && self.is_tlapm() {
+            let step = Peeked {
+                kind: token.kind,
+                text: token.text.clone(),
+                line: token.line,
+                column: token.column,
+            };
+            return Err(self.unexpected_at("<*> step number used in an expression", &step));
         }
         if token.kind == TokenKind::Identifier || is_step {
             let name = if is_step {
@@ -3069,6 +3082,10 @@ impl Parser {
             let keyword = self.get_range(self.index - 1);
             let is_only = self.accept("ONLY");
             let (facts, defs) = self.parse_facts()?;
+            // tlapm's usebody takes facts, or DEF with its names where there are none.
+            if self.is_tlapm() && facts.is_empty() && defs.is_empty() {
+                return Err(self.unexpected("Expected a fact or DEF after BY"));
+            }
             return Ok(Proof {
                 kind: ProofKind::By {
                     is_only,
