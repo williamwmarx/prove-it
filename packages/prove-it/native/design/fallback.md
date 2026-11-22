@@ -8726,6 +8726,37 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+Instantiation doesn't distribute over ENABLED, so not over WF and SF either (Specifying Systems,
+17.8), and `Expr.Action.lambdify` expands each `WF_v(A)` and `SF_v(A)` to its definition in terms
+of ENABLED (`E_tla_norm.expand_fairness`) before it expands definitions and lambdifies, so an
+instanced `WF_vars(Next)` in a hypothesis becomes `<>[]?EnabledWrapper(LAMBDA ...) =>
+[]<><<I!Next>>_I!vars` with the ENABLED lambdified as any other, where the port lambdified the
+ENABLED alone and left `WF_(I!vars)(I!Next)` as the instance substituted it, which LS4 fails
+and tlapm proves (`tests/fixtures/obligations/InstanceFairness.tla`, recorded with b91fb6c). tlapm's lexer reads `WF_vars` as the tokens `WF_` and `vars` of one match
+(`alexer.mll`'s `("WF_" | "SF_" as f) (name as rest)`), both at the whole word, so the
+auto-expansion note of such a subscript's operator starts at the `WF_` (`line 19, characters
+10-16`), where the front end lexed the name alone and the note started three columns in.
+
+Two of the suite's runs, `imported/bugs/everythingisafcn_test` and
+`imported/regression_tests/function_except_tuple_soundness_gh201_test` (tlapm's own tests
+`test/bugs/everythingisafcn_test.tla` and
+`test/regression_tests/function_except_tuple_soundness_gh201_test.tla`), are set aside from the
+counts below, neither matched nor wrong: the suite's recording differs from tlapm b91fb6c on
+Depot. On an obligation Zenon can't prove, Zenon reaches its memory limit before its time limit
+on some machines and not others, and tlapm copies `Zenon error: could not find a proof within
+the memory size limit` to its stdout where it does (`prove.ml`, line 1302). The suite's recording
+has no such line; tlapm b91fb6c built from source on Depot (run qmqp0fxmhb, 2026-11-22) prints
+it on both, as the port does, before the `.thy` and fingerprints lines, and exits 10. Both are
+listed for the Record tlapm job (`tests/fixtures/tlapm-cli`), whose recording on Depot is what
+the port is held to.
+
+The Isabelle port declines a theory other than the goal theory `Isabelle.thy_temp` writes (one
+lemma proved by a method): the checking theory `Isabelle.thy_header` and `thy_write` write for a
+module, which marks each obligation with `ML_command` and proves Zenon's with a structured Isar
+proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabelle/zenon/*`,
+`imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
+port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8743,7 +8774,11 @@ tactic only (`Fpfile.query`).
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
-| with the Trivial method's untreated obligation | 770 / 577 / 4 | 321 / 1,042 / 35 |
+| with the two runs Zenon's memory limit decides set aside | 769 / 577 / 3 | 321 / 1,042 / 35 |
+| with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
+| with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
+| declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
+| with the Trivial method's untreated obligation | 772 / 577 / 0 | 320 / 1,053 / 25 |
 
 ### Declines
 
@@ -8779,7 +8814,13 @@ tactic only (`Fpfile.query`).
   (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
   without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
   section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
-  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`); and a
+  theory other than the goal theory `Isabelle.thy_temp` writes, one lemma proved by a method:
+  the checking theory `Isabelle.thy_header` and `thy_write` write for a module, which marks each
+  obligation with `ML_command` and proves Zenon's with a structured Isar proof (`the checking
+  theory tlapm writes for a module's proofs`, `Isabelle's structured Isar proof`), and a theory
+  of Isabelle/TLA+'s own sources (`a theory beyond the consts and the one lemma tlapm writes a
+  goal as`).
   What tlapm's own encoding
   refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
   Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
@@ -8844,6 +8885,12 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
+  `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
+  no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
+  the Isabelle port now declines beside it, takes the structured Isar proof language (`proof`,
+  `assume`, `have`, `show`, `next`, `qed`, `is` patterns, `of` and `OF`) and Isabelle/TLA+'s own
+  theories.
 
 ### Known wrong outputs
 
@@ -8869,6 +8916,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   limit than the method's (`Prep.already_processed`'s `success_warning`), which Prove It doesn't.
 - tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
   (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
+  Only then does `Schedule.run` hold the back end to the method's time limit (its deadline moves
+  from the wait to the limit, counted from the start), so a back end runs 3 s whatever the limit,
+  and `SMTT(0)` proves what it can in that time; the port's decisions run that long too, and a
+  result before then is the back end's own (`false`), not a `timeout`.
 - The Trivial method (`BY Trivial`) ends an obligation's methods without a result
   (`Prep.prove_with`, `Schedule.Immediate true`), so the obligation is untreated at the end of the
   run and reported failed by `fail` with `unexpected error`, whatever its goal; the port does the

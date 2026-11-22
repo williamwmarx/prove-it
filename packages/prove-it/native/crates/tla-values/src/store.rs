@@ -303,6 +303,39 @@ impl Store {
         }
     }
 
+    /// A store that holds nothing, not even the values a reset interns, to stand in for one lent
+    /// elsewhere until it is given back. Making it allocates nothing.
+    pub fn placeholder() -> Store {
+        Store {
+            base: None,
+            id_base: 0,
+            heap_base: 0,
+            text_base: 0,
+            serial: u64::MAX,
+            copied: None,
+            meta: Vec::new(),
+            heap: Vec::new(),
+            table: Vec::new(),
+            mask: 0,
+            texts: Vec::new(),
+            string_ids: HashMap::new(),
+            model_ids: HashMap::new(),
+            order: StringOrder::default(),
+            unordered_rank: i32::MAX,
+            small_ints: Vec::new(),
+            generation: 0,
+            scratch: Vec::new(),
+            sort_scratch: Vec::new(),
+            pair_scratch: Vec::new(),
+            patch_indexes: Vec::new(),
+            patch_values: Vec::new(),
+            shapes: shapes::Shapes::default(),
+            marked: Vec::new(),
+            marks_copied: 0,
+            is_empty_tuple_ambiguous: false,
+        }
+    }
+
     /// An overlay on a store, which interns what the store doesn't hold while the store doesn't
     /// change: each thread of a parallel search evaluates in one of its own.
     pub fn overlay(base: Arc<Store>) -> Store {
@@ -393,6 +426,13 @@ impl Store {
         }
     }
 
+    /// Whether a value is an overlay's own, which the overlay lets go of where it is laid again
+    /// (`attach`), rather than one of the store under it, whose id stays.
+    #[inline(always)]
+    pub fn is_own(&self, id: Id) -> bool {
+        self.base.is_some() && id >= self.id_base
+    }
+
     /// Lets go of the store under an overlay, keeping the overlay's own values to import.
     pub fn detach(&mut self) {
         self.base = None;
@@ -413,6 +453,33 @@ impl Store {
         let value = match meta.kind {
             KIND_STRING => self.str(text()),
             KIND_MODEL => self.model(text()),
+            KIND_SET | KIND_FUNCTION | KIND_TUPLE if overlay.is_block_of_base(meta) => {
+                // A block of this store's values has this store's ids as its words, so the
+                // overlay hashed it, and read its flags, as this store would.
+                let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
+                let source = &overlay.heap[meta.payload as usize..][..length];
+                let found = self.find(meta.hash, |id| {
+                    let own = self.meta(id);
+                    own.kind == meta.kind
+                        && own.size == meta.size
+                        && is_same(self.words(own.payload as usize, length), source)
+                });
+                match found {
+                    Ok(id) => id,
+                    Err(slot) => {
+                        let offset = self.heap.len() as i32;
+                        self.heap.extend_from_slice(source);
+                        self.allocate_flagged(
+                            meta.kind,
+                            offset,
+                            meta.size,
+                            meta.flags & !BUILT_AS_FUNCTION,
+                            meta.hash,
+                            slot,
+                        )
+                    }
+                }
+            }
             KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
                 let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
                 let source = &overlay.heap[meta.payload as usize..][..length];
@@ -442,6 +509,27 @@ impl Store {
         }
         imported[index] = value;
         value
+    }
+
+    /// Reads the slot of this store's table an overlay's own value would take into the cache,
+    /// for an `import` of it a few values on, where the value is a block of this store's values.
+    pub fn prefetch_import(&self, overlay: &Store, id: Id) {
+        if id >= overlay.id_base {
+            let meta = overlay.meta[id as usize];
+            if matches!(meta.kind, KIND_SET | KIND_FUNCTION | KIND_TUPLE)
+                && overlay.is_block_of_base(meta)
+            {
+                prefetch(&self.table[meta.hash as usize & self.mask]);
+            }
+        }
+    }
+
+    // Whether every word of an overlay's own block is a value of the store under it.
+    fn is_block_of_base(&self, meta: Meta) -> bool {
+        let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
+        self.heap[meta.payload as usize..][..length]
+            .iter()
+            .all(|&word| word < self.id_base)
     }
 
     /// Empties the store and ranks the given texts, in order, as `setStringOrder` and then
@@ -688,12 +776,26 @@ impl Store {
 
     // Adds a value whose block, if any, is already on the heap at `payload`.
     fn allocate(&mut self, kind: u8, payload: i32, size: u32, hash: u32, slot: usize) -> Id {
-        let id = self.value_count() as Id;
         let flags = if matches!(kind, KIND_SET | KIND_FUNCTION | KIND_TUPLE) {
             self.get_flags(kind, payload as usize, size as usize)
         } else {
             0
         };
+        self.allocate_flagged(kind, payload, size, flags, hash, slot)
+    }
+
+    // Adds a value whose block, if any, is already on the heap at `payload`, with its flags
+    // read already.
+    fn allocate_flagged(
+        &mut self,
+        kind: u8,
+        payload: i32,
+        size: u32,
+        flags: u8,
+        hash: u32,
+        slot: usize,
+    ) -> Id {
+        let id = self.value_count() as Id;
         self.meta.push(Meta {
             kind,
             flags,
@@ -1161,8 +1263,8 @@ impl Store {
     /// isn't a string is no record, so it compares with any function by its keys and values
     /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
     /// stops in case the record is the one asked.
-    /// Equal ids, and two scalars or tuples of different lengths of one kind, are told apart in
-    /// place, as `equals` tells them.
+    /// Equal ids, and two scalars, tuples of different lengths or sets of different sizes of one
+    /// kind, are told apart in place, as `equals` tells them.
     #[inline(always)]
     pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
@@ -1175,7 +1277,8 @@ impl Store {
             }
         } else if left_meta.kind == right_meta.kind
             && (left_meta.kind <= KIND_STRING
-                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+                || matches!(left_meta.kind, KIND_TUPLE | KIND_SET)
+                    && left_meta.size != right_meta.size)
         {
             return Ok(false);
         }
@@ -1570,6 +1673,25 @@ impl Store {
 
     // Whether a set holds an element's id, where no comparison of the two can fail: a short set
     // is scanned, and a run of integers or a long set searched.
+    /// Whether a set holds an element, where [`Self::is_member`] answers by scanning the set for
+    /// the element's id: a set short enough to scan, with neither holding a function TLC keeps
+    /// lazy or ANY, and no comparison of TLC's search able to fail. Elsewhere, `None`.
+    pub fn find_in_set(&mut self, set: Id, element: Id) -> Option<bool> {
+        let meta = *self.meta(set);
+        let size = meta.size as usize;
+        if meta.kind != KIND_SET
+            || size == 0
+            || size > SCANNED_SIZE
+            || meta.flags & IS_INT_RUN != 0
+            || self.comparison_can_fail(set)
+            || self.comparison_can_fail(element)
+            || !self.is_member_by_id(element, set)
+        {
+            return None;
+        }
+        Some(position_of(self.words(meta.payload as usize, size), element).is_some())
+    }
+
     fn holds_id(&mut self, set: Id, element: Id) -> Outcome<bool> {
         if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0 {
             return Ok(position_of(self.set_elements(set), element).is_some());
@@ -2520,6 +2642,21 @@ enum Merge {
     Union,
     Intersection,
     Difference,
+}
+
+// Reads a value into the cache ahead of its use: the read goes on while the thread does other
+// work.
+#[inline(always)]
+fn prefetch<T>(value: &T) {
+    let address: *const T = value;
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch is a hint to the cache. It reads nothing the program sees and never
+    // faults, and the address is that of a live value.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(address.cast());
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = address;
 }
 
 // The id in a table of a value with this hash that `is_match` accepts, or the empty slot where the

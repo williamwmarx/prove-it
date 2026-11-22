@@ -1,0 +1,24 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+msgs = {}
+
+State 2: <Next line 6, col 48 to line 6, col 68 of module PassedFalseFirst>
+msgs = {[type |-> "a", n |-> 1]}
+
+State 3: <Next line 6, col 48 to line 6, col 68 of module PassedFalseFirst>
+msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2]}
+
+State 4: <Next line 6, col 48 to line 6, col 68 of module PassedFalseFirst>
+msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2], [type |-> "a", n |-> 3]}
+
+State 5: <Next line 7, col 12 to line 8, col 88 of module PassedFalseFirst>
+msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 9],
+  [k |-> "x", l |-> 1, z |-> 1] }
+
+26 states generated, 9 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.

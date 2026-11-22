@@ -42,6 +42,7 @@ use crate::machine::{
     EVALUATIONS_SPENT, Eval, Machine, Printed, Prints, Program, Registers, Step, UNASSIGNED,
 };
 use crate::memo::{EMPTY, MAXIMUM_ENTRIES};
+use crate::pool::Pool;
 use crate::symmetry::{
     Canonicalizer, Group, NOT_MODEL_VALUES, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -1212,20 +1213,20 @@ impl FingerprintSet {
     }
 
     // Grows the table until it takes `additional` more fingerprints without growing, a large
-    // table on `threads`.
-    fn reserve(&mut self, additional: usize, threads: usize) {
+    // table on the pool's threads.
+    fn reserve(&mut self, additional: usize, pool: Option<&Pool>) {
         let mut capacity = self.fingerprints.len();
         while (self.len + additional) * 2 > capacity {
             capacity *= 2;
         }
         if capacity > self.fingerprints.len() {
             let is_large = self.fingerprints.len() >= THREADED_GROWTH_SLOTS;
-            self.grow_to(capacity, if is_large { threads } else { 1 });
+            self.grow_to(capacity, if is_large { pool } else { None });
         }
     }
 
     fn grow(&mut self) {
-        self.grow_to(self.fingerprints.len() * 2, 1);
+        self.grow_to(self.fingerprints.len() * 2, None);
     }
 
     // Moves the table to one of `capacity` slots, a power of two past its own. On several
@@ -1234,7 +1235,7 @@ impl FingerprintSet {
     // which the range's thread follows to its end. One whose probe leaves the new range this
     // thread places after them. A probe finds a fingerprint wherever its run holds it, so the
     // order they are placed in shows nowhere.
-    fn grow_to(&mut self, capacity: usize, threads: usize) {
+    fn grow_to(&mut self, capacity: usize, pool: Option<&Pool>) {
         let old = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
         let old_indices = self
             .indices
@@ -1256,8 +1257,11 @@ impl FingerprintSet {
         self.shift = u64::BITS - capacity.trailing_zeros();
         self.mask = capacity - 1;
         let shift = self.shift;
-        let shards = threads.next_power_of_two().min(old.len());
-        if shards == 1 {
+        let shards = pool
+            .map_or(1, Pool::threads)
+            .next_power_of_two()
+            .min(old.len());
+        let Some(pool) = pool.filter(|_| shards > 1) else {
             commit(&mut self.fingerprints);
             if let Some(indices) = &mut self.indices {
                 commit(indices);
@@ -1269,7 +1273,7 @@ impl FingerprintSet {
                 }
             }
             return;
-        }
+        };
         let (old_span, span) = (old.len() / shards, capacity / shards);
         let (old_mask, span_bits) = (old.len() - 1, span.trailing_zeros());
         let (old, old_indices) = (&old[..], old_indices.as_deref());
@@ -1277,14 +1281,13 @@ impl FingerprintSet {
             .indices
             .as_mut()
             .map(|indices| indices.chunks_mut(span));
-        let left: Vec<Vec<(u64, u32)>> = std::thread::scope(|scope| {
-            let threads: Vec<_> = self
-                .fingerprints
+        let left: Vec<Vec<(u64, u32)>> = pool.run(
+            self.fingerprints
                 .chunks_mut(span)
                 .enumerate()
                 .map(|(shard, table)| {
                     let mut indices = indices.as_mut().and_then(Iterator::next);
-                    scope.spawn(move || {
+                    move || {
                         let start = shard * span;
                         let end = (shard + 1) * old_span;
                         let mut left = Vec::new();
@@ -1319,11 +1322,9 @@ impl FingerprintSet {
                             }
                         }
                         left
-                    })
-                })
-                .collect();
-            threads.into_iter().map(join).collect()
-        });
+                    }
+                }),
+        );
         for (stored, index) in left.into_iter().flatten() {
             self.place(stored, index);
         }
@@ -1361,7 +1362,7 @@ impl FingerprintSet {
     fn fill(
         &mut self,
         runs: &[&[u64]],
-        threads: usize,
+        pool: &Pool,
         first_index: u32,
         is_resolved: bool,
     ) -> (Vec<u8>, Vec<u32>) {
@@ -1369,8 +1370,8 @@ impl FingerprintSet {
         if count == 0 {
             return (Vec::new(), Vec::new());
         }
-        self.reserve(count, threads);
-        let threads = threads.min(count.div_ceil(FILL_PART)).max(1);
+        self.reserve(count, Some(pool));
+        let threads = pool.threads().min(count.div_ceil(FILL_PART)).max(1);
         let shards = threads
             .next_power_of_two()
             .min(self.fingerprints.len())
@@ -1384,44 +1385,37 @@ impl FingerprintSet {
         let parts = split_runs(runs, part_length);
 
         // Each part's fingerprints by the range of their home, and each one's range.
-        let sorted: Vec<SortedPart> = std::thread::scope(|scope| {
-            let threads: Vec<_> = parts
-                .iter()
-                .map(|part| {
-                    scope.spawn(move || {
-                        let length: usize = part.iter().map(|run| run.len()).sum();
-                        let room = length / shards + length / shards / 4 + 8;
-                        let mut sorted = SortedPart {
-                            buckets: (0..shards).map(|_| Vec::with_capacity(room)).collect(),
-                            shards: Vec::with_capacity(length),
-                            zeros: 0,
-                        };
-                        for &fingerprint in part.iter().flat_map(|run| run.iter()) {
-                            if fingerprint == 0 {
-                                sorted.shards.push(NO_SHARD);
-                                sorted.zeros += 1;
-                                continue;
-                            }
-                            let shard = home_slot(fingerprint, shift) >> span_bits;
-                            sorted.buckets[shard].push(fingerprint);
-                            sorted.shards.push(shard as u16);
-                        }
-                        sorted
-                    })
-                })
-                .collect();
-            threads.into_iter().map(join).collect()
-        });
+        let sorted: Vec<SortedPart> = pool.run(parts.iter().map(|part| {
+            move || {
+                let length: usize = part.iter().map(|run| run.len()).sum();
+                let room = length / shards + length / shards / 4 + 8;
+                let mut sorted = SortedPart {
+                    buckets: (0..shards).map(|_| Vec::with_capacity(room)).collect(),
+                    shards: Vec::with_capacity(length),
+                    zeros: 0,
+                };
+                for &fingerprint in part.iter().flat_map(|run| run.iter()) {
+                    if fingerprint == 0 {
+                        sorted.shards.push(NO_SHARD);
+                        sorted.zeros += 1;
+                        continue;
+                    }
+                    let shard = home_slot(fingerprint, shift) >> span_bits;
+                    sorted.buckets[shard].push(fingerprint);
+                    sorted.shards.push(shard as u16);
+                }
+                sorted
+            }
+        }));
 
         // Each range's thread decides its fingerprints, part by part: the runs' order.
         let sorted = &sorted;
-        let mut decided: Vec<DecidedShard> = std::thread::scope(|scope| {
-            let threads: Vec<_> = self
-                .fingerprints
+        let mut decided: Vec<DecidedShard> = pool.run(
+            self.fingerprints
                 .chunks_mut(span)
                 .enumerate()
                 .map(|(shard, table)| {
-                    scope.spawn(move || {
+                    move || {
                         let start = shard * span;
                         let mut decided = DecidedShard::default();
                         for (part, sorted) in sorted.iter().enumerate() {
@@ -1461,11 +1455,9 @@ impl FingerprintSet {
                             decided.slots.push(slots);
                         }
                         decided
-                    })
-                })
-                .collect();
-            threads.into_iter().map(join).collect()
-        });
+                    }
+                }),
+        );
         self.len += decided.iter().map(|decided| decided.added).sum::<usize>();
 
         // What the threads left, in the runs' order within each range, which holds every equal
@@ -1507,13 +1499,13 @@ impl FingerprintSet {
         // counts the new ones of the part before each.
         let mut statuses = vec![FILL_SEEN; count];
         let (decided, zeros) = (&decided, &zeros);
-        let gathered: Vec<GatheredPart> = std::thread::scope(|scope| {
-            let threads: Vec<_> = statuses
+        let gathered: Vec<GatheredPart> = pool.run(
+            statuses
                 .chunks_mut(part_length)
                 .zip(sorted)
                 .enumerate()
                 .map(|(part, (statuses, sorted))| {
-                    scope.spawn(move || {
+                    move || {
                         let mut cursors = vec![0; shards];
                         let mut zero = 0;
                         let mut gathered = GatheredPart::default();
@@ -1542,11 +1534,9 @@ impl FingerprintSet {
                             }
                         }
                         gathered
-                    })
-                })
-                .collect();
-            threads.into_iter().map(join).collect()
-        });
+                    }
+                }),
+        );
         let Some(indices) = &mut self.indices else {
             return (statuses, Vec::new());
         };
@@ -1563,13 +1553,10 @@ impl FingerprintSet {
             .collect();
         let (gathered, firsts) = (&gathered, &firsts);
         // Each range's thread writes its new indices and reads its seen ones, in the runs' order.
-        let mut found: Vec<Vec<Vec<u32>>> = std::thread::scope(|scope| {
-            let threads: Vec<_> = indices
-                .chunks_mut(span)
-                .zip(decided)
-                .enumerate()
-                .map(|(shard, (table, decided))| {
-                    scope.spawn(move || {
+        let mut found: Vec<Vec<Vec<u32>>> =
+            pool.run(indices.chunks_mut(span).zip(decided).enumerate().map(
+                |(shard, (table, decided))| {
+                    move || {
                         let mut found = Vec::new();
                         let mut left = decided.left.iter().peekable();
                         for (part, (statuses, slots)) in
@@ -1606,11 +1593,9 @@ impl FingerprintSet {
                             found.push(indices);
                         }
                         found
-                    })
-                })
-                .collect();
-            threads.into_iter().map(join).collect()
-        });
+                    }
+                },
+            ));
         for (shard, (decided, slots)) in decided.iter().zip(&left_slots).enumerate() {
             for (&(part, position), &slot) in decided.left.iter().zip(slots) {
                 let (part, position) = (part as usize, position as usize);
@@ -1643,26 +1628,28 @@ impl FingerprintSet {
         // Each part's thread gathers its indices into the runs' order.
         let mut resolved = vec![0; count];
         let (found, zero_indices) = (&found, &zero_indices);
-        std::thread::scope(|scope| {
-            for (part, (resolved, sorted)) in
-                resolved.chunks_mut(part_length).zip(sorted).enumerate()
-            {
-                scope.spawn(move || {
-                    let mut cursors = vec![0; shards];
-                    let mut zero = 0;
-                    for (index, &shard) in resolved.iter_mut().zip(&sorted.shards) {
-                        if shard == NO_SHARD {
-                            *index = zero_indices[part][zero];
-                            zero += 1;
-                        } else {
-                            let shard = shard as usize;
-                            *index = found[shard][part][cursors[shard]];
-                            cursors[shard] += 1;
+        pool.run(
+            resolved
+                .chunks_mut(part_length)
+                .zip(sorted)
+                .enumerate()
+                .map(|(part, (resolved, sorted))| {
+                    move || {
+                        let mut cursors = vec![0; shards];
+                        let mut zero = 0;
+                        for (index, &shard) in resolved.iter_mut().zip(&sorted.shards) {
+                            if shard == NO_SHARD {
+                                *index = zero_indices[part][zero];
+                                zero += 1;
+                            } else {
+                                let shard = shard as usize;
+                                *index = found[shard][part][cursors[shard]];
+                                cursors[shard] += 1;
+                            }
                         }
                     }
-                });
-            }
-        });
+                }),
+        );
         (statuses, resolved)
     }
 }
@@ -1717,13 +1704,6 @@ fn split_runs<'r>(runs: &[&'r [u64]], length: usize) -> Vec<Vec<&'r [u64]>> {
         }
     }
     parts
-}
-
-// What a thread of a scope returns, or its panic.
-fn join<T>(thread: std::thread::ScopedJoinHandle<'_, T>) -> T {
-    thread
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 // Writes a 0 in each page of a table the allocator gave as zeros, which the kernel backs with no
@@ -3496,12 +3476,16 @@ struct Filled<'f> {
     stop: usize,
 }
 
-// The runs one thread adds the new states of, their candidates' place among the statuses, and
-// how many of them are new.
+// The runs one thread adds the new states of, their candidates' place among the statuses, how
+// many of them are new and how many the runs before had, how many parents they have and, where
+// the search records its graph, how many steps.
 struct Share {
     runs: std::ops::Range<usize>,
     statuses: std::ops::Range<usize>,
     new: usize,
+    new_before: usize,
+    parents: usize,
+    steps: usize,
 }
 
 // Where a share's new states go among the states, and its parents' counts of new states.
@@ -3515,6 +3499,9 @@ struct Places<'s> {
 
 // The fewest candidates a thread adds the new states of.
 const SHARE_CANDIDATES: usize = 4096;
+
+// How many states ahead the import reads the table's slots of a state's values.
+const IMPORT_PREFETCH: usize = 8;
 
 // Copies the new states of a share's runs to their places, in the runs' order, and counts each
 // parent's, the share's first being `first_parent`: the places of the states that hold a value
@@ -3561,10 +3548,12 @@ fn copy_new(
 
 // A level the threads share: the states `[start, end)`, the next run to claim, and the first
 // state not to expand, lowered to the state being expanded wherever a thread stops.
-struct Level {
+struct Level<'p> {
     start: usize,
     end: usize,
     threads: usize,
+    /// The threads of this and every shared level, kept from the first to the search's end.
+    pool: &'p Pool,
     number: u64,
     cursor: Padded<AtomicUsize>,
     stop: Padded<AtomicUsize>,
@@ -3578,7 +3567,7 @@ struct Level {
     test_progress_at: Option<usize>,
 }
 
-impl Level {
+impl Level<'_> {
     // Claims the next run of the level's states for a thread, unless none is left before the
     // first state not to expand.
     fn claim(&self) -> Option<std::ops::Range<usize>> {
@@ -3675,7 +3664,7 @@ impl<T> std::ops::Deref for Padded<T> {
 struct Shared<'s> {
     context: &'s EngineContext,
     before: &'s States,
-    level: &'s Level,
+    level: &'s Level<'s>,
     // The actions that label the steps, where the search records a graph that labels them.
     actions: Option<&'s [Step]>,
     // Where the search records its graph, what each thread records of its steps.
@@ -3841,7 +3830,7 @@ impl Search<'_, States> {
         machine: &mut Machine<'_>,
         workers: &mut [Worker<'_>],
         context: &EngineContext,
-        level: &Level,
+        level: &Level<'_>,
         actions: Option<&[Step]>,
         out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
         progress_at: Option<&mut Instant>,
@@ -3907,31 +3896,24 @@ impl Search<'_, States> {
         };
         // Each worker writes files for the check this thread runs ([`tla_values::written`]).
         let journal = tla_values::written::current();
-        let expanded: Vec<Expanded> = std::thread::scope(|scope| {
-            let threads: Vec<_> = workers
-                .iter_mut()
-                .zip(&counts)
-                .map(|(worker, counts)| {
-                    let (shared, store, fingerprints, signal, journal) =
-                        (&shared, &store, &fingerprints, &signal, &journal);
-                    std::thread::Builder::new()
-                        .stack_size(NESTING_STACK_BYTES)
-                        .spawn_scoped(scope, move || {
-                            let _entered =
-                                journal.as_ref().map(tla_values::written::Journal::enter);
-                            let _finishing = Finishing(signal);
-                            worker.attach(store, fingerprints, onces);
-                            expand_claimed(worker, shared, counts, signal)
-                        })
-                        .expect("a thread for the search")
-                })
-                .collect();
+        let count = workers.len();
+        let expanded: Vec<Expanded> = level.pool.scope(|scope| {
+            let round = scope.post(workers.iter_mut().zip(&counts).map(|(worker, counts)| {
+                let (shared, store, fingerprints, signal, journal) =
+                    (&shared, &store, &fingerprints, &signal, &journal);
+                move || {
+                    let _entered = journal.as_ref().map(tla_values::written::Journal::enter);
+                    let _finishing = Finishing(signal);
+                    worker.attach(store, fingerprints, onces);
+                    expand_claimed(worker, shared, counts, signal)
+                }
+            }));
             // TLC reports its progress on a timer while its workers run, whatever their depth
             // (AbstractChecker.runTLC, ModelChecker.runTLCContinueDoing). The timer only wakes
             // this thread to report.
             let mut progress_at = progress_at;
             let mut state = signal.lock();
-            while state.finished < threads.len() {
+            while state.finished < count {
                 if state.is_test_claimed && !state.is_test_reported {
                     report(reporter);
                     state.is_test_reported = true;
@@ -3959,14 +3941,7 @@ impl Search<'_, States> {
                 };
             }
             drop(state);
-            threads
-                .into_iter()
-                .map(|thread| {
-                    thread
-                        .join()
-                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                })
-                .collect()
+            round.join()
         });
         for worker in workers.iter_mut() {
             worker.machine.store.detach();
@@ -4057,26 +4032,33 @@ impl Search<'_, States> {
                 .collect();
             let (statuses, indices) = self.states.set.fill(
                 &fingerprints,
-                workers.len(),
+                level.pool,
                 before_count as u32,
                 self.graph.is_some(),
             );
             (runs, statuses, indices)
         });
         let mut new_counts = vec![0u32; level.end - level.start];
-        // Without a graph, whose steps are recorded parent by parent, the threads add the new
-        // states the fill told from the rest.
+        // The threads add the new states the fill told from the rest and, where the search
+        // records its graph, the steps of each parent. A graph that keeps the states its steps
+        // reached imports them parent by parent, between the new states, as the merge does.
         let (statuses, merged) = match filled {
-            Some((runs, statuses, _)) if self.graph.is_none() => {
+            Some((runs, statuses, indices))
+                if self
+                    .graph
+                    .as_ref()
+                    .is_none_or(|graph| graph.reals.is_none()) =>
+            {
                 self.add_filled(
                     machine,
                     workers,
                     &expanded,
-                    Filled {
+                    &Filled {
                         runs: &runs,
                         statuses: &statuses,
                         stop,
                     },
+                    &indices,
                     level,
                     &mut new_counts,
                 );
@@ -4093,8 +4075,8 @@ impl Search<'_, States> {
         let mut resolved: Vec<Vec<u32>> = expanded
             .iter()
             .map(|found| match self.graph {
-                Some(_) => vec![u32::MAX; found.parents.len()],
-                None => Vec::new(),
+                Some(_) if !merged => vec![u32::MAX; found.parents.len()],
+                _ => Vec::new(),
             })
             .collect();
         // The states in order, each run by the thread that claimed it: what each state's expansion
@@ -4331,39 +4313,54 @@ impl Search<'_, States> {
     // Adds the new states of a level a fill decided, as adding them one by one in the runs'
     // order would, on threads: the order gives each new state its place among the states, so
     // each thread copies the new states of a share of the runs to their places and counts each
-    // parent's. The values the threads' overlays made are then imported state by state in that
+    // parent's. Where the search records its graph, the steps' counts give each parent's steps
+    // their place too, and the same thread copies its share's, each to the index the fill gave
+    // its state. The values the threads' overlays made are then imported state by state in that
     // order, the order adding one by one imports them in.
+    #[allow(clippy::too_many_arguments)]
     fn add_filled(
         &mut self,
         machine: &mut Machine<'_>,
         workers: &mut [Worker<'_>],
         expanded: &[Expanded],
-        filled: Filled<'_>,
-        level: &Level,
+        filled: &Filled<'_>,
+        indices: &[u32],
+        level: &Level<'_>,
         new_counts: &mut [u32],
     ) {
-        let Filled {
+        let &Filled {
             runs,
             statuses,
             stop,
         } = filled;
         let (width, key_width) = (self.states.width, self.states.key_width);
+        let is_graph = self.graph.is_some();
         let parents_of = |run: &FilledRun| run.end.min(stop) - run.start;
+        let steps_of = |run: &FilledRun| match &expanded[run.thread].graph {
+            Some(steps) if is_graph => {
+                let offsets = &steps.edge_offsets[run.successors..];
+                (offsets[parents_of(run)] - offsets[0]) as usize
+            }
+            _ => 0,
+        };
         for run in runs {
             let counts = &expanded[run.thread].successors[run.successors..][..parents_of(run)];
             self.generated += counts.iter().map(|&count| u64::from(count)).sum::<u64>();
         }
-        if statuses.is_empty() {
+        if statuses.is_empty() && !is_graph {
             return;
         }
-        let threads = workers.len().min(statuses.len() / SHARE_CANDIDATES).max(1);
-        let length = statuses.len().div_ceil(threads);
+        let weight = statuses.len() + runs.iter().map(steps_of).sum::<usize>();
+        let threads = workers.len().min(weight / SHARE_CANDIDATES).max(1);
+        let length = weight.div_ceil(threads);
         let mut shares: Vec<Share> = Vec::with_capacity(threads);
-        let (mut first, mut position) = (0, 0);
-        let mut end = 0;
+        let (mut first, mut position, mut end, mut new_before) = (0, 0, 0, 0);
+        let (mut parents, mut steps) = (0, 0);
         for (index, run) in runs.iter().enumerate() {
             end += run.count;
-            if end - position >= length || index + 1 == runs.len() {
+            parents += parents_of(run);
+            steps += steps_of(run);
+            if end - position + steps >= length || index + 1 == runs.len() {
                 let new = statuses[position..end]
                     .iter()
                     .filter(|&&status| status == FILL_NEW)
@@ -4372,16 +4369,43 @@ impl Search<'_, States> {
                     runs: first..index + 1,
                     statuses: position..end,
                     new,
+                    new_before,
+                    parents,
+                    steps,
                 });
-                (first, position) = (index + 1, end);
+                new_before += new;
+                (first, position, parents, steps) = (index + 1, end, 0, 0);
             }
         }
         let before = self.states.count();
-        let count = before + shares.iter().map(|share| share.new).sum::<usize>();
-        if count == before {
+        let count = before + new_before;
+        if count == before && !is_graph {
             return;
         }
-        self.depth = self.depth.max(level.number + 1);
+        let depths = (
+            self.depth.max(1) as u32,
+            self.depth.max(level.number + 1).max(1) as u32,
+        );
+        if count > before {
+            self.depth = self.depth.max(level.number + 1);
+        }
+        // Each thread's runs, by the first of their candidates and that one's place among the
+        // statuses, whose state's index the fill gave.
+        let mut places_of: Vec<Vec<(usize, usize)>> = vec![Vec::new(); expanded.len()];
+        if is_graph {
+            let mut position = 0;
+            for run in runs {
+                places_of[run.thread].push((run.candidates, position));
+                position += run.count;
+            }
+        }
+        let sources = StepSources {
+            expanded,
+            places_of: &places_of,
+            indices,
+            before_count: before,
+            depths,
+        };
         let states = &mut self.states;
         states.ids.resize(count * width, 0);
         states.parents.resize(count, 0);
@@ -4397,48 +4421,81 @@ impl Search<'_, States> {
         let mut parents = &mut states.parents[before..];
         let mut fingerprints = &mut states.fingerprints[before..];
         let mut counts = new_counts;
-        let bounds: Vec<Id> = workers.iter().map(|worker| worker.bound).collect();
-        let bounds = &bounds[..];
-        let is_alone = shares.len() == 1;
-        let own: Vec<Vec<(usize, usize, usize)>> = std::thread::scope(|scope| {
-            let mut threads = Vec::with_capacity(shares.len());
-            let mut copied = Vec::new();
-            for share in &shares {
-                let share_runs = &runs[share.runs.clone()];
-                let (first, last) = (&share_runs[0], &share_runs[share_runs.len() - 1]);
-                let first_parent = first.start;
-                let parent_count = last.start + parents_of(last) - first_parent;
-                let places = Places {
-                    ids: take_front(&mut ids, share.new * width),
-                    keys: take_front(&mut keys, share.new * key_width.unwrap_or(0)),
-                    parents: take_front(&mut parents, share.new),
-                    fingerprints: take_front(&mut fingerprints, share.new),
-                    counts: take_front(&mut counts, parent_count),
-                };
-                let statuses = &statuses[share.statuses.clone()];
-                let copy = move || {
-                    copy_new(
-                        expanded,
-                        share_runs,
-                        statuses,
-                        bounds,
-                        (width, key_width),
-                        first_parent,
-                        places,
-                    )
-                };
-                if is_alone {
-                    copied.push(copy());
-                } else {
-                    threads.push(scope.spawn(copy));
-                }
-            }
-            copied.extend(threads.into_iter().map(join));
-            copied
+        let mut graph = self.graph.as_mut().map(|graph| {
+            graph.extend_for(
+                shares.iter().map(|share| share.steps).sum(),
+                shares.iter().map(|share| share.parents).sum(),
+            )
         });
+        let bounds: Vec<Id> = workers.iter().map(|worker| worker.bound).collect();
+        let (bounds, sources) = (&bounds[..], &sources);
+        let is_alone = shares.len() == 1;
+        let mut copies = Vec::with_capacity(shares.len());
+        for share in &shares {
+            let share_runs = &runs[share.runs.clone()];
+            let first_parent = share_runs[0].start;
+            let places = Places {
+                ids: take_front(&mut ids, share.new * width),
+                keys: take_front(&mut keys, share.new * key_width.unwrap_or(0)),
+                parents: take_front(&mut parents, share.new),
+                fingerprints: take_front(&mut fingerprints, share.new),
+                counts: take_front(&mut counts, share.parents),
+            };
+            let steps = graph
+                .as_mut()
+                .map(|graph| graph.take_front(share.steps, share.parents));
+            let statuses = &statuses[share.statuses.clone()];
+            let new_before = share.new_before;
+            copies.push(move || {
+                let Places {
+                    ids,
+                    keys,
+                    parents,
+                    fingerprints,
+                    counts,
+                } = places;
+                let own = copy_new(
+                    expanded,
+                    share_runs,
+                    statuses,
+                    bounds,
+                    (width, key_width),
+                    first_parent,
+                    Places {
+                        ids,
+                        keys,
+                        parents,
+                        fingerprints,
+                        counts: &mut *counts,
+                    },
+                );
+                if let Some(steps) = steps {
+                    copy_steps(sources, share_runs, stop, counts, new_before, steps);
+                }
+                own
+            });
+        }
+        let own: Vec<Vec<(usize, usize, usize)>> = if is_alone {
+            copies.into_iter().map(|copy| copy()).collect()
+        } else {
+            level.pool.run(copies)
+        };
         let mut place = before;
         for (share, own) in shares.iter().zip(own) {
-            for (offset, thread, index) in own {
+            for (position, &(offset, thread, index)) in own.iter().enumerate() {
+                // The table's slots of the values of a state further on, read while these are
+                // imported: the table is far larger than the cache.
+                if let Some(&(_, thread, index)) = own.get(position + IMPORT_PREFETCH) {
+                    let overlay = &workers[thread].machine.store;
+                    let found = &expanded[thread];
+                    let ids = &found.ids[index * width..][..width];
+                    let keys = key_width.map_or(&[][..], |key_width| {
+                        &found.keys[index * key_width..][..key_width]
+                    });
+                    for &id in ids.iter().chain(keys) {
+                        machine.store.prefetch_import(overlay, id);
+                    }
+                }
                 let worker = &mut workers[thread];
                 let overlay = &worker.machine.store;
                 let mut import = |from: &[Id], into: &mut [Id]| {
@@ -4460,6 +4517,152 @@ impl Search<'_, States> {
                 }
             }
             place += share.new;
+        }
+    }
+}
+
+// What every share of a level's steps reads: each thread's runs, by the first of their
+// candidates and that one's place among the statuses, the index each status's state took, the
+// count of the states before the level, and the depth before the level and once it adds a state.
+struct StepSources<'s> {
+    expanded: &'s [Expanded],
+    places_of: &'s [Vec<(usize, usize)>],
+    indices: &'s [u32],
+    before_count: usize,
+    depths: (u32, u32),
+}
+
+// The room a graph made for a level's steps at the end of its arrays, and, for each parent, what
+// it keeps of it: each share takes its places from the front.
+struct StepPlaces<'g> {
+    edges: &'g mut [u32],
+    labels: Option<&'g mut [u32]>,
+    pieces: Option<&'g mut [u8]>,
+    piece_width: usize,
+    // The graph's index of the first step.
+    first_edge: usize,
+    successor_counts: &'g mut [u32],
+    new_counts: &'g mut [u32],
+    edge_offsets: &'g mut [u32],
+    diameters: &'g mut [u32],
+}
+
+impl<'g> StepPlaces<'g> {
+    // The places of the next `steps` steps and `parents` parents.
+    fn take_front(&mut self, steps: usize, parents: usize) -> StepPlaces<'g> {
+        let first_edge = self.first_edge;
+        self.first_edge += steps;
+        let width = self.piece_width;
+        StepPlaces {
+            edges: take_front(&mut self.edges, steps),
+            labels: self.labels.as_mut().map(|labels| take_front(labels, steps)),
+            pieces: self
+                .pieces
+                .as_mut()
+                .map(|pieces| take_front(pieces, steps * width)),
+            piece_width: width,
+            first_edge,
+            successor_counts: take_front(&mut self.successor_counts, parents),
+            new_counts: take_front(&mut self.new_counts, parents),
+            edge_offsets: take_front(&mut self.edge_offsets, parents),
+            diameters: take_front(&mut self.diameters, parents),
+        }
+    }
+}
+
+impl Graph {
+    // Makes room for `steps` steps of `parents` parents at the end of the graph.
+    fn extend_for(&mut self, steps: usize, parents: usize) -> StepPlaces<'_> {
+        fn grow<T: Copy + Default>(list: &mut Vec<T>, by: usize) -> &mut [T] {
+            let from = list.len();
+            list.resize(from + by, T::default());
+            &mut list[from..]
+        }
+        let first_edge = self.edges.len();
+        StepPlaces {
+            edges: grow(&mut self.edges, steps),
+            labels: self.labels.as_mut().map(|labels| grow(labels, steps)),
+            pieces: self
+                .pieces
+                .as_mut()
+                .map(|pieces| grow(pieces, steps * self.piece_width)),
+            piece_width: self.piece_width,
+            first_edge,
+            successor_counts: grow(&mut self.successor_counts, parents),
+            new_counts: grow(&mut self.new_counts, parents),
+            edge_offsets: grow(&mut self.edge_offsets, parents),
+            diameters: grow(&mut self.diameters, parents),
+        }
+    }
+}
+
+// Copies the steps of a share's runs to their places, each to the index its state took: a state
+// found before the level by its own, and one a thread found by the index the fill gave its place
+// among the statuses. `counts` are the share's parents' counts of new states, and `new_before`
+// the count of the level's new states before the share's.
+fn copy_steps(
+    sources: &StepSources<'_>,
+    runs: &[FilledRun],
+    stop: usize,
+    mut counts: &[u32],
+    new_before: usize,
+    mut places: StepPlaces<'_>,
+) {
+    let mut is_deeper = new_before > 0;
+    for run in runs {
+        let found = &sources.expanded[run.thread];
+        let steps_of = found.graph.as_ref().expect("a thread's steps");
+        let places_of = &sources.places_of[run.thread];
+        let place_of = |candidate: usize| {
+            let (first, place) =
+                places_of[places_of.partition_point(|&(first, _)| first <= candidate) - 1];
+            place + candidate - first
+        };
+        // Most steps reach the run's own candidates.
+        let own = run.candidates..run.candidates + run.count;
+        let first_place = place_of(run.candidates);
+        let parents = run.end.min(stop) - run.start;
+        let offsets = &steps_of.edge_offsets[run.successors..=run.successors + parents];
+        let steps = offsets[0] as usize..offsets[parents] as usize;
+        let length = steps.len();
+        let first_edge = places.first_edge;
+        let mut run_places = places.take_front(length, parents);
+        for (place, &target) in run_places
+            .edges
+            .iter_mut()
+            .zip(&steps_of.edges[steps.clone()])
+        {
+            let target = target as usize;
+            *place = match target.checked_sub(sources.before_count) {
+                None => target as u32,
+                Some(candidate) if own.contains(&candidate) => {
+                    sources.indices[first_place + candidate - run.candidates]
+                }
+                Some(candidate) => sources.indices[place_of(candidate)],
+            };
+        }
+        if let (Some(labels), Some(labels_of)) = (&mut run_places.labels, &steps_of.labels) {
+            labels.copy_from_slice(&labels_of[steps.clone()]);
+        }
+        if let (Some(pieces), Some(pieces_of)) = (&mut run_places.pieces, &steps_of.pieces) {
+            let width = run_places.piece_width;
+            pieces.copy_from_slice(&pieces_of[steps.start * width..steps.end * width]);
+        }
+        run_places
+            .successor_counts
+            .copy_from_slice(&found.successors[run.successors..][..parents]);
+        let (run_counts, rest) = counts.split_at(parents);
+        counts = rest;
+        run_places.new_counts.copy_from_slice(run_counts);
+        for (parent, &count) in run_counts.iter().enumerate() {
+            run_places.edge_offsets[parent] =
+                (first_edge + (offsets[parent + 1] - offsets[0]) as usize) as u32;
+            is_deeper |= count > 0;
+            run_places.diameters[parent] = if is_deeper {
+                sources.depths.1
+            } else {
+                sources.depths.0
+            };
         }
     }
 }
@@ -5963,6 +6166,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut dfid_initial_count = 0usize;
     let mut is_past_initial = false;
     let mut workers: Vec<Worker<'_>> = Vec::new();
+    let mut pool: Option<Pool> = None;
     // The answers to the liveness checker's atoms about the first `count` states and the steps of
     // the first `expanded`.
     let graph_tables = |machine: &mut Machine<'_>,
@@ -5970,7 +6174,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         expanded: usize,
                         count: usize,
                         reals: Option<&Reals>,
-                        last_diameter: Option<u32>|
+                        last_diameter: Option<u32>,
+                        asked: Option<&[bool]>|
      -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
         let edge_count = graph.edge_offsets[expanded] as usize;
@@ -6029,6 +6234,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 levels: None,
                 known: None,
                 is_distinct: false,
+                asked,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -6050,6 +6256,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // The breadth-first search keeps one state for each fingerprint, and every value
                 // of a state is one a walk assigned.
                 is_distinct: is_comparable && settings.dfid.is_none(),
+                asked,
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
@@ -6180,7 +6387,27 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             && !context.diameter_atoms.contains(&true)
         {
             let count = search.states.count();
-            let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
+            // TLC adds an initial state by testing the state predicates of the tableaux' initial
+            // nodes, so only their atoms are answered.
+            let asked = tla_live::initially_read(&to_terms(&model.live_formula)).map(|read| {
+                let mut asked = vec![false; context.atoms.len()];
+                for atom in read {
+                    if let Some(is_asked) = asked.get_mut(atom as usize) {
+                        *is_asked = true;
+                    }
+                }
+                asked
+            });
+            let tables = graph_tables(
+                &mut machine,
+                &search,
+                0,
+                count,
+                None,
+                None,
+                asked.as_deref(),
+            )
+            .map_err(Bail)?;
             if let Some(unanswered) = unanswered_at(
                 model,
                 &search,
@@ -6551,8 +6778,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     return Ok(());
                 }
                 periodic_size = expanded;
-                let tables =
-                    graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
+                let tables = graph_tables(machine, search, expanded, count, None, None, None)
+                    .map_err(Bail)?;
                 let (liveness, size) =
                     check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
@@ -6622,6 +6849,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     debug_assert!(online.is_none() && search.held.is_none());
                     threads_used = threads_used.max(threads);
                     if workers.is_empty() {
+                        pool = Some(Pool::new(thread_count, NESTING_STACK_BYTES));
                         // The memo tables of the search's machine and its workers' share one
                         // machine's room, so that memory doesn't grow with the threads.
                         machine.limit_memo(memo_entries / thread_count);
@@ -6651,6 +6879,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         start: expanding,
                         end: level_end,
                         threads,
+                        pool: pool.as_ref().expect("the pool, started with the workers"),
                         number: search.level,
                         cursor: Padded(AtomicUsize::new(expanding)),
                         stop: Padded(AtomicUsize::new(
@@ -7187,6 +7416,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             count,
                             reals.as_ref(),
                             Some(search.depth.max(1) as u32),
+                            None,
                         ) {
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
@@ -7565,7 +7795,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_tables(&mut machine, &search, expanding, count, None, None) {
+                match graph_tables(&mut machine, &search, expanding, count, None, None, None) {
                     Ok(tables) => Some(Box::new(graph_checkpoint(
                         &mut machine,
                         &search,
@@ -7631,7 +7861,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         stop,
                         initial_states,
                         &|machine, search, expanded, count| {
-                            graph_tables(machine, search, expanded, count, None, None)
+                            graph_tables(machine, search, expanded, count, None, None, None)
                         },
                     )),
                     Err(why) if is_printed && is_held_past_initial => Some(Err(why)),
@@ -7684,12 +7914,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .iter()
                     .all(|&target| (target as usize) < added);
                 let accepted = if is_stored {
-                    graph_tables(&mut machine, &search, expanding + 1, added, None, None)
-                        .ok()
-                        .and_then(|tables| {
-                            accepted_at(model, &context, &search, &tables, expanding + 1, added)
-                        })
-                        .flatten()
+                    graph_tables(
+                        &mut machine,
+                        &search,
+                        expanding + 1,
+                        added,
+                        None,
+                        None,
+                        None,
+                    )
+                    .ok()
+                    .and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanding + 1, added)
+                    })
+                    .flatten()
                 } else {
                     None
                 };
@@ -7769,7 +8007,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         }
                     }
                     let tables =
-                        graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                        graph_tables(&mut machine, &search, expanded, count, None, None, None).ok();
                     let is_keyed = search.states.key_width.is_none()
                         && !is_symmetric
                         && !context.diameter_atoms.contains(&true);
@@ -7958,12 +8196,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 && !is_symmetric
             {
                 let expanded = search.expanding;
-                let accepted = graph_tables(&mut machine, &search, expanded, count, None, None)
-                    .ok()
-                    .and_then(|tables| {
-                        accepted_at(model, &context, &search, &tables, expanded, count)
-                    })
-                    .flatten();
+                let accepted =
+                    graph_tables(&mut machine, &search, expanded, count, None, None, None)
+                        .ok()
+                        .and_then(|tables| {
+                            accepted_at(model, &context, &search, &tables, expanded, count)
+                        })
+                        .flatten();
                 if let Some(Verdict::Accepted {
                     state,
                     path,
@@ -9597,9 +9836,9 @@ mod tests {
         }
         let slots = LARGE_TABLE_BYTES / size_of::<u64>();
         let mut set = FingerprintSet::new(false, Some(count));
-        set.reserve(slots / 4, 1);
+        set.reserve(slots / 4, None);
         assert_eq!(ADVISED.load(Ordering::Relaxed), 0);
-        set.reserve(slots / 2, 1);
+        set.reserve(slots / 2, None);
         assert_eq!(ADVISED.load(Ordering::Relaxed), 1);
         for fingerprint in 1..=(slots / 2 + 1) as u64 {
             if let Err(slot) = set.find(fingerprint) {
@@ -9669,7 +9908,7 @@ mod tests {
         };
         let scattered: Vec<u64> = (0..5000).map(|_| next()).collect();
         let mut set = FingerprintSet::new(false, None);
-        set.reserve(scattered.len() + 3, 1);
+        set.reserve(scattered.len() + 3, None);
         // Three fingerprints whose probes start at the last slot of the first thread's range: the
         // second and third run past it.
         let last = set.fingerprints.len() / 4 - 1;
@@ -9677,7 +9916,8 @@ mod tests {
             .filter(|&fingerprint| set.home(fingerprint) == last)
             .take(3)
             .collect();
-        let (statuses, indices) = set.fill(&[&scattered, &crowded], 4, 0, true);
+        let pool = Pool::new(4, 1 << 20);
+        let (statuses, indices) = set.fill(&[&scattered, &crowded], &pool, 0, true);
         assert!(indices.is_empty());
         let mut expected = FingerprintSet::new(false, None);
         for (&status, &fingerprint) in statuses.iter().zip(scattered.iter().chain(&crowded)) {
@@ -9720,7 +9960,7 @@ mod tests {
         assert_eq!(set.fingerprints.len(), slots);
         assert!(set.fingerprints[0] != 0 && set.fingerprints[slots / 4] != 0);
         for capacity in [slots * 2, slots * 16] {
-            set.grow_to(capacity, 4);
+            set.grow_to(capacity, Some(&Pool::new(4, 1 << 20)));
             assert_eq!(set.fingerprints.len(), capacity);
             let taken = set.fingerprints.iter().filter(|&&stored| stored != 0);
             assert_eq!(taken.count(), fingerprints.len());
@@ -9758,6 +9998,7 @@ mod tests {
             })
             .collect();
         for threads in [1, 2, 3, 5, 16, 33] {
+            let pool = Pool::new(threads, 1 << 20);
             let mut set = FingerprintSet::new(true, None);
             let (first, rest) = fingerprints.split_at(70_001);
             let (second, third) = rest.split_at(1);
@@ -9768,7 +10009,7 @@ mod tests {
                 &[&first[30_000..], second, &[], third],
             ] {
                 let before = set.len as u32 + u32::from(set.zero.is_some());
-                let (statuses, indices) = set.fill(runs, threads, before, true);
+                let (statuses, indices) = set.fill(runs, &pool, before, true);
                 filled.extend(statuses.into_iter().zip(indices));
             }
             assert!(set.fingerprints.len() > THREADED_GROWTH_SLOTS);
@@ -9804,7 +10045,7 @@ mod tests {
             }
         }
         let scattered: Vec<u64> = (0..5000).map(|_| next()).collect();
-        set.reserve(scattered.len() + 3, 1);
+        set.reserve(scattered.len() + 3, None);
         let last = set.fingerprints.len() / 4 - 1;
         let crowded: Vec<u64> = (1..)
             .filter(|&fingerprint| set.home(fingerprint) == last)
@@ -9817,9 +10058,10 @@ mod tests {
             };
             unresolved.insert(slot, fingerprint, index as u32);
         }
-        let (statuses, indices) = set.fill(&[&scattered, &crowded], 4, 300, true);
+        let pool = Pool::new(4, 1 << 20);
+        let (statuses, indices) = set.fill(&[&scattered, &crowded], &pool, 300, true);
         let halves = scattered.split_at(2500);
-        let (same, none) = unresolved.fill(&[halves.0, halves.1, &crowded], 4, 300, false);
+        let (same, none) = unresolved.fill(&[halves.0, halves.1, &crowded], &pool, 300, false);
         assert_eq!(same, statuses);
         assert!(none.is_empty());
         for fingerprint in scattered.iter().chain(&crowded) {
@@ -9827,7 +10069,7 @@ mod tests {
             let wanted = set.find(*fingerprint).expect("a fingerprint filled");
             assert_eq!(unresolved.index(found), set.index(wanted), "{fingerprint}");
         }
-        expected.reserve(scattered.len() + 3, 1);
+        expected.reserve(scattered.len() + 3, None);
         let mut next_index = 300;
         for ((&status, &index), &fingerprint) in statuses
             .iter()
