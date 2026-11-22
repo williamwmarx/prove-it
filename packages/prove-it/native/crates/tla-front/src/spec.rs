@@ -1647,6 +1647,13 @@ fn get_config_operator<'a>(
         .map(crate::environment::ConfigOpDefHeader::definition)
         .or_else(|| get_definition(name, environment));
     let Some(definition) = definition else {
+        // `defns` holds a standard module's operator too: the Java method that overrides it, which
+        // TLC reports as the value of the name (`<Java Method: ...>`), or its definition.
+        if environment.builtins.contains_key(name) {
+            return Err(not_yet(
+                "a name the configuration gives that is an operator of a standard module",
+            ));
+        }
         return Err(FrontError::Config(format!(
             "The {kind} {name} specified in the configuration file\nis not defined in the specification."
         )));
