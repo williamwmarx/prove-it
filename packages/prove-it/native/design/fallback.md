@@ -8621,6 +8621,7 @@ tactic only (`Fpfile.query`).
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 | with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 | with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
+| with a back end's refusal as the attempt's reason | 767 / 574 / 10 | 319 / 1,042 / 37 |
 
 ### Declines
 
@@ -8649,7 +8650,10 @@ tactic only (`Fpfile.query`).
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
   or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
-  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
+  `Isabelle's method modifier simp:`), where tlapm would try it. What tlapm's own encoding
+  refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
+  Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
+  which the port prints. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
