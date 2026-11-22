@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::clock::Instant;
@@ -1418,6 +1418,9 @@ struct States {
     order: Vec<usize>,
     is_verified: bool,
     collisions: u64,
+    /// The answers of the liveness checker's state predicates on the first states, which each
+    /// check of the graph extends where they can't differ between checks.
+    atom_answers: Mutex<Vec<Option<Vec<u8>>>>,
 }
 
 impl States {
@@ -1473,6 +1476,14 @@ impl States {
         }
         self.parents.truncate(count);
         self.fingerprints.truncate(count);
+        let answers = self.atom_answers.get_mut();
+        for answers in answers
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .flatten()
+        {
+            answers.truncate(count);
+        }
     }
 
     // Adds a state whose fingerprint the set holds already.
@@ -5109,6 +5120,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         order,
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
+        atom_answers: Mutex::new(Vec::new()),
     };
     let mut search = Search::new(
         states,
@@ -5232,6 +5244,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             levels
         });
+        {
+            let mut known = search
+                .states
+                .atom_answers
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if known.is_empty() {
+                *known = context
+                    .repeatable_atoms
+                    .iter()
+                    .map(|&is_repeatable| is_repeatable.then(Vec::new))
+                    .collect();
+            }
+        }
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -5246,6 +5272,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 partial: None,
                 pieces: None,
                 levels: None,
+                known: None,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -5263,6 +5290,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .as_ref()
                     .map(|pieces| (&pieces[..edge_count * graph.piece_width], graph.piece_width)),
                 levels: levels.as_deref(),
+                known: Some(&search.states.atom_answers),
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
@@ -8663,6 +8691,7 @@ mod tests {
             order: vec![0],
             is_verified: true,
             collisions: 0,
+            atom_answers: Mutex::new(Vec::new()),
         }
     }
 

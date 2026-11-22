@@ -459,6 +459,8 @@ pub struct Fingerprints<E = Dense> {
     // state's tails are found by once per state, and in a map past it.
     short_numbers: Vec<i32>,
     length_numbers: HashMap<u64, i32>,
+    // The stack `compute_new` walks a value's parts with, kept between calls.
+    pending: Vec<(Id, bool)>,
 }
 
 const SHORT_LENGTHS: usize = 1 << 12;
@@ -533,6 +535,7 @@ impl<E: Entries> Fingerprints<E> {
             lengths: Vec::new(),
             short_numbers: Vec::new(),
             length_numbers: HashMap::new(),
+            pending: Vec::new(),
         }
     }
 
@@ -694,14 +697,22 @@ impl<E: Entries> Fingerprints<E> {
 
     #[inline(never)]
     fn compute_new(&mut self, store: &Store, id: Id) -> Outcome<()> {
-        let mut pending = vec![(id, false)];
+        let mut pending = std::mem::take(&mut self.pending);
+        pending.clear();
+        pending.push((id, false));
+        let mut outcome = Ok(());
         while let Some((top, is_expanded)) = pending.pop() {
             if self.values.is_computed(top) {
                 continue;
             }
             if is_expanded {
-                let computed = self.compute_one(store, top)?;
-                self.values.set(top, computed);
+                match self.compute_one(store, top) {
+                    Ok(computed) => self.values.set(top, computed),
+                    Err(error) => {
+                        outcome = Err(error);
+                        break;
+                    }
+                }
                 continue;
             }
             pending.push((top, true));
@@ -711,7 +722,8 @@ impl<E: Entries> Fingerprints<E> {
                 }
             });
         }
-        Ok(())
+        self.pending = pending;
+        outcome
     }
 
     fn compute_one(&mut self, store: &Store, id: Id) -> Outcome<ValueFingerprint> {
@@ -732,21 +744,17 @@ impl<E: Entries> Fingerprints<E> {
                 let mut fingerprint =
                     polynomial.extend_int(polynomial.extend_byte(0, tag), store.size_of(id) as i32);
                 let mut length = 5;
-                let mut parts = Vec::new();
-                Self::for_each_part(store, id, |part, index| parts.push((part, index)));
-                for (part, index) in parts {
-                    match part {
-                        Some(part) => {
-                            fingerprint = self.extend_known(fingerprint, part);
-                            length += self.values.entry(part).length;
-                        }
-                        None => {
-                            fingerprint =
-                                self.shift(fingerprint, 5) ^ polynomial.get_int(index as i32 + 1);
-                            length += 5;
-                        }
+                Self::for_each_part(store, id, |part, index| match part {
+                    Some(part) => {
+                        fingerprint = self.extend_known(fingerprint, part);
+                        length += self.values.entry(part).length;
                     }
-                }
+                    None => {
+                        fingerprint =
+                            self.shift(fingerprint, 5) ^ polynomial.get_int(index as i32 + 1);
+                        length += 5;
+                    }
+                });
                 (fingerprint, length)
             }
             _ => return Err(UNFINGERPRINTABLE),

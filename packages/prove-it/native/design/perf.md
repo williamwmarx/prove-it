@@ -1058,6 +1058,62 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### Short runs: what TokenRing and SimpleRegular spend (short-run-costs)
+
+The two models of bench-suite.json furthest behind the rest against TLC on 4 cores, TokenRing
+(0.22 s, 5.6× TLC) and SimpleRegular (0.52 s, 5.5×), in Depot run 46kgrg2dmt, whose columns are
+the native binary and TLC. The shipped binary, Bun's with the engine as an addon, runs them in
+the same time (drhbh6n01c, 11 runs: 0.56 and 0.21 s against the native binary's 0.56 and
+0.20 s). Neither is start-up. Instructions (callgrind) of one worker at main d13f0073, each part
+as the run less the run without it:
+
+| Part | TokenRing, 3.41G | SimpleRegular, 8.47G |
+|---|---:|---:|
+| Start-up and front end (the model at N = 2) | 63M, 2% | 108M, 1% |
+| Search (Init, Next, fingerprints, the state table) | 0.92G, 27% | 5.36G, 63% |
+| Invariants | in the search | 3.1G, 37%: `TypeOK` 1.0G; `\A i : pc[i] \in {"b", "Done"} => x[i] = {1}` 1.5G |
+| Liveness: the atoms | 1.98G, 58% | — |
+| Liveness: the checker | 0.29G, 8% | — |
+| The fingerprints sorted for their distance | 4M | 0.2G, 2% |
+
+- **The atoms, twice.** All 46,656 of TokenRing's states are initial, and the engine answers the
+  atoms once on the initial states, where TLC would stop at one that fails, and again on the
+  whole graph: `UniqueToken`, 15k instructions a state, was evaluated twice for each, and its memo
+  table, keyed by the state, never hits. Now a state predicate that reads nothing the search
+  keeps, prints nor draws (`EngineContext::repeatable_atoms`) keeps its answers on the stored
+  states (`States::atom_answers`, cut back with the states), and every later check of the graph,
+  a periodic one too, evaluates it only on the states added since.
+- **Allocations on every evaluation.** `quantify_levels` built three vectors for each `\A` or `\E`
+  over intervals, 1.1M times in SimpleRegular and 0.9M in TokenRing: 6% and 11% of their
+  instructions in `malloc` and `free`. The levels are now counted in an array on the stack.
+  `Fingerprints::compute_new` built its stack for each new value, and `compute_one` a vector of
+  each composite's parts: the stack is now kept between calls and the parts visited in place.
+- **`f[c]` of a variable and a constant**, TokenRing's `c[0]` and `c[N-1]`, went through the
+  generic application, a closure for the variable that keeps a function lazy and one for the
+  constant. It now reads the variable and applies it, as `f[i]` of a bound name did already.
+- **Membership of a scalar in a short set of scalars of its kind**, SimpleRegular's `pc[i] \in
+  {"b", "Done"}`, tested the lazy and ANY flags and joined the element's shape with the set's
+  before looking for the id. Such a comparison can't fail, so a set of 16 elements or fewer, all
+  of the element's kind, now holds it where it holds its id.
+- **The fingerprint distance** sorted the fingerprints with a comparison sort, 700 instructions a
+  state at the end of every run that reports it; a radix sort of 16-bit digits now takes four
+  passes over them.
+
+Instructions of a build without LTO, one worker: TokenRing 4.31G → 2.70G, SimpleRegular 10.44G
+→ 8.76G. Depot, `depot-ubuntu-24.04-4`, bench-suite.json, the native binary against `main` at
+96553647, medians of 15 interleaved runs with the ranges:
+
+| Model | 1 worker | 4 workers |
+|---|---|---|
+| TokenRing (0b4bpstfl1) | 0.21 (0.20–0.23) → 0.14 (0.13–0.19) s, 1.44× | 0.11 → 0.08 s |
+| SimpleRegular (kvsvpskkdk) | 0.56 (0.54–0.57) → 0.49 (0.46–0.51) s, 1.14× | 0.29 → 0.27 s |
+
+Again at the branch's head (1jzh63gq1t, 15 runs): TokenRing 0.18 → 0.12 s, SimpleRegular 0.52 →
+0.47 s. The whole suite (vw9kh46c17, 5 runs) is 1.05× `main` on one worker and 1.04× on four, with
+MCBakery 0.75 → 0.68 s and Commit 0.29 → 0.27 s besides, and no model slower beyond its range.
+Over TLC's medians in 46kgrg2dmt, TokenRing goes from 5.6× to 8.9× on one worker, and
+SimpleRegular from 5.5× to 5.9×.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and

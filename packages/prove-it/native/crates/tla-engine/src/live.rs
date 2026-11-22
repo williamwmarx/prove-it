@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tla_live::{Answers, Declined, Slot};
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -55,6 +55,10 @@ pub struct LiveGraph<'g> {
     /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
     /// state, else one past its parent's.
     pub levels: Option<&'g [u32]>,
+    /// By atom, the answers on the first states from an earlier check of the same states, of each
+    /// state predicate that answers a state the same in every check, which a check takes and
+    /// extends.
+    pub known: Option<&'g Mutex<Vec<Option<Vec<u8>>>>>,
 }
 
 /// What the steps the search took answer of an action atom on each step whose subscript changed:
@@ -672,6 +676,13 @@ pub fn answer_atoms(
     diameters: &Diameters<'_>,
     helpers: &mut [Machine<'_>],
 ) -> Result<Vec<Table>, &'static str> {
+    let mut known = graph
+        .known
+        .map(|known| known.lock().unwrap_or_else(PoisonError::into_inner));
+    let known: &mut [Option<Vec<u8>>] = match &mut known {
+        Some(known) => known,
+        None => &mut [],
+    };
     let (diameter_atoms, last_diameter) = (diameters.atoms, diameters.last);
     let mut evaluator = Evaluator {
         machine,
@@ -819,32 +830,46 @@ pub fn answer_atoms(
                     unknown: Some(reason.clone()),
                     prints,
                 },
-                Atom::State(eval) if is_shared => Table {
-                    answers: on_helpers(
-                        evaluator.machine,
-                        helpers,
-                        graph,
-                        graph.count,
-                        |_| 1,
-                        |run, index, answers: &mut Vec<u8>| answers.push(run.state(index, eval)),
-                    )
-                    .concat(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
-                Atom::State(eval) => Table {
-                    answers: (0..graph.count)
-                        .map(|index| {
+                Atom::State(eval) => {
+                    let known = known.get_mut(position).and_then(Option::as_mut);
+                    let from = known
+                        .as_ref()
+                        .map_or(0, |known| known.len().min(graph.count));
+                    let mut answers = Vec::with_capacity(graph.count);
+                    if let Some(known) = &known {
+                        answers.extend_from_slice(&known[..from]);
+                    }
+                    if is_shared && from < graph.count {
+                        let parts = on_helpers(
+                            evaluator.machine,
+                            helpers,
+                            graph,
+                            graph.count,
+                            |index| usize::from(index >= from),
+                            |run, index, answers: &mut Vec<u8>| {
+                                if index >= from {
+                                    answers.push(run.state(index, eval));
+                                }
+                            },
+                        );
+                        answers.extend(parts.concat());
+                    } else if !is_shared {
+                        answers.extend((from..graph.count).map(|index| {
                             let answer = evaluator.evaluate_state(index, eval);
                             keep_printed(evaluator.machine, &mut prints, index);
                             answer
-                        })
-                        .collect(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
+                        }));
+                    }
+                    if let Some(known) = known {
+                        known.clone_from(&answers);
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
                 Atom::Action { key, .. } if is_shared => {
                     // This atom and the action atoms after it whose subscripts share its values,
                     // each with the ENABLED of its fairness answered already, in one pass of the
