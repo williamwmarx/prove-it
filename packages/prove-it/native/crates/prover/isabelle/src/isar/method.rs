@@ -148,7 +148,11 @@ impl MethodParser<'_> {
             let kind = match kind.as_str() {
                 "intro" => ModifierKind::Intro,
                 "dest" => ModifierKind::Dest,
-                _ => return Err(Error::Unsupported(format!("Isabelle's method modifier {kind}:"))),
+                _ => {
+                    return Err(Error::Unsupported(format!(
+                        "Isabelle's method modifier {kind}:"
+                    )));
+                }
             };
             result.push(Modifier {
                 kind,
