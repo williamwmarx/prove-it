@@ -407,7 +407,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
                     }
                 }
                 target(machine, IS_INIT)[*variable as usize] = value;
-                machine.note_assigned(*variable as usize, value);
+                machine.note_assigned(*variable as usize, value, IS_INIT);
                 machine.assigned += 1;
                 Ok(true)
             }
@@ -552,7 +552,7 @@ fn either_step(
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
-            machine.note_assigned(index, value);
+            machine.note_assigned(index, value, is_init);
             machine.assigned += 1;
             let result = run_rest(&rest, machine, on_complete);
             target(machine, is_init)[index] = UNASSIGNED;
@@ -3268,7 +3268,7 @@ impl<'a> Compiler<'a> {
                 for position in positions {
                     let element = element_at(machine, id, position);
                     target(machine, is_init)[index] = element;
-                    machine.note_assigned(index, element);
+                    machine.note_assigned(index, element, true);
                     let result = run_rest(&assigned, machine, on_complete);
                     if result.is_err() || has_generated(machine) {
                         target(machine, is_init)[index] = UNASSIGNED;
@@ -3288,7 +3288,7 @@ impl<'a> Compiler<'a> {
                 for position in survivors {
                     let element = machine.store.element_at(id, position);
                     target(machine, is_init)[index] = element;
-                    machine.note_assigned(index, element);
+                    machine.note_assigned(index, element, true);
                     run_rest(&assigned, machine, on_complete)?;
                 }
                 target(machine, is_init)[index] = UNASSIGNED;
@@ -3299,7 +3299,7 @@ impl<'a> Compiler<'a> {
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
-                machine.note_assigned(index, element);
+                machine.note_assigned(index, element, true);
                 if let Some((first, lazy)) = &held {
                     let is_first = element == *first || machine.store.equals(element, *first)?;
                     machine.held[index] = is_first.then(|| (element, lazy.clone()));
