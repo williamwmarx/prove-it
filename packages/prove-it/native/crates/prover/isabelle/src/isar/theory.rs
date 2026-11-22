@@ -114,7 +114,7 @@ fn skip_comment(text: &str, start: usize) -> Res<usize> {
     }
 }
 
-fn tokenize(text: &str) -> Res<Vec<OuterToken>> {
+pub(crate) fn tokenize(text: &str) -> Res<Vec<OuterToken>> {
     let mut tokens = Vec::new();
     let mut position = 0;
     while let Some(char) = char_at(text, position) {

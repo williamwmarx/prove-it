@@ -19,3 +19,4 @@ packages/prove-it/tests/fixtures/tlapm-cli/IsabelleMethods.tla | --toolbox 0 0 -
 packages/prove-it/tests/fixtures/tlapm-cli/IsaReuse.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/EnabledLevel.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/ZenonUnsupported.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/IsaRules.tla | --toolbox 0 0 --threads 1

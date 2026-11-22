@@ -8685,6 +8685,15 @@ HIDE of a step no USE made a fact of ends tlapm with `Failure("proof.Gen.set_exp
 (`tests/fixtures/obligation-errors/HideStep.tla`, recorded with b91fb6c), which declines as any
 error tlapm ends with, where the port proved the theorem.
 
+The Isabelle port runs `fast` (`Classical.fast_tac`: the premises atomized, then a depth-first
+search with `step_tac` on the first goal, under `cla_method'` with its `intro:` and `dest:`
+sections), `rule` with rules (`Method.rule_tac`: each rule's first premises resolved against the
+facts by `Drule.multi_resolves`, then against the goal, the new goals normalized), and the
+`add:` section of `simp` and the `simp:` and `simp add:` sections of `auto`, `force` and
+`clarsimp` (`Simplifier.simp_add` over the simpset), which `IsaM("fast")` and `IsaM("(rule
+chooseI)")` in the upstream suite's backend inputs name and the port failed as undefined
+methods (`tests/fixtures/tlapm-cli/IsaRules.tla`, recorded with b91fb6c).
+
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
 for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
@@ -8715,6 +8724,7 @@ tactic only (`Fpfile.query`).
 | with a TAKE's domain inclusion at its bound's name | 766 / 574 / 11 | 319 / 1,042 / 37 |
 | declining what tlapm's parser and Expr.Anon reject | 766 / 577 / 8 | 319 / 1,042 / 37 |
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
+| with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 
 ### Declines
 
@@ -8745,8 +8755,13 @@ tactic only (`Fpfile.query`).
     limit, and an input a back end can't read.
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
-  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
-  `Isabelle's method modifier simp:`), where tlapm would try it. What tlapm's own encoding
+  or combinator the Isabelle port doesn't implement, where tlapm would try it: a method
+  Isabelle/Pure or the provers of Isabelle/TLA+'s session define that the port has no tactic for
+  (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
+  without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
+  section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  What tlapm's own encoding
   refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
   Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
   which the port prints. tlapm
