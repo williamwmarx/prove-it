@@ -516,6 +516,30 @@ pub struct Instantiation<'a> {
 /// LAMBDA is a keyword, so no name bound inside the instance can capture it.
 const LAMBDA_NAME: &str = "LAMBDA";
 
+/// The application an operator parameter's use became where an INSTANCE substituted a LAMBDA for
+/// the parameter: `F(a)` under `F <- LAMBDA y : y + 1` is `LET LAMBDA(y) == y + 1 IN LAMBDA(a)`,
+/// whose operands are the application's, as SANY's are those of the `F(a)` its SubstInNode
+/// wraps.
+pub fn get_substituted_lambda_application(expression: &Expression) -> Option<&Expr> {
+    let ExpressionKind::Let {
+        definitions,
+        instances: None,
+        body,
+        ..
+    } = &expression.kind
+    else {
+        return None;
+    };
+    let [definition] = definitions.as_slice() else {
+        return None;
+    };
+    (&*definition.name == LAMBDA_NAME
+        && matches!(body.kind, ExpressionKind::Apply { .. })
+        && body.reference().is_some_and(|name| &*name == LAMBDA_NAME)
+        && body.resolved.is_local.get())
+    .then_some(body)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal = 0,
