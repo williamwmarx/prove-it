@@ -13,6 +13,7 @@ mod log_file;
 pub mod machine;
 pub mod memo;
 pub mod oracle;
+pub mod pool;
 pub mod search;
 pub mod simulate;
 pub mod symmetry;

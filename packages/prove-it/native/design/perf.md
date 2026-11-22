@@ -1130,6 +1130,23 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### The threads of a shared level kept in a pool (search-pool)
+
+A shared level spawned and joined its threads six or seven times: for the expansion, for each
+of the fingerprint table's fill phases and its growth, and for the copy of its new states. Timed
+on `depot-ubuntu-24.04-16` at 16 workers, a round of 16 threads with 64 MiB stacks cost 0.3–0.5
+ms, 4–20 ms a model over its shared levels, and the fill's four rounds 5–54 ms. The threads are
+now a pool (`pool.rs`), started at the first shared level and kept to the search's end; a round
+posts one job per thread and waits for every job, as the scope did, so the jobs borrow the
+caller's data as before and the output is the same at every thread count. Against main at
+8ee58a30, median wall ms of 5 interleaved runs: the perf suite on `depot-ubuntu-24.04-16` at
+16 workers, 1.038× over the suite, MCLamportMutex 433.5 → 368.5 (1.18×), MCbtree 181.8 → 161.2
+(1.13×), Detlefs 401.0 → 359.9 (1.11×), BufferedRandomAccessFile 164.4 → 155.7, TLCSailfish1
+348.9 → 331.3, PaxosCommit 1376.4 → 1328.2, FastPaxos 254.5 → 246.1, StarkMutex 648.9 → 629.7,
+MCExactInitialSync, cf1s_folklore and 2PCwithBTM within main's range; the bench suite on
+`depot-ubuntu-24.04-4` at 4 workers, 1.00× over the suite, philosophers 65.4 → 62.0, queue 16.2
+→ 15.4, test19 44.7 → 42.9, ReadersWriters 46.2 → 50.2 (main 45–49), the rest within their
+ranges. Parity clean.
 ### A thread's values imported by the hash the overlay kept (import-prefetch)
 
 The merge imports every value a thread made into the store one by one, in the order adding the
@@ -1957,6 +1974,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Scan a set for the element's id before the binary search of a union with one element, and keep the last pair of shapes joined beside the map of joins | PaxosCommit | 16 cores, medians of 7, with passed-sets: 13.12 (12.61–14.67) → 11.14 (10.61–11.78) s (txlp6r4d46), against 13.20 → 11.19 for passed-sets alone (r3slvll58b) | Within the run-to-run range. `Store::union` is 11.8 % of the run and its comparisons 4.8 %, `join_distinct` 2.3 % (Depot jfcw8p8n9v), but a scan saves only the comparisons of a message sent again, and the map's lookup of one pair is already a multiply and a probe. |
 | Read every LET definition and argument its body may read again through its entry (bind-once's first versions), whatever the expression costs | GameOfLife, MCabs, the suite | 16 cores, one thread, medians of 3 (wtrf74gnc0, 5wpc0s2wrc): GameOfLife 0.90 → 0.96 s both times, MCabs 0.19 → 0.22 and 0.19 → 0.21, MCbtree 0.65 → 0.67 and 0.66 → 0.68; BufferedRandomAccessFile 1.59 → 1.39 and 1.56 → 1.36 | An entry is one value: where what the expression reads changes at each evaluation (`x == CHOOSE x \in S : TRUE` down `Sum`'s recursion, `cLogs'[i]` for each candidate of MCabs' pruning), each first read fills it, about 45 instructions around the evaluation, and the second read saves a lookup in a direct table or an application, which cost less. Kept only where the expression is a hashed lookup, or keys a table and is written with five nodes or more. |
 | Key a table by the value of a name that says what its expression read, as `dag == <<vs, es>>` | TLCSailfish1 | 16 threads, medians of 9 (g80xnmw706, jkzr32gf37): 0.34 s (3.93 CPU s) → 0.35 (4.15), then 0.34 (4.10) → 0.36 (4.32); one thread 2.97 → 2.90. Profile bljfb5zrh3: `memo_lookup` 25.3% → 17.7% of the samples, with 6.7% in the lookups by names' values and 2% in the reads of entries | The value takes as many values as `vs` and `es` do, so the table hits no more often, and each lookup finds the name's entry first. On threads the tuple is the thread's own, and the table forgot at each level what `vs` and `es` would still find. Such a name keys nothing now, and a thread's own value doesn't key. |
+| Write a shared level's new states into the state tables' spare capacity on the copy threads, instead of a `resize` that zero-fills their ids, keys, parents and fingerprints on the search's thread first (`tables-uninit`) | the suites | 4 workers on Detlefs, locally: the resize was 115 of the copy's 150 ms. Depot 2np73v3hh2 against main 8ee58a30, medians of 5: 16 cores 1.012× over the perf suite, MCExactInitialSync 1306.7 → 1245.3 ms, Detlefs 397.6 → 379.8, cf1s_folklore 876.1 → 842.4; 4 cores 0.985× over the bench suite, test19 47.1 → 53.8, philosophers 82.5 → 87.5, both outside main's range. Callgrind on test19 at 4 workers: 956.0 M → 957.2 M instructions; locally, 15 interleaved runs, test19 101.2 → 95.8 ms and philosophers 147.2 → 147.8 | About 1% either way. The 4-core loss isn't CPU work; the hypothesis, unverified, is that the four copy threads now fault the new pages in at once, in one address space, which on that machine costs more than the zero-fill saved where levels are small and many. The branch is `tables-uninit`. |
 | Bind a name's value to a slot of the LET's or the call's evaluation, cleared where it begins | | Not built | A compiled value's membership test, parts, filter and predicate are evaluated by its parents past its evaluation (`is_eval_only`), and a LET of an action is walked, not evaluated: none of those passes where the slot is cleared, so a stale value would be read. An entry keyed by what the expression reads holds wherever it is read. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled

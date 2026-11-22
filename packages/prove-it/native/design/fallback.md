@@ -8750,6 +8750,13 @@ it on both, as the port does, before the `.thy` and fingerprints lines, and exit
 listed for the Record tlapm job (`tests/fixtures/tlapm-cli`), whose recording on Depot is what
 the port is held to.
 
+The Isabelle port declines a theory other than the goal theory `Isabelle.thy_temp` writes (one
+lemma proved by a method): the checking theory `Isabelle.thy_header` and `thy_write` write for a
+module, which marks each obligation with `ML_command` and proves Zenon's with a structured Isar
+proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabelle/zenon/*`,
+`imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
+port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
+
 The PTL decider reads LS4's input as `ptl_to_trp -i file | ls4` reads it (`Params.ls4`):
 tlapm's `translate` (`translate/` at b91fb6c) lexes `=>` and `<=>` beside `->` and `<->`, a `;`
 comment, `not`, `until` and `unless`, `!` and `?` quantifiers over `[X]`, `True` and `False`,
@@ -8784,7 +8791,8 @@ but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/co
 | with the two runs Zenon's memory limit decides set aside | 769 / 577 / 3 | 321 / 1,042 / 35 |
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
-| with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 338 / 1,042 / 18 |
+| declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
+| with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 
 ### Declines
 
@@ -8820,7 +8828,13 @@ but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/co
   (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
   without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
   section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
-  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`); and a
+  theory other than the goal theory `Isabelle.thy_temp` writes, one lemma proved by a method:
+  the checking theory `Isabelle.thy_header` and `thy_write` write for a module, which marks each
+  obligation with `ML_command` and proves Zenon's with a structured Isar proof (`the checking
+  theory tlapm writes for a module's proofs`, `Isabelle's structured Isar proof`), and a theory
+  of Isabelle/TLA+'s own sources (`a theory beyond the consts and the one lemma tlapm writes a
+  goal as`).
   What tlapm's own encoding
   refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
   Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
@@ -8885,6 +8899,12 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
+  `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
+  no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
+  the Isabelle port now declines beside it, takes the structured Isar proof language (`proof`,
+  `assume`, `have`, `show`, `next`, `qed`, `is` patterns, `of` and `OF`) and Isabelle/TLA+'s own
+  theories.
 
 ### Known wrong outputs
 
