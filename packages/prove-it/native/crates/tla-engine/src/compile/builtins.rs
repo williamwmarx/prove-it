@@ -10,7 +10,7 @@ use tla_values::json;
 use tla_values::print::{Construction, is_printable, write_constructed};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind,
+    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind, is_tested_set_kind,
 };
 use tla_values::transfer::UNENCODABLE;
 use tla_values::{
@@ -44,6 +44,18 @@ pub(crate) const UNNUMBERED_MODEL_VALUE: &str =
 pub(crate) const ENUMERATED_NAT: &str = "enumerated Nat";
 pub(crate) const ENUMERATED_STRING: &str = "enumerated STRING";
 pub(crate) const ENUMERATED_SEQ: &str = "enumerated Seq(S)";
+
+// Whether evaluating the expression reads no memo table keyed by a variable: a value a fused node
+// reads in place, or one of bound names alone, whose tables are as small as their sets.
+fn is_read_in_place(compiled: &Compiled) -> bool {
+    !matches!(compiled.shape, Shape::Other | Shape::SimulationRun(_))
+        || compiled.footprint.vars.is_empty() && compiled.footprint.primes.is_empty()
+}
+
+// The most entries the memo table of a membership takes once a miss was answered by scanning a
+// short set for the element's id: a longer table no longer stays in a core's own cache, and a row
+// read from memory costs more than the scan.
+const SHORT_TABLE: usize = 1 << 12;
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -322,6 +334,7 @@ impl Compiler<'_> {
             vars: (0..self.ir.variables.len() as u32).collect(),
             primes: Vec::new(),
             slots: vec![super::LEVEL_SLOT, super::TRACE_SLOT],
+            through: None,
         };
         if !self.is_native {
             return leaf(eval(|_| Err(Bail(crate::machine::TRACE_UNKEPT))), footprint);
@@ -448,10 +461,18 @@ impl Compiler<'_> {
         leaf(eval(|_| Err(Bail(INDEX_REPLACED))), Footprint::default())
     }
 
+    /// A place for `Machine::holds_all` to keep the set whose elements last passed membership in
+    /// `set`, where the set reads nothing, so that the test of an element does the same each
+    /// time.
+    fn allocate_pass_in(&mut self, set: &Compiled) -> Option<usize> {
+        (set.footprint.width() == 0 && !self.options.is_memo_off).then(|| self.allocate_pass())
+    }
+
     /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
     pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
         let base_member = self.member_test(base);
         let base_parts = Self::parts_of(base);
+        let pass = self.allocate_pass_in(base);
         Compiled {
             is_normalized: false,
             subset_base: Some(Box::new(base.clone())),
@@ -479,6 +500,9 @@ impl Compiler<'_> {
                 // TLC fails on anything it can't enumerate, untyped model values included.
                 if machine.store.kind_of(element) != KIND_SET {
                     return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                if let Some(pass) = pass {
+                    return machine.holds_all(pass, element, &base_member);
                 }
                 for index in 0..machine.store.size_of(element) {
                     let value = machine.store.element_at(element, index);
@@ -791,7 +815,7 @@ impl Compiler<'_> {
                     return Ok(super::constant(TRUE));
                 }
             };
-            let mut footprint = deferred.footprint;
+            let mut footprint = deferred.footprint.direct();
             footprint.slots.retain(|&slot| slot != super::PRINT_SLOT);
             let footprint = footprint.merge(&Footprint::slot(super::REGISTER_SLOT));
             let evaluate = deferred.eval;
@@ -1042,8 +1066,13 @@ impl Compiler<'_> {
         right_operand: &Operand,
         right: &Compiled,
     ) -> Option<[Eval; 4]> {
-        let ((low, high), (other_low, other_high)) =
-            (left.interval.clone()?, right.interval.clone()?);
+        let (left_interval, right_interval) = (left.interval.clone()?, right.interval.clone()?);
+        let (low, high, other_low, other_high) = (
+            left_interval.low,
+            left_interval.high,
+            right_interval.low,
+            right_interval.high,
+        );
         for operand in [left_operand, right_operand] {
             if operand.is_param
                 || self.may_have_effect_in(operand.node, &operand.context, &mut HashSet::new())
@@ -1181,16 +1210,21 @@ impl Compiler<'_> {
             // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
             // the tests TLC makes as it builds T even where S is empty.
             let right_parts = Self::parts_of(right);
+            let pass = self.allocate_pass_in(right);
             eval(move |machine| {
                 let set = evaluate_set(machine, &left_eval, "expected a set")?;
                 machine.run_parts(&right_parts)?;
                 let before = machine.effects();
                 let mut is_subset = TRUE;
-                for index in 0..machine.store.size_of(set) {
-                    let element = machine.store.element_at(set, index);
-                    if !test(machine, element)? {
-                        is_subset = FALSE;
-                        break;
+                if let Some(pass) = pass {
+                    is_subset = bool_id(machine.holds_all(pass, set, &test)?);
+                } else {
+                    for index in 0..machine.store.size_of(set) {
+                        let element = machine.store.element_at(set, index);
+                        if !test(machine, element)? {
+                            is_subset = FALSE;
+                            break;
+                        }
                     }
                 }
                 // A test may evaluate T's parts again, which an effect shows.
@@ -1204,7 +1238,11 @@ impl Compiler<'_> {
             // `IntervalValue.member` of an integer compares it with the bounds, so TLC tests a set
             // of integers against `a..b` without building it, however large. Where S holds
             // anything else, the test goes as compiled.
-            let right_bounds = right.interval.clone().filter(|_| !right.is_printing());
+            let right_bounds = right
+                .interval
+                .clone()
+                .filter(|_| !right.is_printing())
+                .map(|interval| (interval.low, interval.high));
             eval(move |machine| {
                 let left = evaluate_set(machine, &left_eval, "expected a set")?;
                 if let Some((low, high)) = &right_bounds {
@@ -1466,7 +1504,10 @@ impl Compiler<'_> {
             .version
             .is_some_and(|version| self.text(version) == "1.7.4");
         let set = compiled.last().expect("an operand");
-        let interval = set.interval.clone();
+        let interval = set
+            .interval
+            .clone()
+            .map(|interval| (interval.low, interval.high));
         let reference = set.reference.clone();
         let evaluate_members = set.eval.clone();
         let is_enumerated = set.is_enumerated;
@@ -4091,6 +4132,40 @@ impl Compiler<'_> {
                             }
                         }))
                     }
+                    // A set the engine builds, short enough to scan, answers a miss by the
+                    // element's id, for less than a row of a table grown past a core's cache
+                    // costs: such a miss lets its table take no more entries than that. That
+                    // holds only where neither side reads a table of its own that grows with
+                    // the states, which a hit of this one would have spared.
+                    None if set.member.is_none()
+                        && set.infinite.is_none()
+                        && !is_interval
+                        && is_read_in_place(&element)
+                        && is_read_in_place(&set)
+                        && self.takes_table(&compiled) =>
+                    {
+                        let first = self.program.memo_tables.len();
+                        let tables = first..first + self.tables_taken(&compiled);
+                        let shortened = tables.clone();
+                        let (element, set) = (element.eval.clone(), set.eval.clone());
+                        let scanned = compiled.with_eval(eval(move |machine| {
+                            let value = element(machine)?;
+                            let set = set(machine)?;
+                            if let Some(found) = machine.store.find_in_set(set, value) {
+                                for table in shortened.clone() {
+                                    machine.tables[table].shorten(SHORT_TABLE);
+                                }
+                                return Ok(bool_id(found == is_in));
+                            }
+                            if !is_tested_set_kind(machine.store.kind_of(set)) {
+                                return Err(Bail("membership in a non-set"));
+                            }
+                            Ok(bool_id(machine.store.is_member(value, set)? == is_in))
+                        }));
+                        let cached = self.cached(scanned);
+                        debug_assert_eq!(self.program.memo_tables.len(), tables.end);
+                        cached
+                    }
                     _ => compiled,
                 }
             }
@@ -4196,7 +4271,7 @@ impl Compiler<'_> {
                     && left.infinite.is_none()
                     && !left.has_infinite_part;
                 let compiled = match (compiled, right.interval.clone()) {
-                    (Some(compiled), Some((low, high))) if is_filtered => {
+                    (Some(compiled), Some(super::Interval { low, high, .. })) if is_filtered => {
                         Some(Self::interval_filtered(
                             compiled,
                             left.eval.clone(),
@@ -4418,67 +4493,68 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                arithmetic(
-                    &left,
-                    &right,
-                    match name {
-                        "+" => |left, right| Ok(left + right),
-                        "-" => |left, right| Ok(left - right),
-                        "*" => |left, right| Ok(left * right),
-                        "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
-                            |left: i64, right: i64| {
-                                naturals_divide(left, right).ok_or(Bail("division by zero"))
+                let computed =
+                    arithmetic(
+                        &left,
+                        &right,
+                        match name {
+                            "+" => |left, right| Ok(left + right),
+                            "-" => |left, right| Ok(left - right),
+                            "*" => |left, right| Ok(left * right),
+                            "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
+                                |left: i64, right: i64| {
+                                    naturals_divide(left, right).ok_or(Bail("division by zero"))
+                                }
                             }
-                        }
-                        "\\div" => {
-                            |left: i64, right: i64| {
+                            "\\div" => |left: i64, right: i64| {
                                 if right == 0 {
                                     return Err(Bail("division by zero"));
                                 }
                                 let quotient = left / right;
                                 Ok(quotient
                                     - i64::from(left % right != 0 && (left < 0) != (right < 0)))
-                            }
-                        }
-                        "%" => |left: i64, right: i64| {
-                            if right <= 0 {
-                                return Err(Bail("modulus by a non-positive number"));
-                            }
-                            Ok(left.rem_euclid(right))
+                            },
+                            "%" => |left: i64, right: i64| {
+                                if right <= 0 {
+                                    return Err(Bail("modulus by a non-positive number"));
+                                }
+                                Ok(left.rem_euclid(right))
+                            },
+                            _ => |base: i64, exponent: i64| {
+                                if exponent < 0 {
+                                    return Err(Bail("negative exponent"));
+                                }
+                                if base == 0 && exponent == 0 {
+                                    return Err(Bail("zero to the power of zero"));
+                                }
+                                // Past 32 bits the store fails as TLC's arithmetic overflows.
+                                Ok(u32::try_from(exponent)
+                                    .ok()
+                                    .and_then(|exponent| base.checked_pow(exponent))
+                                    .unwrap_or(i64::MAX))
+                            },
                         },
-                        _ => |base: i64, exponent: i64| {
-                            if exponent < 0 {
-                                return Err(Bail("negative exponent"));
-                            }
-                            if base == 0 && exponent == 0 {
-                                return Err(Bail("zero to the power of zero"));
-                            }
-                            // Past 32 bits the store fails as TLC's arithmetic overflows.
-                            Ok(u32::try_from(exponent)
-                                .ok()
-                                .and_then(|exponent| base.checked_pow(exponent))
-                                .unwrap_or(i64::MAX))
-                        },
-                    },
-                )
+                    );
+                self.folded(computed, &[&left, &right])
             }
             "-." => {
                 arity(1)?;
                 let operand = self.operand(&operands[0])?;
-                unary(
+                let negated = unary(
                     &operand,
                     |machine, value| {
                         let value = expect_int(machine, value)?;
                         machine.store.int(-value)
                     },
                     false,
-                )
+                );
+                self.folded(negated, &[&operand])
             }
             "<" | ">" | "<=" | ">=" => {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                comparison(
+                let compared = comparison(
                     &left,
                     &right,
                     match name {
@@ -4487,14 +4563,28 @@ impl Compiler<'_> {
                         "<=" => |left, right| left <= right,
                         _ => |left, right| left >= right,
                     },
-                )
+                );
+                self.folded(compared, &[&left, &right])
             }
             ".." => {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
                 let (low, high) = (left.eval.clone(), right.eval.clone());
-                let bounds = (low.clone(), high.clone());
+                let known = match (left.shape, right.shape) {
+                    (Shape::Constant(low), Shape::Constant(high))
+                        if self.store.kind_of(low) == KIND_INT
+                            && self.store.kind_of(high) == KIND_INT =>
+                    {
+                        Some((self.store.int_of(low), self.store.int_of(high)))
+                    }
+                    _ => None,
+                };
+                let bounds = super::Interval {
+                    low: low.clone(),
+                    high: high.clone(),
+                    known,
+                };
                 Compiled {
                     is_costly: true,
                     is_in_order: true,
@@ -4917,7 +5007,8 @@ impl Compiler<'_> {
                     // `IntervalValue.size`, which counts the interval without building it and
                     // fails where it has more than 2^31 - 1 elements.
                     None if set.interval.is_some() => {
-                        let (low, high) = set.interval.clone().expect("an interval");
+                        let super::Interval { low, high, .. } =
+                            set.interval.clone().expect("an interval");
                         Compiled {
                             is_costly: true,
                             ..leaf(
@@ -6459,7 +6550,10 @@ impl SubsetSetDraw {
             count: compiled[0].eval.clone(),
             probability: compiled[1].eval.clone(),
             set: compiled[2].eval.clone(),
-            interval: compiled[2].interval.clone(),
+            interval: compiled[2]
+                .interval
+                .clone()
+                .map(|interval| (interval.low, interval.high)),
             reference: compiled[2].reference.clone(),
             average_mode,
         }

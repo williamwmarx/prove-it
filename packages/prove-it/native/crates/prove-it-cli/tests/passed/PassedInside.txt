@@ -1,0 +1,35 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+msgs = {}
+
+State 2: <Next line 6, col 31 to line 6, col 51 of module PassedInside>
+msgs = {[k |-> 1]}
+
+State 3: <Next line 6, col 31 to line 6, col 51 of module PassedInside>
+msgs = {[k |-> 1], [k |-> 2]}
+
+State 4: <Next line 6, col 31 to line 6, col 51 of module PassedInside>
+msgs = {[k |-> 1], [k |-> 2], [type |-> "a", n |-> 1]}
+
+State 5: <Next line 6, col 31 to line 6, col 51 of module PassedInside>
+msgs = {[k |-> 1], [k |-> 2], [type |-> "a", n |-> 1], [type |-> "a", n |-> 2]}
+
+State 6: <Next line 6, col 31 to line 6, col 51 of module PassedInside>
+msgs = { [k |-> 1],
+  [k |-> 2],
+  [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3] }
+
+State 7: <Next line 7, col 12 to line 7, col 79 of module PassedInside>
+msgs = { [k |-> 1],
+  [k |-> 2],
+  [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 9] }
+
+162 states generated, 33 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.

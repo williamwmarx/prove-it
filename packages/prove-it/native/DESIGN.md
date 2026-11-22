@@ -444,6 +444,37 @@ and throws if the value differs, as `epochLookup` does. Memo tables are **per th
 They cache pure functions of their keys, so sharing them cannot change a result, and per-thread
 tables need no synchronisation.
 
+**Names bound once.** TLC binds a LET definition and an operator's argument to a `LazyValue`,
+which computes the value where the body first reads the name and keeps it for the other reads of
+the same states. The compiler substitutes the expression for the name, and where the body may read
+it again (it names it twice, or in what a binder or an operator of the LET evaluates again and
+again) binds it once (`Compiler::bound_once`): one entry of the machine, keyed by everything the
+expression reads, kept with its height as a memo entry is. It serves two ends.
+- **A key.** A footprint says which names it reads its variables and slots through
+  (`Footprint::through`), and `cached()` keys a costly expression by those names' values where
+  that takes no more keys (`Machine::lookup_through`): `[req EXCEPT ![p][q] = c]` with
+  `c == Head(network[q][p]).clock` is keyed by `req`, `p`, `q` and c's value, which takes far
+  fewer values than `network` does. The lookup evaluates the name apart from what TLC is
+  evaluating (as no application's function, reaching no deeper), and where that gives no value to
+  key by (the expression fails, warns or recurses, or the value is a thread's own, which the
+  thread lets go of at the level's end) the expression goes to its table keyed by everything it
+  reads. A name whose value says what its expression read, as `dag == <<vs, es>>` does, keys
+  nothing: its value takes as many values as they do.
+- **A read.** Where the expression is itself a lookup by hash, a read of the name finds the entry
+  by comparing its keys in place (`Machine::binding`). A cheaper expression is evaluated again at
+  each read, which costs less than keeping it.
+
+The value is computed only where a read or a lookup wants it, and a read that fails fails where
+TLC's does. Only an expression that is its evaluation alone is bound, with no effect, warning or
+register read. A binder's slots leave a footprint as before (`without_slots`), and a name that
+reads one of them gives way to what it reads; a recursive definition's footprint names no such
+names. `PROVE_IT_EPOCH_CHECK=1` evaluates again on each hit of a table keyed so.
+
+**Forgetting.** A thread's tables forget at each level what they hold of the ids its overlay let
+go of. A table that has forgotten once notes where it stores (`MemoTable::stored`), and forgets
+the next time by those entries alone, placing again the entries of a run one of them leaves, so
+that a level costs what it stored, not the room of every table.
+
 ### 3.3 Lazy sets
 
 `compile.ts` keeps TLC's distinction between normalised sets, which TLC enumerates in its order,
@@ -1746,9 +1777,10 @@ code made this design change, the code wins, and this records how:
     on the micro-benchmark; the chosen closures 1.4 µs.
 - **Memo (3.2).** The tables, their hashing, probation and direct tables are `memo.ts`'s. Keys of
   width two or less aren't packed into a `u64` yet (M7). `Options { is_memo_off,
-  is_epoch_checked }` are `PROVE_IT_MEMO=off`, which turns off the memo tables, epoch caches and
-  values computed once, and `PROVE_IT_EPOCH_CHECK=1`, which evaluates again on each epoch cache hit
-  and panics if the value differs, which the binding's `catch_unwind` turns into an
+  is_epoch_checked }` are `PROVE_IT_MEMO=off`, which turns off the memo tables, epoch caches,
+  values computed once and sets kept that passed a test of their elements (`Machine::holds_all`),
+  and `PROVE_IT_EPOCH_CHECK=1`, which evaluates again on each epoch cache hit, and tests again each
+  element `holds_all` passes over, and panics if the value differs, which the binding's `catch_unwind` turns into an
   `EngineInvariantError` (3.4). `replay` reads both from the environment; M5's `check()` is to take
   them from the TypeScript side.
 - **Deep nesting.** Evaluation recurses with the expression and with TLA+ recursion, so it runs
