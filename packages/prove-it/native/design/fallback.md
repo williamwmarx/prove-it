@@ -8726,6 +8726,20 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+The PTL decider reads LS4's input as `ptl_to_trp -i file | ls4` reads it (`Params.ls4`):
+tlapm's `translate` (`translate/` at b91fb6c) lexes `=>` and `<=>` beside `->` and `<->`, a `;`
+comment, `not`, `until` and `unless`, `!` and `?` quantifiers over `[X]`, `True` and `False`,
+and the past `alwaysp` and `sometimep`, parses with ocamlyacc's precedences (`until` below
+`unless`, `<->`, `|`, `->` and `&`, all left associative, each prefix operator above them) and
+writes LS4 clauses by renaming (`dsnf`), with a constant inside a clause printed as the atom
+`True` or `False`, so `sometime False` is satisfiable to LS4 (tla-ts calls this a bug of
+`string_of_formula` and records `unsat` as correct; the port prints LS4's `sat`); it writes no
+clauses for a parse error, the reserved word `skolem`, a lowercase bound variable or a past
+operator (`Illegal1`), and LS4 (`Trp2Spec.cc`) rejects an atom with arguments, so each such input
+reaches no verdict (`unknown`), where the port's own reader rejected every spelling and operator
+but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/conformance/ptl`'s
+`.trp` recordings and `syntax-*.ls4`).
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8743,6 +8757,7 @@ tactic only (`Fpfile.query`).
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
+| with LS4's input read as ptl_to_trp and LS4 read it | 769 / 577 / 5 | 338 / 1,042 / 18 |
 
 ### Declines
 

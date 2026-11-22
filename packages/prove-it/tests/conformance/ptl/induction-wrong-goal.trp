@@ -1,0 +1,7 @@
+and([
+or([p]), 
+or([NVV1]),
+always(or([not NVV2, not q])),
+always(or([not p, next(p)])),
+always(or([not NVV1, sometime(NVV2)]))]).
+
