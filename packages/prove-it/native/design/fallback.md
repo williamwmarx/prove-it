@@ -197,8 +197,8 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
 its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
-TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34
-and 35), which the TypeScript report printed: whether to port 1.7.4's generator differences or
+TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34,
+35 and 39), which the TypeScript report printed: whether to port 1.7.4's generator differences or
 retire them with 1.7.4 is open.
 
 SANY's messages come from the port of its generator and levelCheck, which declines a message whose
@@ -5039,6 +5039,14 @@ matches TLC or declines exactly.
   that fails at startup`, `front_constants/substitute-conjunct-failing`), where taking J for a K
   had it answer that no error was found.
 
+- A FingerprintException thrown in an operator argument a Java method applies, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `MethodValue.apply` catches it as any exception and
+  rethrows the method's EvalException ("Attempted to apply the operator overridden by the Java
+  method ... SelectSeq ..."), so TLC prints the frames the FingerprintException froze, the failing
+  value's source among them, with the nested expressions (`SelectSeq(<<1>>, LAMBDA k : {x} =
+  <<x>>)`, SortSeq's comparison likewise), where the binary reported "TLC was unable to
+  fingerprint". The trace evaluator now turns the sources into frames there, as it does
+  for an `EvaluatingValue` (`catch_fingerprint`). Fixtures `java-method-f*`.
 - A constant definition held as a filter, or a `\cup`, `\cap`, `\` or UNION TLC keeps lazy,
   whose part prints, draws or sets a register, counted, compared or printed (`S == {x \in 1..3 :
   PrintT(x)}`, `Cardinality(S) > 0`): TLC converts the one value it keeps at the first such use
@@ -6736,6 +6744,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   HashMap TLC builds it from, which the binary's normalized record doesn't keep, so that failure
   declines ("selected a field TLCGet("spec")'s record lacks, which TLC prints in its own order");
   main prints the wrong order without -inv and -invlevel, and declines with them.
+
+- A variable the initial predicate walks as a conjunct before assigning it (`Init == x /\ x =
+  FALSE`): `getInitStatesAppl` looks it up as its OpDeclNode, which isn't a boolean, and fails
+  printing the declaration's range ("In computing initial states, TLC expected a boolean
+  expression, but instead found line 2, col 10 to line 2, col 10 of module M."), which the IR
+  doesn't keep, so the replay declines ("an unassigned variable walked as a conjunct of the
+  initial predicate"); the trace evaluator had reported an undefined identifier. Read inside an
+  expression (`~x`), it is `evalAppl`'s undefined identifier, which matches. Found in the specs of
+  upstream tla-ts's unit tests at 0341dbe5; fixtures `init-*-variable-*`.
 
 - DFID (`-dfid N`): `DFID with _POSSIBLE predicates`, `DFID with TLCGet of diameter or distinct`,
   `DFID with random draws, register writes, or JSON files`, `DFID with effects, liveness,
@@ -8692,6 +8709,15 @@ HIDE of a step no USE made a fact of ends tlapm with `Failure("proof.Gen.set_exp
 (`tests/fixtures/obligation-errors/HideStep.tla`, recorded with b91fb6c), which declines as any
 error tlapm ends with, where the port proved the theorem.
 
+The Isabelle port runs `fast` (`Classical.fast_tac`: the premises atomized, then a depth-first
+search with `step_tac` on the first goal, under `cla_method'` with its `intro:` and `dest:`
+sections), `rule` with rules (`Method.rule_tac`: each rule's first premises resolved against the
+facts by `Drule.multi_resolves`, then against the goal, the new goals normalized), and the
+`add:` section of `simp` and the `simp:` and `simp add:` sections of `auto`, `force` and
+`clarsimp` (`Simplifier.simp_add` over the simpset), which `IsaM("fast")` and `IsaM("(rule
+chooseI)")` in the upstream suite's backend inputs name and the port failed as undefined
+methods (`tests/fixtures/tlapm-cli/IsaRules.tla`, recorded with b91fb6c).
+
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
 for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
@@ -8721,6 +8747,9 @@ tactic only (`Fpfile.query`).
 | with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
 | with a TAKE's domain inclusion at its bound's name | 766 / 574 / 11 | 319 / 1,042 / 37 |
 | declining what tlapm's parser and Expr.Anon reject | 766 / 577 / 8 | 319 / 1,042 / 37 |
+| with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
+| with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
+| with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
 
 ### Declines
 
@@ -8751,8 +8780,16 @@ tactic only (`Fpfile.query`).
     limit, and an input a back end can't read.
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
-  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
-  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
+  or combinator the Isabelle port doesn't implement, where tlapm would try it: a method
+  Isabelle/Pure or the provers of Isabelle/TLA+'s session define that the port has no tactic for
+  (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
+  without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
+  section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  What tlapm's own encoding
+  refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
+  Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
+  which the port prints. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.

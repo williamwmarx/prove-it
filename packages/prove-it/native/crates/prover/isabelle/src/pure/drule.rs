@@ -5,12 +5,14 @@
 //! (`pure/drule.ts`.) The basic rules are built once per thread, so that each is the same theorem
 //! every time, as the TypeScript's constants.
 
-use crate::error::{Res, thm_exn};
+use std::rc::Rc;
+
+use crate::error::{Exception, Res, thm_exn};
 
 use super::interrupt::without_limits;
 use super::logic::{all_const, is_protected, mk_equals, mk_implies, mk_term, protect};
 use super::name::{NameContext, clean_name, empty_name_context, variant_list, variant_name};
-use super::seq::list_of_seq;
+use super::seq::{Seq, empty_seq, list_of_seq, maps_seq, seq_of_list, single_seq};
 use super::table::{
     IndexKey, Table, empty_table, fast_indexname_ord, lookup_table, table_entries, update_table,
 };
@@ -20,8 +22,8 @@ use super::term::{
     mk_abs, mk_app, mk_bound, mk_tvar, mk_var, prop_t, strip_all_vars,
 };
 use super::thm::{
-    ComposeFlags, ComposeRule, Instantiation, Thm, axiom_thm, bicompose, forall_elim, forall_intr,
-    incr_indexes_thm, instantiate, instantiate_types, rs,
+    BiresRule, ComposeFlags, ComposeRule, Instantiation, Thm, axiom_thm, bicompose, biresolution,
+    forall_elim, forall_intr, incr_indexes_thm, instantiate, instantiate_types, rs,
 };
 use super::types::{TyEnv, norm_type};
 
@@ -388,4 +390,41 @@ pub fn comp_no_flatten(thm: &Thm, count: usize, index: i32, rule: &Thm) -> Res<T
         return Err(thm_exn(format!("comp_no_flatten {index}")));
     }
     Ok(results[0].clone())
+}
+
+/// Drule.multi_resolves: each rule with its premises resolved against the facts in turn, the
+/// first fact at the first premise, in every way the facts resolve.
+pub fn multi_resolves(facts: &[Thm], rules: &[Thm]) -> Seq<Thm> {
+    fn res(fact: &Thm, index: i32, rule: &Thm) -> Res<Seq<Thm>> {
+        match biresolution(
+            false,
+            &[BiresRule {
+                is_elim: false,
+                rule: fact.clone(),
+            }],
+            index,
+            rule,
+        ) {
+            Err(error) if error.is(Exception::Thm) => Ok(empty_seq()),
+            result => result,
+        }
+    }
+    fn multi_res(facts: Rc<[Thm]>, position: usize, rule: Thm) -> Seq<Thm> {
+        match facts.get(position) {
+            None => single_seq(rule),
+            Some(fact) => {
+                let fact = fact.clone();
+                let index = position as i32 + 1;
+                maps_seq(
+                    move |thm| res(&fact, index, &thm),
+                    multi_res(facts.clone(), position + 1, rule),
+                )
+            }
+        }
+    }
+    let facts: Rc<[Thm]> = facts.into();
+    maps_seq(
+        move |rule| Ok(multi_res(facts.clone(), 0, rule)),
+        seq_of_list(rules.to_vec()),
+    )
 }
