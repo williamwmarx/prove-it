@@ -662,7 +662,9 @@ pub struct Diameters<'d> {
 
 /// The answers to every atom, or the reason PROVE_IT_LIVE_CHECK found the steps' answer to ENABLED
 /// wrong. With helpers, the atoms that neither print nor read TLC's diameter are answered on them
-/// too.
+/// too. `known` holds, by position, the answers on the first states from an earlier call on the
+/// same states of each state predicate that answers a state the same in every call, which this
+/// call takes and extends.
 pub fn answer_atoms(
     machine: &mut Machine<'_>,
     graph: &LiveGraph<'_>,
@@ -671,6 +673,7 @@ pub fn answer_atoms(
     is_printing: bool,
     diameters: &Diameters<'_>,
     helpers: &mut [Machine<'_>],
+    known: &mut [Option<Vec<u8>>],
 ) -> Result<Vec<Table>, &'static str> {
     let (diameter_atoms, last_diameter) = (diameters.atoms, diameters.last);
     let mut evaluator = Evaluator {
@@ -819,32 +822,46 @@ pub fn answer_atoms(
                     unknown: Some(reason.clone()),
                     prints,
                 },
-                Atom::State(eval) if is_shared => Table {
-                    answers: on_helpers(
-                        evaluator.machine,
-                        helpers,
-                        graph,
-                        graph.count,
-                        |_| 1,
-                        |run, index, answers: &mut Vec<u8>| answers.push(run.state(index, eval)),
-                    )
-                    .concat(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
-                Atom::State(eval) => Table {
-                    answers: (0..graph.count)
-                        .map(|index| {
+                Atom::State(eval) => {
+                    let known = known.get_mut(position).and_then(Option::as_mut);
+                    let from = known
+                        .as_ref()
+                        .map_or(0, |known| known.len().min(graph.count));
+                    let mut answers = Vec::with_capacity(graph.count);
+                    if let Some(known) = &known {
+                        answers.extend_from_slice(&known[..from]);
+                    }
+                    if is_shared && from < graph.count {
+                        let parts = on_helpers(
+                            evaluator.machine,
+                            helpers,
+                            graph,
+                            graph.count,
+                            |index| usize::from(index >= from),
+                            |run, index, answers: &mut Vec<u8>| {
+                                if index >= from {
+                                    answers.push(run.state(index, eval));
+                                }
+                            },
+                        );
+                        answers.extend(parts.concat());
+                    } else if !is_shared {
+                        answers.extend((from..graph.count).map(|index| {
                             let answer = evaluator.evaluate_state(index, eval);
                             keep_printed(evaluator.machine, &mut prints, index);
                             answer
-                        })
-                        .collect(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
+                        }));
+                    }
+                    if let Some(known) = known {
+                        known.clone_from(&answers);
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
                 Atom::Action { key, .. } if is_shared => {
                     // This atom and the action atoms after it whose subscripts share its values,
                     // each with the ENABLED of its fairness answered already, in one pass of the

@@ -75,6 +75,9 @@ pub struct EngineContext {
     pub diameter_atoms: Vec<bool>,
     /// Whether each atom reads TLCGet("level").
     pub level_atoms: Vec<bool>,
+    /// Whether each atom is a state predicate that reads nothing the search keeps, prints nor
+    /// draws, which answers a state the same in every check of the graph.
+    pub repeatable_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
     /// Whether an action property may print, which the search prints among Next's prints.
@@ -1828,6 +1831,7 @@ impl EngineContext {
             .iter()
             .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
             .collect();
+        let repeatable_atoms = compiled.iter().map(|atom| atom.is_repeatable).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = owned_conjuncts
             .into_iter()
@@ -1877,6 +1881,7 @@ impl EngineContext {
             is_live_registered,
             diameter_atoms,
             level_atoms,
+            repeatable_atoms,
             is_invariant_printing,
             is_action_property_printing,
             startup,
@@ -1955,6 +1960,7 @@ struct CompiledAtom {
     is_printing: bool,
     reads_diameter: bool,
     uses_registers: bool,
+    is_repeatable: bool,
 }
 
 // Whether an atom's action is the next-state relation, named as the specification names it in the
@@ -2080,11 +2086,13 @@ fn compile_atom(
     let mut is_printing = false;
     let mut reads_diameter = false;
     let mut uses_registers = false;
+    let mut is_repeatable = false;
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
             uses_registers = compiled.uses_registers();
+            is_repeatable = !compiled.reads_search();
             if compiled.reads_level() {
                 Atom::LevelState(compiled.eval)
             } else {
@@ -2181,5 +2189,6 @@ fn compile_atom(
         is_printing,
         reads_diameter,
         uses_registers,
+        is_repeatable,
     }
 }
