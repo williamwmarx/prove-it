@@ -9543,6 +9543,57 @@ mod tests {
         }
     }
 
+    // However many threads fill and grow the table, as many parts and ranges as they are or
+    // fewer ranges than parts, each fingerprint is new or seen, and has the index, that inserting
+    // one by one gives it: fingerprints that repeat, 0 among them, in runs of uneven lengths.
+    #[test]
+    fn fills_the_same_on_any_number_of_threads() {
+        let mut random = 0x1234_5678_9abc_def1_u64;
+        let mut next = || {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            ((random % 40_000).wrapping_mul(0x9e37_79b9_7f4a_7c15) & !0xff) | (random % 3)
+        };
+        let fingerprints: Vec<u64> = (0..90_000).map(|_| next() * (next() % 50).min(1)).collect();
+        assert!(fingerprints.contains(&0));
+        let mut expected = FingerprintSet::new(true, None);
+        let wanted: Vec<(u8, u32)> = fingerprints
+            .iter()
+            .map(|&fingerprint| match expected.find(fingerprint) {
+                Ok(slot) => (FILL_SEEN, expected.index(slot)),
+                Err(slot) => {
+                    let index = expected.len as u32 + u32::from(expected.zero.is_some());
+                    expected.insert(slot, fingerprint, index);
+                    (FILL_NEW, index)
+                }
+            })
+            .collect();
+        for threads in [1, 2, 3, 5, 16, 33] {
+            let mut set = FingerprintSet::new(true, None);
+            let (first, rest) = fingerprints.split_at(70_001);
+            let (second, third) = rest.split_at(1);
+            let mut filled = Vec::new();
+            // Two levels, the second of which grows a table past the size threads grow one from.
+            for runs in [
+                &[&first[..30_000]][..],
+                &[&first[30_000..], second, &[], third],
+            ] {
+                let before = set.len as u32 + u32::from(set.zero.is_some());
+                let (statuses, indices) = set.fill(runs, threads, before, true);
+                filled.extend(statuses.into_iter().zip(indices));
+            }
+            assert!(set.fingerprints.len() > THREADED_GROWTH_SLOTS);
+            assert_eq!(filled, wanted, "{threads} threads");
+            assert_eq!((set.len, set.zero), (expected.len, expected.zero));
+            for &fingerprint in &fingerprints {
+                let slot = set.find(fingerprint).expect("a fingerprint filled");
+                let wanted = expected.find(fingerprint).expect("a fingerprint inserted");
+                assert_eq!(set.index(slot), expected.index(wanted), "{fingerprint}");
+            }
+        }
+    }
+
     // A fill of an indexed table gives each fingerprint's state the index inserting one by one
     // would, the new ones in order and a seen one its first's, whichever thread decided it.
     #[test]
