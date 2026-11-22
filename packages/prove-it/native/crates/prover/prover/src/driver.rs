@@ -323,6 +323,7 @@ impl Run<'_> {
             &obligation.sequent,
             obligation.method.as_ref(),
             Some(methods),
+            obligation.is_enabled_axioms_sound,
             obligation.locus.as_ref(),
             &mut |warning| notes.push(warning),
         );
@@ -777,8 +778,11 @@ impl Run<'_> {
     }
 
     // Fpfile.add_to_table: of a prover's results for a fingerprint, the table keeps the greatest by
-    // Fpfile.order, a proof over a failure, of proofs the one with the shorter time limit, of
-    // failures the one with the longer, and of two equal the one it held.
+    // Fpfile.order. Of one prover (Fpfile.prover_of_method, which for Isabelle is its tactic): a
+    // proof over a failure, of proofs the one with the shorter time limit, of failures the one
+    // with the longer, and of two equal the one it held. Of two Isabelle tactics, which share the
+    // table's one Isabelle slot, the method that compares greater, by its time limit and then its
+    // tactic's text, whether it proved or not.
     fn save(&mut self, fingerprint: String, attempt: Attempt) {
         let attempts = &mut self
             .results
@@ -791,6 +795,11 @@ impl Run<'_> {
             || attempts.get(&prover).is_none_or(|held| {
                 let (new, old) = (&attempt.attempt, &held.attempt.attempt);
                 let (new_budget, old_budget) = (get_budget(&new.method), get_budget(&old.method));
+                if new.method.tactic != old.method.tactic {
+                    let tactic = |method: &Method| method.tactic.clone().unwrap_or_default();
+                    return new_budget > old_budget
+                        || (new_budget == old_budget && tactic(&new.method) > tactic(&old.method));
+                }
                 match (new.is_proved, old.is_proved) {
                     (true, false) => true,
                     (false, true) => false,

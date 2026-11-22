@@ -12,3 +12,8 @@ packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | -N --toolbox 0 0 
 packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | --summary
 packages/prove-it/tests/fixtures/tlapm-cli/FactTimes.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/CaseSplit.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/FreshOperator.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/IntPowers.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/IsabelleMethods.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/IsaReuse.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/EnabledLevel.tla | --toolbox 0 0 --threads 1
