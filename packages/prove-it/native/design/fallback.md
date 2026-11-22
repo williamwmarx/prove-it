@@ -1498,7 +1498,9 @@ component's for `k = 0` only: the second component's tuple takes the third's pla
 the components takes `=`, the next the right-hand side, and further ones throw
 `java.lang.ArrayIndexOutOfBoundsException: Index 2k + 1 out of bounds for length n + 3` for `n`
 components, which TLC prints as SANY's generator exception after "Parsing or semantic analysis
-failed." (`except-tuple-*`, `except-nested-overflow`). `TheoremNode.levelCheck` reads the
+failed." (`except-tuple-*`, `except-nested-overflow`). A component ends at the first `]` after
+its last index, which may hold a `]_` the tokens don't pair with a `[` (`![[][A]_x].h`,
+`except-subscript-index`). `TheoremNode.levelCheck` reads the
 statement's `level` field, which `LabelNode.levelCheck` never sets, so a theorem with a labeled
 goal (`THEOREM lbl :: []P`) is checked as constant: its PICK bounds and proof steps are not held
 to a temporal goal's (`labeled-temporal-goal`). `Generator.generateModule` appends an inner

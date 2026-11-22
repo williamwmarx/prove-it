@@ -11,9 +11,8 @@ use crate::ast::{
 use crate::lexer::TokenKind;
 use crate::sany::nodes::{Decimal, DefKind, Label, LetIn, NodeId, NodeKind, SanyLocation};
 use crate::sany::source::{
-    TokenSpan, find_name_tokens, find_token, get_expression_span, get_matching_index,
-    get_parenthesized_span, get_span_location, get_token_index, get_token_location,
-    get_token_source, is_token,
+    TokenSpan, find_name_tokens, find_token, get_expression_span, get_parenthesized_span,
+    get_span_location, get_token_index, get_token_location, get_token_source, is_token,
 };
 use crate::sany::{Result, generator_exception, not_yet, not_yet_unlinkable};
 
@@ -222,13 +221,21 @@ impl ModuleGenerator<'_> {
                             end: name_index,
                         }
                     }
-                    ExceptPathStep::Index(_) => {
+                    ExceptPathStep::Index(args) => {
                         let Some(open) = find_token(&file, path_cursor, span.end, "[") else {
                             return not_yet("Expected [ in an EXCEPT");
                         };
+                        // The component's `]` is the first after its last index, which may
+                        // hold a `]_` the tokens don't pair with a `[`.
+                        let last = args
+                            .last()
+                            .map_or(open, |argument| get_expression_span(&file, argument).end);
+                        let Some(close) = find_token(&file, last + 1, span.end, "]") else {
+                            return not_yet("Expected ] in an EXCEPT");
+                        };
                         TokenSpan {
                             start: open,
-                            end: get_matching_index(&file, open),
+                            end: close,
                         }
                     }
                 };

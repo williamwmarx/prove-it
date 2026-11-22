@@ -13,7 +13,7 @@ mod common;
 fn checks_a_module_as_sany_does() {
     common::check_recorded(
         "sany-checks",
-        9,
+        10,
         &[
             "-fp",
             "0",
