@@ -4410,6 +4410,13 @@ impl Search<'_, States> {
             return;
         }
         self.depth = self.depth.max(level.number + 1);
+        let debug_add_at = Instant::now();
+        let debug = std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some();
+        let debug_step = |name: &str| {
+            if debug {
+                eprintln!("  add {name} at {:?}", debug_add_at.elapsed());
+            }
+        };
         let states = &mut self.states;
         states.ids.resize(count * width, 0);
         states.parents.resize(count, 0);
@@ -4428,6 +4435,7 @@ impl Search<'_, States> {
         let bounds: Vec<Id> = workers.iter().map(|worker| worker.bound).collect();
         let bounds = &bounds[..];
         let is_alone = shares.len() == 1;
+        debug_step("resized");
         let own: Vec<Vec<(usize, usize, usize)>> = std::thread::scope(|scope| {
             let mut threads = Vec::with_capacity(shares.len());
             let mut copied = Vec::new();
@@ -4464,6 +4472,7 @@ impl Search<'_, States> {
             copied.extend(threads.into_iter().map(join));
             copied
         });
+        debug_step("copied");
         let mut place = before;
         for (share, own) in shares.iter().zip(own) {
             for (offset, thread, index) in own {
@@ -4489,6 +4498,7 @@ impl Search<'_, States> {
             }
             place += share.new;
         }
+        debug_step("imported");
     }
 }
 
