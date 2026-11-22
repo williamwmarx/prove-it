@@ -1532,6 +1532,23 @@ returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `fi
 cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
 again, and the tuples `<<v, c>>`.
 
+### A module's text read into tokens once (tokens-once)
+
+SANY's report, the lowering, TLC's module order and the linker each read the spec's texts, in
+readers with caches of their own that a run builds several times over, so a 2PCwithBTM run lexed
+each of its six texts up to seven times, forty lexings, 11.5 M of its 113.7 M instructions, and
+allocated the tokens' texts each time. The lexer now keeps the tokens of each text it has read,
+per thread, and gives every reader the same shared slice. Counted with callgrind (`-workers 1`):
+2PCwithBTM 113.7 M → 95.2 M instructions, SyncCons 210.8 M → 190.6 M, VoucherRedeem 338.8 M →
+302.2 M, MCDisruptor_MPMC 2,493.0 M → 2,482.2 M. Against main at 60c8e813 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 15 interleaved runs: 2PCwithBTM
+10.66 → 10.04, SyncCons 18.83 → 17.94, VoucherRedeem 20.42 → 19.53, queue 19.08 → 18.60, TokenRing
+101.06 → 97.15, test19 53.11 → 52.21, commit 264.22 → 265.69, 1.03× over the seven; the suite, 5
+runs, 1.01×, with the models above 0.1 s within their ranges (MCDisruptor_MPMC read 169.4 → 181.7
+ms there, on 10.8 M fewer instructions: noise of five runs). What remains of a small run is no
+longer in lexing: the parser still parses each text several times, and the environment is linked
+twice.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
