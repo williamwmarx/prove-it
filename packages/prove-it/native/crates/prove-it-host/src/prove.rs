@@ -128,6 +128,7 @@ fn push_key(key: &mut String, part: Option<&str>) {
 }
 
 fn prove_here(file: String, source: String, sources: Sources) -> HookResult {
+    let _tokens = tla_front::lexer::SharedTokens::start();
     let mut key = String::new();
     push_key(&mut key, Some(&file));
     push_key(&mut key, Some(&source));

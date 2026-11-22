@@ -238,6 +238,8 @@ pub struct Environment {
     pub is_scoped_selection_kept: bool,
     /// Whether it keeps them for a LET's INSTANCE, whose copies the front end checks apart.
     pub is_scoped_selection_let_instanced: bool,
+    /// What `getLevelBound` read of the environment, which a change to its constants empties.
+    pub(crate) level_bounds: crate::startup::LevelBoundCache,
 }
 
 impl Environment {
@@ -6489,6 +6491,7 @@ fn link_environment_once(
         scoped_selected_values,
         is_scoped_selection_kept: false,
         is_scoped_selection_let_instanced: false,
+        level_bounds: Default::default(),
     };
     reject_class_overrides(&environment, &root, config, options.version)?;
     reject_index_builtins(&environment, config, &index_builtins)?;
@@ -6521,6 +6524,7 @@ fn link_environment_once(
                     renamed.insert(key.clone(), applied);
                 }
             }
+            environment.level_bounds = Default::default();
             if !renamed.is_empty() {
                 let mut visited = FastSet::default();
                 for definition in environment

@@ -400,6 +400,9 @@ impl Pass<'_> {
                 _ => Ok(Self::anon_apply(index, args, from)),
             },
             HypCore::Fresh { .. } => Ok(Self::anon_apply(index, args, from)),
+            HypCore::Flex { .. } if !args.is_empty() => Err(ObligationError::bug(
+                "File \"src/expr/e_anon.ml\", line 224, characters 24-30: Assertion failed",
+            )),
             HypCore::Flex { .. } => Ok(at(ExprCore::Ix { index }, from)),
             HypCore::Fact { .. } => Err(ObligationError::bug(
                 "File \"src/expr/e_anon.ml\", line 230, characters 24-36: Assertion failed",
@@ -951,7 +954,7 @@ impl Pass<'_> {
                     with_core(StepCore::Have { expression }),
                 ))
             }
-            StepCore::Take { bounds } => {
+            StepCore::Take { bounds, name_loci } => {
                 let (inner, mapped) = self.bounds(context, bounds)?;
                 let universal = at_props(
                     ExprCore::Quant {
@@ -966,7 +969,10 @@ impl Pass<'_> {
                         &adjoin_step(&self.bump_context(&inner, 1), &number, universal, &item),
                         1,
                     ),
-                    with_core(StepCore::Take { bounds: mapped }),
+                    with_core(StepCore::Take {
+                        bounds: mapped,
+                        name_loci: name_loci.clone(),
+                    }),
                 ))
             }
             StepCore::Witness { expressions } => {
@@ -1466,7 +1472,9 @@ mod tests {
             ),
             StepCore::Hide { usable } => format!("(hide {})", show_usable(usable)),
             StepCore::Have { expression } => format!("(have {})", show_expr(expression)),
-            StepCore::Take { bounds } => format!("(take [{}])", show_list(bounds, show_bound)),
+            StepCore::Take { bounds, .. } => {
+                format!("(take [{}])", show_list(bounds, show_bound))
+            }
             StepCore::Witness { expressions } => {
                 format!("(witness {})", show_list(expressions, show_expr))
             }
@@ -4906,7 +4914,12 @@ mod tests {
                     .map(|output| show_expr(&output))
             },
         );
-        assert_eq!(result, "#5@28");
+        // tlapm asserts that a variable takes no arguments (`e_anon.ml`, line 224); the
+        // TypeScript dropped the argument.
+        assert_eq!(
+            result,
+            "ERR TlaProofError|Oops, this seems to be a bug in TLAPM.|-|File \"src/expr/e_anon.ml\", line 224, characters 24-30: Assertion failed"
+        );
         assert_eq!(warnings, Vec::<String>::new());
     }
 
@@ -17511,6 +17524,7 @@ mod tests {
                                     domain: BoundDomain::NoDomain,
                                 },
                             ],
+                            name_loci: Vec::new(),
                         },
                         props: props(76, Some(StepNumber::Unnamed { level: 1, id: 4 })),
                     },

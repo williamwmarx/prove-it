@@ -2,6 +2,7 @@
 //! units from 1 with a tab reaching the next multiple of eight, so every position equals the
 //! TypeScript one.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -744,7 +745,64 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub fn tokenize(source: &str) -> Result<Vec<Token>, SyntaxError> {
+thread_local! {
+    /// The tokens of each text a run has read, by the text, while a `SharedTokens` holds them:
+    /// SANY's report, the lowering, TLC's module order and the linker each read a spec's text,
+    /// in several readers of their own.
+    static TOKENS: RefCell<Option<SharedTokenMap>> = const { RefCell::new(None) };
+}
+
+type SharedTokenMap = FastMap<Box<str>, Rc<[Token]>>;
+
+/// Shares the tokens of each text among the readers of one run on this thread, for as long as
+/// it is held: a host that runs check after check keeps only the current run's. Nested, the
+/// outermost holds them.
+pub struct SharedTokens {
+    is_outermost: bool,
+}
+
+impl SharedTokens {
+    pub fn start() -> Self {
+        TOKENS.with(|tokens| {
+            let mut tokens = tokens.borrow_mut();
+            let is_outermost = tokens.is_none();
+            if is_outermost {
+                *tokens = Some(FastMap::default());
+            }
+            Self { is_outermost }
+        })
+    }
+}
+
+impl Drop for SharedTokens {
+    fn drop(&mut self) {
+        if self.is_outermost {
+            TOKENS.with(|tokens| *tokens.borrow_mut() = None);
+        }
+    }
+}
+
+/// The tokens of a module's text, read once per run where a `SharedTokens` holds them.
+pub fn tokenize(source: &str) -> Result<Rc<[Token]>, SyntaxError> {
+    let known = TOKENS.with(|tokens| {
+        tokens
+            .borrow()
+            .as_ref()
+            .and_then(|tokens| tokens.get(source).cloned())
+    });
+    if let Some(tokens) = known {
+        return Ok(tokens);
+    }
+    let tokens: Rc<[Token]> = Rc::from(tokenize_text(source)?);
+    TOKENS.with(|known| {
+        if let Some(known) = known.borrow_mut().as_mut() {
+            known.insert(source.into(), tokens.clone());
+        }
+    });
+    Ok(tokens)
+}
+
+fn tokenize_text(source: &str) -> Result<Vec<Token>, SyntaxError> {
     let header = find_module_header(source).ok_or_else(|| SyntaxError {
         message: "Expected a module header such as ---- MODULE Name ----".to_string(),
         failure: None,
@@ -786,4 +844,48 @@ pub fn read_at_as_identifier(mut token: Token) -> Token {
         token.kind = TokenKind::Identifier;
     }
     token
+}
+
+#[cfg(test)]
+mod shared_token_tests {
+    use super::*;
+
+    const TEXT: &str = "---- MODULE M ----\nx == 1\n====";
+
+    fn held_texts() -> usize {
+        TOKENS.with(|tokens| tokens.borrow().as_ref().map_or(0, SharedTokenMap::len))
+    }
+
+    #[test]
+    fn shares_tokens_within_a_run_and_forgets_them_after_it() {
+        let first = {
+            let _run = SharedTokens::start();
+            let first = tokenize(TEXT).unwrap();
+            assert!(Rc::ptr_eq(&first, &tokenize(TEXT).unwrap()));
+            assert_eq!(held_texts(), 1);
+            first
+        };
+        assert_eq!(held_texts(), 0);
+        let _run = SharedTokens::start();
+        assert_eq!(held_texts(), 0);
+        let second = tokenize(TEXT).unwrap();
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert_eq!(&*first, &*second);
+    }
+
+    #[test]
+    fn keeps_nothing_outside_a_run_and_holds_through_a_nested_one() {
+        assert!(!Rc::ptr_eq(
+            &tokenize(TEXT).unwrap(),
+            &tokenize(TEXT).unwrap()
+        ));
+        assert_eq!(held_texts(), 0);
+        let _outer = SharedTokens::start();
+        let outer = tokenize(TEXT).unwrap();
+        {
+            let _inner = SharedTokens::start();
+            assert!(Rc::ptr_eq(&outer, &tokenize(TEXT).unwrap()));
+        }
+        assert!(Rc::ptr_eq(&outer, &tokenize(TEXT).unwrap()));
+    }
 }

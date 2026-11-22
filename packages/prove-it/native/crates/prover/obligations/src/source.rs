@@ -659,7 +659,7 @@ impl Source {
                 argument_counts,
                 ..
             } => {
-                if args.len() == 2 {
+                if args.len() == 2 || lookup_operator(operator).fixity == Fixity::Postfix {
                     let regrouped = regroup(expression);
                     if !Rc::ptr_eq(&regrouped, expression) {
                         return recurse(&regrouped);
@@ -725,6 +725,10 @@ impl Source {
                 })
             }
             ast::ExpressionKind::Prime(inner) => {
+                let regrouped = regroup(expression);
+                if !Rc::ptr_eq(&regrouped, expression) {
+                    return recurse(&regrouped);
+                }
                 apply_builtin(Builtin::Prime, recurse(inner)?, Fixity::Postfix)
             }
             ast::ExpressionKind::Unchanged(inner) => {
@@ -1535,12 +1539,31 @@ impl Source {
             ast::StepBody::Have(expression) => with_step_method(StepCore::Have {
                 expression: self.convert_expression(expression, false)?,
             }),
-            ast::StepBody::Take { names, bounds, .. } => with_step_method(StepCore::Take {
-                bounds: if names.is_empty() {
-                    self.convert_bounds(bounds, false)?
-                } else {
-                    get_unbounded(&get_names(names))
-                },
+            ast::StepBody::Take {
+                names,
+                name_ranges,
+                bounds,
+            } => with_step_method(if names.is_empty() {
+                StepCore::Take {
+                    bounds: self.convert_bounds(bounds, false)?,
+                    name_loci: bounds
+                        .iter()
+                        .map(|bound| match &bound.pattern {
+                            ast::BoundPattern::Name { ranges, .. } => {
+                                ranges.first().map(|range| self.get_range_locus(range))
+                            }
+                            ast::BoundPattern::Tuple { .. } => None,
+                        })
+                        .collect(),
+                }
+            } else {
+                StepCore::Take {
+                    bounds: get_unbounded(&get_names(names)),
+                    name_loci: name_ranges
+                        .iter()
+                        .map(|range| Some(self.get_range_locus(range)))
+                        .collect(),
+                }
             }),
             ast::StepBody::Witness(expressions) => with_step_method(StepCore::Witness {
                 expressions: self.convert_expressions(expressions, false)?,
@@ -2456,7 +2479,7 @@ mod tests {
             StepCore::Have { expression: had } => {
                 ("Have", vec![("expression", Some(expression(had)))])
             }
-            StepCore::Take { bounds } => ("Take", vec![("bounds", Some(list(bounds, bound)))]),
+            StepCore::Take { bounds, .. } => ("Take", vec![("bounds", Some(list(bounds, bound)))]),
             StepCore::Witness { expressions: items } => {
                 ("Witness", vec![("expressions", Some(expressions(items)))])
             }
@@ -2613,7 +2636,10 @@ C == ENABLED x' \cdot y
 D == -a + b * c
 ===="##,
             true,
-            r##"{"counter":0,"mule":{"body":[{"definition":{"body":{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":14,"endLine":2,"file":"M.tla","startColumn":13,"startLine":2},"name":"S"},{"kind":"Opaque","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":17,"startLine":2},"name":"T"}],"kind":"Apply","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":13,"startLine":2},"operator":{"builtin":"Setminus","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":6,"startLine":2},"operator":{"builtin":"SUBSET","kind":"Internal"}},"kind":"Operator","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":1,"startLine":2},"name":"A"},"isLocal":false,"kind":"Definition","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":1,"startLine":2},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":13,"endLine":3,"file":"M.tla","startColumn":12,"startLine":3},"name":"S"},{"kind":"Opaque","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":19,"startLine":3},"name":"T"}],"kind":"Apply","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":12,"startLine":3},"operator":{"builtin":"Cup","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"UNION","kind":"Internal"}},{"args":[{"kind":"Opaque","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":26,"startLine":3},"name":"P"}],"kind":"Apply","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":24,"startLine":3},"operator":{"builtin":"BoxTrue","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"Conj","kind":"Internal"}},{"kind":"Opaque","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":31,"startLine":3},"name":"Q"}],"kind":"Apply","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"Implies","kind":"Internal"}},"kind":"Operator","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":1,"startLine":3},"name":"B"},"isLocal":false,"kind":"Definition","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":1,"startLine":3},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":15,"endLine":4,"file":"M.tla","startColumn":14,"startLine":4},"name":"x"}],"kind":"Apply","location":{"endColumn":15,"endLine":4,"file":"M.tla","startColumn":6,"startLine":4},"operator":{"builtin":"ENABLED","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":16,"endLine":4,"file":"M.tla","startColumn":6,"startLine":4},"operator":{"builtin":"Prime","kind":"Internal"}},{"kind":"Opaque","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":23,"startLine":4},"name":"y"}],"kind":"Apply","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":6,"startLine":4},"operator":{"builtin":"Cdot","kind":"Internal"}},"kind":"Operator","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":1,"startLine":4},"name":"C"},"isLocal":false,"kind":"Definition","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":1,"startLine":4},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":8,"endLine":5,"file":"M.tla","startColumn":7,"startLine":5},"name":"a"}],"kind":"Apply","location":{"endColumn":8,"endLine":5,"file":"M.tla","startColumn":6,"startLine":5},"operator":{"kind":"Opaque","name":"-."}},{"args":[{"kind":"Opaque","location":{"endColumn":12,"endLine":5,"file":"M.tla","startColumn":11,"startLine":5},"name":"b"},{"kind":"Opaque","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":15,"startLine":5},"name":"c"}],"kind":"Apply","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":11,"startLine":5},"operator":{"kind":"Opaque","name":"*"}}],"kind":"Apply","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":6,"startLine":5},"operator":{"kind":"Opaque","name":"+"}},"kind":"Operator","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":1,"startLine":5},"name":"D"},"isLocal":false,"kind":"Definition","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":1,"startLine":5},"visibility":"Hidden","whereDefined":"User"}],"extendeeLocations":[],"extendees":[],"isImportant":false,"location":{"endColumn":5,"endLine":6,"file":"M.tla","startColumn":1,"startLine":1},"name":"M"}}"##,
+            // The TypeScript took in only the infix operators after a prefix one, so it read
+            // `ENABLED x' \cdot y` as `(ENABLED x)' \cdot y`; tlapm takes in the prime too, and then
+            // the \cdot: `ENABLED (x' \cdot y)`.
+            r##"{"counter":0,"mule":{"body":[{"definition":{"body":{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":14,"endLine":2,"file":"M.tla","startColumn":13,"startLine":2},"name":"S"},{"kind":"Opaque","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":17,"startLine":2},"name":"T"}],"kind":"Apply","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":13,"startLine":2},"operator":{"builtin":"Setminus","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":6,"startLine":2},"operator":{"builtin":"SUBSET","kind":"Internal"}},"kind":"Operator","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":1,"startLine":2},"name":"A"},"isLocal":false,"kind":"Definition","location":{"endColumn":18,"endLine":2,"file":"M.tla","startColumn":1,"startLine":2},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":13,"endLine":3,"file":"M.tla","startColumn":12,"startLine":3},"name":"S"},{"kind":"Opaque","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":19,"startLine":3},"name":"T"}],"kind":"Apply","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":12,"startLine":3},"operator":{"builtin":"Cup","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":20,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"UNION","kind":"Internal"}},{"args":[{"kind":"Opaque","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":26,"startLine":3},"name":"P"}],"kind":"Apply","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":24,"startLine":3},"operator":{"builtin":"BoxTrue","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":27,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"Conj","kind":"Internal"}},{"kind":"Opaque","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":31,"startLine":3},"name":"Q"}],"kind":"Apply","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":6,"startLine":3},"operator":{"builtin":"Implies","kind":"Internal"}},"kind":"Operator","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":1,"startLine":3},"name":"B"},"isLocal":false,"kind":"Definition","location":{"endColumn":32,"endLine":3,"file":"M.tla","startColumn":1,"startLine":3},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":15,"endLine":4,"file":"M.tla","startColumn":14,"startLine":4},"name":"x"}],"kind":"Apply","location":{"endColumn":16,"endLine":4,"file":"M.tla","startColumn":14,"startLine":4},"operator":{"builtin":"Prime","kind":"Internal"}},{"kind":"Opaque","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":23,"startLine":4},"name":"y"}],"kind":"Apply","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":14,"startLine":4},"operator":{"builtin":"Cdot","kind":"Internal"}}],"kind":"Apply","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":6,"startLine":4},"operator":{"builtin":"ENABLED","kind":"Internal"}},"kind":"Operator","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":1,"startLine":4},"name":"C"},"isLocal":false,"kind":"Definition","location":{"endColumn":24,"endLine":4,"file":"M.tla","startColumn":1,"startLine":4},"visibility":"Hidden","whereDefined":"User"},{"definition":{"body":{"args":[{"args":[{"kind":"Opaque","location":{"endColumn":8,"endLine":5,"file":"M.tla","startColumn":7,"startLine":5},"name":"a"}],"kind":"Apply","location":{"endColumn":8,"endLine":5,"file":"M.tla","startColumn":6,"startLine":5},"operator":{"kind":"Opaque","name":"-."}},{"args":[{"kind":"Opaque","location":{"endColumn":12,"endLine":5,"file":"M.tla","startColumn":11,"startLine":5},"name":"b"},{"kind":"Opaque","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":15,"startLine":5},"name":"c"}],"kind":"Apply","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":11,"startLine":5},"operator":{"kind":"Opaque","name":"*"}}],"kind":"Apply","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":6,"startLine":5},"operator":{"kind":"Opaque","name":"+"}},"kind":"Operator","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":1,"startLine":5},"name":"D"},"isLocal":false,"kind":"Definition","location":{"endColumn":16,"endLine":5,"file":"M.tla","startColumn":1,"startLine":5},"visibility":"Hidden","whereDefined":"User"}],"extendeeLocations":[],"extendees":[],"isImportant":false,"location":{"endColumn":5,"endLine":6,"file":"M.tla","startColumn":1,"startLine":1},"name":"M"}}"##,
         ),
         (
             r"expressions",

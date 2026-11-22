@@ -155,6 +155,16 @@ fn a_failed_decision_fails_the_obligation_with_its_reason() {
             reason: "smt failed: malformed".to_owned()
         }
     );
+    // Prep's NotTried: the message is the attempt's reason, which tlapm prints (a Cantwork).
+    let attempt = &reports[0].attempts[0];
+    assert_eq!(
+        (
+            attempt.reason.as_deref(),
+            attempt.verdict,
+            attempt.is_skipped
+        ),
+        (Some("malformed"), None, false)
+    );
     assert_eq!(
         reports[1].status,
         Status::Failed {

@@ -10,6 +10,8 @@ packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | -N --toolbox 0 0 
 packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | --summary
 packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | -N --toolbox 0 0 --printallobs
 packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | --summary
+packages/prove-it/tests/fixtures/obligations/Take.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/Primes.tla | -N --toolbox 0 0 --printallobs
 packages/prove-it/tests/fixtures/tlapm-cli/FactTimes.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/CaseSplit.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/FreshOperator.tla | --toolbox 0 0 --threads 1
@@ -17,4 +19,6 @@ packages/prove-it/tests/fixtures/tlapm-cli/IntPowers.tla | --toolbox 0 0 --threa
 packages/prove-it/tests/fixtures/tlapm-cli/IsabelleMethods.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/IsaReuse.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/EnabledLevel.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/ZenonUnsupported.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/IsaRules.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/ZeroSeconds.tla | --toolbox 0 0 --threads 1

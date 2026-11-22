@@ -94,6 +94,15 @@ enum Added {
 ///
 /// It also gives each ENABLED atom the actions it splits into, which the search's steps then
 /// answer it from, and labels the steps where some atom is made of only some of them.
+/// Why the split refuses what TLC evaluates as it splits the next-state relation, where that has
+/// an effect.
+const SPLIT_EFFECTS: &str = "TLC's actions whose split prints, draws or sets a register";
+
+/// Why the split refuses an \E's bound that has an effect, which TLC evaluates once as it splits
+/// the relation and the engine, taking the relation whole, would evaluate at each state.
+pub const SPLIT_BOUND_EFFECTS: &str =
+    "TLC's actions whose split prints, draws or sets a register in an \\E's bound";
+
 pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     let mut ir = ir.clone();
     // A spec without variables has no behaviors, and the IR's next-state relation stands for none.
@@ -608,7 +617,7 @@ impl Splitter<'_, '_> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
             let Ok(set) = self
-                .evaluate(bound.set, &place.context)?
+                .evaluate_bound(bound.set, &place.context)?
                 .and_then(|set| elements(&set))
             else {
                 return Ok(None);
@@ -843,7 +852,73 @@ impl Splitter<'_, '_> {
             && !self
                 .evaluator
                 .can_read(definition.body, &Context::default())
-            && self.evaluate(definition.body, &Context::default())?.is_ok())
+            // What `processConstantDefns` computed before the split, effects and all: the
+            // split itself evaluates nothing of it.
+            && self
+                .evaluator
+                .evaluate(definition.body, &Context::default())
+                .is_ok())
+    }
+
+    // An \E's bound the split evaluates, as TLC does when it starts (`Tool.getActions`), which the
+    // engine, taking the relation whole, would evaluate at each state instead. It declines where
+    // that would differ, from what the evaluation did:
+    //
+    // | what the bound did                               | counted | why                         |
+    // |--------------------------------------------------|---------|-----------------------------|
+    // | printed (Print, PrintT, ...)                     | yes     | once, or at each state      |
+    // | drew (RandomElement, Randomization's)            | yes     | the generator advances      |
+    // | TLCGet of "level", "diameter", "generated",      | yes     | the search's, which differ  |
+    // |   "distinct", "queue", "duration", "stats"       |         |   between TLC's start and a |
+    // |                                                  |         |   state                     |
+    // | TLCGet("spec")                                   | yes     | the split's actions so far  |
+    // | TLCGet of "config", "revision", "action"         | no      | fixed for the run; "action" |
+    // |                                                  |         |   is Action.UNKNOWN outside |
+    // |                                                  |         |   simulation                |
+    // | TLCGet or TLCGetOrDefault of a register or a     | no      | change only where the spec  |
+    // |   property                                       |         |   sets them, which the      |
+    // |                                                  |         |   split doesn't follow: the |
+    // |                                                  |         |   engine's as before        |
+    // | TLCSet                                           | refused | fails as TLC starts, so TLC |
+    // |                                                  |         |   takes the relation whole, |
+    // |                                                  |         |   as the engine does        |
+    //
+    // A key not in the table, or a TLCGet the split evaluator can't answer, fails or is left to
+    // the engine as before.
+    fn evaluate_bound(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Result<Evaluated<Value>, Unsupported> {
+        // A generator, whose state tells whether the bound drew: the startup's is gone, and which
+        // draws the bound would make doesn't matter where any declines.
+        let seed = self.evaluator.ir.model.random_seed;
+        let random = self
+            .evaluator
+            .random
+            .replace(tla_values::random::JavaRandom::seeded(seed));
+        let effects = |evaluator: &Evaluator<'_>| {
+            (
+                evaluator.printed.len(),
+                evaluator.random.as_ref().map(|random| random.state()),
+                evaluator.varying_tlc_gets,
+            )
+        };
+        let before = effects(self.evaluator);
+        let writes = self.evaluator.register_writes;
+        let value = self.evaluator.evaluate(node, context);
+        let after = effects(self.evaluator);
+        self.evaluator.random = random;
+        // TLCSet of a register as TLC starts finds neither a worker's thread nor a checker
+        // (`TLCGetSet.TLCSet`), and TLC takes the relation whole where it fails, as the engine
+        // does where the split refuses.
+        if self.evaluator.register_writes != writes {
+            return Err(Unsupported(SPLIT_EFFECTS.into()));
+        }
+        if after != before {
+            return Err(Unsupported(SPLIT_BOUND_EFFECTS.into()));
+        }
+        Ok(value)
     }
 
     // An expression the split evaluates, as TLC does when it starts. One that may print, draw or
@@ -854,9 +929,7 @@ impl Splitter<'_, '_> {
         context: &Context,
     ) -> Result<Evaluated<Value>, Unsupported> {
         if may_have_effect(self.evaluator, node, &mut HashSet::new()) {
-            return Err(Unsupported(
-                "TLC's actions whose split prints, draws or sets a register".into(),
-            ));
+            return Err(Unsupported(SPLIT_EFFECTS.into()));
         }
         Ok(self.evaluator.evaluate(node, context))
     }
@@ -951,6 +1024,10 @@ pub(crate) fn may_have_effect(
                                 | "AssertEq"
                                 | "JavaTime"
                                 | "RandomElement"
+                                | "RandomSubset"
+                                | "RandomSetOfSubsets"
+                                | "RandomSubsetSet"
+                                | "TestRandomSetOfSubsets"
                                 | "TLCGet"
                                 | "TLCGetOrDefault"
                                 | "TLCGetAndSet"
