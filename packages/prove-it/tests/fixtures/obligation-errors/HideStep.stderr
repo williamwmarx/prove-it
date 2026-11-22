@@ -1,0 +1,5 @@
+File "./HideStep.tla", line 4, characters 10-13:
+Error: This expression does not appear in the context and cannot be hidden.
+
+ tlapm ending abnormally with Failure("proof.Gen.set_expr")
+

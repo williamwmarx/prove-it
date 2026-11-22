@@ -8623,7 +8623,11 @@ caps it), and a leaf citing the directive beside an assumption of level above 1 
 note at its location as the module is elaborated and the property `enabledaxioms` false, which
 `Prep.expand_enabled_cdot` refuses (`ENABLEDaxioms depends on assumptions of level > 1`) where
 the port applied the rule whatever the levels and proved `ENABLED B <=> ENABLED C` from
-`B <=> C` for actions `B` and `C`, which tlapm fails.
+`B <=> C` for actions `B` and `C`, which tlapm fails. The pass that looks for the directive
+walks every theorem's proof with `Proof.Visit`'s dummy fact standing for an assertion's, so a
+HIDE of a step no USE made a fact of ends tlapm with `Failure("proof.Gen.set_expr")`
+(`tests/fixtures/obligation-errors/HideStep.tla`, recorded with b91fb6c), which declines as any
+error tlapm ends with, where the port proved the theorem.
 
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
