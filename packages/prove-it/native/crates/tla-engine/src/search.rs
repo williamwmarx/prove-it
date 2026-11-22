@@ -5970,7 +5970,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         expanded: usize,
                         count: usize,
                         reals: Option<&Reals>,
-                        last_diameter: Option<u32>|
+                        last_diameter: Option<u32>,
+                        asked: Option<&[bool]>|
      -> Result<Vec<Table>, &'static str> {
         let graph = search.graph.as_ref().expect("a graph");
         let edge_count = graph.edge_offsets[expanded] as usize;
@@ -6029,6 +6030,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 levels: None,
                 known: None,
                 is_distinct: false,
+                asked,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -6050,6 +6052,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // The breadth-first search keeps one state for each fingerprint, and every value
                 // of a state is one a walk assigned.
                 is_distinct: is_comparable && settings.dfid.is_none(),
+                asked,
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
@@ -6180,7 +6183,27 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             && !context.diameter_atoms.contains(&true)
         {
             let count = search.states.count();
-            let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
+            // TLC adds an initial state by testing the state predicates of the tableaux' initial
+            // nodes, so only their atoms are answered.
+            let asked = tla_live::initially_read(&to_terms(&model.live_formula)).map(|read| {
+                let mut asked = vec![false; context.atoms.len()];
+                for atom in read {
+                    if let Some(is_asked) = asked.get_mut(atom as usize) {
+                        *is_asked = true;
+                    }
+                }
+                asked
+            });
+            let tables = graph_tables(
+                &mut machine,
+                &search,
+                0,
+                count,
+                None,
+                None,
+                asked.as_deref(),
+            )
+            .map_err(Bail)?;
             if let Some(unanswered) = unanswered_at(
                 model,
                 &search,
@@ -6551,8 +6574,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     return Ok(());
                 }
                 periodic_size = expanded;
-                let tables =
-                    graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
+                let tables = graph_tables(machine, search, expanded, count, None, None, None)
+                    .map_err(Bail)?;
                 let (liveness, size) =
                     check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
@@ -7187,6 +7210,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             count,
                             reals.as_ref(),
                             Some(search.depth.max(1) as u32),
+                            None,
                         ) {
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
@@ -7565,7 +7589,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 None
             } else {
                 let expanding = search.expanding;
-                match graph_tables(&mut machine, &search, expanding, count, None, None) {
+                match graph_tables(&mut machine, &search, expanding, count, None, None, None) {
                     Ok(tables) => Some(Box::new(graph_checkpoint(
                         &mut machine,
                         &search,
@@ -7631,7 +7655,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         stop,
                         initial_states,
                         &|machine, search, expanded, count| {
-                            graph_tables(machine, search, expanded, count, None, None)
+                            graph_tables(machine, search, expanded, count, None, None, None)
                         },
                     )),
                     Err(why) if is_printed && is_held_past_initial => Some(Err(why)),
@@ -7684,12 +7708,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .iter()
                     .all(|&target| (target as usize) < added);
                 let accepted = if is_stored {
-                    graph_tables(&mut machine, &search, expanding + 1, added, None, None)
-                        .ok()
-                        .and_then(|tables| {
-                            accepted_at(model, &context, &search, &tables, expanding + 1, added)
-                        })
-                        .flatten()
+                    graph_tables(
+                        &mut machine,
+                        &search,
+                        expanding + 1,
+                        added,
+                        None,
+                        None,
+                        None,
+                    )
+                    .ok()
+                    .and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanding + 1, added)
+                    })
+                    .flatten()
                 } else {
                     None
                 };
@@ -7769,7 +7801,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         }
                     }
                     let tables =
-                        graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                        graph_tables(&mut machine, &search, expanded, count, None, None, None).ok();
                     let is_keyed = search.states.key_width.is_none()
                         && !is_symmetric
                         && !context.diameter_atoms.contains(&true);
@@ -7958,12 +7990,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 && !is_symmetric
             {
                 let expanded = search.expanding;
-                let accepted = graph_tables(&mut machine, &search, expanded, count, None, None)
-                    .ok()
-                    .and_then(|tables| {
-                        accepted_at(model, &context, &search, &tables, expanded, count)
-                    })
-                    .flatten();
+                let accepted =
+                    graph_tables(&mut machine, &search, expanded, count, None, None, None)
+                        .ok()
+                        .and_then(|tables| {
+                            accepted_at(model, &context, &search, &tables, expanded, count)
+                        })
+                        .flatten();
                 if let Some(Verdict::Accepted {
                     state,
                     path,
