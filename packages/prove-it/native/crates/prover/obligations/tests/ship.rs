@@ -400,7 +400,8 @@ fn an_unknown_prover_has_no_encoder() {
 }
 
 // tlapm's Prep.compute_meth fails a prover it does not know with "Unknown prover", whatever the
-// name; the TypeScript looked names up in an object and took `constructor` for a prover.
+// name, as a method error that names where the pragma is; the TypeScript looked names up in an
+// object and took `constructor` for a prover.
 #[test]
 fn a_prover_named_like_an_object_property_is_unknown() {
     let source = [
@@ -419,7 +420,7 @@ fn a_prover_named_like_an_object_property_is_unknown() {
         })
     });
     let error = encode(&obligations[0], "smt").expect_err("an unknown prover");
-    assert_eq!(error.name(), "TlaProverError");
+    assert_eq!(error.name(), "TlaMethodError");
     assert_eq!(error.message(), "Unknown prover: constructor");
 }
 

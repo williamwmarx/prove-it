@@ -780,7 +780,7 @@ impl Compiler<'_> {
             if operands.len() != 1 {
                 return unsupported("an operator applied to the wrong number of arguments");
             }
-            self.is_printing = true;
+            self.note_effect();
             let operand = &operands[0];
             let mut inner = operand.context.clone();
             inner.can_print = true;
@@ -1319,7 +1319,7 @@ impl Compiler<'_> {
         if operands.len() != 3 {
             return unsupported("an operator applied to the wrong number of arguments");
         }
-        self.is_printing = true;
+        self.note_effect();
         let compiled = operands
             .iter()
             .map(|operand| self.compile(operand.node, &operand.context.without_print()))
@@ -1386,7 +1386,7 @@ impl Compiler<'_> {
         if key.is_none() && self.ir.may_keep_test_draws_lazy() {
             return unsupported("TestRandomSetOfSubsets where TLC may keep its function lazy");
         }
-        self.is_printing = true;
+        self.note_effect();
         let compiled = operands
             .iter()
             .map(|(node, context)| self.compile(*node, &context.without_print()))
@@ -1446,7 +1446,7 @@ impl Compiler<'_> {
         if operands.len() != if is_element { 1 } else { 2 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
-        self.is_printing = true;
+        self.note_effect();
         // `Randomization.RandomSubset` and `RandomElement` are Java methods, whose arguments TLC
         // evaluates in order before it calls them (`Tool.evalAppl`): a print there that nothing
         // keeps lazy prints before the draw, as the engine prints it.
@@ -1610,7 +1610,7 @@ impl Compiler<'_> {
         if operands.len() != if is_print { 2 } else { 1 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
-        self.is_printing = true;
+        self.note_effect();
         let compiled = operands
             .iter()
             .map(|operand| {
@@ -2371,7 +2371,7 @@ impl Compiler<'_> {
         let mut footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
         if is_ordered {
             footprint = footprint.merge(&Footprint::slot(super::PRINT_SLOT));
-            self.is_printing = true;
+            self.note_effect();
         }
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
         let is_lines = name.starts_with("nd");
@@ -3135,7 +3135,7 @@ impl Compiler<'_> {
         if operands.len() != if is_set { 2 } else { 1 } {
             return unsupported("an operator applied to the wrong number of arguments");
         }
-        self.is_printing = true;
+        self.note_effect();
         let compiled = operands
             .iter()
             .map(|operand| self.compile(operand.node, &operand.context))
@@ -3210,7 +3210,7 @@ impl Compiler<'_> {
             }
             _ => return unsupported("an operator applied to the wrong number of arguments"),
         };
-        self.is_printing = true;
+        self.note_effect();
         // A Java method's arguments are evaluated once each, in order, before it runs
         // (`MethodValue.apply`), so the key and the default print where TLC computes them.
         let [key, default] = values.map(|operand| operand.clone());
@@ -3298,7 +3298,7 @@ impl Compiler<'_> {
         let [condition, name] = operands else {
             return unsupported("an operator applied to the wrong number of arguments");
         };
-        self.is_printing = true;
+        self.note_effect();
         let condition = self.operand(condition)?;
         let name = self.operand(&Operand {
             context: name.context.without_print(),

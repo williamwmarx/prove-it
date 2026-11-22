@@ -1163,6 +1163,15 @@ pub struct Compiler<'a> {
     pub is_trace_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
+    /// Whether anything compiled may print, draw or write once TLC has started: any such effect
+    /// but one written in the body of a definition TLC computes once as it starts, or of an
+    /// assumption, and compiled as part of it (`Compiler::note_effect`).
+    pub is_printing_past_startup: bool,
+    /// The values computed once at startup whose bodies have such an effect: with each of them
+    /// computed, no read of one has it again (`Machine::constant_once`).
+    pub startup_effect_onces: Vec<usize>,
+    /// The body TLC evaluates at startup alone that is being compiled, if one is.
+    startup_descent: Option<StartupDescent>,
     /// Ordered warning events may be produced during evaluation.
     pub is_warning: bool,
     /// Whether a walk compiled may warn that an UNCHANGED variable changed (2143), which TLC's
@@ -1241,6 +1250,18 @@ pub struct Compiler<'a> {
     /// The conjunct the walk is compiling as a guard, with what the walk knows on its path, for a
     /// Print or PrintT that is the conjunct itself to print a variable as its assignment built it.
     print_sources: Option<walker::PrintSources>,
+}
+
+// The compilation of a body TLC evaluates as it starts and never again: a constant definition's
+// (`processConstantDefns`) or an assumption's. An effect compiled along `path`, the nodes being
+// compiled from the body down, each written in the one before, is in a closure only that body's
+// evaluation runs. One compiled past a `stray`, a node written elsewhere, such as the body of an
+// operator the body applies, may be in a closure the compiler keeps and uses again where the
+// search evaluates it.
+struct StartupDescent {
+    path: Vec<NodeId>,
+    strays: u32,
+    effects: u32,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -1356,6 +1377,9 @@ impl<'a> Compiler<'a> {
             is_count_read: false,
             is_trace_read: false,
             is_printing: false,
+            is_printing_past_startup: false,
+            startup_effect_onces: Vec::new(),
+            startup_descent: None,
             is_warning: false,
             is_unchanged_warning: false,
             startup_bodies: 0,
@@ -2092,6 +2116,7 @@ impl<'a> Compiler<'a> {
             return Ok(constant(TRUE));
         }
         self.depth += 1;
+        let descended = self.descend(node);
         let result = if self.depth > MAXIMUM_EXPANSION {
             unsupported("expansion too deep")
         } else {
@@ -2121,8 +2146,94 @@ impl<'a> Compiler<'a> {
                 })
             })
         };
+        self.ascend(descended);
         self.depth -= 1;
         result
+    }
+
+    // Notes an effect being compiled: a print, a draw, a register or a file written. Only one in
+    // a body TLC evaluates at startup alone, compiled as part of that body, never happens again.
+    pub(crate) fn note_effect(&mut self) {
+        self.is_printing = true;
+        match &mut self.startup_descent {
+            Some(descent) if descent.strays == 0 => descent.effects += 1,
+            _ => self.is_printing_past_startup = true,
+        }
+    }
+
+    // Enters a node of a body TLC evaluates at startup alone: whether it is written in the node
+    // being compiled, and so part of the body, or `None` outside such a body.
+    fn descend(&mut self, node: NodeId) -> Option<bool> {
+        let descent = self.startup_descent.as_ref()?;
+        let node = self.node(node).0;
+        let is_part = descent.strays == 0
+            && descent
+                .path
+                .last()
+                .is_some_and(|&parent| self.is_written_in(parent, node));
+        let descent = self.startup_descent.as_mut()?;
+        if is_part {
+            descent.path.push(node);
+        } else {
+            descent.strays += 1;
+        }
+        Some(is_part)
+    }
+
+    fn ascend(&mut self, descended: Option<bool>) {
+        let (Some(is_part), Some(descent)) = (descended, &mut self.startup_descent) else {
+            return;
+        };
+        if is_part {
+            descent.path.pop();
+        } else {
+            descent.strays -= 1;
+        }
+    }
+
+    // Whether a node is another or written in it, outside the definitions a LET in it makes:
+    // the compiler keeps what it compiles of a definition by the definition.
+    fn is_written_in(&self, parent: NodeId, node: NodeId) -> bool {
+        let mut pending = vec![parent];
+        let mut seen = HashSet::new();
+        while let Some(next) = pending.pop() {
+            let (next, kind) = self.node(next);
+            if next == node {
+                return true;
+            }
+            if !seen.insert(next) || matches!(kind, NodeKind::Definition(_)) {
+                continue;
+            }
+            pending.extend(kind.children());
+        }
+        false
+    }
+
+    // Compiles a body TLC evaluates at startup alone, and counts the effects compiled as part of
+    // it.
+    fn compile_at_startup(
+        &mut self,
+        body: Option<NodeId>,
+        compile: impl FnOnce(&mut Self) -> Compiling<Compiled>,
+    ) -> (Compiling<Compiled>, u32) {
+        let descent = body.map(|body| StartupDescent {
+            path: vec![self.node(body).0],
+            strays: 0,
+            effects: 0,
+        });
+        let outer = std::mem::replace(&mut self.startup_descent, descent);
+        let compiled = compile(self);
+        let descent = std::mem::replace(&mut self.startup_descent, outer);
+        (compiled, descent.map_or(0, |descent| descent.effects))
+    }
+
+    /// Compiles an assumption, where what it prints is printed: TLC evaluates each as it starts
+    /// and never again.
+    pub fn compile_assumption(&mut self, node: NodeId) -> Result<Compiled, CompileError> {
+        self.compile_at_startup(Some(node), |compiler| {
+            compiler.compile_root_printing(Root::Expression(node), true)
+        })
+        .0
     }
 
     // A Print where the engine doesn't evaluate as TLC does. ENABLED evaluates its action until
@@ -5407,16 +5518,21 @@ impl<'a> Compiler<'a> {
             ..context.global(true)
         };
         self.startup_bodies += 1;
-        let compiled = match &definition.form {
-            DefinitionForm::Function(_) if warning_only => {
-                self.compile_function_definition(node, &body_context)
-            }
-            // The constructor TLC builds at once, which may print (`is_built_at_startup`).
-            DefinitionForm::Function(bounds) => self
-                .compile_function_construction(bounds, definition.body, &body_context)
-                .map(Self::mark_costly),
-            DefinitionForm::Operator(_) => self.compile(definition.body, &body_context),
-        };
+        // Only an operator's body is compiled whole, as itself.
+        let body = matches!(&definition.form, DefinitionForm::Operator(_))
+            .then_some(definition.body)
+            .filter(|_| !warning_only);
+        let (compiled, effects) =
+            self.compile_at_startup(body, |compiler| match &definition.form {
+                DefinitionForm::Function(_) if warning_only => {
+                    compiler.compile_function_definition(node, &body_context)
+                }
+                // The constructor TLC builds at once, which may print (`is_built_at_startup`).
+                DefinitionForm::Function(bounds) => compiler
+                    .compile_function_construction(bounds, definition.body, &body_context)
+                    .map(Self::mark_costly),
+                DefinitionForm::Operator(_) => compiler.compile(definition.body, &body_context),
+            });
         self.startup_bodies -= 1;
         let compiled = compiled?;
         let once = self.allocate_once();
@@ -5426,6 +5542,15 @@ impl<'a> Compiler<'a> {
             && matches!(&definition.form,
                 DefinitionForm::Operator(params) if params.is_empty())
             && self.may_have_effect_past_arguments(definition.body, &mut HashSet::new());
+        // The effects happen once where every read is of the value computed once; a part of
+        // the value evaluated in its place would have them again.
+        if effects > 0 {
+            if is_value_read_once {
+                self.startup_effect_onces.push(once);
+            } else {
+                self.is_printing_past_startup = true;
+            }
+        }
         let compiled = self.kept_definition(
             node,
             Compiled {
@@ -6642,7 +6767,7 @@ impl<'a> Compiler<'a> {
                     .merge(&payload.footprint)
                     .merge(&path.footprint)
                     .merge(&Footprint::slot(PRINT_SLOT));
-                self.is_printing = true;
+                self.note_effect();
                 Some((write, payload.eval, path.eval))
             }
             None => None,
