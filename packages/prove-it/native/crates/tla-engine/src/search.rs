@@ -1534,6 +1534,11 @@ trait Reached {
     fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
         false
     }
+    // Whether the invariants of a state new here, with this fingerprint, are this search's to
+    // check: a thread leaves them to the thread that took the state first.
+    fn claims(&mut self, _fingerprint: u64) -> bool {
+        true
+    }
 }
 
 impl Reached for States {
@@ -2387,7 +2392,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             }
         }
         self.check_exit_followed(machine)?;
-        if !is_in_model || is_new {
+        if !is_in_model || is_new && fingerprint.is_none_or(|new| self.states.claims(new)) {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
             let failing = if self.is_continued || self.dfid_statuses.is_some() {
                 crate::context::first_failing(machine, &context.invariants)
@@ -2835,6 +2840,55 @@ struct Candidates<'b> {
     parents: Vec<u32>,
     deferred: Vec<(u32, u64)>,
     collisions: u64,
+    claims: Option<&'b Claims>,
+    // The fingerprints the thread claimed while expanding its current state.
+    claimed: Vec<u64>,
+}
+
+// The states new in a level whose invariants a thread has taken to check, by fingerprint. A state
+// that several of the level's states step to is new to every thread that expands one of them,
+// and its invariants hold or fail whichever thread asks, as TLC's workers check a state only
+// where their put into the set of fingerprints finds it new (`Worker.addElement`). So the first
+// thread to reach a state checks it, and the others take it for checked.
+struct Claims {
+    slots: Vec<AtomicU64>,
+    shift: u32,
+}
+
+impl Claims {
+    // A probe gives up after this many slots, and the thread checks the state itself: a level
+    // that finds more states than the table was sized for only checks some of them again.
+    const PROBES: usize = 16;
+
+    fn new(level: usize) -> Self {
+        let capacity = (level * 8).next_power_of_two().max(1 << 12);
+        Self {
+            slots: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
+            shift: u64::BITS - capacity.trailing_zeros(),
+        }
+    }
+
+    // Whether the calling thread is the first to claim the fingerprint.
+    fn claim(&self, fingerprint: u64) -> bool {
+        if fingerprint == 0 {
+            return true;
+        }
+        let mask = self.slots.len() - 1;
+        let mut slot = home_slot(fingerprint, self.shift);
+        for _ in 0..Self::PROBES {
+            match self.slots[slot].compare_exchange(
+                0,
+                fingerprint,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(claimed) if claimed == fingerprint => return false,
+                Err(_) => slot = (slot + 1) & mask,
+            }
+        }
+        true
+    }
 }
 
 impl Candidates<'_> {
@@ -2920,6 +2974,17 @@ impl Reached for Candidates<'_> {
         self.deferred.push((parent as u32, fingerprint));
         true
     }
+
+    fn claims(&mut self, fingerprint: u64) -> bool {
+        let Some(claims) = self.claims else {
+            return true;
+        };
+        let is_first = claims.claim(fingerprint);
+        if is_first {
+            self.claimed.push(fingerprint);
+        }
+        is_first
+    }
 }
 
 // A thread of the search: its machine, on an overlay of the store, and its caches, which it keeps
@@ -2981,6 +3046,10 @@ struct Expanded {
     // Each state, by its parent, whose invariant failed but which another thread may have found
     // first under a VIEW or symmetry, as another state with the same key.
     deferred: Vec<(u32, u64)>,
+    // The fingerprints it had claimed in the expansion it stopped at: what their checks did
+    // belongs to the first state of the level that steps to one of them, which may be another
+    // thread's and earlier.
+    suspects: Vec<u64>,
     collisions: u64,
     is_past_walk: bool,
     is_membership_unsafe: bool,
@@ -3086,6 +3155,7 @@ struct Shared<'s> {
     // The warnings the search has reported, and how often, so that a thread tells a warning TLC
     // may still print from one it never prints again.
     warned: &'s HashMap<crate::RuntimeWarning, u32>,
+    claims: Option<&'s Claims>,
 }
 
 // What a graph keeps of each step besides its target: the action that took it, and the state it
@@ -3116,6 +3186,8 @@ fn expand_claimed(
         parents: Vec::new(),
         deferred: Vec::new(),
         collisions: 0,
+        claims: shared.claims,
+        claimed: Vec::new(),
     };
     let mut quiet = Quiet;
     let mut search = Search::new(
@@ -3137,6 +3209,7 @@ fn expand_claimed(
     std::mem::swap(&mut search.fingerprints, &mut worker.fingerprints);
     search.canonicalizer = worker.canonicalizer.take();
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
+    let mut suspects = Vec::new();
     let width = before.width;
     let mut generated = 0;
     'claiming: loop {
@@ -3160,6 +3233,7 @@ fn expand_claimed(
                 break 'claiming;
             }
             search.expanding = expanding;
+            search.states.claimed.clear();
             search.current.clear();
             search
                 .current
@@ -3189,6 +3263,7 @@ fn expand_claimed(
                 {
                     machine.output.clear();
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
+                    suspects = std::mem::take(&mut search.states.claimed);
                     break 'claiming;
                 }
                 Ok(()) => {
@@ -3207,6 +3282,7 @@ fn expand_claimed(
                 Err(_) => {
                     machine.output.clear();
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
+                    suspects = std::mem::take(&mut search.states.claimed);
                     break 'claiming;
                 }
             }
@@ -3224,6 +3300,7 @@ fn expand_claimed(
         fingerprints: found.fingerprints,
         parents: found.parents,
         deferred: found.deferred,
+        suspects,
         collisions: found.collisions,
         is_past_walk: worker.machine.is_past_walk,
         is_membership_unsafe: worker.machine.is_membership_unsafe,
@@ -3247,6 +3324,12 @@ impl Search<'_, States> {
         out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
         progress_at: Option<&mut Instant>,
     ) -> Outcome<()> {
+        // Where the key isn't the state, or a fingerprint is verified by its key, two states can
+        // share a fingerprint, and each thread checks its own.
+        let claims = (self.states.key_width.is_none()
+            && !self.states.is_verified
+            && !context.invariants.is_empty())
+        .then(|| Claims::new(level.end - level.start));
         let shared = Shared {
             context,
             before: &self.states,
@@ -3258,6 +3341,7 @@ impl Search<'_, States> {
                 is_real: graph.reals.is_some(),
             }),
             warned: &self.warned,
+            claims: claims.as_ref(),
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
@@ -3372,6 +3456,23 @@ impl Search<'_, States> {
         }
         self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
+        // A thread that stopped had claimed states in that expansion, whose checks may be what
+        // stopped it. One thread meets each at the first state of the level that steps to it,
+        // where another thread left it unchecked: the level stops there, if that is earlier.
+        let suspects: HashSet<u64> = expanded
+            .iter()
+            .flat_map(|found| &found.suspects)
+            .copied()
+            .collect();
+        if !suspects.is_empty() {
+            for found in &expanded {
+                for (fingerprint, &parent) in found.fingerprints.iter().zip(&found.parents) {
+                    if (parent as usize) < stop && suspects.contains(fingerprint) {
+                        stop = parent as usize;
+                    }
+                }
+            }
+        }
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
         for (thread, found) in expanded.iter().enumerate() {
             for (run, claimed) in found.claimed.iter().enumerate() {
@@ -8627,6 +8728,8 @@ mod tests {
             parents: Vec::new(),
             deferred: Vec::new(),
             collisions: 0,
+            claims: None,
+            claimed: Vec::new(),
         };
         for (state, fingerprint, index) in [(5, 0, 0), (6, 1, 1)] {
             let slot = Reached::find(&mut thread, &[state], fingerprint).expect("a state before");
@@ -8643,6 +8746,8 @@ mod tests {
             parents: Vec::new(),
             deferred: Vec::new(),
             collisions: 0,
+            claims: None,
+            claimed: Vec::new(),
         };
         for (state, fingerprint) in [(7, 2), (8, 0)] {
             let Err(slot) = Reached::find(&mut thread, &[state], fingerprint) else {
@@ -8697,6 +8802,55 @@ mod tests {
             }
         }
         assert_eq!(ADVISED.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn claims_each_fingerprint_for_one_thread() {
+        let claims = Claims::new(64);
+        let fingerprints: Vec<u64> = (1..=400u64)
+            .map(|index| index.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        let claimed: Vec<usize> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        fingerprints
+                            .iter()
+                            .filter(|&&fingerprint| claims.claim(fingerprint))
+                            .count()
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().expect("a thread that claims"))
+                .collect()
+        });
+        assert_eq!(claimed.iter().sum::<usize>(), fingerprints.len());
+        assert!(
+            fingerprints
+                .iter()
+                .all(|&fingerprint| !claims.claim(fingerprint))
+        );
+        // The fingerprint that stands for an empty slot is every thread's to check.
+        assert!(claims.claim(0) && claims.claim(0));
+    }
+
+    // A table too full to place a fingerprint leaves it to every thread that asks.
+    #[test]
+    fn claims_for_every_thread_what_a_full_table_cant_place() {
+        let claims = Claims::new(1);
+        let capacity = claims.slots.len() as u64;
+        let placed = (1..=capacity * 2)
+            .filter(|&fingerprint| claims.claim(fingerprint))
+            .count() as u64;
+        assert!(placed > capacity);
+        assert!(
+            (1..=capacity * 2)
+                .filter(|&fingerprint| !claims.claim(fingerprint))
+                .count() as u64
+                <= capacity
+        );
     }
 
     #[test]
