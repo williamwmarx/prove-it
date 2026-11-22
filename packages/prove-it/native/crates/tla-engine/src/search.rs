@@ -3520,6 +3520,9 @@ struct Places<'s> {
 // The fewest candidates a thread adds the new states of.
 const SHARE_CANDIDATES: usize = 4096;
 
+// How many states ahead the import reads the table's slots of a state's values.
+const IMPORT_PREFETCH: usize = 8;
+
 // Copies the new states of a share's runs to their places, in the runs' order, and counts each
 // parent's, the share's first being `first_parent`: the places of the states that hold a value
 // of their thread's overlay, an id from the thread's bound on, with the thread and the candidate.
@@ -4516,7 +4519,20 @@ impl Search<'_, States> {
         });
         let mut place = before;
         for (share, own) in shares.iter().zip(own) {
-            for (offset, thread, index) in own {
+            for (position, &(offset, thread, index)) in own.iter().enumerate() {
+                // The table's slots of the values of a state further on, read while these are
+                // imported: the table is far larger than the cache.
+                if let Some(&(_, thread, index)) = own.get(position + IMPORT_PREFETCH) {
+                    let overlay = &workers[thread].machine.store;
+                    let found = &expanded[thread];
+                    let ids = &found.ids[index * width..][..width];
+                    let keys = key_width.map_or(&[][..], |key_width| {
+                        &found.keys[index * key_width..][..key_width]
+                    });
+                    for &id in ids.iter().chain(keys) {
+                        machine.store.prefetch_import(overlay, id);
+                    }
+                }
                 let worker = &mut workers[thread];
                 let overlay = &worker.machine.store;
                 let mut import = |from: &[Id], into: &mut [Id]| {
