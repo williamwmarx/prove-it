@@ -8601,6 +8601,7 @@ tactic only (`Fpfile.query`).
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 | with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
+| with Isabelle's simp, flat_rule and result ranking | 763 / 574 / 14 | 313 / 1,042 / 43 |
 
 ### Declines
 
