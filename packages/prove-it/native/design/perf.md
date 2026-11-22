@@ -1545,9 +1545,9 @@ per thread, and gives every reader the same shared slice. Counted with callgrind
 10.66 → 10.04, SyncCons 18.83 → 17.94, VoucherRedeem 20.42 → 19.53, queue 19.08 → 18.60, TokenRing
 101.06 → 97.15, test19 53.11 → 52.21, commit 264.22 → 265.69, 1.03× over the seven; the suite, 5
 runs, 1.01×, with the models above 0.1 s within their ranges (MCDisruptor_MPMC read 169.4 → 181.7
-ms there, on 10.8 M fewer instructions: noise of five runs). What remains of a small run is no
-longer in lexing: the parser still parses each text several times, and the environment is linked
-twice.
+ms there, on 10.8 M fewer instructions; 15 runs of it alone gave 179.1 → 179.2 ms: noise of
+five runs). What remains of a small run is no longer in lexing: the parser still parses each text
+several times, and the environment is linked twice.
 
 ## Measured and dropped
 
