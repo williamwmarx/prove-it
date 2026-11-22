@@ -839,6 +839,9 @@ pub enum Atom {
     Action {
         action: Eval,
         subscript: Option<Eval>,
+        /// What the subscript's value depends on besides the state: the atoms whose subscripts
+        /// have the same key share its values on the helpers.
+        key: Option<SubscriptKey>,
         enabled: Option<usize>,
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
@@ -2042,6 +2045,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
         Atom::Action {
             action,
             subscript,
+            key,
             enabled,
             is_next,
             split,
@@ -2049,6 +2053,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
         } => Atom::Action {
             action: guard(action),
             subscript: subscript.map(guard),
+            key,
             enabled,
             is_next,
             split,
@@ -2087,10 +2092,13 @@ fn compile_atom(
             }
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
-            let subscript = match unchanged {
-                None => None,
+            let (subscript, key) = match unchanged {
+                None => (None, None),
                 Some(node) => match resolve(ir, *node) {
-                    NodeKind::Unchanged(inner) => Some(compile_subscript(compiler, *inner, scope)?),
+                    NodeKind::Unchanged(inner) => (
+                        Some(compile_subscript(compiler, *inner, scope)?),
+                        Some(get_subscript_key(ir, *inner, scope)),
+                    ),
                     _ => return Err("a subscript the engine doesn't read".to_string()),
                 },
             };
@@ -2115,6 +2123,7 @@ fn compile_atom(
                 piece: piece.filter(|_| is_answered),
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
+                key,
                 enabled: enabled.map(|position| position as usize),
             })
         })(),

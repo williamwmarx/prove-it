@@ -1470,15 +1470,26 @@ by zero, words TLC's failure (`except-*` fixtures), and declines only where that
 warns, which TLC did as it started and doesn't again ("a value TLC computed at startup with a
 warning").
 
-The liveness level of an application of an operator that applies an operator argument counts
-that argument's level, as SANY's does (`Specs.getLevel`, `getLevelParams`), so `<>(Apply(G)...)`
-with `G(k) == x + k` is a state predicate rather than a constant TLC evaluates as it starts. It
-counts it only where the body applies the argument at weight 1: `OpApplNode.levelCheck` adds an
-operand's level parameters only for a weight-1 operand (`BuiltInOperators`), and ENABLED, ',
-UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal quantifiers take theirs with weight
-0. So `Over(F(_)) == ENABLED F(2)` applied to an action `Op` is a state predicate, and
-`PROPERTY Prop` with `Prop == [](Over(Op))` is an invariant TLC reports violated by the initial
-state, not a temporal property.
+The liveness level of an application counts the arguments whose parameters the operator's body
+reads, as SANY's does (`Specs.getLevel` takes SANY's level, and `OpDefNode.levelCheck` weights a
+parameter 1 where the body's level parameters hold it): the front end reads the weights off its
+port of SANY's level check (`levels.rs`), which computes the level parameters node by node, as
+SANY does, through a LET's definitions, a LET function's bounds, and an operator argument the
+body applies (`OpApplNode.levelCheck` adds an operand's level parameters only for a weight-1
+operand, and ENABLED, ', UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal
+quantifiers take theirs with weight 0). So `<>(Apply(G)...)` with `G(k) == x + k` is a state
+predicate rather than a constant TLC evaluates as it starts; `Over(F(_)) == ENABLED F(2)`
+applied to an action `Op` is a state predicate, and `PROPERTY Prop` with `Prop == [](Over(Op))`
+is an invariant TLC reports violated by the initial state, not a temporal property; and `F(x')`
+with `F(p) == x = 0`, `F(p) == LET A == p  B == A IN B` or `F(p) == LET f[i \in p] == i IN 1 \in
+DOMAIN f` is an action where the body reads `p` and a state predicate where it doesn't
+(`tests/level-params`). An operator SANY's level check doesn't accept counts every argument.
+SANY levels an application of a standard module's operator by the module's definition of it,
+which the front end parses for that (`get_standard_definition`): `PickSuccessor(exp)` is of
+`exp`'s level, which `astToLive` raises to the Java method's action level through
+`getLevelBound`, so `PROPERTY P` with `P == []PickSuccessor(TRUE)` is TLC's "Temporal formulas
+containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
+which declined before.
 
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
@@ -6353,6 +6364,40 @@ text (probes of 2026-11-18):
   also lacks the frame of a selection through a single copy, which answers now (see "Call stacks
   of a selection"). The assumption context matches.
 
+The specs of upstream tla-ts's unit tests at 0341dbe5 (`packages/tla-ts/tests/unit`, lifted
+statically and run against the pinned jar: `scratch/upstream/unit` on `upstream-results`) show
+these, each as main b7f832b9 prints it:
+
+- TLCEval of an argument of constant level caches its value in the semantic graph for the run
+  (`TLCEval.tlcEvalConst`), where the evaluation's `Context` is deep-empty: TLC evaluates it once,
+  with the empty state, and the binary at each evaluation. `Inv == x >= 0 /\ TLCEval(Print("b",
+  TRUE))` prints `"b"` once in TLC and at each state natively; `x' = TLCEval(RandomElement(1..1000))`
+  draws once in TLC; and `Inv == TLCEval(Print(v, TRUE))`, whose argument SANY gives constant
+  level (Print's first parameter is unused), fails in TLC on the undefined `v` and holds natively.
+  A zero-arity definition read under a binder sees its caller's context, so whether TLC caches
+  depends on where the definition is read; LET definitions after the first have a context too.
+- The split of the next-state relation (`Tool.getActionsAppl`) evaluates an operator's arguments
+  where SANY gives each constant level (`args[i].getLevel()`), before the configuration's
+  substitutions: `A(C)` with `CONSTANT C <- Lit` and a state-level `Lit` is split into `A(1)`, and
+  `A(Def)` with `Def == x` and `Def <- Alt` is not, where the binary decides on the substituted
+  expression; `A(D(1))` with `D(q) == TLCGet("level") + q` reads the level as TLC starts (0).
+- Strings TLC interns as it splits the next-state relation or builds TLCExt's records rank before
+  those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
+  "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
+  TLC and `{"action", "zzq"}` natively.
+- An initial predicate that leaves a variable undefined after two complete initial states prints
+  TLC's "Computed 2 initial states..." twice in TLC, once natively.
+- Random draws after a trace, not yet traced: `Init == x = RandomElement(1..1000) /\ PrintT(x)` with
+  `Next == RandomElement(1..2) = 3 /\ x' = x` and `-seed 4` prints `731` before the deadlock's trace
+  in both, and after it `882` in TLC and `731` natively, as though the binary's generator hadn't
+  advanced past Next's draw; and with `A == n' = n + 1 /\ x' = RandomElement(1..1000)`, `B ==
+  PrintT(<<"B", n>>) /\ FALSE`, `INVARIANT n < 2` and `POSTCONDITION PrintT(Cardinality(
+  CounterExample.state))`, TLC prints `<<"B", 1>>` where the binary prints `3`.
+- Two prints TLC makes that the binary doesn't, not yet traced: `PROPERTY Prop` with `Prop ==
+  <>[]~S(x)`, `S(v) == v < 0 /\ PrintT("s")` and x from 0 to 4 prints `"s"` once in TLC, though
+  no state makes `v < 0` hold; and `Next == \E i \in {PrintT(<<"split", TLCGet("level")>>)} :
+  TRUE` under `SPECIFICATION Spec` with `Spec == [][Next]_<<>>` prints `<<"split", 1>>` in TLC.
+
 #### Sets past `TLCGlobals.setBound`
 
 TLC builds a set enumeration element by element in a `ValueVec`, which fails once it holds
@@ -8404,7 +8449,8 @@ of integer powers; the runs those change count as wrong here until the port foll
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
-| with the frontends' notes and refusals | 731 / 574 / 46 | 313 / 1,042 / 43 |
+| with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
+| with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 
 ### Declines
 

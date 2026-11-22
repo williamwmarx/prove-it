@@ -922,7 +922,10 @@ impl<'a> Prover<'a> {
     fn settle_error(&self, task: &Task, error: ObligationError) -> Result<Report> {
         let status = match error {
             ObligationError::Unsupported(reason) => Status::Unsupported { reason },
-            ObligationError::Prover(reason) => Status::Failed { reason },
+            ObligationError::Prover(reason)
+            | ObligationError::Method {
+                message: reason, ..
+            } => Status::Failed { reason },
             error => return Err(error),
         };
         Ok(self.run.get_base(task.position, status, Vec::new()))
@@ -1014,7 +1017,12 @@ pub fn prove_obligations_with(
                 status: Status::Unsupported { reason },
                 attempts: Vec::new(),
             }),
-            Err(ObligationError::Prover(reason)) => Proving::Settled(Report {
+            Err(
+                ObligationError::Prover(reason)
+                | ObligationError::Method {
+                    message: reason, ..
+                },
+            ) => Proving::Settled(Report {
                 id: obligation.id,
                 location: obligation.location.clone(),
                 text: obligation.text.clone(),

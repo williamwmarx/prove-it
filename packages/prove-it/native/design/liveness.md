@@ -429,10 +429,12 @@ WF_vars(Next)'s action on each step, as TLC does. Under `-lncheck final` the eng
 With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
 threads, each a run of the states over the search's store, as a parallel search's threads expand a
 level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
-A helper answers an action atom's steps and stuttering steps in one pass over its run, computes
-which of TLC's actions changed an ENABLED atom's subscript from each state, and runs ENABLED on
-the states the steps leave unknown; the search's thread evaluates only a state whose subscript
-failed on a step, or every state where the atoms print.
+A helper answers an action atom's steps and stuttering steps in one pass over its run, and with
+it every action atom after it whose subscript has the same key and whose ENABLED atom is answered
+already, evaluating the subscript on each state once for them all and marking the state's steps
+once for each; it computes which of TLC's actions changed an ENABLED atom's subscript from each
+state, and runs ENABLED on the states the steps leave unknown. The search's thread evaluates only
+a state whose subscript failed on a step, or every state where the atoms print.
 Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
 store's size in memory. TokenRing at N = 8, its graph kept, checks on 4 threads in 51 s rather than
 81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store
