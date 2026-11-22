@@ -1532,6 +1532,69 @@ returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `fi
 cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
 again, and the tuples `<<v, c>>`.
 
+### Constants folded, recursive calls and the initial atoms (const-shapes)
+
+**Constants a fused node sees.** Every expression that reads nothing was a `Machine::once`
+closure, `Shape::Other` to the node above it: `N - 1`, `{1}`, `{"b", "Done"}`, `<<0, 0>>`. In
+SimpleRegular, 7.6M lookups of 34 instructions each, and the bounds of `\A i \in 0..(N-1)`
+evaluated through two of them at each of its 1.1M quantifications. Now arithmetic, comparisons,
+negation, set enumerations and tuples whose operands are all `Shape::Constant` are evaluated as
+they compile (`Compiler::folded`), on a machine of an empty program that borrows the compiler's
+store, and are `Shape::Constant` themselves; `cached` keeps a constant as it is, so a definition
+whose body folds is one too. This is not TLC's `processConstantDefns`, which computes whole
+constant definitions at startup: a fold is of an operator TLC evaluates at each use, whose value
+is the same wherever it is evaluated, since its operands are values and it prints, draws, warns
+and reads nothing. One that fails (`1 \div 0`, a set of values TLC can't compare, an overflow)
+stays as compiled and fails where and as it did. `a..b` of constant integer bounds keeps them
+(`Interval::known`), which the quantifier over intervals and the membership test read in place,
+and a membership in a constant set reads the set in place. Lookups through `Machine::once` in
+SimpleRegular went from 7.6M to 0.56M. The first build made a `Store` for each fold to stand in
+for the one lent, 1.4M instructions each, which took VoucherRedeem from 0.02 to 0.03 s
+(mh7z94pjng); `Store::placeholder` allocates nothing.
+
+**Recursive calls.** GameOfLife's `Sum(f, S)` is 8.4M calls of about 230 instructions of
+machinery each: the arguments' closures, pushed on the machine's stack and swapped into the
+parameters' slots, then `keeping_slots` copying the body's slots to the stack and back through
+two `memcpy` calls. A call of one to three parameters now reads its arguments as a fused node
+reads operands (`predicate::Leaf`, a bound name in place) into an array, and a body of up to four
+slots of its own keeps them in an array (`Machine::keeping`); the path of an operator whose table
+is on is out of line (`call_kept`). Heights and TOO_DEEP are counted where they were, and an
+argument that fails stops the call as before. `S = {}`, a bound name and a constant, was the
+generic comparison; it now reads the slot, and `equals_asked` tells sets of different sizes
+apart in place, as `equals` did.
+
+**The atoms of the initial states.** Where the initial states are checked for an atom that fails
+as TLC adds them, the engine answered every atom on them; TLC's `addInitState` evaluates only the
+state predicates of the tableaux' initial nodes (`tla_live::initially_read`). TokenRing, whose
+46,656 states are all initial, ran ENABLED of its fairness on each there (8% of its
+instructions), which the steps answer in the final check. The others are now left unanswered on
+that pass, which reads none of them.
+
+Callgrind, one worker, a build without LTO: SimpleRegular 7.08G → 6.68G, GameOfLife 13.43G →
+11.46G, TokenRing 1.82G → 1.65G. On Depot, against the integration branch at ba748411, medians
+with the ranges:
+
+| Run | Model | Before, 1 thread | After, 1 thread | Before, every core (CPU) | After |
+|---|---|---|---|---|---|
+| z8xcmv8svc, 4 cores, 15 runs, folding alone | SimpleRegular | 0.48 (0.44–0.50) | 0.46 (0.43–0.52) | | |
+| 03gtp2zfw5, 4 cores, 15 runs | TokenRing | 0.10 (0.10–0.11) | 0.09 (0.09–0.09) | | |
+| 1mpn0h00m9, 16 cores, the suite, 5 runs | GameOfLife | 0.94 (0.92–0.94) | 0.84 (0.82–0.85) | 0.12 (1.12) | 0.11 (1.01) |
+
+| hvrhfcjntf, 4 cores, the suite, 9 runs | SimpleRegular | 0.45 (0.44–0.48) | 0.44 (0.43–0.47) | 0.18 (0.57) | 0.17 (0.56) |
+| hvrhfcjntf | TokenRing | 0.11 (0.10–0.12) | 0.09 (0.09–0.10) | 0.06 (0.14) | 0.06 (0.12) |
+
+The 16-core suite (1mpn0h00m9) is 1.00× on one thread and on 16, and the 4-core one
+(hvrhfcjntf) 1.01× on one worker and 1.02× in CPU on four, every other model within its range.
+SimpleRegular gains less than its instructions (5.7%): what is left of it is the search's own
+fixed costs and the store's memory.
+
+What is left of TokenRing's 1.65G instructions: `UniqueToken` on each state (about 9k
+instructions a state, its quantifiers over `0..N`, `0..i-1` and `i..N-1`), the search and the
+checker's `add_state` (15%). `add_state` is spread over
+reading each step's action check from the atoms' tables (`read`, 285 instructions a step, 250K
+steps), ordering each successor set (`slot_order`) and the tableau's state checks, with nothing
+evaluated twice.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
