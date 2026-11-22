@@ -175,6 +175,47 @@ pub(crate) enum Key {
     Slot(u32),
 }
 
+/// The most keys a name bound once is found by, as many as a memo table's.
+pub(crate) const BINDING_KEYS: usize = 6;
+
+/// A name bound once: a LET definition or an operator's argument its body may read more than
+/// once, where its keys are read and its expression.
+pub(crate) struct BoundName {
+    pub keys: Box<[Key]>,
+    pub inner: Eval,
+}
+
+/// Where a memo table of an expression that reads names bound once reads one of its keys: a
+/// place, or such a name's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThroughKey {
+    Read(Key),
+    Binding(u32),
+}
+
+/// In place of the value of a name bound once: its expression gave no value to key a memo table
+/// by for what it read (`Machine::binding_key`), which a read of the name evaluates again.
+const UNKEYED: Id = EMPTY - 1;
+
+/// The value a name bound once last had, by what its expression read then, with how deep the
+/// evaluation nested recursive calls.
+#[derive(Clone)]
+pub(crate) struct BoundValue {
+    read: [Id; BINDING_KEYS],
+    value: Id,
+    height: u32,
+}
+
+impl Default for BoundValue {
+    fn default() -> BoundValue {
+        BoundValue {
+            read: [EMPTY; BINDING_KEYS],
+            value: EMPTY,
+            height: 0,
+        }
+    }
+}
+
 /// A recursive operator or function once its body has settled.
 pub(crate) struct Recursive {
     pub body: Eval,
@@ -212,6 +253,8 @@ pub struct Program {
     pub(crate) once_count: usize,
     pub(crate) round_count: usize,
     pub(crate) recursives: Vec<Option<Recursive>>,
+    /// The names bound once, which a memo table keyed by one's value reads by its number.
+    pub(crate) bindings: Vec<BoundName>,
     /// The bodies of the function constructors that may be the function of an application,
     /// each list by the number `Machine::applying_construction` holds.
     pub(crate) constructions: Vec<Box<[NodeId]>>,
@@ -290,6 +333,8 @@ pub struct Machine<'p> {
     pub(crate) program: &'p Program,
     pub(crate) tables: Vec<MemoTable>,
     pub(crate) epochs: Vec<EpochCache>,
+    /// The last value of each name bound once (`Program::bindings`).
+    bindings: Vec<BoundValue>,
     pub(crate) onces: Vec<Id>,
     /// The values computed once whose evaluation nested recursive calls, with how deep they
     /// went, which a machine that adopts them counts where it reads them too.
@@ -480,6 +525,7 @@ impl<'p> Machine<'p> {
             epochs: (0..program.epoch_count)
                 .map(|_| EpochCache::default())
                 .collect(),
+            bindings: vec![BoundValue::default(); program.bindings.len()],
             onces: vec![EMPTY; program.once_count],
             deep_onces: vec![(EMPTY, 0); program.once_count],
             rounds: vec![u64::MAX; program.round_count],
@@ -589,6 +635,7 @@ impl<'p> Machine<'p> {
         for cache in &mut self.epochs {
             *cache = EpochCache::default();
         }
+        self.bindings.fill(BoundValue::default());
         for once in self
             .onces
             .iter_mut()
@@ -811,6 +858,153 @@ impl<'p> Machine<'p> {
             self.tables[table].set_with_height(read, value, height);
         }
         Ok(value)
+    }
+
+    /// Reads a name bound once: TLC binds a LET definition or an operator's argument to a
+    /// `LazyValue`, which computes it where the body first reads it and keeps the value for its
+    /// other reads of the same states. The value is kept by what the expression read, so a read
+    /// finds it wherever those are the same, and it is computed, with its failure, only where
+    /// one reads it. Nothing is kept of an evaluation that printed a warning or kept a function
+    /// lazy, as a memo table keeps nothing of one (`lookup_further`).
+    #[inline(always)]
+    pub(crate) fn binding<const WIDTH: usize>(
+        &mut self,
+        index: usize,
+        keys: &[Key; WIDTH],
+        inner: &Eval,
+    ) -> Outcome<Id> {
+        let read = keys.map(|key| self.read_key(key));
+        let known = &self.bindings[index];
+        // Compared key by key, which beats a call to memcmp for six keys or fewer.
+        let mut is_known = known.value < UNKEYED && known.height == 0;
+        for (place, &key) in read.iter().enumerate() {
+            is_known &= known.read[place] == key;
+        }
+        if is_known {
+            return Ok(known.value);
+        }
+        self.bind(index, &read, inner)
+    }
+
+    #[inline(never)]
+    fn bind(&mut self, index: usize, read: &[Id], inner: &Eval) -> Outcome<Id> {
+        let known = &self.bindings[index];
+        if known.value < UNKEYED && known.read.iter().zip(read).all(|(kept, key)| kept == key) {
+            let (value, height) = (known.value, known.height);
+            self.reach_cached(height)?;
+            return Ok(value);
+        }
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let value = inner(self);
+        let height = self.reached_below(outer);
+        let value = value?;
+        if self.output.len() == output_at && value != self.kept_lazy_function {
+            self.keep_binding(index, read, value, height);
+        }
+        Ok(value)
+    }
+
+    fn keep_binding(&mut self, index: usize, read: &[Id], value: Id, height: u32) {
+        let kept = &mut self.bindings[index];
+        kept.read[..read.len()].copy_from_slice(read);
+        kept.value = value;
+        kept.height = height;
+    }
+
+    /// The value of a name bound once, for a memo table to key what reads the name by, or None
+    /// where the table can't: the expression fails or warns, which only a read of the name may
+    /// do, or its evaluation nests recursive calls, which each read counts from where it is. Nor
+    /// does a value of a thread's own key one: the thread lets go of it at the level's end, where
+    /// what the expression read may still find the entry in a later level. It is evaluated apart
+    /// from what TLC is evaluating: as no application's function, and reaching no deeper than
+    /// before.
+    #[inline(always)]
+    fn binding_key(&mut self, index: u32) -> Option<Id> {
+        let program = self.program;
+        let bound = &program.bindings[index as usize];
+        let known = &self.bindings[index as usize];
+        let mut is_known = known.value != EMPTY;
+        for (place, &key) in bound.keys.iter().enumerate() {
+            is_known &= known.read[place] == self.read_key(key);
+        }
+        if is_known {
+            let (value, height) = (known.value, known.height);
+            return (value != UNKEYED && height == 0 && !self.store.is_own(value)).then_some(value);
+        }
+        self.bind_key(index)
+    }
+
+    // `binding_key` of a name whose value isn't known for what its expression reads now.
+    #[inline(never)]
+    fn bind_key(&mut self, index: u32) -> Option<Id> {
+        let program = self.program;
+        let bound = &program.bindings[index as usize];
+        let width = bound.keys.len();
+        let mut read = [EMPTY; BINDING_KEYS];
+        for (place, &key) in read.iter_mut().zip(bound.keys.iter()) {
+            *place = self.read_key(key);
+        }
+        let output_at = self.output.len();
+        let stack_at = self.stack.len();
+        let reach = std::mem::replace(&mut self.reach, self.depth);
+        let keeping = std::mem::replace(&mut self.keeping_lazy_function_value, false);
+        let applying = self.applying_construction.take();
+        let kept = self.kept_lazy_function;
+        let value = (bound.inner)(self);
+        let height = self.reach.saturating_sub(self.depth);
+        let is_kept_lazy =
+            self.kept_lazy_function != kept || matches!(value, Ok(value) if value == kept);
+        self.reach = reach;
+        self.keeping_lazy_function_value = keeping;
+        self.applying_construction = applying;
+        self.kept_lazy_function = kept;
+        self.stack.truncate(stack_at);
+        match value {
+            Ok(value) if self.output.len() == output_at && !is_kept_lazy => {
+                self.keep_binding(index as usize, &read[..width], value, height);
+                (height == 0 && !self.store.is_own(value)).then_some(value)
+            }
+            _ => {
+                self.output.truncate(output_at);
+                self.keep_binding(index as usize, &read[..width], UNKEYED, 0);
+                None
+            }
+        }
+    }
+
+    /// `lookup` of an expression that reads names bound once, keyed by their values in place of
+    /// what their expressions read. Where one has no value to key by, `plain` evaluates it as it
+    /// would be without the names: through its table keyed by everything it reads, if it has one.
+    #[inline(always)]
+    pub(crate) fn lookup_through<const WIDTH: usize>(
+        &mut self,
+        table: usize,
+        keys: &[ThroughKey; WIDTH],
+        inner: &Eval,
+        plain: &Eval,
+    ) -> Outcome<Id> {
+        if !self.tables[table].is_enabled() {
+            return plain(self);
+        }
+        let mut read = [EMPTY; WIDTH];
+        for (place, &key) in read.iter_mut().zip(keys) {
+            *place = match key {
+                ThroughKey::Read(key) => self.read_key(key),
+                ThroughKey::Binding(index) => match self.binding_key(index) {
+                    Some(value) => value,
+                    None => return plain(self),
+                },
+            };
+        }
+        let (known, height) = self.tables[table].find(&read);
+        if known != EMPTY && height == 0 {
+            if self.program.is_epoch_checked && inner(self)? != known {
+                panic!("a memo table keyed by names bound once hit a stale value");
+            }
+            return Ok(known);
+        }
+        self.lookup_further(table, &read, known, height, inner)
     }
 
     pub(crate) fn epoch_lookup(

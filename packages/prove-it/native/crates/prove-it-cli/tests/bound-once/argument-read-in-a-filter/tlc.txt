@@ -1,0 +1,43 @@
+TLC2 Version 2026.11.22.162126
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 31972] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/crates/prove-it-cli/tests/bound-once/argument-read-in-a-filter/M.tla
+Parsing file /tmp/tlc-2783830675996976541/Integers.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-2783830675996976541/FiniteSets.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-2783830675996976541/TLC.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-2783830675996976541/Naturals.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-2783830675996976541/Sequences.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-22 16:21:27)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-22 16:21:27.
+Error: Invariant Few is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ vs = {0}
+/\ es = {}
+
+State 2: <Next line 9, col 25 to line 11, col 95 of module M>
+/\ vs = {0, 1}
+/\ es = {<<1, 0>>}
+
+State 3: <Next line 9, col 25 to line 11, col 95 of module M>
+/\ vs = {0, 1, 2}
+/\ es = {<<1, 0>>, <<2, 0>>}
+
+State 4: <Next line 9, col 25 to line 11, col 95 of module M>
+/\ vs = {0, 1, 2, 3}
+/\ es = {<<1, 0>>, <<2, 0>>, <<3, 0>>}
+
+State 5: <Next line 9, col 25 to line 11, col 95 of module M>
+/\ vs = {0, 1, 2, 3, 4}
+/\ es = {<<1, 0>>, <<2, 0>>, <<3, 0>>, <<4, 0>>, <<4, 1>>, <<4, 2>>, <<4, 3>>}
+
+476 states generated, 366 distinct states found, 329 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 01s at (2026-11-22 16:21:28)

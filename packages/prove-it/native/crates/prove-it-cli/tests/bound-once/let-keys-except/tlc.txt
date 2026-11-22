@@ -1,0 +1,60 @@
+TLC2 Version 2026.11.22.162129
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 1669] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/crates/prove-it-cli/tests/bound-once/let-keys-except/M.tla
+Parsing file /tmp/tlc-5844427402190440772/Integers.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-5844427402190440772/Sequences.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5844427402190440772/TLC.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5844427402190440772/Naturals.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5844427402190440772/FiniteSets.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-22 16:21:29)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-22 16:21:30.
+Error: Invariant Low is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ net = <<<<<<>>, <<>>>>, <<<<>>, <<>>>>>>
+/\ req = <<<<0, 0>>, <<0, 0>>>>
+/\ clock = <<1, 1>>
+
+State 2: <Send(1,2) line 9, col 15 to line 13, col 30 of module M>
+/\ net = <<<<<<>>, <<[clock |-> 1, type |-> "req"]>>>>, <<<<>>, <<>>>>>>
+/\ req = <<<<0, 0>>, <<0, 0>>>>
+/\ clock = <<2, 1>>
+
+State 3: <Send(1,2) line 9, col 15 to line 13, col 30 of module M>
+/\ net = << <<<<>>, <<[clock |-> 1, type |-> "req"], [clock |-> 2, type |-> "req"]>>>>,
+   <<<<>>, <<>>>> >>
+/\ req = <<<<0, 0>>, <<0, 0>>>>
+/\ clock = <<3, 1>>
+
+State 4: <Recv(2,1) line 14, col 15 to line 20, col 61 of module M>
+/\ net = <<<<<<>>, <<[clock |-> 2, type |-> "req"]>>>>, <<<<>>, <<>>>>>>
+/\ req = <<<<0, 0>>, <<1, 0>>>>
+/\ clock = <<3, 2>>
+
+State 5: <Send(1,2) line 9, col 15 to line 13, col 30 of module M>
+/\ net = << <<<<>>, <<[clock |-> 2, type |-> "req"], [clock |-> 3, type |-> "req"]>>>>,
+   <<<<>>, <<>>>> >>
+/\ req = <<<<0, 0>>, <<1, 0>>>>
+/\ clock = <<4, 2>>
+
+State 6: <Recv(2,1) line 14, col 15 to line 20, col 61 of module M>
+/\ net = <<<<<<>>, <<[clock |-> 3, type |-> "req"]>>>>, <<<<>>, <<>>>>>>
+/\ req = <<<<0, 0>>, <<2, 0>>>>
+/\ clock = <<4, 3>>
+
+State 7: <Recv(2,1) line 14, col 15 to line 20, col 61 of module M>
+/\ net = <<<<<<>>, <<>>>>, <<<<>>, <<>>>>>>
+/\ req = <<<<0, 0>>, <<3, 0>>>>
+/\ clock = <<4, 4>>
+
+110 states generated, 78 distinct states found, 35 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-11-22 16:21:30)
