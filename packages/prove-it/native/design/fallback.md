@@ -5055,6 +5055,14 @@ matches TLC or declines exactly.
   (`Startup::dependents`), which the engine evaluates where the definition failed: one that fails
   again with only its prints answers; one that draws or sets a register again, or computes this
   time, declines ("a definition TLC computes at startup that fails there"), as main did.
+- TLCGet("spec")'s initial predicates of a SPECIFICATION, found in the specs of upstream tla-ts's
+  unit tests at 0341dbe5. `processConfigSpec` looks a conjunct's name without arguments up: to a
+  value, which it takes as no initial predicate (TRUE, or a constant the configuration sets so),
+  and to a LET's definition, an OpDefNode it names after the LET (`Spec == LET I2 == Init IN I2 /\
+  [][Next]_v` has the initial predicate `I2`, at `Init`). The binary listed `TRUE /\ Init /\ ...`'s
+  TRUE as an `UnnamedAction` and named a LET's initial predicate after what it stands for, or split
+  its body. A constant expression with arguments (`(1 = 1) /\ Init`) stays an `UnnamedAction`, as
+  in TLC. Fixtures `spec-description-*`.
 - A set enumeration TLC can't normalize tested in a set of functions, of records or of tuples
   (`LET S == {1, "a"} IN S \in [{1} -> {1}]`), in a state: the message TLC words prints the
   element, whose `toString` fails, so the FingerprintException holds the element's source, then
