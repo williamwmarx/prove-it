@@ -1724,6 +1724,11 @@ Both suites are 1.01–1.02× in geomean on one thread, every model agreeing (z3
 v770lr7sjd). Two of MCLamportMutex's 16-core runs alone landed on a machine whose one-thread
 times ranged over 0.6 s for both binaries (x76ppps3bf, jkrcm46vjt) and say nothing; earlier
 versions of the change measured 1.67 → 1.51 (62tr35z6pj) and 1.66 → 1.49 (d5c4rdrf4c) there.
+On the integration branch at 531431ba, the suite again on 16 cores (s410hmk747, 3 runs): 1.03× on
+one thread, 15/15 agreeing; MCLamportMutex 1.65 → 1.50 and 0.47 (4.76) → 0.44 (4.30),
+BufferedRandomAccessFile 1.56 → 1.40 and 0.17 (1.79) → 0.15 (1.55), MCMultiNode 3.75 → 3.58,
+TLCSailfish1 2.90 → 2.88, MCExactInitialSync 1.43 (19.54) → 1.32 (18.19) on 16 threads, MCbtree
+0.68 → 0.69, cf1s_folklore 4.78 → 4.73.
 
 **What it costs.** MCbtree is 2–3% slower on one thread on the 16-core machine (0.66 → 0.68 s in
 three runs of three versions), and cf1s_folklore 1–2% in three suite runs of four, 4.7% in its
