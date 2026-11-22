@@ -9,8 +9,8 @@ use crate::equality::is_equal_expr;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
     Bound, BoundDomain, Builtin, DefnCore, Expr, ExprCore, ExprNode, ExprProps, Hyp, HypCore,
-    HypNode, Level, Quantifier, Sequent, Time, Visibility, WhereDefined, apply_builtin, at,
-    at_expr, at_props, expr, get_fact, get_hyp_name, hyp, is_builtin_apply, map_accumulate,
+    HypNode, Level, Quantifier, Sequent, Time, Visibility, WhereDefined, adjoin_all, apply_builtin,
+    at, at_expr, at_props, expr, get_fact, get_hyp_name, hyp, is_builtin_apply, map_accumulate,
     map_bound_domains, map_children, strip_props, to_index,
 };
 use crate::format::{FormatArg, format, render_doc};
@@ -23,6 +23,7 @@ use crate::proof::{
 use crate::substitution::{
     cons_substitution, normalize_apply, shift, shift_expr, substitute_bounds, substitute_expr,
 };
+use crate::temporal::get_time;
 
 /// tlapm builds nodes with x @@ step, which copies all of the step's properties.
 fn get_props(from: &ProofProps) -> ProofProps {
@@ -689,7 +690,7 @@ impl Simplifier {
                     context: vec![get_fact(
                         expression.clone(),
                         Visibility::Visible,
-                        time,
+                        get_time(&adjoin_all(&None, context), expression)?,
                         step.props.location.clone(),
                     )],
                     active: match implication {
@@ -751,7 +752,7 @@ impl Simplifier {
                             context: vec![get_fact(
                                 expression.clone(),
                                 Visibility::Visible,
-                                time,
+                                get_time(&adjoin_all(&None, context), expression)?,
                                 step.props.location.clone(),
                             )],
                             active: shift_expr(1, goal)?,
@@ -799,10 +800,14 @@ impl Simplifier {
                     return Err(ObligationError::proof("Proof.Simplify.simplify_step/PICK"));
                 };
                 let mut hyps = get_bound_hyps(bounds)?;
+                let body_time = get_time(
+                    &adjoin_all(&adjoin_all(&None, &assert_context), &hyps),
+                    body,
+                )?;
                 hyps.push(get_fact(
                     body.clone(),
                     Visibility::Visible,
-                    assert_time,
+                    body_time,
                     body.location.clone(),
                 ));
                 let active = shift_expr(to_index(hyps.len()), &assert_goal)?;
@@ -1882,11 +1887,11 @@ mod tests {
         check(C1, 2563, "0xb191b2d259b35fd4", 31);
         check(C2, 1065, "0x662396fed9fe812b", 33);
         check(C3, 446, "0xb3a3c8b23d167060", 34);
-        check(C4, 2036, "0xa5ab99571a44932e", 41);
+        check(C4, 2039, "0x514add36750b603b", 41);
         check(D1, 1252, "0xa94765768fdbeb9b", 26);
         check(D2, 863, "0x28f5e67ccb391c5f", 28);
         check(D3, 872, "0xb2eca2de53e31331", 33);
-        check(D4, 834, "0x11436adfb8e52298", 37);
+        check(D4, 831, "0xe78d4dc79a8cb901", 37);
         check(D5, 2072, "0xdb1ccf9b3e4c5d40", 51);
         check(D6, 2804, "0xbc1823f09c8204ad", 63);
         check(D7, 1623, "0x88489a608982a215", 69);

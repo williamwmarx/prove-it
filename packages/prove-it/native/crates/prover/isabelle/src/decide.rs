@@ -60,6 +60,7 @@ pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
         Ok(true) => (Verdict::Unsat, None),
         Ok(false) => (Verdict::Unknown, None),
         Err(Error::Isabelle(exception, _)) => (Verdict::Unknown, Some(exception.name())),
+        Err(Error::Unsupported(what)) => return Err(DecideError::Declined(what)),
         // Poly/ML grows its stack instead, until Isabelle runs out of memory, which tlapm counts
         // as a failure. The TypeScript answers unknown on JavaScript's stack overflow; in
         // WebAssembly the host's stack is the limit, so the port doesn't guess.
