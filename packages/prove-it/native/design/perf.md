@@ -1077,7 +1077,8 @@ Instructions of a build without LTO, one worker: TokenRing 4.31G → 2.70G, Simp
 | TokenRing (0b4bpstfl1) | 0.21 (0.20–0.23) → 0.14 (0.13–0.19) s, 1.44× | 0.11 → 0.08 s |
 | SimpleRegular (kvsvpskkdk) | 0.56 (0.54–0.57) → 0.49 (0.46–0.51) s, 1.14× | 0.29 → 0.27 s |
 
-The whole suite (vw9kh46c17, 5 runs) is 1.05× `main` on one worker and 1.04× on four, with
+Again at the branch's head (1jzh63gq1t, 15 runs): TokenRing 0.18 → 0.12 s, SimpleRegular 0.52 →
+0.47 s. The whole suite (vw9kh46c17, 5 runs) is 1.05× `main` on one worker and 1.04× on four, with
 MCBakery 0.75 → 0.68 s and Commit 0.29 → 0.27 s besides, and no model slower beyond its range.
 Over TLC's medians in 46kgrg2dmt, TokenRing goes from 5.6× to 8.9× on one worker, and
 SimpleRegular from 5.5× to 5.9×.
