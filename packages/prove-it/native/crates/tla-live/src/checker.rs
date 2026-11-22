@@ -2770,4 +2770,40 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn copies_rows_together_as_it_copies_them_one_by_one() {
+        for checks in [1, 3, 60, 64, 130] {
+            for (before, count) in [(0, 70), (1, 1), (5, 0), (21, 150), (64, 64)] {
+                let mut from = StepResults::new(checks);
+                from.add(count);
+                for row in 0..count {
+                    for id in (row % 3..checks).step_by(2) {
+                        from.set(row, id, (row + id) % 3 == 0);
+                    }
+                }
+                let (mut together, mut apart) =
+                    (StepResults::new(checks), StepResults::new(checks));
+                for results in [&mut together, &mut apart] {
+                    results.add(before + count + 3);
+                    if before > 0 {
+                        results.set(before - 1, 0, true);
+                    }
+                    results.set(before + count, checks - 1, true);
+                }
+                together.copy_rows(before, &from);
+                for row in 0..count {
+                    apart.copy_row(before + row, &from, row);
+                }
+                assert_eq!(
+                    together.checked, apart.checked,
+                    "{checks} checks from {before}"
+                );
+                assert_eq!(
+                    together.values, apart.values,
+                    "{checks} checks from {before}"
+                );
+            }
+        }
+    }
 }
