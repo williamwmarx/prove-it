@@ -232,7 +232,10 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
   a body names before the body, each after those its own body names, so a chain of definitions
   each naming the next is walked one definition at a time instead of each within the walk of the
   one naming it; `levels.rs`'s analyzer analyzes a definition's named definitions the same way
-  before the definition. The `spec` mode compares the split
+  before the definition, those whose analysis reaches no definition being analyzed and no cycle
+  but a definition naming itself, since a definition of a recursive section reads the levels
+  assumed of the one the analysis entered the section at, and analyzes the others where it
+  reaches them, as before. The `spec` mode compares the split
   of SPECIFICATION (1,093 of 1,111 models) and the `properties` mode the sorted properties (1,032
   of 1,111), none differing. What TLC evaluates there (a constant conjunct or definition, a `\A`
   a property unrolls over a constant set) is `NotYet`.

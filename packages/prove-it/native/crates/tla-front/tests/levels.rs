@@ -350,6 +350,76 @@ fn leaves_a_parameter_named_like_a_let_recursive_operator_not_native() {
     ));
 }
 
+// A recursive section's definitions read the levels assumed of the definition their analysis
+// entered the section at, so the analysis reaches each where its caller names it: an operator
+// the section's recursive operator names is analyzed within the recursive operator's analysis,
+// whatever the order of the definitions that name it. Each case's error is the one SANY at TLC
+// d8fb231 reports.
+fn get_always_action_error(location: &str) -> Vec<(String, String)> {
+    vec![(
+        location.to_owned(),
+        "[] followed by action not of form [A]_v.".to_owned(),
+    )]
+}
+
+#[test]
+fn analyzes_the_caller_of_a_recursive_operator_within_its_analysis() {
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nVARIABLE x\nRECURSIVE R(_)\nA(n) == R(n) /\\ n\nBad == [](A(x' = x))\nR(n) == [](A(n))\n====\n",
+            &[]
+        ),
+        get_always_action_error("line 5, col 8 to line 5, col 20 of module Main")
+    );
+}
+
+#[test]
+fn analyzes_a_chain_to_a_recursive_operator_within_its_analysis() {
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nVARIABLE x\nRECURSIVE R(_)\nB(n) == R(n) /\\ n\nA(n) == B(n)\nBad == [](A(x' = x))\nR(n) == [](A(n))\n====\n",
+            &[]
+        ),
+        get_always_action_error("line 6, col 8 to line 6, col 20 of module Main")
+    );
+}
+
+#[test]
+fn analyzes_the_caller_of_mutually_recursive_operators_within_their_analysis() {
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nVARIABLE x\nRECURSIVE P(_), Q(_)\nA(n) == P(n) /\\ n\nBad == [](A(x' = x))\nQ(n) == [](A(n))\nP(n) == Q(n)\n====\n",
+            &[]
+        ),
+        get_always_action_error("line 5, col 8 to line 5, col 20 of module Main")
+    );
+}
+
+#[test]
+fn analyzes_the_caller_of_a_recursive_operator_a_let_names_within_its_analysis() {
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nVARIABLE x\nRECURSIVE R(_)\nA(n) == R(n) /\\ n\nSpec == LET Bad == [](A(x' = x)) IN Bad\nR(n) == [](A(n))\n====\n",
+            &[]
+        ),
+        get_always_action_error("line 5, col 20 to line 5, col 32 of module Main")
+    );
+}
+
+#[test]
+fn analyzes_the_caller_of_an_instanced_recursive_operator_within_its_analysis() {
+    assert_eq!(
+        get_level_errors(
+            "---- MODULE Main ----\nVARIABLE x\nI == INSTANCE Inner WITH y <- x\n====\n",
+            &[(
+                "Inner",
+                "---- MODULE Inner ----\nVARIABLE y\nRECURSIVE R(_)\nA(n) == R(n) /\\ n\nBad == [](A(y' = y))\nR(n) == [](A(n))\n====\n"
+            )]
+        ),
+        get_always_action_error("line 5, col 8 to line 5, col 20 of module Inner")
+    );
+}
+
 // A chain of definitions, each naming the next, is analyzed one definition at a time: an analyzer
 // that starts from the first doesn't hold the stack through the analysis of each one named, so
 // the chain's length is no limit of it.
@@ -402,4 +472,53 @@ fn analyzes_a_chain_of_definitions_one_at_a_time() {
         levels,
         (ACTION_LEVEL, tla_front::dependencies::Level::Action)
     );
+}
+
+// A definition that names only itself is analyzed the same wherever its analysis starts, so a
+// chain of definitions that ends at a recursive operator is analyzed one definition at a time too.
+#[test]
+fn analyzes_a_chain_to_a_recursive_operator_one_at_a_time() {
+    use tla_front::levels::{ACTION_LEVEL, Scope};
+    const LENGTH: usize = 3_000;
+    let mut source =
+        "---- MODULE Chain ----\nVARIABLE x\nRECURSIVE Up(_)\nUp(n) == x' = n \\/ Up(n)\n"
+            .to_owned();
+    for index in (1..=LENGTH).rev() {
+        if index == LENGTH {
+            source.push_str(&format!("D{index} == Up(x)\n"));
+        } else {
+            source.push_str(&format!("D{index} == D{} /\\ x = 0\n", index + 1));
+        }
+    }
+    source.push_str("====");
+    let level = std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024)
+        .spawn(move || {
+            let config = parse_config("", TlcVersion::Master).expect("a configuration");
+            let environment = create_environment(&EnvironmentOptions {
+                linked_extendees: &[],
+                origin: None,
+                source: &source,
+                load_module: &|_| None,
+                config: &config,
+                is_unconfigured: true,
+                version: TlcVersion::Master,
+                is_level_checked: false,
+                load_class: None,
+            })
+            .expect("an environment");
+            environment
+                .create_unsubstituted_level_analyzer()
+                .analyze_definition(
+                    environment.definitions.get("D1").expect("the first"),
+                    &Scope::default(),
+                )
+                .expect("the levels")
+                .data
+                .level
+        })
+        .expect("a thread")
+        .join()
+        .expect("the analysis");
+    assert_eq!(level, ACTION_LEVEL);
 }
