@@ -3100,6 +3100,16 @@ configurable bound would answer the upstream tests that set one (`filter_within_
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a temporal property through a recursion that ends between 600 and 2,000 nested calls where
+  TLC's translation overflows ("a recursive temporal formula nested more deeply than TLC's stack
+  may hold"), as `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5) /\ F(n - 1, m + 1))` with `Prop ==
+  F(1100, 0)`. Main reported TLC's overflow at 100 nested calls whatever the recursion, which
+  matched only where TLC overflows too, and not at 800 or 1,000 calls of `F(n) == IF n = 0 THEN
+  <>P ELSE F(n - 1)`, which TLC completes. Of 968 generated recursive properties run through the
+  jar, 4 such runs that main matched decline. Winning them back takes the stack each level of
+  TLC's translation takes. As WebAssembly, whose host's stack holds about 900 levels of the
+  translation, one past that declines ("WebAssembly ran out of stack"), also where it never
+  ends and TLC overflows, which main reported at 100 calls.
 - a constant definition with effects that converts a value with `ToJson`, `ToJsonArray` or
   `ToJsonObject` ("a constant definition with effects applying a Json operator, which TLC computes
   as it starts"), also where the conversion can't fail and nothing reads the definition more
@@ -4854,8 +4864,15 @@ matches TLC or declines exactly.
   expression an argument could decide, as through an IF on the state alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE
   Reach(n + 1)`). An argument above constant level that becomes a constant can make a guard
   decidable, so `F(n) == IF n = 0 THEN <>P ELSE F(0)` with `Prop == F(x)` completes, as in TLC
-  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A finite recursion it follows
-  to 600 nested calls and declines past that. Fixtures `liveness-recursion-depth-{100,200,500,900}`,
+  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A recursion it follows to 600
+  nested calls; one that ends past that declines, and one that reaches 2,000 nested calls, which
+  overflow TLC's stack whatever each level takes, gets the overflow, as one that never ends does
+  (`F(n) == IF n > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, the `tla-front` test
+  `overflows_on_a_recursion_that_never_ends_and_declines_one_that_ends_past_tlc_stack`). An IF
+  decides only where its guard may name a parameter: `F(n) == TRUE /\ <>(x = 0) /\ F(n + 1)`
+  overflows from the first repeated call (`liveness-recursion-constant-conjunct`), as do the
+  shapes of `liveness-recursion-{mutual-cycle,state-argument,state-guard-conjunct,let-state-guard}`,
+  and `liveness-recursion-ending-past-stack` ends at 700 calls and declines. Fixtures `liveness-recursion-depth-{100,200,500,900}`,
   `liveness-recursion-state-guard` and `liveness-recursion-unevaluated-argument-read`, where a guard
   reads the argument that fails, which TLC reports as its evaluation error, as the binary does.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
@@ -6675,14 +6692,14 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
 
 - A recursive temporal formula nested more deeply than TLC's stack may hold ("a recursive temporal
   formula nested more deeply than TLC's stack may hold"): a property whose translation nests more
-  than 600 calls of recursive operators that may end. Where TLC's translation overflows depends on
-  its stack and on what each level takes: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)`
-  completes at 1,000 and overflows at 1,500, and `F(n - 1) /\ <>P` in its place completes at 800
+  than 600 calls of recursive operators and ends before 2,000. Where TLC's translation overflows
+  depends on its stack and on what each level takes: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE
+  F(n - 1)` completes at 1,000 and overflows at 1,200, and `F(n - 1) /\ <>P` in its place completes at 800
   and overflows at 900. A recursion whose levels take more of TLC's stack than these may overflow
   below 600 calls, where the binary completes it: a known wrong output, as for the evaluator's
   recursion. And a temporal formula nested more deeply than the translation follows ("a temporal
-  formula nested more deeply than the translation follows"), past 2,000 nested expansions of any
-  kind, which SANY's parser doesn't reach first.
+  formula nested more deeply than the translation follows"), past 2,000 nested expansions other
+  than of recursive calls, which SANY's parser doesn't reach first.
 
 - The replay that evaluates a failure again to print TLC's call stack (`evaluating the failure
   again:`) doesn't follow two kinds of frame, outside an assumption, where TLC prints none, and

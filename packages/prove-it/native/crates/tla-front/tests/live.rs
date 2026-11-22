@@ -324,3 +324,44 @@ fn overflows_on_a_recursion_whose_guard_reads_only_the_state() {
     };
     assert!(matches!(error, FrontError::StackOverflow), "{error:?}");
 }
+
+#[test]
+fn overflows_on_a_recursion_that_never_ends_and_declines_one_that_ends_past_tlc_stack() {
+    // Each of these follows 2,000 calls before it overflows, or 1,100 before it ends, deeper than
+    // a test thread's stack holds.
+    let lowered = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| {
+            [
+                ("IF n > 3 THEN <>(x = 1) ELSE (<>(x = 1) /\\ F(n - 1))", "0"),
+                ("IF n = 0 THEN <>(x = 1) ELSE ([](x # 5) /\\ F(n + 1))", "3"),
+                ("IF n = 0 THEN <>(x = 1) ELSE (<>(x = 1) /\\ F(n - 1))", "1100"),
+            ]
+            .map(|(body, argument)| {
+                let spec = format!(
+                    "---- MODULE Deep ----\nEXTENDS Naturals\nVARIABLE x\nSpec == x = 0 /\\ [][x' = (x + 1) % 3]_x /\\ WF_x(x' = (x + 1) % 3)\nRECURSIVE F(_)\nF(n) == {body}\nProp == F({argument})\n====\n"
+                );
+                match try_lower_spec("Deep", &spec, "SPECIFICATION Spec\nPROPERTY Prop\n") {
+                    Ok(_) => Ok(()),
+                    Err(FrontError::Warned(_, error)) => Err(*error),
+                    Err(error) => Err(error),
+                }
+            })
+        })
+        .expect("a thread")
+        .join()
+        .expect("the lowerings");
+    let [descending, growing, ending] = lowered;
+    assert!(
+        matches!(descending, Err(FrontError::StackOverflow)),
+        "{descending:?}"
+    );
+    assert!(
+        matches!(growing, Err(FrontError::StackOverflow)),
+        "{growing:?}"
+    );
+    assert!(
+        matches!(&ending, Err(FrontError::NotYet(reason)) if reason == "a recursive temporal formula nested more deeply than TLC's stack may hold"),
+        "{ending:?}"
+    );
+}

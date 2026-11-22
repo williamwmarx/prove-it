@@ -19,15 +19,20 @@ use crate::spec::{
 };
 use crate::tlc_messages::is_eval_exception;
 
-/// How deep the translation nests expansions of any kind before it declines, which a formula's own
-/// nesting doesn't reach before SANY's parser gives out.
+/// How deep the translation nests expansions other than of recursive calls before it declines,
+/// which a formula's own nesting doesn't reach before SANY's parser gives out.
 const MAXIMUM_EXPANSION_DEPTH: usize = 2000;
 
-/// How many nested calls of recursive operators the translation follows. TLC's translation
+/// How many nested calls of recursive operators TLC's translation surely holds. It
 /// (`Liveness.astToLive`) recurses on the JVM's stack, whose size decides where it overflows: at
 /// the corpus's `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1) /\ <>P` completes at 800 and
-/// overflows at 900. Past this bound the translation declines rather than guess.
+/// overflows at 900, and `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` completes at 1000 and
+/// overflows at 1200. A translation that goes deeper but ends declines rather than guess.
 const MAXIMUM_RECURSION: usize = 600;
+
+/// How many nested calls of recursive operators overflow TLC's stack whatever their shape, past
+/// which the translation overflows as TLC's does, as on a recursion that never ends.
+const OVERFLOWING_RECURSION: usize = 2000;
 
 /// An argument of a recursive call, as the translation compares calls to find one it is already in.
 enum Argument {
@@ -52,6 +57,23 @@ impl PartialEq for Argument {
             ) => left == right && left_scope == right_scope,
             _ => false,
         }
+    }
+}
+
+/// Whether an expression may name what an operator's parameters or a LET bind, through a name
+/// resolved in a scope; a global definition it applies can't, but for its arguments. A LET counts
+/// as one that may.
+fn may_name_local(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExpressionKind::Let { .. } => true,
+        ExpressionKind::Identifier { .. }
+        | ExpressionKind::Apply { .. }
+        | ExpressionKind::OperatorReference { .. }
+            if expression.is_locally_resolved() =>
+        {
+            true
+        }
+        _ => expression.children().iter().any(may_name_local),
     }
 }
 
@@ -186,9 +208,12 @@ struct Converter<'a> {
     depth: usize,
     /// The calls of recursive operators the translation is in.
     recursion: Vec<RecursiveCall>,
-    /// How many constant expressions the translation has evaluated, as a guard or an operand, which
-    /// is what an argument's value can decide.
+    /// How many constant expressions that may name a parameter the translation has evaluated to
+    /// decide what it expands, which is what an argument's value can decide (`count_decision`).
     evaluations: std::cell::Cell<usize>,
+    /// Whether the translation followed more nested recursive calls than TLC's stack surely
+    /// holds, so that TLC may have overflowed where it didn't.
+    is_past_tlc_stack: bool,
     /// Levels of pure, context-free global calls whose translation is non-temporal.
     call_levels: HashMap<*const Definition, Level>,
     /// Whether the formula being translated is part of an expression an INSTANCE put in for a
@@ -201,9 +226,16 @@ impl Converter<'_> {
         get_level(expression, scope, self.environment, self.facts, &[])
     }
 
+    /// Counts a constant expression the translation evaluates to decide what it expands, where an
+    /// argument of a recursive call may decide it: one that may name a parameter.
+    fn count_decision(&self, expression: &Expr) {
+        if may_name_local(expression) {
+            self.evaluations.set(self.evaluations.get() + 1);
+        }
+    }
+
     /// The evaluator, whose failures TLC words in ways the front end doesn't follow yet.
     fn get_evaluator(&self, reason: &str) -> Result<&Evaluator<'_>> {
-        self.evaluations.set(self.evaluations.get() + 1);
         self.evaluator.ok_or_else(|| not_yet(reason))
     }
 
@@ -214,6 +246,7 @@ impl Converter<'_> {
         scope: Option<&Rc<Scope>>,
         reason: &str,
     ) -> Result<Option<bool>> {
+        self.count_decision(expression);
         match self.get_evaluator(reason)?.evaluate(expression, scope) {
             Ok(ConfigValue::Boolean(value)) => Ok(Some(value)),
             Ok(_) => Ok(None),
@@ -298,7 +331,7 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
-        if self.depth >= MAXIMUM_EXPANSION_DEPTH {
+        if self.depth >= MAXIMUM_EXPANSION_DEPTH + self.recursion.len() {
             return Err(not_yet(
                 "a temporal formula nested more deeply than the translation follows",
             ));
@@ -423,10 +456,11 @@ impl Converter<'_> {
         }) {
             return Err(FrontError::StackOverflow);
         }
+        if self.recursion.len() >= OVERFLOWING_RECURSION {
+            return Err(FrontError::StackOverflow);
+        }
         if self.recursion.len() >= MAXIMUM_RECURSION {
-            return Err(not_yet(
-                "a recursive temporal formula nested more deeply than TLC's stack may hold",
-            ));
+            self.is_past_tlc_stack = true;
         }
         self.recursion.push(call);
         let expanded = self.expand(&body, bound.as_ref(), expression, scope);
@@ -619,6 +653,9 @@ impl Converter<'_> {
                     return Err(cannot_handle(expression));
                 }
                 let reason = "a temporal quantifier over a set TLC fails to list";
+                for bound in bounds {
+                    self.count_decision(&bound.set);
+                }
                 let bindings = self
                     .get_evaluator(reason)?
                     .get_temporal_bindings(bounds, scope);
@@ -720,6 +757,28 @@ impl Converter<'_> {
     }
 }
 
+/// The fairness conditions, the properties' negations and the properties by name, translated.
+type Translated = (Vec<Rc<Live>>, Vec<Rc<Live>>, Vec<(Rc<str>, Rc<Live>)>);
+
+fn convert_all(
+    converter: &mut Converter,
+    temporals: &[Expanded],
+    properties: &[Property],
+) -> Result<Translated> {
+    let fairness = temporals
+        .iter()
+        .map(|temporal| converter.convert(&temporal.expression, temporal.scope.as_ref()))
+        .collect::<Result<Vec<_>>>()?;
+    let mut negations = Vec::with_capacity(properties.len());
+    let mut named = Vec::with_capacity(properties.len());
+    for property in properties {
+        let formula = converter.convert(&property.expression, property.scope.as_ref())?;
+        negations.push(Rc::new(Live::Not(formula.clone())));
+        named.push((property.name.clone(), formula));
+    }
+    Ok((fairness, negations, named))
+}
+
 /// `createLivenessChecker`'s formula, properties and atoms, or none without temporal properties.
 pub fn get_liveness(
     temporals: &[Expanded],
@@ -742,20 +801,17 @@ pub fn get_liveness(
         depth: 0,
         recursion: Vec::new(),
         evaluations: std::cell::Cell::new(0),
+        is_past_tlc_stack: false,
         call_levels: HashMap::new(),
         is_substituted: false,
     };
-    let fairness = temporals
-        .iter()
-        .map(|temporal| converter.convert(&temporal.expression, temporal.scope.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
-    let mut negations = Vec::with_capacity(properties.len());
-    let mut named = Vec::with_capacity(properties.len());
-    for property in properties {
-        let formula = converter.convert(&property.expression, property.scope.as_ref())?;
-        negations.push(Rc::new(Live::Not(formula.clone())));
-        named.push((property.name.clone(), formula));
+    let converted = convert_all(&mut converter, temporals, properties);
+    if converter.is_past_tlc_stack && !matches!(converted, Err(FrontError::StackOverflow)) {
+        return Err(not_yet(
+            "a recursive temporal formula nested more deeply than TLC's stack may hold",
+        ));
     }
+    let (fairness, mut negations, named) = converted?;
     let violation = if negations.len() == 1 {
         negations.remove(0)
     } else {
