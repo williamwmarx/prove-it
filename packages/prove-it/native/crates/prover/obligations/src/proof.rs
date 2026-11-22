@@ -58,6 +58,8 @@ pub struct Obligation {
     pub location: Option<Locus>,
     pub kind: ObligationKind,
     pub method: Option<OldMethod>,
+    /// Module.Elab's `enabledaxioms` property, from the leaf proof: see ProofProps.
+    pub is_enabled_axioms_sound: Option<bool>,
 }
 
 /// `ProofProps`. `use_location` is where a USE step comes from, so find_meth can tell apart the
@@ -69,6 +71,14 @@ pub struct ProofProps {
     pub obligations: Option<Vec<Obligation>>,
     pub method: Option<OldMethod>,
     pub use_location: Option<Locus>,
+    /// Props.supp: a suppression pragma precedes the step or proof, whose obligations are kept but
+    /// not emitted (Proof.Gen.collect's obgetter).
+    pub is_suppressed: bool,
+    /// Module.Elab's `enabledaxioms` property, which its ENABLEDaxioms check assigns to each leaf
+    /// proof of a theorem that cites the directive: whether the assumptions the leaf depends on
+    /// are all of level at most 1, which the directive's rule is sound for. None where the
+    /// theorem never cites it.
+    pub is_enabled_axioms_sound: Option<bool>,
 }
 
 #[derive(Clone, Debug)]

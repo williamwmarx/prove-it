@@ -1,0 +1,305 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:20
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:26
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:26
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:12:3:12:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:12:6:12:26
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:30
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:16:6:16:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:14
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:simp; time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(simp); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:20
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:(simp, auto); time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT P,
+       NEW CONSTANT Q,
+       P /\ Q ,
+       TRUE 
+PROVE  Q /\ P
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:26
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(simp, auto); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:26
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:12:3:12:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:(simp, auto); time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT a,
+       P(a) /\ TRUE ,
+       TRUE 
+PROVE  \E x : P(x)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:12:6:12:26
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto intro: setEqualI); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:30
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:auto; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT S,
+       NEW CONSTANT T,
+       \A x : x \in S <=> x \in T ,
+       TRUE 
+PROVE  S = T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:force; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT S,
+       NEW CONSTANT T,
+       \A x : x \in S <=> x \in T ,
+       TRUE 
+PROVE  S = T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto intro: setEqualI); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:16:6:16:12
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./IsabelleMethods.tla", line 12, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT P(_),
+                  NEW CONSTANT a,
+                  P(a) /\ TRUE ,
+                  IsaM("(simp, auto)") 
+           PROVE  \E x : P(x)
+File "./IsabelleMethods.tla", line 8, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT P,
+                  NEW CONSTANT Q,
+                  P /\ Q ,
+                  IsaM("(simp, auto)") 
+           PROVE  Q /\ P
+File "./IsabelleMethods.tla", line 1, character 1 to line 17, character 4:
+[ERROR]: 2/14 obligations failed.
+There were backend errors processing module `"IsabelleMethods"`.

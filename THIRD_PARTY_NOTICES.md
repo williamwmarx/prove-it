@@ -1,6 +1,6 @@
 # Third-party notices
 
-Prove It is distributed under the MIT license in `LICENSE`, except seven files ported from OCaml, which keep OCaml's license (see OCaml below). It is derived from [tla-ts](https://github.com/aidenybai/tla-ts) by Aiden Bai, whose copyright notice `LICENSE` carries, and it includes or is ported from the projects below. Each project's notice and license follow.
+Prove It is distributed under the MIT license in `LICENSE`, except seven files ported from OCaml, which keep OCaml's license (see OCaml below). It is derived from [tla-ts](https://github.com/aidenybai/tla-ts) by Aiden Bai, whose copyright notice `LICENSE` carries, and `native/crates/prove-it-cli/tests/upstream-tlapm/` holds cases of its tlapm conformance suite as they are (`packages/conformance/test/tlapm` at 0341dbe5). It includes or is ported from the projects below. Each project's notice and license follow.
 
 ## TLA+ tools (TLC, SANY and the PlusCal translator)
 

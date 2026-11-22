@@ -21,14 +21,17 @@ use prove_it_prover::driver::{
 use prove_it_prover::tlapm_cache::{FingerprintTable, KnownResults, LocalTime, load_fingerprints};
 use prove_it_prover::{Cancel, DecideError, Limits, Statistic, Verdict};
 use prove_obligations::bytes;
-use prove_obligations::errors::ObligationError;
-use prove_obligations::expression::{Channel, get_at_prefix, get_locus_text};
+use prove_obligations::errors::{ObligationError, quote_ocaml};
+use prove_obligations::expression::{
+    Channel, ObligationWarning, get_at_prefix, get_locus_prefix, get_locus_text,
+};
 use prove_obligations::format::{format, render_doc};
 use prove_obligations::generate::LineRange;
 use prove_obligations::index::{
     ModuleObligations, ObligationSource, PrintedObligation, WHOLE_MODULE, format_summary,
     get_obligations,
 };
+use prove_obligations::prep::methods::is_frontend;
 use prove_obligations::prep::normalize::{expand_defs, normalize_expand, normalize_sequent};
 use prove_obligations::printer::{format_obligation, print_sequent};
 use prove_obligations::proof::ObligationKind;
@@ -453,25 +456,6 @@ fn quote_shell_argument(arg: &str) -> String {
     }
 }
 
-/// OCaml's `%S`: a string in quotes, as String.escaped writes it.
-fn quote_ocaml(text: &str) -> String {
-    let mut quoted = String::from("\"");
-    for byte in text.bytes() {
-        match byte {
-            b'"' => quoted.push_str("\\\""),
-            b'\\' => quoted.push_str("\\\\"),
-            b'\n' => quoted.push_str("\\n"),
-            b'\t' => quoted.push_str("\\t"),
-            b'\r' => quoted.push_str("\\r"),
-            8 => quoted.push_str("\\b"),
-            b' '..=b'~' => quoted.push(char::from(byte)),
-            other => quoted.push_str(&format!("\\{other:03}")),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
 /// C's `%g`: six significant digits, without trailing zeros, in exponent form outside 1e-4 to 1e6.
 fn format_general(value: f64) -> String {
     if value.is_nan() {
@@ -564,6 +548,23 @@ fn join_paths(left: &str, right: &str) -> String {
 }
 
 // A message of tlapm's toolbox protocol, which it writes to stderr.
+/// What a warning prints, by its channel: Util.printf on stdout, Errors.err as a toolbox message
+/// or on stderr, and what only the toolbox sees.
+fn format_warning(warning: &ObligationWarning, is_toolbox: bool) -> Option<Printed> {
+    let text = format!("{}\n", warning.text);
+    match warning.channel {
+        Channel::Stdout => Some(Printed::Out(text)),
+        Channel::Toolbox | Channel::ToolboxOnly if is_toolbox => {
+            Some(Printed::Err(format_toolbox_message(&[
+                "type:warning".to_owned(),
+                format!("msg:{}", warning.text),
+            ])))
+        }
+        Channel::ToolboxOnly => None,
+        Channel::Toolbox | Channel::Stderr => Some(Printed::Err(text)),
+    }
+}
+
 fn format_toolbox_message(fields: &[String]) -> String {
     let mut message = String::from("@!!BEGIN\n");
     for field in fields {
@@ -990,19 +991,9 @@ fn generate_obligations(
         Some(lines),
         &mut |warning| {
             not_utf8.check(&warning);
-            let text = format!("{}\n", warning.text);
-            let message = match warning.channel {
-                Channel::Stdout => Some(Printed::Out(text)),
-                Channel::Toolbox | Channel::ToolboxOnly if is_toolbox => {
-                    Some(Printed::Err(format_toolbox_message(&[
-                        "type:warning".to_owned(),
-                        format!("msg:{}", warning.text),
-                    ])))
-                }
-                Channel::ToolboxOnly => None,
-                Channel::Toolbox | Channel::Stderr => Some(Printed::Err(text)),
-            };
-            printed.borrow_mut().extend(message);
+            printed
+                .borrow_mut()
+                .extend(format_warning(&warning, is_toolbox));
         },
     );
     if let Some(reason) = declined {
@@ -1723,7 +1714,8 @@ fn prove_module(
         .collect();
     let mut text = String::new();
     if is_toolbox {
-        for (report, obligation) in &unproved {
+        // collect_untreated_obligations prepends each, so they print last first.
+        for (report, obligation) in unproved.iter().rev() {
             if report.attempts.is_empty() && !matches!(obligation.kind, ObligationKind::Error(_)) {
                 text.push_str(&format_failed_obligation(obligation, "unexpected error"));
             }
@@ -1792,6 +1784,18 @@ fn prove_scheduled(
     let obligations = &module.obligations;
     let mut cache = Cache::default();
     let mut prover = Prover::new(obligations, &mut cache, settings);
+    // Prep.make_task: tlapm finds each obligation's methods before it schedules any task, and warns
+    // of a pragma it can't read as it goes (Errors.err), leaving that obligation untreated.
+    for position in 0..obligations.len() {
+        if let Err(ObligationError::Method { message, at }) = prover.get_methods(position) {
+            let text = format!("{}{message}", get_locus_prefix(at.as_ref()));
+            io.err(if is_toolbox {
+                format_toolbox_message(&["type:warning".to_owned(), format!("msg:{text}")])
+            } else {
+                format!("{text}\n")
+            });
+        }
+    }
     let mut reports: Vec<Option<Report>> = vec![None; obligations.len()];
     let mut printed = vec![0; obligations.len()];
     let mut waiting: VecDeque<Task> = (0..obligations.len()).map(Task::new).collect();
@@ -1805,6 +1809,7 @@ fn prove_scheduled(
             let step = prover
                 .step(&mut task)
                 .map_err(|error| get_obligation_error(&error))?;
+            print_frontend_warnings(io, &mut prover, is_toolbox);
             match step {
                 Step::Settled(report) => {
                     print_settled(
@@ -1875,10 +1880,11 @@ fn prove_scheduled(
         }
         race.record(&task, &fingerprint, &name, &answer, note);
         let position = task.position;
-        match prover
+        let answered = prover
             .answer(&mut task, answer)
-            .map_err(|error| get_obligation_error(&error))?
-        {
+            .map_err(|error| get_obligation_error(&error))?;
+        print_frontend_warnings(io, &mut prover, is_toolbox);
+        match answered {
             Some(report) => {
                 print_settled(
                     io,
@@ -1911,6 +1917,17 @@ fn prove_scheduled(
         reports,
         results: prover.into_results(),
     })
+}
+
+// What the frontends printed as the step ran them (Util.printf, Util.eprintf and Errors.err).
+fn print_frontend_warnings(io: &Io<'_>, prover: &mut Prover<'_>, is_toolbox: bool) {
+    for warning in prover.take_warnings() {
+        match format_warning(&warning, is_toolbox) {
+            Some(Printed::Out(text)) => io.out(text),
+            Some(Printed::Err(text)) => io.err(text),
+            None => {}
+        }
+    }
 }
 
 // The toolbox messages of the attempts not printed yet, as Toolbox.print_old_res prints a reused
@@ -1950,6 +1967,7 @@ fn print_settled(
 ) -> Run<()> {
     check_report(report, is_proving)?;
     if report.status == Status::Trivial || matches!(obligation.kind, ObligationKind::Error(_)) {
+        print_attempts(io, &report.attempts, obligation, printed, is_toolbox)?;
         if is_toolbox {
             io.err(format_report(report, obligation)?);
         }
@@ -2031,9 +2049,12 @@ impl Race {
             let is_numbering = match self.numbering.get(position) {
                 Some(is_numbering) => *is_numbering,
                 None => {
-                    let is_numbering = prover
-                        .is_numbering(*position)
-                        .map_err(|error| get_obligation_error(&error))?;
+                    // An obligation whose frontend refused it, or whose pragma tlapm can't
+                    // read, sends nothing.
+                    let is_numbering = match prover.is_numbering(*position) {
+                        Err(ObligationError::Prover(_) | ObligationError::Method { .. }) => false,
+                        numbering => numbering.map_err(|error| get_obligation_error(&error))?,
+                    };
                     self.numbering.insert(*position, is_numbering);
                     is_numbering
                 }
@@ -2156,18 +2177,39 @@ fn format_report(report: &Report, obligation: &PrintedObligation) -> Run<String>
     Ok(text)
 }
 
-// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
-// Toolbox.normalize, which keeps pragmas, for a reused one.
-fn format_normalized(obligation: &PrintedObligation, is_reused: bool) -> Run<String> {
-    let normalize = || {
-        if is_reused {
-            normalize_sequent(&expand_defs(&obligation.sequent, false)?)
-        } else {
-            normalize_expand(&obligation.sequent, obligation.method.as_ref(), None)
-        }
+/// How far a failed obligation is normalized before it prints.
+#[derive(Clone, Copy)]
+enum Normalized {
+    /// Prep.normalize_expand, for a new failure.
+    Expanded,
+    /// Toolbox.normalize, which keeps pragmas, for a reused one.
+    Reused,
+    /// Prep.normalize_expr, as far as a frontend that refused the obligation got.
+    Refused,
+}
+
+// A failed obligation as tlapm prints it: with each fact that holds only now marked where a
+// temporal method (Method.is_temporal: LS4) failed it.
+fn format_normalized(
+    obligation: &PrintedObligation,
+    normalized: Normalized,
+    is_temporal: bool,
+) -> Run<String> {
+    let normalize = || match normalized {
+        Normalized::Expanded => normalize_expand(
+            &obligation.sequent,
+            obligation.method.as_ref(),
+            None,
+            obligation.is_enabled_axioms_sound,
+            None,
+            &mut |_| {},
+        ),
+        Normalized::Reused => normalize_sequent(&expand_defs(&obligation.sequent, false)?),
+        Normalized::Refused => normalize_sequent(&expand_defs(&obligation.sequent, true)?),
     };
     let sequent = normalize().map_err(|error| get_obligation_error(&error))?;
-    let text = format_obligation(&sequent).map_err(|error| get_obligation_error(&error))?;
+    let text =
+        format_obligation(&sequent, is_temporal).map_err(|error| get_obligation_error(&error))?;
     Ok(format!("{text}\n"))
 }
 
@@ -2204,6 +2246,8 @@ fn format_attempt(obligation: &PrintedObligation, attempt: &Attempt) -> Run<Stri
     };
     let is_proved = attempt.attempt.is_proved;
     let is_reused = attempt.attempt.is_reused;
+    // A frontend's only result is a refusal (Prep.normalize_expand's NotTried).
+    let is_refused = is_frontend(&method.prover);
     let mut fields = vec![format!("prover:{}", method.prover)];
     if !meth.is_empty() {
         fields.push(format!("meth:{meth}"));
@@ -2213,14 +2257,22 @@ fn format_attempt(obligation: &PrintedObligation, attempt: &Attempt) -> Run<Stri
     }
     fields.push(format!("already:{is_reused}"));
     if !is_proved {
-        let lead = if is_reused {
-            String::new()
+        let (lead, normalized) = if is_reused {
+            (String::new(), Normalized::Reused)
+        } else if is_refused {
+            (
+                format!(
+                    "{}\nObligation:\n\n",
+                    attempt.reason.as_deref().unwrap_or_default()
+                ),
+                Normalized::Refused,
+            )
         } else {
-            format!("\n{note}")
+            (format!("\n{note}"), Normalized::Expanded)
         };
         fields.push(format!(
             "obl:{lead}{}",
-            format_normalized(obligation, is_reused)?
+            format_normalized(obligation, normalized, method.prover == "ls4")?
         ));
     }
     Ok(format_obligation_message(

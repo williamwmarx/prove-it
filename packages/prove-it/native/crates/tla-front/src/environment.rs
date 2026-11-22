@@ -656,7 +656,70 @@ fn is_sany_standard_module(name: &str, version: TlcVersion) -> bool {
     modules.iter().any(|module| module.0 == name)
 }
 
+thread_local! {
+    /// The standard modules of the pinned TLC as the parser reads them, by name, each parsed on
+    /// the first read of one of its definitions; and what each name read gave.
+    static PARSED_STANDARD_MODULES: RefCell<FastMap<&'static str, Option<Rc<Module>>>> =
+        RefCell::new(FastMap::default());
+    static STANDARD_DEFINITIONS: RefCell<FastMap<Box<str>, Option<StandardDefinition>>> =
+        RefCell::new(FastMap::default());
+}
+
+/// A standard module's definition, with the module it is read in.
+pub(crate) type StandardDefinition = (Rc<Module>, Rc<Definition>);
+
+fn get_parsed_standard_module(name: &'static str, source: &'static str) -> Option<Rc<Module>> {
+    PARSED_STANDARD_MODULES.with(|modules| {
+        modules
+            .borrow_mut()
+            .entry(name)
+            .or_insert_with(|| crate::parser::parse_module(source).ok().map(Rc::new))
+            .clone()
+    })
+}
+
+/// The definition of `name` in the standard modules of the pinned TLC, as the parser reads
+/// them, with its module: the first module in order that defines it. The operator tables say
+/// which modules define a name, so only those are parsed, each once.
+pub(crate) fn get_standard_module_definition(name: &str) -> Option<StandardDefinition> {
+    STANDARD_DEFINITIONS.with(|definitions| {
+        if let Some(definition) = definitions.borrow().get(name) {
+            return definition.clone();
+        }
+        let definition = standard_modules::MASTER
+            .iter()
+            .filter(|(module, _)| {
+                standard_builtins::MASTER.iter().any(|table| {
+                    table.name == *module
+                        && table.operators.iter().any(|operator| operator.name == name)
+                })
+            })
+            .find_map(|(module, source)| {
+                let module = get_parsed_standard_module(module, source)?;
+                let definition = module
+                    .definitions
+                    .iter()
+                    .find(|definition| &*definition.name == name)?
+                    .clone();
+                Some((module, definition))
+            });
+        definitions
+            .borrow_mut()
+            .insert(name.into(), definition.clone());
+        definition
+    })
+}
+
 impl Environment {
+    /// The definition of a standard module's operator the front end implements as a builtin, as
+    /// SANY parses the module: SANY levels an application of the operator by it.
+    pub fn get_standard_definition(&self, name: &str) -> Option<Rc<Definition>> {
+        if !self.builtins.contains_key(name) {
+            return None;
+        }
+        get_standard_module_definition(name).map(|(_, definition)| definition)
+    }
+
     pub fn is_substituted(&self, definition: &Rc<Definition>) -> bool {
         self.substituted_definitions
             .contains_key(&(Rc::as_ptr(definition) as usize))
@@ -8654,6 +8717,46 @@ fn add_assumptions(
         add_assumptions(extended, visited, assumptions);
     }
     assumptions.extend(linked.module.assumptions.iter().cloned());
+}
+
+#[cfg(test)]
+mod standard_definition_tests {
+    use super::*;
+
+    /// The lookup, which parses only the modules whose text spells the name, finds what parsing
+    /// every module and taking the first definition of the name would, for every builtin.
+    #[test]
+    fn finds_the_standard_definition_parsing_every_module_would() {
+        let modules: Vec<Module> = standard_modules::MASTER
+            .iter()
+            .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
+            .collect();
+        let names = CORE_OPERATORS.iter().map(|(name, _, _)| *name).chain(
+            [standard_builtins::MASTER, standard_builtins::TLC_174]
+                .into_iter()
+                .flatten()
+                .flat_map(|module| module.operators.iter().map(|operator| operator.name)),
+        );
+        let locate = |module: &Module, definition: &Definition| {
+            (
+                module.name.clone(),
+                definition.name.clone(),
+                definition.location.clone(),
+            )
+        };
+        for name in names {
+            let expected = modules.iter().find_map(|module| {
+                let definition = module
+                    .definitions
+                    .iter()
+                    .find(|definition| &*definition.name == name)?;
+                Some(locate(module, definition))
+            });
+            let found = get_standard_module_definition(name)
+                .map(|(module, definition)| locate(&module, &definition));
+            assert_eq!(found, expected, "{name}");
+        }
+    }
 }
 
 #[cfg(test)]

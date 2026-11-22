@@ -59,7 +59,9 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         visit: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        self.walk(node, context, is_init, &mut |evaluator| {
+        let outer = self.is_initial_walk;
+        self.is_initial_walk |= is_init;
+        let walked = self.walk(node, context, is_init, &mut |evaluator| {
             if !evaluator.is_complete(is_init) {
                 if is_init && let Some(stack) = &mut evaluator.call_stack {
                     stack.incomplete = Some(
@@ -77,7 +79,9 @@ impl<'ir> Evaluator<'ir> {
                 });
             }
             visit(evaluator)
-        })
+        });
+        self.is_initial_walk = outer;
+        walked
     }
 
     // Whether an expression names a startup definition that failed as TLC started.

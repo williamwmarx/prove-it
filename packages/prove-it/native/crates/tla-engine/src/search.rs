@@ -31,7 +31,7 @@ use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 use crate::compile::builtins::{PROBED_REGISTER_FAILS, PROBED_REGISTER_SET};
 use crate::compile::{
     CompileError, Compiler, DISTINCT_SLOT, ENUMERATED_INT, ENUMERATED_NAT, ENUMERATED_SEQ,
-    ENUMERATED_STRING, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options, SymmetryElements,
+    ENUMERATED_STRING, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options, SymmetryElements, TRACE_SLOT,
 };
 use crate::context::{
     Atom, EngineContext, Startup, StartupDefinition, StartupSymmetry, count_possible,
@@ -889,6 +889,7 @@ pub(crate) const SEQ_COMPARED: &str = "compared Seq(S) with a non-overridden val
 // function, which fails in TLC only where it built the value as a record, and which the evaluator
 // of failures evaluates again.
 const TLC_FAILURES: &[&str] = &[
+    crate::machine::TRACE_OF_INCOMPLETE_STATE,
     "a temporal formula in a state",
     "enumerated ANY",
     tla_values::fingerprint::ANY_FINGERPRINT.0,
@@ -1595,6 +1596,11 @@ struct Search<'r, T, E = Dense> {
     // Whether the spec reads the counts TLCGet gives of the search but the distinct states
     // (`Search::set_counts`).
     is_counted: bool,
+    // Whether the search keeps the behavior up to the state it expands for TLCExt's Trace
+    // (`Machine::trace`).
+    is_trace_kept: bool,
+    // Where it keeps it, each expanded state's behavior, by the state's index (`keep_trace`).
+    trace_lists: Vec<Id>,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
     is_dfid: bool,
@@ -1690,6 +1696,8 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             reporter,
             is_distinct_read,
             is_counted: false,
+            is_trace_kept: false,
+            trace_lists: Vec::new(),
             is_continued: false,
             is_dfid: false,
             startup: None,
@@ -2018,6 +2026,28 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         let zero = machine.store.int(0)?;
         machine.set_slot(LEVEL_SLOT, zero);
         Ok(())
+    }
+
+    // The behavior up to the state the search expands, for TLCExt's Trace: TLC's trace of the
+    // state (`getTraceInfo`), the parents the state was first found by, and the state. The search
+    // keeps it as a list of pairs, each the list of the state's parent and the state's record, made
+    // once as it expands the state, whose parent it expanded first; `Machine::trace` makes the
+    // tuple only where Trace is evaluated.
+    fn keep_trace(&mut self, machine: &mut Machine<'_>) {
+        let parent = self.states.parent(self.expanding).unwrap_or(-1);
+        let prefix = usize::try_from(parent)
+            .ok()
+            .and_then(|parent| self.trace_lists.get(parent).copied())
+            .unwrap_or(tla_values::store::EMPTY_TUPLE);
+        let record = machine.state_record(&self.current);
+        let behavior = machine.store.tuple_of(&[prefix, record]);
+        if self.trace_lists.len() <= self.expanding {
+            self.trace_lists
+                .resize(self.expanding + 1, tla_values::store::EMPTY_TUPLE);
+        }
+        self.trace_lists[self.expanding] = behavior;
+        machine.set_slot(TRACE_SLOT, behavior);
+        machine.trace_epoch = Some(self.expansion_epoch);
     }
 
     fn set_expanded_current(&self, machine: &mut Machine<'_>) {
@@ -2623,6 +2653,9 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         self.dfid_all_done = true;
         self.dfid_all_nonleaf = true;
         self.expansion_epoch = machine.next_epoch();
+        if self.is_trace_kept {
+            self.keep_trace(machine);
+        }
         self.level_id = machine.store.int(self.level as i64)?;
         self.next_level_id = machine.store.int(self.level as i64 + 1)?;
         // TLC's main thread finds the initial states and enqueues them all before its workers
@@ -4188,7 +4221,16 @@ fn run_startup(
         ] {
             machine.set_slot(slot, zero);
         }
-        check_assumptions(machine, startup, 0, is_native)?
+        // TLC evaluates the assumptions in an empty state, whose Trace is its record where the
+        // spec has no variables and fails otherwise (`TLCExt.getTrace`).
+        let kept = machine.trace_epoch;
+        if machine.program.trace_record.is_some() {
+            machine.set_slot(TRACE_SLOT, tla_values::store::EMPTY_TUPLE);
+            machine.trace_epoch = Some(u64::MAX);
+        }
+        let assumed = check_assumptions(machine, startup, 0, is_native);
+        machine.trace_epoch = kept;
+        assumed?
     };
     Ok(Unconfirmed::new(Started {
         printed,
@@ -4935,62 +4977,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_count_read = compiler.is_count_read;
+    let is_trace_read = compiler.is_trace_read;
     let is_cached = compiler.is_cached || compiler.is_tlc_cache_used;
     let is_ranking = compiler.is_ranking;
     let is_printing = compiler.is_printing;
     let is_warning = compiler.is_warning;
-    // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
-    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
     let is_picking = compiler.is_picking;
-    let is_pipelined = settings.dfid.is_none()
-        && !is_warning
-        && !is_printing
-        && !is_lambda_built
-        && !compiler.is_cached
-        && !is_distinct_read
-        && context.view.is_none()
-        && model.startup.symmetry.is_none()
-        && !settings.is_live_checked;
-    // A level's states are shared between threads where the order of the steps across states
-    // shows nowhere but in the states found and the graph the merge records in that order: nothing
-    // prints or reads the count of distinct states, and no test asks for a check of the graph at
-    // a state inside a level. A warning may be raised, since a thread that raises one TLC may
-    // print stops the level at its state (`expand_claimed`).
-    // More threads than the machine runs at once would only take turns.
-    let thread_count = settings
-        .threads
-        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
-    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
-    let is_shared = thread_count > 1
-        && !compiler.is_ranking
-        && !is_picking
-        && !compiler.is_printing
-        && !is_lambda_built
-        && !compiler.is_cached
-        && !is_distinct_read
-        && !settings.is_continued
-        && !(model.is_recording_graph && settings.test_live_check_at.is_some())
-        // The online checker adds each state as it is expanded, between the expansions, and the
-        // held prints come out between them: neither may meet a level the threads share.
-        && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
-        && !settings.is_live_checked
-        && context.possible.is_empty();
-    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
-    // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
-    // it in the order it first evaluates each expression), or anything prints, draws or reads or
-    // sets TLC's registers: a helper machine has none of the search's registers or generator.
-    let atom_threads = if compiler.is_ranking
-        || is_warning
-        || compiler.is_printing
-        || is_lambda_built
-        || compiler.is_tlc_cache_used
-    {
-        1
-    } else {
-        thread_count
-    };
+    let is_compiled_cached = compiler.is_cached;
+    let is_tlc_cache_used = compiler.is_tlc_cache_used;
+    let is_effect_past_startup = compiler.is_printing_past_startup;
+    let startup_effect_onces = std::mem::take(&mut compiler.startup_effect_onces);
     let program = Program {
         evaluation_budget: settings.test_evaluations,
         ..compiler.finish()
@@ -5011,6 +5008,65 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Ok(group) => group,
         Err(outcome) => return *outcome,
     };
+    // Whether anything may print, draw, or read or write a register or a file from here on. What
+    // does so only in an assumption, or in a constant definition TLC computed once as it started
+    // (`processConstantDefns`), has done it: every use of such a definition reads the value the
+    // startup kept. One the startup kept no value of is evaluated again at each use.
+    let is_printing_on = is_printing
+        && (is_effect_past_startup
+            || startup_effect_onces.iter().any(|&once| {
+                matches!(
+                    machine.onces[once],
+                    crate::memo::EMPTY | crate::machine::RETRIED_ONCE
+                )
+            }));
+    // Checking a successor once the walk reaches the next reorders nothing anyone can see where
+    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
+    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
+    let is_pipelined = settings.dfid.is_none()
+        && !is_warning
+        && !is_printing_on
+        && !is_lambda_built
+        && !is_compiled_cached
+        && !is_distinct_read
+        && context.view.is_none()
+        && model.startup.symmetry.is_none()
+        && !settings.is_live_checked;
+    // A level's states are shared between threads where the order of the steps across states
+    // shows nowhere but in the states found and the graph the merge records in that order: nothing
+    // prints or reads the count of distinct states, and no test asks for a check of the graph at
+    // a state inside a level. A warning may be raised, since a thread that raises one TLC may
+    // print stops the level at its state (`expand_claimed`).
+    // More threads than the machine runs at once would only take turns.
+    let thread_count = settings
+        .threads
+        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
+    let is_shared = thread_count > 1
+        && !is_ranking
+        && !is_picking
+        && !is_printing_on
+        && !is_lambda_built
+        && !is_compiled_cached
+        && !is_distinct_read
+        && !settings.is_continued
+        && !is_trace_read
+        && !(model.is_recording_graph && settings.test_live_check_at.is_some())
+        // The online checker adds each state as it is expanded, between the expansions: it may
+        // not meet a level the threads share.
+        && !(model.is_recording_graph && context.is_live_registered)
+        && !settings.is_live_checked
+        && context.possible.is_empty();
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
+    // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
+    // it in the order it first evaluates each expression), or anything prints, draws or reads or
+    // sets TLC's registers: a helper machine has none of the search's registers or generator.
+    let atom_threads =
+        if is_ranking || is_warning || is_printing_on || is_lambda_built || is_tlc_cache_used {
+            1
+        } else {
+            thread_count
+        };
     // The initial states draw on from where the startup left the generator.
     let startup_random = machine.random.state();
     machine.startup_random = startup_random;
@@ -5065,12 +5121,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.is_dfid = settings.dfid.is_some();
     search.is_contest_tracked = settings.workers > 1;
     search.is_counted = is_count_read;
+    // TLC's trace of a state is the one its workers wrote (`TLCTrace`), found again from the
+    // fingerprints of a VIEW or symmetry's representative, where the search keeps the states it
+    // reached; the liveness checker evaluates its atoms off the search.
+    search.is_trace_kept = is_trace_read
+        && settings.workers == 1
+        && settings.dfid.is_none()
+        && !settings.is_continued
+        && !model.is_recording_graph
+        && !is_symmetric
+        && context.view.is_none();
     search.is_print_race_tracked = settings.workers > 1 && settings.dfid.is_none();
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
     search.is_picking = is_picking;
-    search.held = (model.is_recording_graph && is_printing).then(Vec::new);
+    search.held = (model.is_recording_graph && is_printing_on).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
         labels: context
@@ -5257,6 +5323,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.reset_assigned();
         let zero = machine.store.int(0)?;
         machine.set_slot(LEVEL_SLOT, zero);
+        if search.is_trace_kept {
+            machine.set_slot(TRACE_SLOT, tla_values::store::EMPTY_TUPLE);
+            machine.trace_epoch = Some(u64::MAX);
+        }
         search.set_distinct(&mut machine, 0)?;
         search.set_counts(&mut machine, 0, 0, 1)?;
         // TLC stops before it computes the initial states, at a time of its threads' choosing.
@@ -6789,6 +6859,66 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         found = None;
                     }
                     None => {}
+                }
+            }
+            // TLC's worker adds the state it stopped at to the behavior graphs once it has reported
+            // the invariant or the action property a step violates (`Worker#doNextCheckLiveness`),
+            // with the successors `isSeenState` put in its `SetOfStates` before the checks, the
+            // violating one among them. Where that addition reaches a tableau node that accepts
+            // every behavior, TLC reports the temporal properties violated as well
+            // (`LiveCheck#printErrorTrace`), which the engine doesn't follow.
+            if let Some(stop) = &found
+                && matches!(
+                    stop.kind,
+                    ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_)
+                )
+                && online.is_none()
+                && search.graph.is_some()
+            {
+                let expanding = search.expanding;
+                let count = search.states.count();
+                let output = machine.output.clone();
+                let graph = search.graph.as_mut().expect("a graph");
+                let (offsets, partial, stopped) =
+                    (graph.edge_offsets.len(), graph.partial, graph.stopped);
+                // Placing the stop's prints added the state already.
+                if stop_added.is_none() {
+                    graph.edge_offsets.push(graph.edges.len() as u32);
+                    graph.partial = Some(expanding);
+                    if let (Some(fingerprint), Some(last)) = (graph.stopped.take(), &stop.last) {
+                        search.states.push(last, &[], fingerprint, expanding as i32);
+                    }
+                }
+                let added = search.states.count();
+                // A step to a successor the search neither stored nor noted names no state the
+                // checker can read; TLC has no late node of such a new state either.
+                let graph = search.graph.as_ref().expect("a graph");
+                let is_stored = graph.edges[graph.edge_offsets[expanding] as usize..]
+                    .iter()
+                    .all(|&target| (target as usize) < added);
+                let accepted = if is_stored {
+                    graph_tables(&mut machine, &search, expanding + 1, added, None, None)
+                        .ok()
+                        .and_then(|tables| {
+                            accepted_at(model, &context, &search, &tables, expanding + 1, added)
+                        })
+                        .flatten()
+                } else {
+                    None
+                };
+                machine.output = output;
+                search.states.truncate(count);
+                let graph = search.graph.as_mut().expect("a graph");
+                graph.edge_offsets.truncate(offsets);
+                graph.partial = partial;
+                graph.stopped = stopped;
+                if matches!(accepted, Some(Verdict::Accepted { state, .. }) if state as usize == expanding)
+                {
+                    online_declined = Some(
+                        "a temporal property TLC finds violated as it adds the state it stopped at"
+                            .into(),
+                    );
+                    found = None;
                 }
             }
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the

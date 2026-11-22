@@ -1,0 +1,5 @@
+Error: Evaluating assumption line 4, col 8 to line 4, col 19 of module TraceAssumeState failed.
+Attempted to apply the operator overridden by the Java method
+public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException,
+but it produced the following error:
+In evaluating TLCExt!Trace, the state is not completely specified yet (variables x, y undefined).

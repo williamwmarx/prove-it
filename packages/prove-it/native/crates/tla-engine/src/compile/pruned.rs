@@ -48,7 +48,7 @@ pub(super) struct Pruning {
 /// not `\cdot`, an action, and none that reads or changes what TLC keeps beside the state, which
 /// can change between two functions of the enumeration (TLC's registers and caches, its counts
 /// and level, files, the environment, random draws, the trace, the successor's history).
-fn is_steady_builtin(name: &str) -> bool {
+pub(super) fn is_steady_builtin(name: &str) -> bool {
     const PREFIXES: [&str; 9] = [
         "TLC",
         "IO",
