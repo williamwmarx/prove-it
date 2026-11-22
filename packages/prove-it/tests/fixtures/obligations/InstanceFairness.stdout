@@ -1,0 +1,41 @@
+
+\* TLAPM version b91fb6c
+\* launched at 2026-11-22 22:10:04 with command line:
+\* /home/runner/work/tmp/tlapm-install/bin/tlapm -N --toolbox 0 0 --printallobs InstanceFairness.tla
+
+File "./InstanceFairness.tla", line 9, characters 17-20:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 9, characters 24-27:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./InstanceFairness.tla", line 10, characters 18-21:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 10, characters 10-16:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./InstanceFairness.tla", line 11, characters 19-22:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 11, characters 14-17:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./InstanceFairness.tla", line 9, characters 17-20:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 9, characters 24-27:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./InstanceFairness.tla", line 10, characters 18-21:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 10, characters 10-16:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./InstanceFairness.tla", line 11, characters 19-22:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./InstanceFairness.tla", line 11, characters 14-17:
+[INFO]: Auto-expanding the definition of operator:  vars
+

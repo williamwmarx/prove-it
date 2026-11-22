@@ -21,7 +21,7 @@ use crate::levels::{get_level_info, level_number};
 use crate::substitution::{
     Substitution, SubstitutionNode, bump_by, normalize_apply, shift, substitute_expr,
 };
-use crate::temporal::rewrite_unchanged;
+use crate::temporal::{expand_fairness, rewrite_unchanged};
 
 /// Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
 /// soundness needs expanded, as the AutoUSE directive allows.
@@ -789,7 +789,15 @@ pub fn lambdify(
         options: options.unwrap_or(LAMBDIFY_ALL),
         on_warning,
     };
-    let expanded = pass.expand_definitions(scope, expression, None)?;
+    // Instantiation doesn't distribute over ENABLED, so not over WF and SF either (Specifying
+    // Systems, 17.8): each is expanded to its definition in terms of ENABLED first, so that
+    // the ENABLED is lambdified as any other (Expr.Action.lambdify).
+    let expression = if pass.options.is_enabled {
+        expand_fairness(expression)?
+    } else {
+        expression.clone()
+    };
+    let expanded = pass.expand_definitions(scope, &expression, None)?;
     check_arity(&lambdify_operators(
         anonymizer, host, &mut pass, scope, &expanded, false,
     )?)

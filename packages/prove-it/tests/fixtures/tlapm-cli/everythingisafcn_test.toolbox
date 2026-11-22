@@ -1,0 +1,169 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:12:1:12:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:12:1:12:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:21:17:21:21
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:21:23:21:27
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:5
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:12:1:12:11
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:12:1:12:11
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:being proved
+@!!prover:smt
+@!!meth:time-limit: 5
+@!!obl:
+ASSUME NEW CONSTANT f,
+       DOMAIN f = DOMAIN f ,
+       \A x \in DOMAIN f : f[x] \in {f[x_1] : x_1 \in DOMAIN f} 
+PROVE  f \in [DOMAIN f -> {f[x] : x \in DOMAIN f}]
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:failed
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 5.0 (100%)
+@!!reason:timeout
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT f,
+       DOMAIN f = DOMAIN f ,
+       \A x \in DOMAIN f : f[x] \in {f[x_1] : x_1 \in DOMAIN f} 
+PROVE  f \in [DOMAIN f -> {f[x] : x \in DOMAIN f}]
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:being proved
+@!!prover:zenon
+@!!meth:(10 s); time-limit: 10
+@!!obl:
+ASSUME NEW CONSTANT f,
+       DOMAIN f = DOMAIN f ,
+       \A x \in DOMAIN f : f[x] \in {f[x_1] : x_1 \in DOMAIN f} 
+PROVE  f \in [DOMAIN f -> {f[x] : x \in DOMAIN f}]
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 6.8 (68%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT f,
+       DOMAIN f = DOMAIN f ,
+       \A x \in DOMAIN f : f[x] \in {f[x_1] : x_1 \in DOMAIN f} 
+PROVE  f \in [DOMAIN f -> {f[x] : x \in DOMAIN f}]
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:21:9:21:11
+@!!status:failed
+@!!prover:isabelle
+@!!meth:auto; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT f,
+       DOMAIN f = DOMAIN f ,
+       \A x \in DOMAIN f : f[x] \in {f[x_1] : x_1 \in DOMAIN f} 
+PROVE  f \in [DOMAIN f -> {f[x] : x \in DOMAIN f}]
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:21:17:21:21
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:21:23:21:27
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./everythingisafcn_test.tla", line 21, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT f,
+                  a == DOMAIN f,
+                  b == {f[x] : x \in a},
+                  <2>1 ,
+                  <2>2 
+           PROVE  f \in [a -> b]
+File "./everythingisafcn_test.tla", line 1, character 1 to line 25, character 4:
+[ERROR]: 1/5 obligations failed.
+There were backend errors processing module `"everythingisafcn_test"`.
