@@ -3175,8 +3175,11 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
     }
 }
 
-// The most states of a level a thread claims at once (`CHUNK` in `parallel.ts`).
-const CHUNK: usize = 32;
+// A thread claims a run of a level's states at a time: one part in CLAIM_SHARE of its share of
+// the states left. A run is then long while much of the level is left, so that a thread expands
+// states found one after another, whose values its caches hold from one to the next, and short
+// at the level's end, so that the threads finish together.
+const CLAIM_SHARE: usize = 4;
 
 // Marks a slot of a thread's own states, which `Candidates::find` returns apart from the slots of
 // the states found before the level. A table's slots are below half of the address space, so the
@@ -3331,10 +3334,11 @@ impl Worker<'_> {
     }
 }
 
-// A run of a level's states a thread claimed: the first, and where its successor counts and
-// candidates start among the thread's.
+// A run of a level's states a thread claimed: the states `[start, end)`, and where its successor
+// counts and candidates start among the thread's.
 struct Claimed {
     start: usize,
+    end: usize,
     successors: usize,
     candidates: usize,
 }
@@ -3361,12 +3365,13 @@ struct Expanded {
 
 // A run of a level's states whose candidates a fill decided: the thread that claimed it, where
 // its candidates and successor counts start among the thread's, how many of the candidates come
-// from the states the level expanded, and its first state.
+// from the states the level expanded, and its states, `[start, end)`.
 struct FilledRun {
     thread: usize,
     candidates: usize,
     count: usize,
     start: usize,
+    end: usize,
     successors: usize,
 }
 
@@ -3446,7 +3451,7 @@ fn copy_new(
 struct Level {
     start: usize,
     end: usize,
-    chunk: usize,
+    threads: usize,
     number: u64,
     cursor: Padded<AtomicUsize>,
     stop: Padded<AtomicUsize>,
@@ -3458,6 +3463,30 @@ struct Level {
     stop_at: Option<usize>,
     // PROVE_IT_TEST_PROGRESS_AT: the state whose claim has the search report its progress.
     test_progress_at: Option<usize>,
+}
+
+impl Level {
+    // Claims the next run of the level's states for a thread, unless none is left before the
+    // first state not to expand.
+    fn claim(&self) -> Option<std::ops::Range<usize>> {
+        let mut start = self.cursor.load(Ordering::Relaxed);
+        loop {
+            if start >= self.end || start >= self.stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            let length = ((self.end - start) / (CLAIM_SHARE * self.threads)).max(1);
+            let claimed = self.cursor.compare_exchange_weak(
+                start,
+                start + length,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+            match claimed {
+                Ok(_) => return Some(start..start + length),
+                Err(next) => start = next,
+            }
+        }
+    }
 }
 
 // What a thread did of a level so far, which the search's thread reads to report its progress.
@@ -3594,23 +3623,17 @@ fn expand_claimed(
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
     let width = before.width;
     let mut generated = 0;
-    'claiming: loop {
-        let start = level.cursor.fetch_add(level.chunk, Ordering::Relaxed);
-        if start >= level.end || start >= level.stop.load(Ordering::Relaxed) {
-            break;
-        }
-        if level
-            .test_progress_at
-            .is_some_and(|at| (start..start + level.chunk).contains(&at))
-        {
+    'claiming: while let Some(run) = level.claim() {
+        if level.test_progress_at.is_some_and(|at| run.contains(&at)) {
             signal.hold_for_report();
         }
         claimed.push(Claimed {
-            start,
+            start: run.start,
+            end: run.end,
             successors: successors.len(),
             candidates: search.states.parents.len(),
         });
-        for expanding in start..(start + level.chunk).min(level.end) {
+        for expanding in run {
             if expanding >= level.stop.load(Ordering::Relaxed) {
                 break 'claiming;
             }
@@ -3827,12 +3850,14 @@ impl Search<'_, States> {
         }
         self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
-        let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
-        for (thread, found) in expanded.iter().enumerate() {
-            for (run, claimed) in found.claimed.iter().enumerate() {
-                owners[(claimed.start - level.start) / level.chunk] = Some((thread, run));
-            }
-        }
+        // The runs in the level's order, each by its thread and its place among the thread's:
+        // the threads claimed them one after another from the level's first state on.
+        let mut owners: Vec<(usize, usize)> = expanded
+            .iter()
+            .enumerate()
+            .flat_map(|(thread, found)| (0..found.claimed.len()).map(move |run| (thread, run)))
+            .collect();
+        owners.sort_unstable_by_key(|&(thread, run)| expanded[thread].claimed[run].start);
         let width = self.states.width;
         let key_width = self.states.key_width;
         let is_verified = self.states.is_verified;
@@ -3863,7 +3888,6 @@ impl Search<'_, States> {
         .then(|| {
             let runs: Vec<FilledRun> = owners
                 .iter()
-                .map_while(Option::as_ref)
                 .map_while(|&(thread, run)| {
                     let found = &expanded[thread];
                     let claimed = &found.claimed[run];
@@ -3877,6 +3901,7 @@ impl Search<'_, States> {
                         candidates: claimed.candidates,
                         count: parents.partition_point(|&parent| (parent as usize) < stop),
                         start: claimed.start,
+                        end: claimed.end,
                         successors: claimed.successors,
                     })
                 })
@@ -3931,7 +3956,7 @@ impl Search<'_, States> {
         // found joins the states found, unless an invariant it deferred fails of a state that is
         // new, which stops the search there.
         let unmerged = if merged { &[][..] } else { &owners[..] };
-        'states: for &(thread, run) in unmerged.iter().map_while(Option::as_ref) {
+        'states: for &(thread, run) in unmerged {
             let found = &expanded[thread];
             let claimed = &found.claimed[run];
             let next = found.claimed.get(run + 1);
@@ -3948,9 +3973,7 @@ impl Search<'_, States> {
             let mut deferred = found
                 .deferred
                 .partition_point(|&(parent, _)| (parent as usize) < claimed.start);
-            for (offset, parent) in
-                (claimed.start..(claimed.start + level.chunk).min(level.end)).enumerate()
-            {
+            for (offset, parent) in (claimed.start..claimed.end).enumerate() {
                 if parent > stop {
                     break 'states;
                 }
@@ -4180,8 +4203,7 @@ impl Search<'_, States> {
             stop,
         } = filled;
         let (width, key_width) = (self.states.width, self.states.key_width);
-        let parents_of =
-            |run: &FilledRun| (run.start + level.chunk).min(level.end).min(stop) - run.start;
+        let parents_of = |run: &FilledRun| run.end.min(stop) - run.start;
         for run in runs {
             let counts = &expanded[run.thread].successors[run.successors..][..parents_of(run)];
             self.generated += counts.iter().map(|&count| u64::from(count)).sum::<u64>();
@@ -6436,7 +6458,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     let level = Level {
                         start: expanding,
                         end: level_end,
-                        chunk: ((level_end - expanding) / (4 * threads)).clamp(1, CHUNK),
+                        threads,
                         number: search.level,
                         cursor: Padded(AtomicUsize::new(expanding)),
                         stop: Padded(AtomicUsize::new(
