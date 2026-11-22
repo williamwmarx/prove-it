@@ -2200,6 +2200,7 @@ fn format_normalized(
             &obligation.sequent,
             obligation.method.as_ref(),
             None,
+            obligation.is_enabled_axioms_sound,
             None,
             &mut |_| {},
         ),

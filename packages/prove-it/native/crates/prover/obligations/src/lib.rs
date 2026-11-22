@@ -4,6 +4,7 @@
 pub mod action;
 pub mod anonymize;
 pub mod bytes;
+pub mod enabled_axioms;
 pub mod equality;
 pub mod errors;
 pub mod expression;

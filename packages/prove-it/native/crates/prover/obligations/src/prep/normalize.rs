@@ -376,6 +376,7 @@ impl AnonymizerHost for LambdifyHost {
 fn expand_enabled_cdot(
     sequent: Sequent,
     frontends: &[String],
+    is_enabled_axioms_sound: Option<bool>,
     at: Option<&Locus>,
     warn: &mut Warn,
 ) -> Result<Sequent> {
@@ -389,13 +390,19 @@ fn expand_enabled_cdot(
             return check_level_change(&sequent);
         }
         if has("enabledaxioms") {
-            // Prep.expand_enabled_cdot prints this where M_elab found the directive cited, which
-            // is where it is a method. M_elab's level check of the citing step is not ported:
-            // the rule is applied whatever the assumptions' levels.
-            warn(ObligationWarning {
-                text: "expr has ENABLEDaxioms property ===".to_owned(),
-                channel: Channel::Stdout,
-            });
+            // The property is on each leaf of a theorem that cites the directive (Module.Elab's
+            // check), and false where the leaf depends on an assumption of level above 1.
+            if let Some(is_sound) = is_enabled_axioms_sound {
+                warn(ObligationWarning {
+                    text: "expr has ENABLEDaxioms property ===".to_owned(),
+                    channel: Channel::Stdout,
+                });
+                if !is_sound {
+                    return Err(ObligationError::prover(
+                        "ENABLEDaxioms depends on assumptions of level > 1 \n\n",
+                    ));
+                }
+            }
             return implication_to_enabled(&sequent, at, warn);
         }
         return Ok(sequent);
@@ -449,6 +456,7 @@ pub fn normalize_expand(
     sequent: &Sequent,
     method: Option<&OldMethod>,
     methods: Option<&FoundMethods>,
+    is_enabled_axioms_sound: Option<bool>,
     at: Option<&Locus>,
     warn: &mut Warn,
 ) -> Result<Sequent> {
@@ -463,6 +471,7 @@ pub fn normalize_expand(
     expand_enabled_cdot(
         normalize_sequent(&expand_defs(sequent, true)?)?,
         &methods.frontends,
+        is_enabled_axioms_sound,
         at,
         warn,
     )
@@ -713,6 +722,7 @@ mod tests {
             method.as_ref(),
             method.is_none().then_some(&found),
             None,
+            None,
             &mut |_| {},
         );
         for (key, wanted) in outcomes {
@@ -747,6 +757,7 @@ mod tests {
                             &sequent,
                             method.as_ref(),
                             Some(&frontends),
+                            None,
                             None,
                             &mut |_| {},
                         ),

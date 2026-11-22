@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Bound, BoundDomain, Builtin, DefnCore, ExceptPoint, Expr, ExprCore, HypCore, IdentityCache,
-    Level, Scope, ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh, get_fresh,
+    Bound, BoundDomain, Builtin, DefnCore, ExceptPoint, Expr, ExprCore, Hyp, HypCore,
+    IdentityCache, Level, Scope, ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh, get_fresh,
     get_local_defn, get_param_fresh, get_scope_at, hyp, is_builtin_apply, map_accumulate,
 };
 
@@ -120,6 +120,21 @@ fn compute_hyp_level(scope: &Rc<Scope>) -> Result<LevelInfo> {
         },
         HypCore::Fact { expression, .. } => get_level_info(&scope.rest, expression),
     }
+}
+
+/// The scope the hypotheses extend `scope` to, and the highest level among them: what
+/// `Expr.Levels.compute_level` of a sequent records on its context.
+pub fn get_context_level(scope: &ScopeRef, context: &[Hyp]) -> Result<(ScopeRef, usize)> {
+    let (inner, levels) = map_accumulate(scope.clone(), context, |current, hyp| {
+        let next = adjoin(&current, hyp);
+        let level = match &next {
+            Some(next_scope) => get_hyp_level(next_scope)?.level,
+            // `adjoin` always gives a scope.
+            None => return Err(ObligationError::assert_failure()),
+        };
+        Ok((next, level))
+    })?;
+    Ok((inner, levels.into_iter().fold(0, usize::max)))
 }
 
 fn get_hyp_level(scope: &Rc<Scope>) -> Result<LevelInfo> {
@@ -273,21 +288,9 @@ pub fn get_level_info(scope: &ScopeRef, expression: &Expr) -> Result<LevelInfo> 
             apply_operator(&operator, &recurse_all(scope, args)?)
         }
         ExprCore::Sequent { sequent } => {
-            let (inner, levels) =
-                map_accumulate(scope.clone(), &sequent.context, |current, hyp| {
-                    let next = adjoin(&current, hyp);
-                    let level = match &next {
-                        Some(next_scope) => get_hyp_level(next_scope)?.level,
-                        // `adjoin` always gives a scope.
-                        None => return Err(ObligationError::assert_failure()),
-                    };
-                    Ok((next, level))
-                })?;
+            let (inner, hyps) = get_context_level(scope, &sequent.context)?;
             let active = get_level_info(&inner, &sequent.active)?.level;
-            Ok(get_info(
-                levels.into_iter().fold(0, usize::max).max(active),
-                0,
-            ))
+            Ok(get_info(hyps.max(active), 0))
         }
         ExprCore::With {
             expression: inner, ..
