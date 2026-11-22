@@ -246,6 +246,11 @@ pub struct Source {
     file: Rc<str>,
     lines: Vec<Vec<u16>>,
     lexical: Lexical,
+    /// Where each pragma a construct owns opens: tlapm's grammar reads a method pragma as part
+    /// of the definition, axiom or proof it follows (`defn`'s `optional (use read_new_method)`,
+    /// Proof.Parser's `read_method`), so the USE, HIDE or proof after it finds no pragma there.
+    /// The units and steps are converted in order, so an owner marks its pragma first.
+    owned_pragmas: std::cell::RefCell<std::collections::HashSet<Position>>,
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
 }
@@ -264,6 +269,7 @@ pub fn create_source(
         file: Rc::from(file),
         lexical: read_lexical(&lines),
         lines,
+        owned_pragmas: std::cell::RefCell::default(),
         counter,
         is_expanding_tuples,
     }
@@ -301,8 +307,24 @@ impl Source {
         }
     }
 
+    /// The pragma after the node that ends at `end`, which the node's parser read as its
+    /// method pragma, now owned by the node.
+    fn own_pragma(&self, end: &ast::Position) {
+        let pragma = find_pragma(
+            &self.lexical,
+            &self.lines,
+            Position {
+                line: get_index(end.line),
+                column: end.column as usize,
+            },
+        );
+        if let Some(pragma) = pragma {
+            self.owned_pragmas.borrow_mut().insert(pragma.open);
+        }
+    }
+
     /// Proof.Parser's `suppress`: where the suppression pragma before the keyword at `start`
-    /// opens, if there is one.
+    /// opens, if there is one. A pragma the construct before the keyword owns is none.
     fn get_suppression(&self, start: &ast::Position) -> Result<Option<Locus>> {
         let Some((pragma, is_suppression)) = find_pragma_before(
             &self.lexical,
@@ -314,6 +336,9 @@ impl Source {
         ) else {
             return Ok(None);
         };
+        if self.owned_pragmas.borrow().contains(&pragma.open) {
+            return Ok(None);
+        }
         if !is_suppression {
             // What tlapm's parser makes of a pragma there isn't recorded yet.
             return Err(ObligationError::Unsupported(
@@ -338,14 +363,18 @@ impl Source {
         let Some(range) = range else {
             return Ok(None);
         };
-        read_old_method(
+        let method = read_old_method(
             &self.lexical,
             &self.lines,
             Position {
                 line: get_index(range.end.line),
                 column: range.end.column as usize,
             },
-        )
+        )?;
+        if method.is_some() {
+            self.own_pragma(&range.end);
+        }
+        Ok(method)
     }
 
     /// A method pragma belongs to the node it follows, whose locus then takes it in.
@@ -1147,6 +1176,11 @@ impl Source {
             )?,
             None => None,
         };
+        if methods.is_some()
+            && let Some(range) = &definition.location.range
+        {
+            self.own_pragma(&range.end);
+        }
         Ok(Defn {
             core: match methods {
                 Some(methods) => DefnCore::Bpragma {

@@ -33,7 +33,7 @@ pub struct PragmaSpan {
 }
 
 /// A place in the source: `line` counts from 0 and `column` counts UTF-16 code units from 0.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
