@@ -855,9 +855,18 @@ fn coalesce_modal(scope: &ScopeRef, expression: &Expr) -> Result<Expr> {
             },
             expression,
         )),
+        // A declared non-constant operator's application keeps its arguments, so `F(1)` and
+        // `F(2)` stay apart: the coalesced operator applies to them, as a user operator's does.
         HypCore::Fresh { name, .. } => {
             let not_substitutive = vec![false; args.len()];
-            coalesce_operator(scope, name, &not_substitutive, operator, args)
+            let opaque = coalesce_operator(scope, name, &not_substitutive, operator, args)?;
+            Ok(at(
+                ExprCore::Apply {
+                    operator: opaque,
+                    args: coalesce_args(scope, args)?,
+                },
+                expression,
+            ))
         }
         _ => Err(ObligationError::assert_failure()),
     }

@@ -3040,6 +3040,46 @@ A Json operator writes its file through the run's journal (`tla_values::written`
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
 
+#### TLCExt's Trace
+
+`TLCExt.getTrace` gives the records of the states from an initial state to the one it is evaluated
+in, which TLC rebuilds from its trace file (`getTraceInfo`) and the engine keeps as the search goes:
+as it expands a state it keeps the path the search found it by, the parents TLC writes to its trace
+too, as a pair of the parent's path and the state's record (`Search::keep_trace`), in space linear
+in the states, and makes the tuple of the path's records only where Trace is evaluated, once for
+each state expanded. That tuple is Trace as Next and an action constraint read it; in a successor,
+as an invariant or a state constraint reads it, and in an initial state, Trace is that tuple and the
+state's record (`Machine::trace`). Where an invariant or a state constraint evaluates it in each
+successor, each evaluation keeps a tuple as long as the path, as the store keeps every value it
+interns: a chain of n states so reaching Trace holds some n²/2 of its records' ids, which TLC
+allocates too and collects. In the initial predicate before every variable is assigned, in an
+assumption and in a postcondition, TLC fails naming the variables unassigned, in the order of their
+names, which the trace evaluator words as TLC does; a spec without variables has `<<[]>>` in an
+assumption. The engine declines Trace ("TLCExt's Trace, the behavior the engine doesn't keep") with
+more than one worker, `-dfid`, `-continue`, `-simulate`, a VIEW, SYMMETRY or temporal properties to
+check, where TLC finds the trace otherwise or the engine evaluates off the search; where TLC's
+record of a state, which holds its variables in TLC's order unnormalized and prints them so
+(`RecordValue(TLCState)`), differs from the engine's, in the order of their names ("TLCExt's Trace
+of variables TLC orders otherwise than their names", as `VARIABLES y, x`); primed ("TLCExt's Trace
+in a primed context"), which TLC evaluates in the successor the walk assigns and fails at with an
+exception it reports as unexpected, as `x' = (Trace')[1].x` or, with `F <- Trace`, `x' =
+(F(0)')[1].x`; and where TLC's rebuild evaluates again an initial predicate, or a next-state
+relation, that may have an effect or a value that depends on more than its arguments, through the
+definitions it names ("TLCExt's Trace, whose rebuild evaluates again what may have an effect or
+change", `Compiler::may_change_again`): TLC prints again what they print as it rebuilds the states
+before the one it gives the trace of, from the initial predicate and the next-state relation
+(`getTraceInfo`, `Tool.getState`), and a draw, TLCGet's counts of the search or a Java class of the
+user's may give it other states, as `x' = TLCGet("distinct")`, where it fails to find the state
+again ("Failed to recover the initial state from its fingerprint"). The trace of an invariant's
+violation, which TLC rebuilds through a next-state relation that reads Trace, still declines
+("rebuilding a trace: the builtin Trace"). On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+(72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
+the pinned jar) main answers 72,567 runs as the jar does, declines 311 and answers none otherwise;
+with Trace it answers 72,578 and declines 300. The 11 runs are TLCExtTraceTest and the
+`tlc_ext/trace_*` tests but the two of a simulation (`trace_simulate`, TLCExtTraceSimTest), which
+decline. No other run changes. `tests/trace` holds TLC's output beside its specs
+(`reads_the_behavior_as_tlc_through_trace`).
+
 #### -maxSetSize
 
 `-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc`
@@ -6660,6 +6700,20 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   incomplete successor has no missing variable`. `unsupported DFID violation` is a violation of a kind the DFID report doesn't word
   (one other than an invariant's violation or failure, a deadlock or an action property's
 violation).
+- A temporal property TLC finds violated as it adds the state it stopped at, after an invariant or
+  an action property a step from that state violates. `Worker#doNextCheckLiveness` still adds the
+  state to the behavior graphs, with the successors `isSeenState` put in its `SetOfStates` before
+  the checks, the violating one among them; a successor TLC had expanded has its late node there,
+  where a tableau node that accepts every behavior makes `LiveCheck#printErrorTrace` report "Temporal
+  property Prop was violated" and its counterexample after the first report, which keeps its exit
+  code (`setErrState` returns false once done). `Spec == x \in {0, 1} /\ [][x' = IF x = 0 THEN 1
+  ELSE 0]_x` with `PROPERTY [][x' = 1]_x` and `PROPERTY [](x = 1 => [](x = 1))` prints both; the
+  binary printed the action property alone. The engine adds the stopped state as TLC does and, where
+  that reaches such a node, declines ("a temporal property TLC finds violated as it adds the state it
+  stopped at"). An invariant's violating successor is new, has no late node, and TLC reports nothing
+  more, as the binary does. Found in the specs of upstream tla-ts's unit tests at 0341dbe5;
+  fixtures `stop-liveness-*`.
+
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
@@ -8504,7 +8558,7 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs the last two change count as wrong here until the port follows them.
+of integer powers, each of which the port follows below.
 
 The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
 b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
@@ -8517,6 +8571,33 @@ too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the por
 `x = 0 => (x = 0)'` from `CASE x = 0` or `HAVE x = 0`, `[]b` from `USE b`, `[](c = x)` from
 `PICK c : c = x` and `[](c \in {x})` from `NEW c \in {x}`, which tlapm fails.
 
+The port follows b91fb6c's coalescing of a declared non-constant operator's application
+(`tests/fixtures/tlapm-cli/FreshOperator.tla`, recorded with b91fb6c): `Coalesce.coalesce_modal`
+applies the coalesced operator to the arguments, as it does a user operator's, where the port
+left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
+proved `F(1) = F(2)`, which tlapm fails.
+
+The port follows b91fb6c's typing of integer powers (`tests/fixtures/tlapm-cli/IntPowers.tla`,
+recorded with b91fb6c): the `IntExpTyping` axiom of its Z3 input (`n_axioms.ml`,
+`intexp_typing`) types `x ^ y` as an integer only where `0 <= y`, beside `x # 0 \/ 1 <= y`, since
+`n ^ (-1)` is the real `1 / n` (tlaplus/tlapm#300), where the port's axiom had no bound on `y`
+and Z3 proved `n ^ (-1) \in Int` for a non-zero integer `n`, which tlapm fails.
+
+The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
+`asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
+for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
+`Classical.flat_rule` does (`Object_Logic.atomize_prems` over each premise), where the port
+refused the rule: so `(auto intro: setEqualI)`, which `IsaWithSetExtensionality` runs and
+`AllIsa` runs third, proves `S = T` from `\A x : x \in S <=> x \in T`
+(`tests/fixtures/tlapm-cli/IsabelleMethods.tla`, recorded with b91fb6c). tlapm's fingerprints
+table keeps one Isabelle result per fingerprint (`Fpfile.add_to_record`), and `Fpfile.order`
+ranks results of different tactics, which `prover_of_method` makes different provers, by their
+methods (`compare (normalize m1) (normalize m2)`: the time limit, then the tactic's text), not a
+proof over a failure, so a later failure of a tactic whose text sorts higher (`force` over
+`(auto intro: setEqualI)`) drops the proof, and `AllIsa`'s third tactic proves again where the
+port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
+tactic only (`Fpfile.query`).
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8525,6 +8606,9 @@ too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the por
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
+| with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
+| with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
+| with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8550,8 +8634,10 @@ too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the por
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
     limit, and an input a back end can't read.
-- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, and a method
-  whose encoder can't take the obligation (`smt can't encode …`), where tlapm would try it. tlapm
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
+  whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
+  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
+  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
