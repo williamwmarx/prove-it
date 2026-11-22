@@ -223,6 +223,7 @@ fn decode_result(prover: &str, result: Option<&MarshalValue>) -> Option<Attempt>
         reason: reason.flatten(),
         verdict: None,
         time_used_ms: None,
+        is_skipped: false,
     })
 }
 

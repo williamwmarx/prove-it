@@ -1941,7 +1941,7 @@ fn print_attempts(
 ) -> Run<()> {
     for attempt in &attempts[(*printed).min(attempts.len())..] {
         if let Some(reason) = attempt
-            .is_skipped()
+            .is_skipped
             .then_some(attempt.reason.as_deref())
             .flatten()
         {
@@ -2148,7 +2148,7 @@ fn check_report(report: &Report, is_proving: bool) -> Run<()> {
     if let Some(reason) = report
         .attempts
         .iter()
-        .filter(|attempt| attempt.is_skipped())
+        .filter(|attempt| attempt.is_skipped)
         .find_map(|attempt| attempt.reason.as_deref())
     {
         return decline(format!(
