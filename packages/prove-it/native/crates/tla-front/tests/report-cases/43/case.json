@@ -1,0 +1,5 @@
+{
+  "root": "Uboxxnxaprimexboxxrlast",
+  "version": "1.7.4",
+  "test": "reports a LET whose recursive section SANY accepts, used under [] outside it, at the level SANY gives it"
+}
