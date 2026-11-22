@@ -1130,6 +1130,24 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### The threads of a shared level kept in a pool (search-pool)
+
+A shared level spawned and joined its threads six or seven times: for the expansion, for each
+of the fingerprint table's fill phases and its growth, and for the copy of its new states. Timed
+on `depot-ubuntu-24.04-16` at 16 workers, a round of 16 threads with 64 MiB stacks cost 0.3–0.5
+ms, 4–20 ms a model over its shared levels, and the fill's four rounds 5–54 ms. The threads are
+now a pool (`pool.rs`), started at the first shared level and kept to the search's end; a round
+posts one job per thread and waits for every job, as the scope did, so the jobs borrow the
+caller's data as before and the output is the same at every thread count. Against main at
+8ee58a30, median wall ms of 5 interleaved runs: the perf suite on `depot-ubuntu-24.04-16` at
+16 workers, 1.038× over the suite, MCLamportMutex 433.5 → 368.5 (1.18×), MCbtree 181.8 → 161.2
+(1.13×), Detlefs 401.0 → 359.9 (1.11×), BufferedRandomAccessFile 164.4 → 155.7, TLCSailfish1
+348.9 → 331.3, PaxosCommit 1376.4 → 1328.2, FastPaxos 254.5 → 246.1, StarkMutex 648.9 → 629.7,
+MCExactInitialSync, cf1s_folklore and 2PCwithBTM within main's range; the bench suite on
+`depot-ubuntu-24.04-4` at 4 workers, 1.00× over the suite, philosophers 65.4 → 62.0, queue 16.2
+→ 15.4, test19 44.7 → 42.9, ReadersWriters 46.2 → 50.2 (main 45–49), the rest within their
+ranges. Parity clean.
+
 ### Short runs: what TokenRing and SimpleRegular spend (short-run-costs)
 
 The two models of bench-suite.json furthest behind the rest against TLC on 4 cores, TokenRing
