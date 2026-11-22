@@ -1058,6 +1058,128 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### A tuple of variables compared by its variables (live-atoms-fast)
+
+cf1s_folklore timed by phase on `depot-ubuntu-24.04-16`, `main` at d13f0073, in ms (an
+instrumentation build, 3 runs each):
+
+| cf1s_folklore | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|
+| One thread | 3,560 | 1,910 | 910 | 6,430 |
+| 16 threads | 690 | 190 | 360 | 1,270 |
+
+Of the atoms on one thread, ENABLED of the fairness ran on every state (730 ms: its action is a
+part of Next, which is one of TLC's actions, so no steps answer it) and the action atom took
+1,100 ms on 22.4 M steps, though the steps answered the action itself ("Plan (ii), as built"
+below): what was left was the subscript, `vars`, evaluated on each state into a tuple the store
+interned, and the two tuples of each step compared. ENABLED's own time was two thirds
+`UNCHANGED vars`, a predicate there, building the same two tuples for each successor it tried
+(`compile_unchanged` 8.7% of the run, `intern_block` 4.5%). Of the 16-thread search, the threads
+took 320 ms, the fill 135 and the merge 200; of the check, reading the tables ahead 160 ms and
+the two behaviors' graphs, a thread each, 200.
+
+TLC compares two tuples element by element, up to the first pair that differs or fails
+(`TupleValue.equals`), and a subscript's or an UNCHANGED's tuple of variables has a variable's two
+values at each place. So the variables' own values tell, in that order, and no tuple is built:
+
+- **A liveness atom's subscript** that is a tuple of state variables, or of such tuples, through
+  the definitions and names UNCHANGED reads through (`Compiler::tuple_slots_in_scope`), carries
+  their slots (`SubscriptSlots`). A step leaves it unchanged where each slot's two ids are equal
+  and can't fail to compare with themselves; the first pair that isn't is compared as before
+  (`are_slots_unchanged`). Where the slots are every variable, the search kept one state for each
+  fingerprint and no two values of a variable can fail to compare (the joins of what the walks
+  assigned, which answering an action from the steps already needs), a step changes it just where
+  it reaches another state, and nothing is read at all (`Subscript::State`). Under
+  PROVE_IT_LIVE_CHECK the subscript's values are compared too (`SUBSCRIPT_DIFFERS`).
+- **UNCHANGED as a predicate** compares the two states' slots the same way, and builds the tuples
+  only where a variable isn't assigned or a pair doesn't compare as unequal, for whatever TLC does
+  then.
+- **The shape of an assigned value** is joined only where the state being expanded doesn't hold
+  that value for the variable, as it does for most of a successor's: `shape_of` was 2.9% of the
+  run. The test is inside `note_assigned`, after the one for a search that keeps no shapes: at
+  the call sites MCbtree went 0.71 → 0.74 s on one thread (5 runs, zvtz6j0dxl), and with it
+  inside 0.73 → 0.71 (9 runs, qlqqn916qt).
+- **The checker's read-ahead** no longer copies on one thread what its threads read. The threads
+  that order the successor sets write them where a count of each set's entries, taken with the
+  first pass, puts them (24.5 M positions, 98 MB, which the checker's thread had joined from the
+  threads' vectors), and the action checks' rows are joined a word at a time, not a row
+  (`StepResults::copy_row` was 57 ms of the run).
+
+On `depot-ubuntu-24.04-16`, medians of 5 interleaved runs against `main` at 58371d45, with the
+ranges (run r3ftbpmft7; run zvtz6j0dxl against d13f0073 gave cf1s_folklore 6.40 → 5.59 and
+1.28 → 1.09, StarkMutex 3.23 → 2.67 and 0.75 → 0.71):
+
+| Model | One thread, `main` | One thread, now | Gain | 16 threads, `main` | 16 threads, now | Gain |
+|---|---:|---:|---:|---:|---:|---:|
+| cf1s_folklore | 6.67 (6.40–6.73) | 5.45 (5.02–5.46) | 1.22× | 1.37 (1.30–1.40) | 1.12 (1.11–1.15) | 1.22× |
+| StarkMutex | 3.28 (3.12–3.77) | 2.60 (2.59–2.98) | 1.26× | 0.80 (0.77–0.81) | 0.76 (0.75–0.78) | 1.05× |
+| SpanTreeRandom | 0.39 (0.39–0.40) | 0.36 (0.35–0.37) | 1.08× | 0.14 (0.14–0.14) | 0.13 (0.13–0.13) | 1.08× |
+
+cf1s_folklore's CPU at 16 threads went 11.1 → 8.8 s and its peak memory 1,025 → 690 MB (546 →
+420 MB on one thread): a helper no longer keeps a subscript's value for every state. What is left
+of cf1s_folklore, by phase, in ms, timed before the checker's read-ahead stopped copying:
+
+| cf1s_folklore | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|
+| One thread | 3,560 | 720 | 1,010 | 5,350 |
+| 16 threads | 700 | 80 | 385 | 1,200 |
+
+On one thread the atoms are now ENABLED run on each state and the four state predicates. On 16
+threads the search's own thread is the largest serial part: 430 ms of samples in that profile,
+150 of them the merge's loop over the level's candidates and steps (`expand_level`'s own) and
+110 copying memory, with the two behaviors' graphs (210 ms on a thread each) next.
+
+### Membership in a function's domain, from its keys (domain-keys)
+
+MCMultiNode's memo tables by lookups, one thread (an instrumentation build that names each
+table's node): its 13 invariants read `history` alone, which takes 14,926 values over the 1.5 M
+states, and their tables hit 89%. The lookups are in RwTxExecuteAction's guard,
+
+```tla
+\A view \in DOMAIN ledgerBranches:
+    \A seqnum \in DOMAIN ledgerBranches[view]:
+        "tx" \in DOMAIN ledgerBranches[view][seqnum]
+        => history[i].tx /= ledgerBranches[view][seqnum].tx
+```
+
+evaluated for each request in `history` of each state expanded:
+
+| Node | Keys | Lookups | Hits | Entries |
+|---|---|---:|---:|---:|
+| `"tx" \in DOMAIN ledgerBranches[view][seqnum]` | ledgerBranches, view, seqnum | 27.5 M | 85% | 4,194,304: full, then off |
+| `DOMAIN ledgerBranches[view]` | ledgerBranches, view | 13.7 M | 88% | 1,654,134 |
+| `DOMAIN ledgerBranches` | ledgerBranches | 8.0 M | 92% | 627,189 |
+
+A membership in a set that isn't constant is a costly node, since a miss compares as TLC's search
+does, so the test of a record's field had a table of its own, the largest of the run; each miss
+built the record's domain, a set of two strings the store interned, to search it, and once the
+table was full and off, every test did (`intern_block` 5.6% of the run, `MemoTable::store` 4.8%).
+With threads each thread's share of the table's room fills sooner.
+
+The function's own keys answer in place where the store's search of the domain would be one of
+ids, or of an integer's bounds (`Store::find_in_domain`, each case read from `is_member` of
+`domain_of`): an integer in a tuple or in a function over a run of integers; in a function of at
+most 16 keys, a key found by its id, or a boolean, integer or string missing from keys of its kind
+alone. Wherever a comparison could fail (a key or a function that is or holds a function TLC
+keeps lazy, or ANY), and for every other function, the membership goes through its table as
+before, which evaluates both sides again, so it stays whole where either side has an effect. On
+`depot-ubuntu-24.04-16`, medians of 5 interleaved runs against `main` at 58371d45 (run
+r3ftbpmft7; run 7njvvxg3xm against d13f0073 gave 4.63 → 4.18 and 0.87 → 0.84):
+
+| Model | One thread, `main` | One thread, now | Gain | 16 threads, `main` | 16 threads, now | Gain | RSS MB, one thread |
+|---|---:|---:|---:|---:|---:|---:|---|
+| MCMultiNode | 4.79 (4.53–4.90) | 4.39 (4.20–4.48) | 1.09× | 0.90 (0.85–0.90) | 0.83 (0.81–0.89) | 1.08× | 531 → 386 |
+
+The two tables left, of a sequence's domain as a quantifier's bound, are 21.7 M lookups: about
+10% of the threads' time at 16 threads, where each thread fills tables of its own. A quantifier
+that walked a sequence's indices without the set 1..n would need neither.
+
+Over the rest of the suite in run r3ftbpmft7, with this and the section above, no model is slower
+by more than its ranges overlap. On one thread MCExactInitialSync's medians are the furthest
+apart, 13.17 (12.97–13.71) → 13.97 (13.46–14.72); 7 more interleaved runs of it on one thread
+gave 14.12 (13.25–14.60) → 14.29 (13.29–14.59) (run 70xgp9xp3x), the same range for both, and it
+has no membership in a domain, no UNCHANGED as a predicate and no temporal property.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and

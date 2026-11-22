@@ -435,6 +435,11 @@ already, evaluating the subscript on each state once for them all and marking th
 once for each; it computes which of TLC's actions changed an ENABLED atom's subscript from each
 state, and runs ENABLED on the states the steps leave unknown. The search's thread evaluates only
 a state whose subscript failed on a step, or every state where the atoms print.
+A subscript that is a tuple of state variables is evaluated on neither path: the two states' own
+values of those variables tell whether a step changes it, compared in the tuple's order as TLC's
+`equals` compares them, and where it is a tuple of every variable and no comparison of a
+variable's values can fail, whether the step reaches another state does (perf.md, "A tuple of
+variables compared by its variables").
 Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
 store's size in memory. TokenRing at N = 8, its graph kept, checks on 4 threads in 51 s rather than
 81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store
