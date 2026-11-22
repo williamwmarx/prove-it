@@ -6803,6 +6803,66 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     None => {}
                 }
             }
+            // TLC's worker adds the state it stopped at to the behavior graphs once it has reported
+            // the invariant or the action property a step violates (`Worker#doNextCheckLiveness`),
+            // with the successors `isSeenState` put in its `SetOfStates` before the checks, the
+            // violating one among them. Where that addition reaches a tableau node that accepts
+            // every behavior, TLC reports the temporal properties violated as well
+            // (`LiveCheck#printErrorTrace`), which the engine doesn't follow.
+            if let Some(stop) = &found
+                && matches!(
+                    stop.kind,
+                    ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_)
+                )
+                && online.is_none()
+                && search.graph.is_some()
+            {
+                let expanding = search.expanding;
+                let count = search.states.count();
+                let output = machine.output.clone();
+                let graph = search.graph.as_mut().expect("a graph");
+                let (offsets, partial, stopped) =
+                    (graph.edge_offsets.len(), graph.partial, graph.stopped);
+                // Placing the stop's prints added the state already.
+                if stop_added.is_none() {
+                    graph.edge_offsets.push(graph.edges.len() as u32);
+                    graph.partial = Some(expanding);
+                    if let (Some(fingerprint), Some(last)) = (graph.stopped.take(), &stop.last) {
+                        search.states.push(last, &[], fingerprint, expanding as i32);
+                    }
+                }
+                let added = search.states.count();
+                // A step to a successor the search neither stored nor noted names no state the
+                // checker can read; TLC has no late node of such a new state either.
+                let graph = search.graph.as_ref().expect("a graph");
+                let is_stored = graph.edges[graph.edge_offsets[expanding] as usize..]
+                    .iter()
+                    .all(|&target| (target as usize) < added);
+                let accepted = if is_stored {
+                    graph_tables(&mut machine, &search, expanding + 1, added, None, None)
+                        .ok()
+                        .and_then(|tables| {
+                            accepted_at(model, &context, &search, &tables, expanding + 1, added)
+                        })
+                        .flatten()
+                } else {
+                    None
+                };
+                machine.output = output;
+                search.states.truncate(count);
+                let graph = search.graph.as_mut().expect("a graph");
+                graph.edge_offsets.truncate(offsets);
+                graph.partial = partial;
+                graph.stopped = stopped;
+                if matches!(accepted, Some(Verdict::Accepted { state, .. }) if state as usize == expanding)
+                {
+                    online_declined = Some(
+                        "a temporal property TLC finds violated as it adds the state it stopped at"
+                            .into(),
+                    );
+                    found = None;
+                }
+            }
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
             // deadlocked state too after it reports the deadlock, and stops at the first whose
             // tableau node accepts every behavior (`LiveCheck#addNextState`): the search reports
