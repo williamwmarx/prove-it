@@ -2204,6 +2204,33 @@ fn check_applied(machine: &mut Machine<'_>, function: Id, is_several: bool) -> O
     Ok(())
 }
 
+// A quantifier's bound, checked that TLC enumerates it: its set or, where the bound is `DOMAIN f`
+// of a function TLC builds, f, whose keys are the domain's elements in its normalized order, and
+// whether it is f.
+fn bound_elements(machine: &mut Machine<'_>, set: &Compiled) -> Outcome<(Id, bool)> {
+    let reason = "quantified over a non-set";
+    let Some(function) = &set.domain_of else {
+        let id = evaluate_set(machine, &set.eval, reason)?;
+        set.check_enumerated(machine, id, machine.store.size_of(id))?;
+        return Ok((id, false));
+    };
+    let function = function(machine)?;
+    let domain = if lazy_function::is_lazy(machine, function) {
+        lazy_function::domain_value(machine, function)?
+    } else if !is_function_kind(machine.store.kind_of(function)) {
+        return Err(Bail("DOMAIN of a non-function"));
+    } else if machine.store.size_of(function) as usize <= tla_values::SET_BOUND
+        && !set.is_kept_lazy()
+    {
+        return Ok((function, true));
+    } else {
+        machine.store.domain_of(function)
+    };
+    let domain = expect_set(machine, domain, reason)?;
+    set.check_enumerated(machine, domain, machine.store.size_of(domain))?;
+    Ok((domain, false))
+}
+
 fn quantify(
     machine: &mut Machine<'_>,
     levels: &[Level],
@@ -2212,11 +2239,14 @@ fn quantify(
     is_forall: bool,
 ) -> Outcome<bool> {
     if let [level] = levels {
-        let set = evaluate_set(machine, &level.set.eval, "quantified over a non-set")?;
+        let (set, is_domain) = bound_elements(machine, &level.set)?;
         let size = machine.store.size_of(set);
-        level.set.check_enumerated(machine, set, size)?;
         for index in 0..size {
-            let element = machine.store.element_at(set, index);
+            let element = if is_domain {
+                machine.store.get_key(set, index)
+            } else {
+                machine.store.element_at(set, index)
+            };
             if let Some(reject) = reject
                 && reject.rejects(machine, element)
             {
