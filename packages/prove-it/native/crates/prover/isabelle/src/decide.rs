@@ -108,7 +108,7 @@ mod tests {
 
     /// Theories tlapm wrote for Isabelle, named after their module and obligation
     /// (`tests/fixtures/isabelle`).
-    const FIXTURES: [(&str, &str); 12] = fixtures!(
+    const FIXTURES: [(&str, &str); 13] = fixtures!(
         "AllocatorImplementation_proof-127",
         "AllocatorImplementation_proof-33",
         "AtomicBakeryWithoutSMT-465",
@@ -121,6 +121,7 @@ mod tests {
         "TLAPS-2",
         "constantfcn_test-1",
         "function_except_tuple_soundness_gh201_test-1",
+        "setequal-zenon",
     );
 
     fn read_theory(name: &str) -> &'static str {
@@ -231,6 +232,48 @@ mod tests {
             let text = read_theory(name);
             assert!(text.contains(&format!("by {method}\n")), "{name}");
             assert_eq!(decide_text(text.into()).verdict, verdict, "{name}");
+        }
+    }
+
+    /// The port reads the goal theory Isabelle.thy_temp writes, one lemma proved by a method,
+    /// and declines the rest: the checking theory Isabelle.thy_header and thy_write write for a
+    /// module, which marks each obligation with ML_command and proves Zenon's with a structured
+    /// Isar proof, and a theory of Isabelle/TLA+'s own sources.
+    #[test]
+    fn declines_the_theories_it_doesnt_read() {
+        let goal = read_theory("TLAPS-2");
+        assert!(goal.contains("by (auto intro: inIrrefl)\n"));
+        for (text, reason) in [
+            (
+                read_theory("setequal-zenon").to_owned(),
+                "the checking theory tlapm writes for a module's proofs",
+            ),
+            (
+                goal.replace(
+                    "by (auto intro: inIrrefl)\n",
+                    "proof (rule zenon_nnpp)\n show FALSE by auto\nqed\n",
+                ),
+                "Isabelle's structured Isar proof",
+            ),
+            (
+                "theory Tests\n  imports Constant\nbegin\ntext \\<open>Regressions.\\<close>\nlemma \"TRUE\" by auto\nend\n"
+                    .to_owned(),
+                "a theory beyond the consts and the one lemma tlapm writes a goal as",
+            ),
+            (
+                goal.replace("\nend\n", "\nlemma other: shows \"TRUE\" by auto\nend\n"),
+                "a theory beyond the consts and the one lemma tlapm writes a goal as",
+            ),
+            (
+                format!("section \\<open>A Simple Resource Allocator\\<close>\n{goal}"),
+                "a theory beyond the consts and the one lemma tlapm writes a goal as",
+            ),
+        ] {
+            assert_eq!(
+                decide(&text, &Limits::new(30_000.0, None, None)),
+                Err(DecideError::Declined(reason.into())),
+                "{reason}"
+            );
         }
     }
 
