@@ -13,7 +13,7 @@ use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
 use crate::sany::linter::lint_sany_module;
 use crate::sany::nodes::{Graph, NodeId, SanyMessage, format_sany_location};
-use crate::sany::{GENERATOR_EXCEPTION, Result, UNLINKABLE, UNLINTED_MODULES, not_yet};
+use crate::sany::{EXCEPTION, Result, UNLINKABLE, UNLINTED_MODULES, not_yet};
 
 /// The warnings of SANY's linter for the modules it lints, in order, where SANY lints them: SANY
 /// lints only a spec without errors.
@@ -27,7 +27,8 @@ pub enum Generated {
     Unproven(Vec<ModuleMessages>, Lints, String),
     /// A shape whose messages linking would give otherwise than SANY, and why.
     Declined(String),
-    Exception(usize),
+    /// How many modules the generator saw before the one it throws on, and the exception's text.
+    Exception(usize, String),
 }
 
 /// The shapes of the first lines of the messages SANY prints in `tests/conformance/sany-stdout`'s
@@ -437,9 +438,12 @@ pub fn get_generator_messages(
         },
     );
     let specification = match generated {
-        Err(FrontError::NotYet(reason)) if reason == GENERATOR_EXCEPTION => {
+        Err(FrontError::NotYet(reason)) if reason.starts_with(EXCEPTION) => {
             // The modules before the one that throws are those `on_module` saw.
-            return Ok(Generated::Exception(ends.into_inner().len()));
+            return Ok(Generated::Exception(
+                ends.into_inner().len(),
+                reason[EXCEPTION.len()..].to_owned(),
+            ));
         }
         Err(FrontError::NotYet(reason)) if reason.starts_with(UNLINKABLE) => {
             return Ok(Generated::Declined(reason[UNLINKABLE.len()..].to_owned()));

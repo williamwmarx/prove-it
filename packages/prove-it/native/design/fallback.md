@@ -1491,6 +1491,29 @@ which the front end parses for that (`get_standard_definition`): `PickSuccessor(
 containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
 which declined before.
 
+SANY's semantic checks are its code's, not its messages' (`tests/sany-checks`, recorded with the
+jar). `Generator.processExcept` places the tuple of an EXCEPT component's several indexes
+(`![1, 2] = e`) at the ExceptSpec node's heir `2k + 1` for the component at `k`, which is that
+component's for `k = 0` only: the second component's tuple takes the third's place, the one past
+the components takes `=`, the next the right-hand side, and further ones throw
+`java.lang.ArrayIndexOutOfBoundsException: Index 2k + 1 out of bounds for length n + 3` for `n`
+components, which TLC prints as SANY's generator exception after "Parsing or semantic analysis
+failed." (`except-tuple-*`, `except-nested-overflow`). A component ends at the first `]` after
+its last index, which may hold a `]_` the tokens don't pair with a `[` (`![[][A]_x].h`,
+`except-subscript-index`). `TheoremNode.levelCheck` reads the
+statement's `level` field, which `LabelNode.levelCheck` never sets, so a theorem with a labeled
+goal (`THEOREM lbl :: []P`) is checked as constant: its PICK bounds and proof steps are not held
+to a temporal goal's (`labeled-temporal-goal`). `Generator.generateModule` appends an inner
+module's `opDefsInRecursiveSection` to the enclosing module's, so `ModuleNode.levelCheck` checks
+the inner module's recursive section again after the enclosing one's, where an application's
+constraints are those cached from the second pass: `Argument 1 of recursive operator R is primed`
+is reported for the inner module's operator where a top-level section passes
+(`recursive-inner-module`, `recursive-declared-order`, `recursive-top-level`). A DEF clause entry
+with arguments after an identifier prefix (`BY DEF I!Op(1)`) stops `genIdToSelector` with
+"Internal error: IdPrefixElement has other than 2 or 3 heirs." and a Java stack trace, which the
+binary declines (`a DEF clause entry with arguments after an identifier prefix, which SANY ends
+on with an internal error`; `def-prefix-arguments` keeps the jar's output beside the decline).
+
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
 unresolved lazy UNION can also reach that guard; a concrete class alone does not prove that
@@ -7317,7 +7340,8 @@ met it (`<...>` stands for a name or a value the reason prints).
   theorem, step or instance <...> where an operator is required`, `a RECURSIVE declaration without a
   place`, `a module named as a fact that SANY may not find`, `a module named in a DEF clause that
   SANY may not find`, `a DEF clause entry in parentheses`, `a DEF clause entry that is neither a
-  name nor an operator symbol`, `an empty USE or HIDE without a place`, `an empty BY without a
+  name nor an operator symbol`, `a DEF clause entry with arguments after an identifier prefix,
+  which SANY ends on with an internal error`, `an empty USE or HIDE without a place`, `an empty BY without a
   place`, `a module in a recursive section, where SANY's generator throws`, `a unit in a recursive
   section without a range`, `a module-level RECURSIVE declaration of <...>, a name already bound`,
   `a LET function in a temporal formula`, `an operator argument that isn't a definition`, `a
