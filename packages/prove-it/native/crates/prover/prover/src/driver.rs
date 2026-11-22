@@ -613,16 +613,18 @@ impl Run<'_> {
                 continue;
             }
             // Prep.prove_with: the Trivial method ends the obligation's methods (Schedule.Immediate
-            // true) without a result, so tlapm's end of run finds the obligation untreated and
+            // true) without a result, whatever the goal. The methods before it keep theirs: an
+            // obligation none recorded a result for is untreated at tlapm's end of run, which
             // reports it failed by `fail` with an unexpected error (tlapm_lib's
-            // collect_untreated_obligations), whatever the goal.
+            // collect_untreated_obligations).
             if method.prover == "trivial" {
+                let attempts = std::mem::take(&mut task.attempts);
                 return Ok(Step::Settled(self.get_base(
                     position,
                     Status::Failed {
                         reason: "the Trivial method records no result".to_owned(),
                     },
-                    Vec::new(),
+                    attempts,
                 )));
             }
             if !ENCODED.contains(&method.prover.as_str()) {
