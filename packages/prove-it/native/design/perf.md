@@ -329,7 +329,8 @@ read-only memo snapshots.
   (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
   (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
   a graph or run on one thread don't fill.
-- **Measured, not done: growing the table on threads.** Doubling the table takes 220–350 ms at the
+- **Measured, not done then, built since** ("What a shared level did on one thread", under
+  Results)**: growing the table on threads.** Doubling the table takes 220–350 ms at the
   last doubling on MCExactInitialSync, nearly all of it the kernel faulting in 4 KB pages
   (transparent huge pages are `madvise` on the machine measured). Threads rewriting ranges of it
   fault in parallel and contend: 0.6 s slower at 4 threads. With `MADV_HUGEPAGE` on the table it
@@ -1058,6 +1059,115 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### What a shared level did on one thread, and where its threads' time went (merge-serial-part)
+
+MCExactInitialSync at 16 threads, timed by phase on `depot-ubuntu-24.04-16` (`main` at d13f0073,
+six runs of 2.27–2.41 s, Depot run 6vddlr1504): the threads expanding 1.34 s, the fill that tells
+the new fingerprints 0.42 s, the merge 0.42 s, 18 shared levels. So 38% of the run was the two
+phases after the threads, and the threads themselves took 21.1 CPU seconds for what one thread
+does in 13.3. Four changes, each measured on that machine against `main` at d13f0073 with
+`bench-suite.ts`, medians of 7 interleaved runs with the range:
+
+| MCExactInitialSync | 1 thread, s | 16 threads, s | CPU at 16, s | Depot run |
+|---|---|---|---:|---|
+| `main` (three machines) | 13.50–13.62 | 2.03–2.15 (1.99–2.32) | 21.2–23.1 | |
+| A table's pages written first | 12.22 (12.04–12.80) | 1.97 (1.87–2.09) | 21.5 | tw2bb4kwp4 |
+| and the fill without shared lines, the table grown and the new states added on threads | 12.10 (12.03–12.21) | 1.47 (1.46–1.50) | 20.9 | 3wdtv9w822 |
+| and long runs claimed | 11.81 (11.73–12.06) | 1.30 (1.18–1.33) | 17.9 | 0q5k6kp9hq |
+
+The phases at 16 threads, ms, as each change went in (Depot runs 6vddlr1504, tcm83wfg2n, attempt
+xs5r1nsfzr, and br1n0v1l2q):
+
+| | Threads | Fill | Merge | Wall |
+|---|---:|---:|---:|---:|
+| `main` | 1,340 | 420 | 416 | 2,270 |
+| Fill, growth and merge on threads | 1,345 | 207 | 96 | 1,690 |
+| and the pages written first | 1,340 | 85 | 105 | 1,620 |
+| and runs of up to 4,096 states | 1,130 | 74 | 97 | 1,380 |
+
+- **A table's pages written first.** `perf` at 16 threads with the growth on threads (Depot run
+  wz87pxs3bd) showed 8% of the CPU in the kernel, nearly all under `do_wp_page` → `wp_page_copy` → `ptep_clear_flush` →
+  `smp_call_function_many_cond`: the rehash of a grown table probes a slot before it writes it,
+  so the first touch of each page of the new table was a read, which maps the kernel's page of
+  zeros, and the write that followed replaced that page and flushed its mapping on every core.
+  `/proc/vmstat` showed the rest: `thp_fault_alloc` stayed 0 over a one-thread run. Linux before
+  6.13 splits a huge page of zeros at the first write and never backs the region with a huge
+  page again, so the advice of #199 had no effect on a 6.12 kernel, which the Depot runners are;
+  the 4-core container it was measured on runs 6.18. The table now writes a 0 to each 4 KB of
+  itself as it is made (`commit`). A one-thread run then takes 236 huge pages and a 16-thread
+  run 345 (690 MB, the tables' last three sizes), and one thread is 1.11× faster on
+  MCExactInitialSync, whose 268 MB table every successor probes.
+- **The fill without shared cache lines.** Each of the fill's threads read every candidate and
+  wrote its status and its slot into arrays in the candidates' order, so neighbouring entries,
+  decided by different threads, moved their lines between the cores at every write: 15 ns of
+  wall a candidate at 16 threads. Threads now sort each part of the candidates by the range of
+  the table their home is in, the ranges' threads decide them part by part, which is the
+  candidates' order, reading the table 8 fingerprints ahead, and the parts' threads gather the
+  statuses back. The indices are written the same way, and read back only for a graph. The
+  fill's passes take 44 ms of wall over the run (9 sorting, 18 deciding, 8 gathering, 9 for the
+  indices).
+- **The table grown on threads.** Growing was 230 ms of the fill's 420, on one thread. A
+  fingerprint's home keeps its leading bits as the table grows, so each thread moves a range of
+  the old table to the same range of the new one. With the pages written first the growth is
+  24 ms; without, the threads' 100,000 page faults each flushed 15 other cores and it was 126.
+  That is the contention the earlier try at growing on threads met ("Measured, not done" under
+  track 6), which cost 0.6 s at 4 threads.
+- **The new states added on threads.** Where the search records no graph, the fill's statuses
+  give each new state its place, so threads copy the new states of a share of the level's runs
+  each and count each parent's, and the values a thread's overlay made are imported afterwards
+  in the states' order, which is the order adding them one by one imported them in. 416 → 96 ms,
+  of which 51 are one thread growing the states' arrays, the kernel zeroing 576 MB of new pages,
+  and 19 the copy.
+- **Long runs claimed.** A thread claimed 32 states of a level at a time, so each of 16 threads
+  expanded 32 states of every 512. States found one after another hold much the same values, and
+  a thread that skips between runs finds fewer of them in its caches: the threads' CPU for the
+  search was 14.5 s at 2 threads, 16.6 at 4, 18.2 at 8 and 20.9 at 16. With runs of up to 4,096
+  states it was 13.4, 14.0, 16.3 and 17.0 (Depot run br1n0v1l2q; 16,384 took less CPU still but
+  more wall, the threads ending a level apart). A thread now claims one part in four of its
+  share of the states left, so runs are long while a level is and single states at its end.
+  One part in 2, 8 and 16 measured 1.29, 1.29 and 1.30 s on MCExactInitialSync against 1.23 for
+  one in 4, and one in 2, 8, 16 and 64 measured 1.82, 1.96, 2.03 and 2.22 s on PaxosCommit
+  against 1.88 (medians of 8 and of 5 runs on one machine).
+
+The suites, 5 runs, against `main` at d13f0073. `perf-suite.json` on `depot-ubuntu-24.04-16`
+(Depot run tlq9hdlnsn), every model agreeing with TLC, one thread 1.02× in geomean:
+
+| Model | 1 thread, s | 16 threads, s | Gain at 16 | CPU at 16, s |
+|---|---|---|---:|---|
+| MCExactInitialSync | 13.18 → 12.02 | 2.08 → 1.26 | 1.65× | 22.1 → 17.6 |
+| PaxosCommit | 14.49 → 14.34 | 2.39 → 1.97 | 1.21× | 32.4 → 26.7 |
+| MCMultiNode | 4.59 → 4.46 | 0.88 → 0.68 | 1.29× | 9.3 → 7.3 |
+| MCLamportMutex | 1.84 → 1.80 | 0.53 → 0.46 | 1.15× | 5.4 → 4.6 |
+| Detlefs | 1.81 → 1.77 | 0.48 → 0.38 | 1.26× | 3.1 → 2.9 |
+| cf1s_folklore | 6.20 → 6.09 | 1.26 → 1.09 | 1.16× | 10.3 → 9.1 |
+| TLCSailfish1 | 3.42 → 3.41 | 0.44 → 0.41 | 1.07× | 5.4 → 5.1 |
+| BufferedRandomAccessFile | 1.66 → 1.66 | 0.21 → 0.19 | 1.11× | |
+| MCbtree | 0.71 → 0.69 | 0.19 → 0.18 | 1.06× | |
+
+The rest (FastPaxos, MCabs, GameOfLife, StarkMutex, SpanTreeRandom, 2PCwithBTM) is within its
+range on both. `bench-suite.json` on `depot-ubuntu-24.04-4` (Depot run c17glp0m8w), 18 of 18
+agreeing, one thread 1.03×: on 4 threads commit 0.14 → 0.11 s, SimpleRegular 0.30 → 0.24, MCbtree
+0.31 → 0.28, MCBakery 0.54 → 0.51, MCLamportMutex 0.99 → 0.94, and nothing slower.
+
+**The spread at 16 threads.** `main`'s MCExactInitialSync took 2.03, 2.08, 2.12, 2.15 and 2.33 s
+in median on five machines of the type, and 1.99–2.46 s over all their runs: 15% between the
+machines' medians, and up to 16% between the runs of one. The 3.19 s of an earlier baseline is
+what `main` took before the fill gave the indices (3.06 s under merge-fill-indices above), not
+another run of the same build. With these changes the seven runs of one machine lie within
+1.18–1.33 s and the five of another within 1.22–1.31.
+
+**What is left at 16 threads** on MCExactInitialSync, of about 1.3 s: the threads 1.1 s, 17.6 CPU
+seconds for 12 of one thread; the fill 75 ms; the merge 97 ms, half of it one thread faulting in
+the states' arrays, which threads could only write first into capacity the vector doesn't count
+as its length yet, an `unsafe` the crate doesn't have; 60 ms starting and ending the process.
+`perf` by symbol before the long runs (Depot run r52fz3smlh), CPU seconds at 16 threads against
+one: the memo lookups 2.5 against 1.0, the walk's `segment` 2.1 against 1.25, `Candidates::find`
+1.2 against 0.5 for `States::find`, `get_child` 1.4 against 0.8, and `shift_by_table`, which
+reads only its thread's own tables, 1.8 against 1.7: what reads memory past a core's own cache
+costs about twice as much. Each thread's memo tables take 7.7 MB (4.4 MB on one thread) and its
+table of a large level's states about 3 MB, against 4 MB a thread of the 32 MB of L3 that eight
+cores share.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1082,6 +1192,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
 | Resolve and copy a graph's steps to the graph on the threads after a level's merge, rather than on the merge's thread as it numbers the states (`edges-on-threads`) | cf1s_folklore, StarkMutex | 16 threads, medians of 3: 1.37 → 1.36 s, 0.79 → 0.77 s; the suite within noise | Copying 22 million steps is a few milliseconds; the per-candidate timers of the merge's instrumentation had inflated its share to 20 % of the merge. The parallel copy spawns threads a level for nothing. |
+| Read ahead a thread's own table of the level's states with the state table's, at 16 threads (it was within noise at 4) | MCExactInitialSync, PaxosCommit, MCMultiNode | 16 threads, medians of 8, 5 and 5 runs on one machine, with the long runs: 1.23 → 1.32 s (CPU 16.8 → 18.1 s), 1.88 → 1.92 s, 0.69 → 0.67 s | The thread's table is a few megabytes its thread alone reads, mostly in its own cache, and the second read-ahead for every successor costs more than the misses it saves. |
 | Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
