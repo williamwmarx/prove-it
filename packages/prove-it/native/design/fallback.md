@@ -4838,6 +4838,13 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A quantifier the front end evaluates over many bindings, as a property's constant conjunct or
+  the guard of a temporal IF: `Prop == (\E i, j, k \in 1..1000 : i = 1) /\ <>(x = 1)`. TLC's
+  `ContextEnumerator` makes each binding as it goes, so a quantifier whose body decides it at the
+  first holds one binding, and one whose body reads each holds one at a time. The front end's
+  evaluator made every binding first, a billion here, and ran out of memory (exit 134) where TLC
+  completes. It now makes them one at a time, in the same order. Fixtures
+  `stream-bindings-property-{conjunct,guard}`.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
   in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
   `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
