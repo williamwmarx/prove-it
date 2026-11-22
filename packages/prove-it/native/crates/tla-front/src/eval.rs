@@ -249,6 +249,17 @@ impl Bindings {
         }
     }
 
+    /// No binding, as of a bound over an empty set.
+    fn none() -> Bindings {
+        Bindings {
+            names: Vec::new(),
+            sets: Vec::new(),
+            positions: None,
+            nodes: vec![None],
+            changed: 0,
+        }
+    }
+
     /// Whether no binding is left to make.
     pub fn is_empty(&self) -> bool {
         self.positions.is_none()
@@ -934,6 +945,10 @@ impl Evaluator<'_> {
                 }
                 elements => elements?,
             });
+        }
+        // A bound over an empty set binds nothing, whatever its pattern.
+        if sets.iter().any(Vec::is_empty) {
+            return Ok(Bindings::none());
         }
         let names = names
             .into_iter()
