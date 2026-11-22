@@ -8726,6 +8726,17 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+Instantiation doesn't distribute over ENABLED, so not over WF and SF either (Specifying Systems,
+17.8), and `Expr.Action.lambdify` expands each `WF_v(A)` and `SF_v(A)` to its definition in terms
+of ENABLED (`E_tla_norm.expand_fairness`) before it expands definitions and lambdifies, so an
+instanced `WF_vars(Next)` in a hypothesis becomes `<>[]?EnabledWrapper(LAMBDA ...) =>
+[]<><<I!Next>>_I!vars` with the ENABLED lambdified as any other, where the port lambdified the
+ENABLED alone and left `WF_(I!vars)(I!Next)` as the instance substituted it, which LS4 fails
+and tlapm proves (`tests/fixtures/obligations/InstanceFairness.tla`, recorded with b91fb6c). tlapm's lexer reads `WF_vars` as the tokens `WF_` and `vars` of one match
+(`alexer.mll`'s `("WF_" | "SF_" as f) (name as rest)`), both at the whole word, so the
+auto-expansion note of such a subscript's operator starts at the `WF_` (`line 19, characters
+10-16`), where the front end lexed the name alone and the note started three columns in.
+
 Two of the suite's runs, `imported/bugs/everythingisafcn_test` and
 `imported/regression_tests/function_except_tuple_soundness_gh201_test` (tlapm's own tests
 `test/bugs/everythingisafcn_test.tla` and
@@ -8758,6 +8769,7 @@ the port is held to.
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
 | with the two runs Zenon's memory limit decides set aside | 769 / 577 / 3 | 321 / 1,042 / 35 |
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
+| with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 
 ### Declines
 
