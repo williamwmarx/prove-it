@@ -10,4 +10,8 @@ THEOREM AutoSimp == ASSUME NEW S PROVE (S = {}) <=> (\A x : x \notin S)
   BY IsaM("(auto simp: emptysetIffEmpty)")
 THEOREM Plain == ASSUME NEW S PROVE (S = {}) <=> (\A x : x \notin S)
   BY IsaM("simp")
+THEOREM IntroDest == ASSUME NEW P, NEW Q, P /\ Q PROVE Q /\ P
+  BY IsaM("(auto intro: conjI dest: conjD1)")
+THEOREM SimpAddTwice == ASSUME NEW S PROVE (S = {}) <=> (\A x : x \notin S)
+  BY IsaM("(simp add: emptysetIffEmpty setEqual)")
 ====

@@ -211,33 +211,40 @@ impl MethodParser<'_> {
             .is_some_and(|token| token.kind == OuterTokenKind::Symbol && token.text == symbol)
     }
 
-    /// Method.sections: a section's header is one or two words, `!` after them for a safe rule,
-    /// then `:`. The header's length in tokens at `at`, or 0 where no section starts there.
-    fn header_length(&self, at: usize) -> usize {
-        let mut words = 0;
-        while words < 2
-            && self
-                .token_at(at + words)
-                .is_some_and(|token| token.kind == OuterTokenKind::Word)
-        {
-            words += 1;
+    /// Method.sections: the length in tokens of the section header at `at` among those the
+    /// method's sections parse (one or two words, `!` for a safe rule after them, then `:`), or 0
+    /// where none starts there, so a fact named like a header's word is still a fact.
+    fn header_length(&self, at: usize, sections: Sections) -> usize {
+        let is_word = |offset: usize, word: &str| {
+            self.token_at(at + offset)
+                .is_some_and(|token| token.kind == OuterTokenKind::Word && token.text == word)
+        };
+        for header in section_headers(sections) {
+            let words: Vec<&str> = header.split(' ').filter(|word| *word != "!").collect();
+            if !words
+                .iter()
+                .enumerate()
+                .all(|(offset, word)| is_word(offset, word))
+            {
+                continue;
+            }
+            let bang = usize::from(header.ends_with('!'));
+            if bang == usize::from(self.symbol_at(at + words.len(), "!"))
+                && self.symbol_at(at + words.len() + bang, ":")
+            {
+                return words.len() + bang + 1;
+            }
         }
-        if words == 0 {
-            return 0;
-        }
-        let bang = usize::from(self.symbol_at(at + words, "!"));
-        if self.symbol_at(at + words + bang, ":") {
-            words + bang + 1
-        } else {
-            0
-        }
+        0
     }
 
-    /// Attrib.thms: fact names up to the next section. An attribute in brackets after a name,
-    /// which the port doesn't apply, declines.
-    fn facts(&mut self) -> Res<Vec<String>> {
+    /// Attrib.thms: fact names up to the next section of `sections`, if any. An attribute in
+    /// brackets after a name, which the port doesn't apply, declines.
+    fn facts(&mut self, sections: Option<Sections>) -> Res<Vec<String>> {
         let mut names = Vec::new();
-        while self.is_word() && self.header_length(self.position) == 0 {
+        while self.is_word()
+            && sections.is_none_or(|sections| self.header_length(self.position, sections) == 0)
+        {
             names.push(self.word()?);
             if self.is_symbol("[", 0) {
                 return Err(Error::Unsupported("Isabelle's fact attributes".into()));
@@ -249,7 +256,7 @@ impl MethodParser<'_> {
     fn modifiers(&mut self, sections: Sections) -> Res<Vec<Modifier>> {
         let mut result = Vec::new();
         loop {
-            let length = self.header_length(self.position);
+            let length = self.header_length(self.position, sections);
             if length == 0 {
                 return Ok(result);
             }
@@ -261,7 +268,7 @@ impl MethodParser<'_> {
             self.position += length;
             result.push(Modifier {
                 kind: section_kind(sections, &header)?,
-                facts: self.facts()?,
+                facts: self.facts(Some(sections))?,
             });
         }
     }
@@ -276,7 +283,7 @@ impl MethodParser<'_> {
         };
         let facts = |parser: &mut Self| {
             if has_args {
-                parser.facts()
+                parser.facts(None)
             } else {
                 Ok(Vec::new())
             }
@@ -368,14 +375,14 @@ impl MethodParser<'_> {
     }
 }
 
-/// The modifier a section's header declares for the method's sections: those the port applies
-/// as Isabelle does, those Isabelle takes and the port doesn't (which decline), and any other,
-/// which Isabelle's syntax rejects.
-fn section_kind(sections: Sections, header: &str) -> Res<ModifierKind> {
+/// The section headers a method's Method.sections parse, each as its words with ` !` for a safe
+/// rule: Classical.cla_modifiers; Clasimp's clasimp_modifiers (the simp, split, cla and iff
+/// modifiers); Simplifier.simp_modifiers' with the cong modifiers.
+fn section_headers(sections: Sections) -> &'static [&'static str] {
     const CLA: &[&str] = &[
         "intro", "intro !", "elim", "elim !", "dest", "dest !", "del",
     ];
-    const SIMP: &[&str] = &[
+    const CLASIMP: &[&str] = &[
         "simp",
         "simp add",
         "simp del",
@@ -384,37 +391,43 @@ fn section_kind(sections: Sections, header: &str) -> Res<ModifierKind> {
         "cong",
         "cong add",
         "cong del",
-    ];
-    const SPLIT_IFF: &[&str] = &[
         "split",
         "split add",
         "split del",
+        "intro",
+        "intro !",
+        "elim",
+        "elim !",
+        "dest",
+        "dest !",
+        "del",
         "iff",
         "iff add",
         "iff !",
         "iff add !",
         "iff del",
     ];
-    const SIMP_METHOD: &[&str] = &["add", "del", "flip", "only", "cong", "cong add", "cong del"];
+    const SIMP: &[&str] = &["add", "del", "flip", "only", "cong", "cong add", "cong del"];
+    match sections {
+        Sections::Classical => CLA,
+        Sections::Clasimp => CLASIMP,
+        Sections::Simp => SIMP,
+    }
+}
+
+/// The modifier a section's header declares: one the port applies as Isabelle does, or one
+/// Isabelle takes and the port doesn't, which declines.
+fn section_kind(sections: Sections, header: &str) -> Res<ModifierKind> {
     match (sections, header) {
-        (Sections::Classical | Sections::Clasimp, "intro") => return Ok(ModifierKind::Intro),
-        (Sections::Classical | Sections::Clasimp, "dest") => return Ok(ModifierKind::Dest),
+        (Sections::Classical | Sections::Clasimp, "intro") => Ok(ModifierKind::Intro),
+        (Sections::Classical | Sections::Clasimp, "dest") => Ok(ModifierKind::Dest),
         (Sections::Clasimp, "simp" | "simp add") | (Sections::Simp, "add") => {
-            return Ok(ModifierKind::Simp);
+            Ok(ModifierKind::Simp)
         }
-        _ => {}
-    }
-    let known: &[&[&str]] = match sections {
-        Sections::Classical => &[CLA],
-        Sections::Clasimp => &[SIMP, SPLIT_IFF, CLA],
-        Sections::Simp => &[SIMP_METHOD],
-    };
-    if known.iter().any(|list| list.contains(&header)) {
-        return Err(Error::Unsupported(format!(
+        _ => Err(Error::Unsupported(format!(
             "Isabelle's method modifier {header}:"
-        )));
+        ))),
     }
-    Err(error_exn(format!("Outer syntax error at: {header}")))
 }
 
 pub fn parse_proof_text(tokens: &[OuterToken]) -> Res<ProofText> {
@@ -766,4 +779,107 @@ pub fn terminal_proof(
             results,
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Exception;
+    use crate::isar::theory::tokenize;
+
+    fn parse(text: &str) -> Res<MethodText> {
+        Ok(parse_proof_text(&tokenize(text)?)?.initial)
+    }
+
+    fn modifier(kind: ModifierKind, facts: &[&str]) -> Modifier {
+        Modifier {
+            kind,
+            facts: facts.iter().map(|fact| (*fact).to_owned()).collect(),
+        }
+    }
+
+    // Method.sections of each method: a fact named like a header's word stays a fact, and a
+    // header another method's sections take is no section of this one.
+    #[test]
+    fn parses_the_sections_each_method_takes() {
+        assert_eq!(
+            parse("(auto intro: conjI dest: conjunct1)").unwrap(),
+            MethodText::Auto {
+                modifiers: vec![
+                    modifier(ModifierKind::Intro, &["conjI"]),
+                    modifier(ModifierKind::Dest, &["conjunct1"]),
+                ]
+            }
+        );
+        assert_eq!(
+            parse("(auto simp add: add dest intro: dest)").unwrap(),
+            MethodText::Auto {
+                modifiers: vec![
+                    modifier(ModifierKind::Simp, &["add", "dest"]),
+                    modifier(ModifierKind::Intro, &["dest"]),
+                ]
+            }
+        );
+        assert_eq!(
+            parse("(simp add: simp cong)").unwrap(),
+            MethodText::Simp {
+                modifiers: vec![modifier(ModifierKind::Simp, &["simp", "cong"])]
+            }
+        );
+        assert_eq!(
+            parse("(rule chooseI dest)").unwrap(),
+            MethodText::Rule {
+                facts: vec!["chooseI".into(), "dest".into()]
+            }
+        );
+        assert_eq!(
+            parse("(fast intro: conjI)").unwrap(),
+            MethodText::Fast {
+                modifiers: vec![modifier(ModifierKind::Intro, &["conjI"])]
+            }
+        );
+        assert_eq!(
+            parse("(simp)").unwrap(),
+            MethodText::Simp {
+                modifiers: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn declines_what_isabelle_takes_and_the_port_does_not() {
+        for text in [
+            "(auto elim: conjE)",
+            "(auto intro!: conjI)",
+            "(auto simp del: x)",
+            "(simp only: x)",
+            "(blast dest!: x)",
+            "(simp (no_asm))",
+            "(rule x [OF y])",
+            "clarify",
+        ] {
+            assert!(
+                matches!(parse(text), Err(Error::Unsupported(_))),
+                "{text}: {:?}",
+                parse(text)
+            );
+        }
+    }
+
+    // A section another method takes, or a word that is no section, is Isabelle's syntax error.
+    #[test]
+    fn rejects_what_isabelle_rejects() {
+        for text in [
+            "(simp intro: x)",
+            "(blast simp: x)",
+            "(auto foo: x)",
+            "no_such_method",
+        ] {
+            assert!(
+                matches!(parse(text), Err(Error::Isabelle(Exception::Error, _))),
+                "{text}: {:?}",
+                parse(text)
+            );
+        }
+    }
 }
