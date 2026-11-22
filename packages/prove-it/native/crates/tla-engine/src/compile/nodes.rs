@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use tla_ir::{Bound, NodeId, NodeKind, PathStep, Pattern, TextId, Update};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE,
+    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE,
     Outcome, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id, check_set_insertion};
@@ -21,7 +21,7 @@ use super::{
     lookup, member, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine, Printed, RuntimeWarning};
+use crate::machine::{Eval, Machine, Printed, RuntimeWarning, UNASSIGNED};
 
 /// A bound's names, at fresh slots: one name, or a tuple pattern's.
 pub(crate) struct Binder {
@@ -654,12 +654,51 @@ impl Compiler<'_> {
         let next = self.compile(expression, &context.primed(true))?;
         let footprint = now.footprint.merge(&next.footprint);
         let (now, next) = (now.eval, next.eval);
+        // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+        let evaluate = move |machine: &mut Machine<'_>| {
+            let now = now(machine)?;
+            let next = next(machine)?;
+            Ok(bool_id(machine.store.equals(now, next)?))
+        };
+        // Where the expression is a tuple of state variables, or of such tuples, its two values
+        // are equal just where each variable's two values are, which TLC compares in order
+        // (`TupleValue.equals`): the tuples are built only where a variable isn't assigned or a
+        // pair doesn't compare as unequal, for whatever TLC does then.
+        let variables = self
+            .get_unchanged_indices(expression, &context.primed(false), 0)
+            .ok()
+            .flatten()
+            .filter(|found| {
+                found
+                    .iter()
+                    .all(|&(variable, _)| (variable as usize) < self.ir.variables.len())
+            });
+        let Some(variables) = variables else {
+            return Ok(leaf(eval(evaluate), footprint));
+        };
+        let variables: Box<[usize]> = variables
+            .into_iter()
+            .map(|(variable, _)| variable as usize)
+            .collect();
         Ok(leaf(
-            // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
             eval(move |machine| {
-                let now = now(machine)?;
-                let next = next(machine)?;
-                Ok(bool_id(machine.store.equals(now, next)?))
+                let is_assigned = variables.iter().all(|&variable| {
+                    machine.cur[variable] != UNASSIGNED && machine.next[variable] != UNASSIGNED
+                });
+                if !is_assigned {
+                    return evaluate(machine);
+                }
+                for &variable in &variables {
+                    let (now, next) = (machine.cur[variable], machine.next[variable]);
+                    if now == next && !machine.store.comparison_can_fail(now) {
+                        continue;
+                    }
+                    return match machine.store.equals(now, next) {
+                        Ok(false) => Ok(FALSE),
+                        _ => evaluate(machine),
+                    };
+                }
+                Ok(TRUE)
             }),
             footprint,
         ))

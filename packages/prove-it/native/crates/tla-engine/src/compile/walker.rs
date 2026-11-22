@@ -1054,7 +1054,7 @@ impl<'a> Compiler<'a> {
         self.get_assignable(node, context, !is_init, 0)
     }
 
-    fn get_unchanged_indices(
+    pub(crate) fn get_unchanged_indices(
         &mut self,
         node: NodeId,
         context: &Context,
