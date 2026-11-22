@@ -215,11 +215,18 @@ level, each argument read and allowed up to an action's (`ModuleNode.levelCheck`
 sections join). In `Spec == LET RECURSIVE R(_)  A(n) == R(n) /\ n  Bad == [](A(x' = x))  R(n) ==
 [](A(n)) IN Bad`, SANY reads `R(n)` in A at n's level, so `A(x' = x)` is an action and Bad fails
 ("[] followed by action not of form [A]_v."), where linking took R's own, temporal, level and
-printed no errors. Linking now checks a LET's recursive section as SANY's first pass does, and
-declines where that fails and its own analysis doesn't ("a LET's recursive section, which SANY
-level-checks with its recursive operators' levels preset"). TLC 1.7.4's report, which links, now
+printed no errors. Linking now checks a LET's recursive section as SANY does: the recursive
+operators first, as a RECURSIVE statement adds them, then the section's other definitions, with
+the recursive operators' levels preset; then again with each at least the level of the
+section's recursive operators, which the LET's later definitions and body read, and which the
+LET's level takes. It declines where that check fails and its own analysis doesn't ("a LET's
+recursive section, which SANY level-checks with its recursive operators' levels preset"). SANY
+at TLC 1.7.4 (5a47802) checks sections as at d8fb231. TLC 1.7.4's report, which links, now
 declines it (tests/report-cases/41); TLC's, which the generator writes, reports it (case 40); and
-a section SANY accepts, applied before its definition, keeps its report (case 42).
+a section SANY accepts, applied before its definition, keeps its report (case 42). Of 552
+generated specs with a LET's recursive section run through TLC 1.7.4's jar, 22 that linking
+reported clean, which SANY rejects, now decline, 4 that it rejected, which SANY accepts, now
+match, and none that matched declines.
 
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
