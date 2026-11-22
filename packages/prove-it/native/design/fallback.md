@@ -4844,8 +4844,10 @@ matches TLC or declines exactly.
   the corpus's `-Xss2m`. The binary's translation stopped at 100 nested expansions and reported
   TLC's StackOverflowError (1005, exit 255) where TLC checks the model. It now reports the overflow
   only where TLC's recursion doesn't end: a call it is already in, with the same constant
-  arguments (Github1389Loops' `bad(FALSE)`) or an argument above constant level, on which no IF
-  decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in, with arguments of
+  arguments (Github1389Loops' `bad(FALSE)`), the same unevaluated expression in the same scope
+  where a constant argument fails to evaluate (`F(n) == <>(x = 0) /\ F(n)` with `Prop == F(1 \div
+  0)`, `liveness-recursion-unevaluated-argument`), or an argument above constant level, on which no
+  IF decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in, with arguments of
   the same kinds (constant or not), that it reached evaluating no constant expression an argument
   could decide, as through an IF on the state alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE
   Reach(n + 1)`). An argument above constant level that becomes a constant can make a guard

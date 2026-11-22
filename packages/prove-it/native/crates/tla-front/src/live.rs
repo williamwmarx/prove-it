@@ -36,8 +36,9 @@ enum Argument {
     /// An argument above constant level, which the translation can't decide on, so that TLC
     /// expands every branch of the call again whatever its value.
     Variable,
-    /// A constant argument that fails to evaluate, which no other call matches.
-    Unknown,
+    /// A constant argument that fails to evaluate: the expression it is and the scope it is
+    /// evaluated in, which a parameter passed on as it is keeps (`bind_operator_arguments`).
+    Unevaluated(*const Expression, *const Scope),
 }
 
 impl PartialEq for Argument {
@@ -45,6 +46,10 @@ impl PartialEq for Argument {
         match (self, other) {
             (Argument::Value(left), Argument::Value(right)) => left == right,
             (Argument::Variable, Argument::Variable) => true,
+            (
+                Argument::Unevaluated(left, left_scope),
+                Argument::Unevaluated(right, right_scope),
+            ) => left == right && left_scope == right_scope,
             _ => false,
         }
     }
@@ -437,7 +442,26 @@ impl Converter<'_> {
             .map(|evaluator| evaluator.evaluate(argument, scope))
         {
             Some(Ok(value)) => Argument::Value(value),
-            _ => Argument::Unknown,
+            _ => {
+                // A parameter is the expression its binding holds, in the binding's scope.
+                let reference = argument.reference().unwrap_or_default();
+                let thunk = matches!(argument.kind, ExpressionKind::Identifier { .. })
+                    .then(|| lookup_scope(scope, &reference))
+                    .flatten();
+                match thunk {
+                    Some((node, Binding::Thunk { expression, scope })) => Argument::Unevaluated(
+                        Rc::as_ptr(expression),
+                        scope
+                            .resolve(node)
+                            .as_ref()
+                            .map_or(std::ptr::null(), Rc::as_ptr),
+                    ),
+                    _ => Argument::Unevaluated(
+                        Rc::as_ptr(argument),
+                        scope.map_or(std::ptr::null(), Rc::as_ptr),
+                    ),
+                }
+            }
         }
     }
 
