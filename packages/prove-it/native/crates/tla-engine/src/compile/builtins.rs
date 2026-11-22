@@ -3995,10 +3995,33 @@ impl Compiler<'_> {
                 });
                 // A miss in a set that isn't constant compares the element with the set's elements
                 // as TLC's binary search does, to fail where it fails, so it is cached too.
-                Compiled {
+                let compiled = Compiled {
                     is_costly: set.member.is_some() || is_interval || set.footprint.width() > 0,
                     is_boolean: true,
                     ..leaf(evaluate, footprint)
+                };
+                // A function's own keys answer most memberships in its domain in place, for
+                // less than a table's row costs and without the domain; the rest goes through
+                // the table, which evaluates both sides again, so neither may have an effect.
+                let is_repeatable = !compiled.is_printing()
+                    && !compiled.uses_registers()
+                    && !compiled.reads_search()
+                    && !compiled.footprint.slots.contains(&super::WARNING_SLOT);
+                match &set.domain_of {
+                    Some(function) if is_repeatable && compiled.is_costly => {
+                        let (element, function) = (element.eval.clone(), function.clone());
+                        let cached = self.cached(compiled);
+                        let through_table = cached.eval.clone();
+                        cached.with_eval(eval(move |machine| {
+                            let value = element(machine)?;
+                            let function = function(machine)?;
+                            match machine.store.find_in_domain(function, value) {
+                                Some(found) => Ok(bool_id(found == is_in)),
+                                None => through_table(machine),
+                            }
+                        }))
+                    }
+                    _ => compiled,
                 }
             }
             "\\subseteq" => {
@@ -4306,6 +4329,7 @@ impl Compiler<'_> {
                     parts: Some(super::parts(move |machine| {
                         function_part(machine).map(|_| ())
                     })),
+                    domain_of: Some(function.clone()),
                     member: Some(super::member(move |machine, element| {
                         let function = function(machine)?;
                         if lazy_function::is_lazy(machine, function) {

@@ -375,6 +375,9 @@ pub struct Compiled {
     pub(crate) has_infinite_part: bool,
     /// Membership, when the engine can test it without building the set.
     pub(crate) member: Option<Member>,
+    /// The function a set is the domain of, where it is written `DOMAIN f`: a membership in it
+    /// reads the function's keys in place where they tell (`Store::find_in_domain`).
+    pub(crate) domain_of: Option<Eval>,
     /// What TLC evaluates to make the set's value, its parts in TLC's order.
     pub(crate) parts: Option<Parts>,
     pub(crate) shape: Shape,
@@ -631,6 +634,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         infinite_value: None,
         has_infinite_part: false,
         member: None,
+        domain_of: None,
         parts: None,
         shape: Shape::Other,
         interval: None,
