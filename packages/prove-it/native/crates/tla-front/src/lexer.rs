@@ -2,6 +2,7 @@
 //! units from 1 with a tab reaching the next multiple of eight, so every position equals the
 //! TypeScript one.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -744,7 +745,23 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub fn tokenize(source: &str) -> Result<Vec<Token>, SyntaxError> {
+thread_local! {
+    /// The tokens of each text this thread has read, by the text: SANY's report, the lowering,
+    /// TLC's module order and the linker each read a spec's text, in several readers of their own.
+    static TOKENS: RefCell<FastMap<Box<str>, Rc<[Token]>>> = RefCell::new(FastMap::default());
+}
+
+/// The tokens of a module's text, read once per thread.
+pub fn tokenize(source: &str) -> Result<Rc<[Token]>, SyntaxError> {
+    if let Some(tokens) = TOKENS.with(|tokens| tokens.borrow().get(source).cloned()) {
+        return Ok(tokens);
+    }
+    let tokens: Rc<[Token]> = Rc::from(tokenize_text(source)?);
+    TOKENS.with(|known| known.borrow_mut().insert(source.into(), tokens.clone()));
+    Ok(tokens)
+}
+
+fn tokenize_text(source: &str) -> Result<Vec<Token>, SyntaxError> {
     let header = find_module_header(source).ok_or_else(|| SyntaxError {
         message: "Expected a module header such as ---- MODULE Name ----".to_string(),
         failure: None,

@@ -295,7 +295,7 @@ pub fn get_unboxed_source(source: &str) -> Result<String, SyntaxError> {
 /// without the boxes of []ASSUME and []PROVE, so the module is not the one of the text's tokens.
 #[derive(Debug)]
 pub struct SanyReading {
-    pub tokens: Vec<Token>,
+    pub tokens: Rc<[Token]>,
     pub module: Result<Rc<Module>, SyntaxError>,
     pub is_unboxed: bool,
 }
@@ -325,7 +325,7 @@ pub fn read_sany_text(readings: &mut SanyReadings, text: &str) -> Rc<SanyReading
         })
     };
     let reading = Rc::new(read().unwrap_or_else(|error| SanyReading {
-        tokens: Vec::new(),
+        tokens: Rc::from(Vec::new()),
         module: Err(error),
         is_unboxed: false,
     }));

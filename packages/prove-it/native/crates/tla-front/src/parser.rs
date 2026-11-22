@@ -3434,7 +3434,7 @@ fn parse_collecting(
 ) -> Parsed<(Module, Vec<SanyError>)> {
     let tokens = match tokens {
         Some(tokens) => tokens.to_vec(),
-        None => tokenize(source)?,
+        None => tokenize(source)?.to_vec(),
     };
     // belchDEF scans keyword tokens even when they name a record field. When a
     // field can stop that scan, consult the SANY grammar for its definition markers.
