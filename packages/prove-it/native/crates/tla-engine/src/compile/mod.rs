@@ -7108,36 +7108,50 @@ impl<'a> Compiler<'a> {
         // TLC evaluates an argument where the body first reads it, after what the body printed
         // or drew before: where one fails, the engine stops rather than order the two.
         let is_body_printing = read.slots.contains(&PRINT_SLOT);
-        let evaluate = eval(move |machine| {
-            if is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
-                return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
-            }
-            let at = machine.stack.len();
-            for argument in &arg_evals {
-                let value = match argument(machine) {
-                    Ok(value) => value,
-                    Err(bail) => {
-                        machine.stack.truncate(at);
-                        if is_body_printing {
-                            return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+        let call = RecursiveCall {
+            runtime,
+            is_body_printing,
+        };
+        let arguments: Vec<predicate::Leaf> =
+            compiled_args.iter().map(predicate::Leaf::of).collect();
+        let fixed = match arguments.len() {
+            1 => Some(call.with::<1>(&arguments, &slots)),
+            2 => Some(call.with::<2>(&arguments, &slots)),
+            3 => Some(call.with::<3>(&arguments, &slots)),
+            _ => None,
+        };
+        let evaluate = fixed.unwrap_or_else(|| {
+            eval(move |machine| {
+                if is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
+                    return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
+                }
+                let at = machine.stack.len();
+                for argument in &arg_evals {
+                    let value = match argument(machine) {
+                        Ok(value) => value,
+                        Err(bail) => {
+                            machine.stack.truncate(at);
+                            if is_body_printing {
+                                return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+                            }
+                            return Err(bail);
                         }
-                        return Err(bail);
-                    }
-                };
-                machine.stack.push(value);
-            }
-            for (offset, &slot) in slots.iter().enumerate() {
-                std::mem::swap(
-                    &mut machine.locals[slot as usize],
-                    &mut machine.stack[at + offset],
-                );
-            }
-            let result = machine.call_recursive(runtime);
-            for (offset, &slot) in slots.iter().enumerate() {
-                machine.locals[slot as usize] = machine.stack[at + offset];
-            }
-            machine.stack.truncate(at);
-            result
+                    };
+                    machine.stack.push(value);
+                }
+                for (offset, &slot) in slots.iter().enumerate() {
+                    std::mem::swap(
+                        &mut machine.locals[slot as usize],
+                        &mut machine.stack[at + offset],
+                    );
+                }
+                let result = machine.call_recursive(runtime);
+                for (offset, &slot) in slots.iter().enumerate() {
+                    machine.locals[slot as usize] = machine.stack[at + offset];
+                }
+                machine.stack.truncate(at);
+                result
+            })
         });
         let footprint = Footprint::merge_all(
             compiled_args
@@ -7881,6 +7895,44 @@ fn slots_footprint(slots: Vec<u32>) -> Footprint {
 enum RecursiveTarget {
     Global(NodeId),
     Local(Rc<Operator>),
+}
+
+/// A call of a recursive operator of a few parameters, whose arguments are read as a fused node
+/// reads its operands and held in place while the body runs.
+#[derive(Clone, Copy)]
+struct RecursiveCall {
+    runtime: usize,
+    is_body_printing: bool,
+}
+
+impl RecursiveCall {
+    fn with<const N: usize>(self, arguments: &[predicate::Leaf], slots: &[u32]) -> Eval {
+        let arguments: [predicate::Leaf; N] = std::array::from_fn(|index| arguments[index].clone());
+        let slots: [u32; N] = std::array::from_fn(|index| slots[index]);
+        eval(move |machine| {
+            if self.is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
+                return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
+            }
+            let mut values = [0; N];
+            for (value, argument) in values.iter_mut().zip(&arguments) {
+                *value = match argument.read(machine) {
+                    Ok(value) => value,
+                    Err(_) if self.is_body_printing => {
+                        return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+                    }
+                    Err(bail) => return Err(bail),
+                };
+            }
+            for (value, &slot) in values.iter_mut().zip(&slots) {
+                std::mem::swap(&mut machine.locals[slot as usize], value);
+            }
+            let result = machine.call_recursive(self.runtime);
+            for (value, &slot) in values.iter().zip(&slots) {
+                machine.locals[slot as usize] = *value;
+            }
+            result
+        })
+    }
 }
 
 pub(crate) fn call_recursive_function(
