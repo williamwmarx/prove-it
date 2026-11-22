@@ -13,10 +13,14 @@ TypeScript engine is deleted. The plan was written for the owner on 2026-11-09 (
 ## What a decline leaves
 
 A decline prints `prove-it: not native yet: <reason>` on stderr and exits 1. Output is held for
-the first two seconds of a run (`transaction.rs`, `HOLD`): a decline within them prints nothing
-else, on stdout or stderr. After them the output streams as TLC prints it, so a slow decline
-follows the TLC lines already printed: stdout may hold TLC's transcript up to the point where the
-engine stopped, and stderr then ends with the decline's line. `main` does the same. The library and
+the first two seconds of a run (`transaction.rs`, `HOLD`), and through the front end's lowering of
+the model however long that takes (`holding_through`); it streams from the first write after
+them, and a decline marked before that write keeps it held (`is_streaming`). So a decline before
+anything streamed, the front end's however slow its lowering, prints nothing else, on stdout or
+stderr. Once the output streams it goes out as TLC prints it, so a later decline of the startup's
+evaluation or of the engine follows the TLC lines already printed: stdout may hold TLC's
+transcript up to the point where the engine stopped, and stderr then ends with the decline's
+line. `main` does the same. The library and
 the CLI of `dist/` print none of it ([cli.md](cli.md), "What a decline leaves printed"). A tool that
 compares runs counts a decline with stdout within the hold, or with more than one stderr line, as
 contaminated, not as a decline.
@@ -4838,6 +4842,17 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A property or a specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F ==
+  F /\ WF_x(Next)`, found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016,
+  c0019). TLC's expansion of the formula recurses until the JVM's stack overflows, and it reports
+  the StackOverflowError (1005, exit 255), as it does for a global `RECURSIVE F` with `F == F /\
+  ...`. The front end caught that recursion for a global definition only, so the binary's expansion
+  recursed until its own stack overflowed and the process aborted (exit 134). It now keeps the LET
+  definitions it is expanding as it keeps the global ones, and reports the overflow where one is
+  reached again in its own expansion. A deep but finite expansion still completes: 600 nested
+  conjunctions (`endless-expansion-finite-nesting`) and 1,100, which TLC completes too and which
+  the release build follows, though the debug build's own stack doesn't; past about 1,500, SANY's
+  parser gives out first. Fixtures `endless-expansion-*`.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
   in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
   `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
@@ -4847,6 +4862,12 @@ matches TLC or declines exactly.
   constant invariant does. The front end's builtin table marked both state-level, so the binary
   checked such an invariant in each state ("Invariant Inv is violated by the initial state").
   Fixtures `tlcext-constant-*`.
+- An initial predicate that leaves a variable undefined after a power of two of complete initial
+  states, found in the specs of upstream tla-ts's unit tests at 0341dbe5. `DoInitFunctor.addElement`
+  reports its progress before it checks the state is legal, so `Init == \E i \in 1..3 : i < 3 => x
+  = i` prints "Computed 2 initial states..." before "current state is not a legal state"; the binary
+  found the state incomplete before it counted the progress, and left the line out. Fixture
+  `initial-state-not-legal-after-progress`.
 
 - The call stack of a failure in an argument of a function application of several, found in the
   specs of upstream tla-ts's unit tests at 0341dbe5. SANY parses `f[a, b]` as `f[<<a, b>>]`, a
@@ -5041,6 +5062,15 @@ matches TLC or declines exactly.
   its effects then alone; and reading a JSON file again shows nothing. Each of these declined at
   first and answers again as on main (corpus models of the Parity jobs, such as
   `simple_lambda` and `Traceetcdraft`).
+- A set enumeration compared with a filter TLC keeps lazy whose predicate fails, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `SetEnumValue.equals` converts the other operand
+  (`toSetEnum`) inside its own method, so the failure, which froze the call stack in the
+  predicate's frames, passes through it and comes out as a FingerprintException where the set
+  enumeration has a source: `{} = x'` with `x' = {n \in SUBSET {1} : 1 \div 0 = 1}` is "TLC was
+  unable to fingerprint" with the frozen frames (exit 75), where the binary reported the nested
+  expressions (exit 255). A filter over a set enumeration, which TLC filters at once, fails
+  before any comparison, and a filter on the left fails in its own conversion, as before. Fixtures
+  `equality-frozen-*`.
 - A startup definition that fails, of a module another extends or instantiates without
   parameters (`HD == PrintT("h") /\ 1 \div 0 = 1` in HA, `EXTENDS HA`): `processConstantDefns`
   runs for every module, over `getOpDefs`, which holds the definitions the module extends, and
@@ -5049,6 +5079,14 @@ matches TLC or declines exactly.
   (`Startup::dependents`), which the engine evaluates where the definition failed: one that fails
   again with only its prints answers; one that draws or sets a register again, or computes this
   time, declines ("a definition TLC computes at startup that fails there"), as main did.
+- TLCGet("spec")'s initial predicates of a SPECIFICATION, found in the specs of upstream tla-ts's
+  unit tests at 0341dbe5. `processConfigSpec` looks a conjunct's name without arguments up: to a
+  value, which it takes as no initial predicate (TRUE, or a constant the configuration sets so),
+  and to a LET's definition, an OpDefNode it names after the LET (`Spec == LET I2 == Init IN I2 /\
+  [][Next]_v` has the initial predicate `I2`, at `Init`). The binary listed `TRUE /\ Init /\ ...`'s
+  TRUE as an `UnnamedAction` and named a LET's initial predicate after what it stands for, or split
+  its body. A constant expression with arguments (`(1 = 1) /\ Init`) stays an `UnnamedAction`, as
+  in TLC. Fixtures `spec-description-*`.
 - A set enumeration TLC can't normalize tested in a set of functions, of records or of tuples
   (`LET S == {1, "a"} IN S \in [{1} -> {1}]`), in a state: the message TLC words prints the
   element, whose `toString` fails, so the FingerprintException holds the element's source, then
@@ -6475,8 +6513,6 @@ these, each as main b7f832b9 prints it:
   those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
   "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
   TLC and `{"action", "zzq"}` natively.
-- An initial predicate that leaves a variable undefined after two complete initial states prints
-  TLC's "Computed 2 initial states..." twice in TLC, once natively.
 - Random draws after a trace, not yet traced: `Init == x = RandomElement(1..1000) /\ PrintT(x)` with
   `Next == RandomElement(1..2) = 3 /\ x' = x` and `-seed 4` prints `731` before the deadlock's trace
   in both, and after it `882` in TLC and `731` natively, as though the binary's generator hadn't
@@ -6653,6 +6689,21 @@ Each of these declines exactly the shape it names; the reason is printed after `
 native yet:` and, where the engine or a replay meets it, after its prefix (`the engine stopped:`,
 `evaluating the failure again:`, ...).
 
+- A temporal formula through definitions nested more deeply than TLC's stack may hold ("a temporal
+  formula through definitions nested more deeply than TLC's stack may hold"): a property or a
+  specification whose expansion nests more than 2,250 definitions, global or of LETs. TLC's
+  expansion recurses on the JVM's stack: at the corpus's `-Xss2m`, a chain of `D1 == [](x # 5) /\
+  D2` ... completes at 2,250 definitions and overflows from 2,300 to 2,450 from run to run, where
+  the binary completed (it now declines from 2,251; the `tla-front` test
+  `declines_a_property_through_definitions_nested_past_tlc_stack`). A chain whose definitions take
+  more of TLC's stack than these may overflow below 2,250 where the binary completes: a known wrong
+  output, as for the evaluator's recursion. The front end's level analysis of such a chain recurses
+  too, on the run's thread, whose stack is 256 MiB: at 64 MiB it aborted from about 7,500
+  definitions in a release build (2,250 in a debug one). It takes time quadratic in the chain, 1 s
+  at 2,300 definitions and 41 s at 10,000 in a release build, so past the output's hold the
+  decline follows what the run printed. WebAssembly, on its 64 MiB stack, declines such a chain
+  from between 500 and 1,000 definitions ("WebAssembly ran out of stack").
+
 - The replay that evaluates a failure again to print TLC's call stack (`evaluating the failure
   again:`) doesn't follow two kinds of frame, outside an assumption, where TLC prints none, and
   declines there. SubBag of a value that isn't a function fails, as TLC evaluates Bags.tla's
@@ -6717,6 +6768,32 @@ violation).
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
+- A split of the next-state relation whose evaluation of an \E's bound printed, drew or set or
+  read a register ("TLC's actions whose split prints, draws or sets a register in an \E's bound"):
+  the effect has to run, so a bound whose effect is in an IF's branch the evaluation doesn't take,
+  `\E v \in (IF FALSE THEN (IF PrintT("bound") THEN {0, 1} ELSE {}) ELSE {0, 1}) : y' = v`, is
+  split as TLC splits it (`split-effects-bound-effect-untaken`; `-taken` declines). Only what would
+  differ between TLC's one evaluation and the engine's at each state counts: a print, a draw, and
+  TLCGet of the search's keys (`"level"`, `"diameter"`, `"generated"`, `"distinct"`, `"queue"`,
+  `"duration"`, `"stats"`) or of `"spec"`, whose actions the split is still building. TLCGet of
+  `"config"`, `"revision"` or `"action"` (`Action.UNKNOWN` outside simulation), and TLCGet or
+  TLCGetOrDefault of a register or a property, leave the relation to the engine as before
+  (`split-effects-bound-reads-{config,revision,action,getordefault,register,register-set-by-next}`; a register the next-state relation sets the bound reads at each state, as TLC does); TLCSet, which fails
+  as TLC starts, has TLC take the relation whole, as the engine does where the split refuses. The
+  table is in `Splitter::evaluate_bound`. `Tool.getActions`
+  evaluates an \E's bound once, as TLC starts, and binds its elements into the actions it makes,
+  so `Next == \E v \in (IF PrintT("domain") THEN 0..1 ELSE {}) : y' = v` prints `"domain"` once
+  and `\E v \in RandomSubset(1, 10..19) : ...` draws once, where the engine, which took such a
+  relation whole when the trace evaluator's split refused it, printed or drew at each state. The
+  binary now declines there; the split's draws include Randomization's. An operator's argument of
+  constant level with an effect, which `getActionsAppl` evaluates as it splits too, the engine
+  takes whole as before, where it matches TLC as it starts
+  (`action-split-constant-argument-drawn-*`). A constant definition the split meets is one
+  `processConstantDefns` computed before it, effects and all, which the split takes whole without
+  evaluating it again (`Never == \E i \in (IF PrintT("split") THEN {} ELSE {1}) : TRUE` prints
+  once, as it did). Found in the specs of upstream tla-ts's unit tests at 0341dbe5; fixtures
+  `split-effects-*`.
+
 - The evaluator of failures: `a constant definition with parameters`, where the replay is asked
   to compute as TLC starts (`processConstantDefns`) a definition that takes parameters, which TLC
   never computes there; `evaluating the failure again: a VIEW the model doesn't
@@ -6733,6 +6810,16 @@ violation).
   function`, `reading a count _Track took of a name that isn't a string`, `reading a count _Track
   took of a name TLC made as it searched`, `reading a count _Track took that isn't an integer`
   and `reading counts _Track took in a crowded bucket`.
+- An incomplete successor whose action fails as TLC evaluates it in full to print the trace ("an
+  incomplete successor whose action fails as TLC evaluates it in full to print the trace"). After
+  reporting the successor that leaves a variable undefined, `printTrace` finds it again among all
+  of the action's successors (`Tool.getState`, `getNextStates` into a StateVec), so `x' = 1 /\ (x =
+  0 \/ <<x>>[2] = 0)` fails on its second disjunct there: `printTraceAndStop` prints that failure
+  (1000) in place of the successor. The binary printed the successor. The rebuild now walks the
+  action in full and declines where the rest fails; an action of the next-state relation split
+  from it is a separate action `getState` doesn't reach once it found the successor. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `incomplete-successor-*`.
+
 - A `tlc2.overrides.TLCOverrides` index (see "Java overrides that stay declined"): `a TLCOverrides
   index whose classes the front end doesn't read`, and `a class a TLCOverrides index names` `that
   isn't a plain class`, `with a superclass`, `that implements an interface`, `with a static
@@ -8592,7 +8679,20 @@ caps it), and a leaf citing the directive beside an assumption of level above 1 
 note at its location as the module is elaborated and the property `enabledaxioms` false, which
 `Prep.expand_enabled_cdot` refuses (`ENABLEDaxioms depends on assumptions of level > 1`) where
 the port applied the rule whatever the levels and proved `ENABLED B <=> ENABLED C` from
-`B <=> C` for actions `B` and `C`, which tlapm fails.
+`B <=> C` for actions `B` and `C`, which tlapm fails. The pass that looks for the directive
+walks every theorem's proof with `Proof.Visit`'s dummy fact standing for an assertion's, so a
+HIDE of a step no USE made a fact of ends tlapm with `Failure("proof.Gen.set_expr")`
+(`tests/fixtures/obligation-errors/HideStep.tla`, recorded with b91fb6c), which declines as any
+error tlapm ends with, where the port proved the theorem.
+
+The Isabelle port runs `fast` (`Classical.fast_tac`: the premises atomized, then a depth-first
+search with `step_tac` on the first goal, under `cla_method'` with its `intro:` and `dest:`
+sections), `rule` with rules (`Method.rule_tac`: each rule's first premises resolved against the
+facts by `Drule.multi_resolves`, then against the goal, the new goals normalized), and the
+`add:` section of `simp` and the `simp:` and `simp add:` sections of `auto`, `force` and
+`clarsimp` (`Simplifier.simp_add` over the simpset), which `IsaM("fast")` and `IsaM("(rule
+chooseI)")` in the upstream suite's backend inputs name and the port failed as undefined
+methods (`tests/fixtures/tlapm-cli/IsaRules.tla`, recorded with b91fb6c).
 
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
@@ -8621,7 +8721,11 @@ tactic only (`Fpfile.query`).
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 | with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 | with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
-| with a postfix operator taken in as tlapm's parser does | 766 / 574 / 11 | 319 / 1,042 / 37 |
+| with a TAKE's domain inclusion at its bound's name | 766 / 574 / 11 | 319 / 1,042 / 37 |
+| declining what tlapm's parser and Expr.Anon reject | 766 / 577 / 8 | 319 / 1,042 / 37 |
+| with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
+| with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
+| with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
 
 ### Declines
 
@@ -8640,8 +8744,11 @@ tactic only (`Fpfile.query`).
   exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
   the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
   run of tlapm, and the recordings in `tests/fixtures/obligation-errors` leave the backtrace out. A
-  module file that isn't there declines the same way. The deleted TypeScript CLI printed these without the
-  backtrace.
+  module file that isn't there declines the same way, as does what tlapm's parser rejects where
+  SANY's doesn't (a BY with neither facts nor DEF, `Unexpected ====`; a `<*>` step reference in an
+  expression, `Unexpected <*>`) and a variable applied to arguments, on which `Expr.Anon` asserts
+  (`e_anon.ml`, line 224) and tlapm reports a bug in itself. The deleted TypeScript CLI printed
+  these without the backtrace.
 - **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
@@ -8649,8 +8756,16 @@ tactic only (`Fpfile.query`).
     limit, and an input a back end can't read.
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
-  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
-  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
+  or combinator the Isabelle port doesn't implement, where tlapm would try it: a method
+  Isabelle/Pure or the provers of Isabelle/TLA+'s session define that the port has no tactic for
+  (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
+  without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
+  section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  What tlapm's own encoding
+  refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
+  Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
+  which the port prints. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
