@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use crate::error::{Res, error_exn};
+use crate::error::{Error, Res, error_exn};
 use crate::provers::clasimp::{BlastDepthTac, ClasimpContext, auto_tac, clarsimp_tac, force_tac};
 use crate::provers::classical::{ClassicalContext, add_unsafe_dest, add_unsafe_intro, with_claset};
 use crate::pure::drule::{asm_rl, is_norm_hhf, norm_hhf_eq, reflexive_thm, term_i};
@@ -148,7 +148,7 @@ impl MethodParser<'_> {
             let kind = match kind.as_str() {
                 "intro" => ModifierKind::Intro,
                 "dest" => ModifierKind::Dest,
-                _ => return Err(error_exn(format!("Unsupported method modifier: {kind}"))),
+                _ => return Err(Error::Unsupported(format!("Isabelle's method modifier {kind}:"))),
             };
             result.push(Modifier {
                 kind,
@@ -179,9 +179,13 @@ impl MethodParser<'_> {
             "clarsimp" => MethodText::Clarsimp {
                 modifiers: modifiers(self)?,
             },
+            // Simplifier.simp_method takes modifiers (`add:`, `only:`, …) and options
+            // (`(no_asm)`), which the port doesn't implement.
             "simp" => {
-                if has_args {
-                    return Err(error_exn("Unsupported method modifier"));
+                if has_args && (self.is_section_start() || self.is_symbol("(", 0)) {
+                    return Err(Error::Unsupported(
+                        "Isabelle's simp method with arguments".into(),
+                    ));
                 }
                 MethodText::Simp
             }
