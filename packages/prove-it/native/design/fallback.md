@@ -8621,6 +8621,7 @@ tactic only (`Fpfile.query`).
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 | with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 | with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
+| declining what tlapm's parser and Expr.Anon reject | 765 / 577 / 9 | 319 / 1,042 / 37 |
 
 ### Declines
 
@@ -8639,8 +8640,11 @@ tactic only (`Fpfile.query`).
   exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
   the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
   run of tlapm, and the recordings in `tests/fixtures/obligation-errors` leave the backtrace out. A
-  module file that isn't there declines the same way. The deleted TypeScript CLI printed these without the
-  backtrace.
+  module file that isn't there declines the same way, as does what tlapm's parser rejects where
+  SANY's doesn't (a BY with neither facts nor DEF, `Unexpected ====`; a `<*>` step reference in an
+  expression, `Unexpected <*>`) and a variable applied to arguments, on which `Expr.Anon` asserts
+  (`e_anon.ml`, line 224) and tlapm reports a bug in itself. The deleted TypeScript CLI printed
+  these without the backtrace.
 - **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:

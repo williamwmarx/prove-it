@@ -400,6 +400,9 @@ impl Pass<'_> {
                 _ => Ok(Self::anon_apply(index, args, from)),
             },
             HypCore::Fresh { .. } => Ok(Self::anon_apply(index, args, from)),
+            HypCore::Flex { .. } if !args.is_empty() => Err(ObligationError::bug(
+                "File \"src/expr/e_anon.ml\", line 224, characters 24-30: Assertion failed",
+            )),
             HypCore::Flex { .. } => Ok(at(ExprCore::Ix { index }, from)),
             HypCore::Fact { .. } => Err(ObligationError::bug(
                 "File \"src/expr/e_anon.ml\", line 230, characters 24-36: Assertion failed",
@@ -4906,7 +4909,12 @@ mod tests {
                     .map(|output| show_expr(&output))
             },
         );
-        assert_eq!(result, "#5@28");
+        // tlapm asserts that a variable takes no arguments (`e_anon.ml`, line 224); the
+        // TypeScript dropped the argument.
+        assert_eq!(
+            result,
+            "ERR TlaProofError|Oops, this seems to be a bug in TLAPM.|-|File \"src/expr/e_anon.ml\", line 224, characters 24-30: Assertion failed"
+        );
         assert_eq!(warnings, Vec::<String>::new());
     }
 
