@@ -3340,6 +3340,101 @@ fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
     }
 }
 
+// tests/trace: TLCExt's Trace, TLC's output beside each at d8fb231: in the invariant, a state
+// constraint and an action constraint of a search with two initial states and branching steps,
+// and in its next-state relation, which reads it too; in an invariant of a chain of 100,001
+// states that never evaluates it, which the search keeps in space linear in the states; in the initial predicate before every
+// variable is assigned, which fails naming those that aren't; and in assumptions, of a spec
+// without variables and with them. The engine declines where TLC's record of a state has its
+// variables in another order than their names, and where TLC's rebuild of the trace evaluates
+// again a next-state relation that prints or reads TLCGet("distinct"), which TLC rebuilds no
+// trace through, primed, directly and as the configuration's substitute
+// for an operator, where TLC fails in the successor the walk assigns with an exception, and with
+// two workers.
+#[test]
+fn reads_the_behavior_as_tlc_through_trace() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/trace");
+    let read = |file: String| std::fs::read_to_string(directory.join(&file)).expect(&file);
+    let args = |workers: &'static str| {
+        [
+            "-workers",
+            workers,
+            "-nowarning",
+            "-seed",
+            "4",
+            "-fp",
+            "0",
+            "-lncheck",
+            "final",
+        ]
+    };
+    for (name, exit) in [
+        ("TraceSearch", 0),
+        ("TraceInit", 75),
+        ("TraceAssume", 0),
+        ("TraceAssumeState", 10),
+        ("TraceLong", 0),
+    ] {
+        let (output, run) = run_front(
+            &format!("trace-{name}"),
+            &read(format!("{name}.tla")),
+            &read(format!("{name}.cfg")),
+            &args("1"),
+        );
+        assert_eq!(
+            (output.status.code(), get_untimed(&stdout(&output))),
+            (Some(exit), read(format!("{name}.txt"))),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(run).expect("removed");
+    }
+    for (name, workers, reason) in [
+        (
+            "TraceOrder",
+            "1",
+            "TLCExt's Trace of variables TLC orders otherwise than their names",
+        ),
+        (
+            "TraceRebuilt",
+            "1",
+            "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change",
+        ),
+        (
+            "TraceRebuiltCount",
+            "1",
+            "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change",
+        ),
+        (
+            "TraceSearch",
+            "2",
+            "TLCExt's Trace, the behavior the engine doesn't keep",
+        ),
+        ("TracePrimed", "1", "TLCExt's Trace in a primed context"),
+        (
+            "TracePrimedSubstituted",
+            "1",
+            "TLCExt's Trace in a primed context",
+        ),
+    ] {
+        let (output, run) = run_front(
+            &format!("trace-{name}-{workers}"),
+            &read(format!("{name}.tla")),
+            &read(format!("{name}.cfg")),
+            &args(workers),
+        );
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains(&format!(
+                "prove-it: not native yet: the engine stopped: {reason}"
+            )),
+            "{name}: {}{error}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(run).expect("removed");
+    }
+}
+
 // tests/processes: the fairness PlusCal writes, `\A self \in S : WF_vars(p(self))`, whose atoms are
 // each the action under one value of `self`: one process set over an interval, two sets with WF on
 // both, SF, a process waiting on a guard, model values, a constant set, WF on some processes only

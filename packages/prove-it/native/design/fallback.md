@@ -1491,6 +1491,29 @@ which the front end parses for that (`get_standard_definition`): `PickSuccessor(
 containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
 which declined before.
 
+SANY's semantic checks are its code's, not its messages' (`tests/sany-checks`, recorded with the
+jar). `Generator.processExcept` places the tuple of an EXCEPT component's several indexes
+(`![1, 2] = e`) at the ExceptSpec node's heir `2k + 1` for the component at `k`, which is that
+component's for `k = 0` only: the second component's tuple takes the third's place, the one past
+the components takes `=`, the next the right-hand side, and further ones throw
+`java.lang.ArrayIndexOutOfBoundsException: Index 2k + 1 out of bounds for length n + 3` for `n`
+components, which TLC prints as SANY's generator exception after "Parsing or semantic analysis
+failed." (`except-tuple-*`, `except-nested-overflow`). A component ends at the first `]` after
+its last index, which may hold a `]_` the tokens don't pair with a `[` (`![[][A]_x].h`,
+`except-subscript-index`). `TheoremNode.levelCheck` reads the
+statement's `level` field, which `LabelNode.levelCheck` never sets, so a theorem with a labeled
+goal (`THEOREM lbl :: []P`) is checked as constant: its PICK bounds and proof steps are not held
+to a temporal goal's (`labeled-temporal-goal`). `Generator.generateModule` appends an inner
+module's `opDefsInRecursiveSection` to the enclosing module's, so `ModuleNode.levelCheck` checks
+the inner module's recursive section again after the enclosing one's, where an application's
+constraints are those cached from the second pass: `Argument 1 of recursive operator R is primed`
+is reported for the inner module's operator where a top-level section passes
+(`recursive-inner-module`, `recursive-declared-order`, `recursive-top-level`). A DEF clause entry
+with arguments after an identifier prefix (`BY DEF I!Op(1)`) stops `genIdToSelector` with
+"Internal error: IdPrefixElement has other than 2 or 3 heirs." and a Java stack trace, which the
+binary declines (`a DEF clause entry with arguments after an identifier prefix, which SANY ends
+on with an internal error`; `def-prefix-arguments` keeps the jar's output beside the decline).
+
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
 unresolved lazy UNION can also reach that guard; a concrete class alone does not prove that
@@ -3017,6 +3040,62 @@ A Json operator writes its file through the run's journal (`tla_values::written`
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
 
+#### TLCExt's Trace
+
+`TLCExt.getTrace` gives the records of the states from an initial state to the one it is evaluated
+in, which TLC rebuilds from its trace file (`getTraceInfo`) and the engine keeps as the search goes:
+as it expands a state it keeps the path the search found it by, the parents TLC writes to its trace
+too, as a pair of the parent's path and the state's record (`Search::keep_trace`), in space linear
+in the states, and makes the tuple of the path's records only where Trace is evaluated, once for
+each state expanded. That tuple is Trace as Next and an action constraint read it; in a successor,
+as an invariant or a state constraint reads it, and in an initial state, Trace is that tuple and the
+state's record (`Machine::trace`). Where an invariant or a state constraint evaluates it in each
+successor, each evaluation keeps a tuple as long as the path, as the store keeps every value it
+interns: a chain of n states so reaching Trace holds some n²/2 of its records' ids, which TLC
+allocates too and collects. In the initial predicate before every variable is assigned, in an
+assumption and in a postcondition, TLC fails naming the variables unassigned, in the order of their
+names, which the trace evaluator words as TLC does; a spec without variables has `<<[]>>` in an
+assumption. The engine declines Trace ("TLCExt's Trace, the behavior the engine doesn't keep") with
+more than one worker, `-dfid`, `-continue`, `-simulate`, a VIEW, SYMMETRY or temporal properties to
+check, where TLC finds the trace otherwise or the engine evaluates off the search; where TLC's
+record of a state, which holds its variables in TLC's order unnormalized and prints them so
+(`RecordValue(TLCState)`), differs from the engine's, in the order of their names ("TLCExt's Trace
+of variables TLC orders otherwise than their names", as `VARIABLES y, x`); primed ("TLCExt's Trace
+in a primed context"), which TLC evaluates in the successor the walk assigns and fails at with an
+exception it reports as unexpected, as `x' = (Trace')[1].x` or, with `F <- Trace`, `x' =
+(F(0)')[1].x`; and where TLC's rebuild evaluates again an initial predicate, or a next-state
+relation, that may have an effect or a value that depends on more than its arguments, through the
+definitions it names ("TLCExt's Trace, whose rebuild evaluates again what may have an effect or
+change", `Compiler::may_change_again`): TLC prints again what they print as it rebuilds the states
+before the one it gives the trace of, from the initial predicate and the next-state relation
+(`getTraceInfo`, `Tool.getState`), and a draw, TLCGet's counts of the search or a Java class of the
+user's may give it other states, as `x' = TLCGet("distinct")`, where it fails to find the state
+again ("Failed to recover the initial state from its fingerprint"). The trace of an invariant's
+violation, which TLC rebuilds through a next-state relation that reads Trace, still declines
+("rebuilding a trace: the builtin Trace"). On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+(72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
+the pinned jar) main answers 72,567 runs as the jar does, declines 311 and answers none otherwise;
+with Trace it answers 72,578 and declines 300. The 11 runs are TLCExtTraceTest and the
+`tlc_ext/trace_*` tests but the two of a simulation (`trace_simulate`, TLCExtTraceSimTest), which
+decline. No other run changes. `tests/trace` holds TLC's output beside its specs
+(`reads_the_behavior_as_tlc_through_trace`).
+
+#### -maxSetSize
+
+`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc`
+suite of aidenybai/tla-ts at 0341dbe5), and stays declined: TLC's limit isn't the bound alone.
+`ValueVec.ensureCapacity` throws ("Attempted to construct a set with too many elements") only
+when a vector whose array already holds `setBound` elements must grow, and caps its growth at
+`setBound`, so a vector's real limit is the larger of its initial capacity and the bound: `new
+ValueVec()` holds 10, and a vector TLC sizes as it builds it never grows. `StateVec.grow` does the
+same for the successors of a state (`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61
+sites, with capacities of their own (the default 10, the exact size of what it enumerates,
+`kOutOfN`, a bit count), so with a small bound one set of 10 elements builds and another fails.
+The engine models only the default bound, 1,000,000 (`TLCGlobals.setBound`). Answering a smaller
+one takes each of those sites' capacities, matched to the engine's set builders; a single
+configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
+`presized_function_set_ignores_bound`) otherwise than TLC.
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
@@ -4017,6 +4096,17 @@ an INSTANCE with substitutions makes (`I!V(1)!L`, `I!X!L`, `J!V(1)!L` through an
 after the selection's: the front end puts a `$Nop` at the INSTANCE around the part selected
 (`Lowering::get_selection_substitution`), so the frame prints. A selection through a copy of a
 copy, and one whose failure is in a substitute, print wrong; see "Known wrong outputs".
+
+A selection reads the copy's body as the instantiated module wrote it, under the substitutions
+(`selectorToNode` walks a `SubstInNode`'s body and wraps the part selected in it again): where an
+INSTANCE substitutes a LAMBDA for an operator parameter, the front end writes the parameter's
+application `F(C)` as `LET LAMBDA(y) == y + 1 IN LAMBDA(C)`, whose operands a selector takes as
+`F(C)`'s (`instances::get_substituted_lambda_application`), so `I!Val!1!1` of `Val == {F(C)}`
+under `F <- LAMBDA y : y + 1, C <- 4` is 4, as TLC's, where the binary took the LET's one operand
+and printed 5, and `!2` of `F(C, 7)` is 7 where it declined ("A LET/IN expression has only one
+operand", an error tla-front raises); a failure in the part selected is reported through the
+INSTANCE's frame, as TLC's (`tests/instance-selections`, recorded with the jar; the upstream unit
+case `subexpressions_test/c0006`).
 
 #### A constraint that fails on a successor
 
@@ -6572,6 +6662,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   (`f[x \in S] == ...`), which TLC builds in the definition's frame, declines alike ("building a
   function a definition defines").
 
+- A name the configuration gives that is an operator of a standard module the spec extends
+  (`SPECIFICATION Nat`, `INVARIANT IsFiniteSet`, `SPECIFICATION Seq`): `defns` holds it, as the
+  Java method that overrides it, which TLC reports as the name's value ("The value of Nat is equal
+  to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>", the method
+  of the module the spec reached it through), or as its definition. The binary reported the name
+  undefined; it now declines ("a name the configuration gives that is an operator of a standard
+  module"). A module the spec doesn't extend leaves the name undefined, which matches. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `config-builtin-name-*`.
+
 - A TLCGet("spec") record a failure prints whole (`Attempted to select nonexistent field
   "properties" from the record [ inits |-> ..., actions |-> ..., temporals |-> ..., invariants |->
   ..., impliedinits |-> ..., impliedtemporals |-> ..., variables |-> ..., actionconstraints |->
@@ -6601,6 +6700,20 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   incomplete successor has no missing variable`. `unsupported DFID violation` is a violation of a kind the DFID report doesn't word
   (one other than an invariant's violation or failure, a deadlock or an action property's
 violation).
+- A temporal property TLC finds violated as it adds the state it stopped at, after an invariant or
+  an action property a step from that state violates. `Worker#doNextCheckLiveness` still adds the
+  state to the behavior graphs, with the successors `isSeenState` put in its `SetOfStates` before
+  the checks, the violating one among them; a successor TLC had expanded has its late node there,
+  where a tableau node that accepts every behavior makes `LiveCheck#printErrorTrace` report "Temporal
+  property Prop was violated" and its counterexample after the first report, which keeps its exit
+  code (`setErrState` returns false once done). `Spec == x \in {0, 1} /\ [][x' = IF x = 0 THEN 1
+  ELSE 0]_x` with `PROPERTY [][x' = 1]_x` and `PROPERTY [](x = 1 => [](x = 1))` prints both; the
+  binary printed the action property alone. The engine adds the stopped state as TLC does and, where
+  that reaches such a node, declines ("a temporal property TLC finds violated as it adds the state it
+  stopped at"). An invariant's violating successor is new, has no late node, and TLC reports nothing
+  more, as the binary does. Found in the specs of upstream tla-ts's unit tests at 0341dbe5;
+  fixtures `stop-liveness-*`.
+
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
@@ -7292,7 +7405,8 @@ met it (`<...>` stands for a name or a value the reason prints).
   theorem, step or instance <...> where an operator is required`, `a RECURSIVE declaration without a
   place`, `a module named as a fact that SANY may not find`, `a module named in a DEF clause that
   SANY may not find`, `a DEF clause entry in parentheses`, `a DEF clause entry that is neither a
-  name nor an operator symbol`, `an empty USE or HIDE without a place`, `an empty BY without a
+  name nor an operator symbol`, `a DEF clause entry with arguments after an identifier prefix,
+  which SANY ends on with an internal error`, `an empty USE or HIDE without a place`, `an empty BY without a
   place`, `a module in a recursive section, where SANY's generator throws`, `a unit in a recursive
   section without a range`, `a module-level RECURSIVE declaration of <...>, a name already bound`,
   `a LET function in a temporal formula`, `an operator argument that isn't a definition`, `a
@@ -8418,6 +8532,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 ### What matches
 
 - Every fixture tlapm 9ed0376 recorded in `tests/fixtures/obligations` and `tests/fixtures/tlapm-cli`
+  (b91fb6c for `FactTimes`)
   (`prove-it-cli/tests/tlapm.rs`, `unit/cli.test.ts`): stdout, stderr and the exit status, with
   `-N`, `--toolbox`, `--line`, `--printallobs`, `--strict`, `--summary`, `--nofp`, `--cleanfp`, and
   over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
@@ -8443,7 +8558,24 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs those change count as wrong here until the port follows them.
+of integer powers; the runs the last change count as wrong here until the port follows it.
+
+The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
+b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
+gives them in their context (`Proof.Simplify`), always where the formula is closed under `[]`
+and otherwise only now, where the port gave them the scope's time; a USE of a name that is no fact
+or step of a proof, such as a declared variable, takes the scope's time (`Proof.Gen.gen_step`),
+where the port gave it always; and the membership fact `Pltl.expand_domains` makes of `NEW c \in
+S` takes the time of `S` shifted under `c`, where the port judged `S` as written, one hypothesis
+too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the port proved
+`x = 0 => (x = 0)'` from `CASE x = 0` or `HAVE x = 0`, `[]b` from `USE b`, `[](c = x)` from
+`PICK c : c = x` and `[](c \in {x})` from `NEW c \in {x}`, which tlapm fails.
+
+The port follows b91fb6c's coalescing of a declared non-constant operator's application
+(`tests/fixtures/tlapm-cli/FreshOperator.tla`, recorded with b91fb6c): `Coalesce.coalesce_modal`
+applies the coalesced operator to the arguments, as it does a user operator's, where the port
+left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
+proved `F(1) = F(2)`, which tlapm fails.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
@@ -8451,6 +8583,9 @@ of integer powers; the runs those change count as wrong here until the port foll
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
 | with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
+| with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
+| with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
+| with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8489,6 +8624,12 @@ of integer powers; the runs those change count as wrong here until the port foll
   asserts), and so a machine of more than 99 processors without `--threads`, no module, and
   globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
   empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **A pragma before a proof or a USE that isn't a suppression** (`a pragma before a proof or a
+  USE that isn't a suppression`): Proof.Parser reads the pragma as tokens, so one that doesn't
+  hold `_` or `suppress` alone, as `(*{ sup(* c *)press }*)`, is no suppression, and tlapm's
+  parser fails on what it reads it as (`Unexpected identifier press`, `Could not parse
+  "./SplitPragma.tla" successfully.`, with its backtrace, exit 3; tlapm b91fb6c on
+  `tests/fixtures/obligations/SplitPragma.tla`), which the port doesn't word.
 - **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
   module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
   given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through

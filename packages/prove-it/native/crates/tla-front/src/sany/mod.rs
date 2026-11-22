@@ -23,6 +23,16 @@ pub type Result<T> = std::result::Result<T, crate::errors::FrontError>;
 /// statements declared, as `SANY.parse` prints it.
 pub const GENERATOR_EXCEPTION: &str = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
 
+/// What starts the reason of a `NotYet` for an exception SANY's generator throws, which
+/// `SANY.parse` prints as its text: the rest of the reason.
+pub const EXCEPTION: &str = "SANY's generator throws: ";
+
+/// The exception SANY's generator throws, printed as `SANY.parse` prints it where the generator
+/// throws on the root module.
+pub fn generator_exception<T>(text: impl std::fmt::Display) -> Result<T> {
+    not_yet(format!("{EXCEPTION}{text}"))
+}
+
 /// The `NotYet` the port returns where the TypeScript throws.
 pub fn not_yet<T>(reason: impl Into<String>) -> Result<T> {
     Err(crate::errors::FrontError::NotYet(reason.into()))

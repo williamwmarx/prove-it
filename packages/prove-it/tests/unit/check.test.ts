@@ -873,18 +873,34 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("success");
   });
 
-  it.each(["Extensions", "ExtensionsShort"])(
-    "declines the TLCExt operators of the %s config",
-    async (name) => {
-      await expectDeclined(
-        {
-          source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
-          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-        },
-        "the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep",
-      );
-    },
-  );
+  // TLC's output at d8fb231.
+  const checkExtensions = (name: string) =>
+    checkOnEngine({
+      source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+    });
+
+  it("checks the TLCExt operators of the Extensions config", async () => {
+    const result = await checkExtensions("Extensions");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      4,
+      4,
+      4,
+    ]);
+  });
+
+  it("checks the TLCExt operators of the ExtensionsShort config", async () => {
+    const result = await checkExtensions("ExtensionsShort");
+    expect([
+      result.status,
+      result.violations[0]?.headline,
+      result.violations[0]?.states.length,
+      result.generatedStates,
+      result.distinctStates,
+      result.depth,
+    ]).toEqual(["invariant-violation", "Invariant Short is violated.", 3, 3, 3, 3]);
+  });
 
   it("rejects comparisons of differently-typed model values", async () => {
     const result = await checkOnEngine({

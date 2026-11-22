@@ -1027,6 +1027,23 @@ pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 
 than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
 2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
 
+### One standard module parsed, when one of its definitions is read (parse-one-module)
+
+A small run spent 11% of its instructions parsing the twenty standard modules of the pinned TLC,
+twice: the level bound (`startup.rs`) parsed them all into its own copy on the first builtin it
+met, as the row under "Measured and dropped" says, and since #388 the leveling of a builtin's
+application (`spec.rs`) parsed them all again, once per thread, to read SANY's definition of the
+operator, which cost every run that levels one about 8.5 M instructions, a millisecond. Counted
+with callgrind on 2PCwithBTM (`-workers 1`): 132.5 M instructions at 32811017, 141.1 M at
+d82a68e6 after #388, and the per-function difference was that lookup alone. The operator tables
+(`standard_builtins.rs`) say which module defines a name, so one lookup, shared by the level bound
+and the leveling, parses only that module, once, and remembers what each name gave; a run whose
+builtins are all core operators parses none. 2PCwithBTM now takes 123.7 M instructions, SyncCons
+237.5 M → 220.7 M, VoucherRedeem 360.5 M → 346.7 M. Against main at d82a68e6 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 11 interleaved runs: 2PCwithBTM
+14.8 → 13.1, queue 22.8 → 21.0, SyncCons 22.9 → 21.2, VoucherRedeem 26.2 → 23.6, test19 70.2 →
+60.8, commit 290.6 → 282.4, TokenRing 187.8 → 183.0, 1.09× over the seven; the suite, 5 runs,
+1.04× with the models above 0.1 s within their ranges.
 ### TLC's overrides table read once (overrides-once)
 
 Every lookup of an override's level, and every scan of a module's overrides as the environment
@@ -1059,7 +1076,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
 | Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
 | Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
-| Parse the standard modules once per thread for the startup's level bounds, which a new `LevelBound` parsed on each call | 2PCwithBTM, SyncCons, VoucherRedeem, Queue (`-workers 1`) | Local profile, 40 runs of each: CPU 7.56G → 7.47G samples (1.1%); Depot bench-suite, 15 runs: every model the same, 1.00× | The modules were mostly parsed once per run already; what is left of that parse is 3.6% of a small run, and the rest of the front end's third is lowering, SANY's analysis and two links of the environment. The branch is `standard-levels`. |
+| Parse the standard modules once per thread for the startup's level bounds, which a new `LevelBound` parsed on each call | 2PCwithBTM, SyncCons, VoucherRedeem, Queue (`-workers 1`) | Local profile, 40 runs of each: CPU 7.56G → 7.47G samples (1.1%); Depot bench-suite, 15 runs: every model the same, 1.00× | The modules were mostly parsed once per run already; what is left of that parse is 3.6% of a small run, and the rest of the front end's third is lowering, SANY's analysis and two links of the environment. The branch is `standard-levels`. Parsing only the module a name's definition is in, instead of all twenty, was later built (parse-one-module, under Results). |
 | Read the operands of arithmetic, comparisons and other binary and unary builtins in place (`predicate::Leaf`) rather than through their closures | BufferedRandomAccessFile, MCabs, MCMultiNode, PaxosCommit | 1.66 → 1.59 s, 10.29 → 10.27 s, 5.71 → 5.66 s, 17.9 → 18.6 s | An indirect call to a leaf costs a nanosecond or two; see below. |
 | Intern the integers to 65,535 at reset rather than to 4,096 | BufferedRandomAccessFile | 1.60 → 1.62 s; 2PCwithBTM's start-up 14 → 21 ms | `store.int`'s share is the small integers' own path, not the hash table. |
 | An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |

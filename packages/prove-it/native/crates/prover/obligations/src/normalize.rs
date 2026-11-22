@@ -1824,6 +1824,7 @@ mod tests {
             obligations: None,
             method: optional(&fields[3], read_method),
             use_location: read_locus(&fields[4]),
+            is_suppressed: false,
         }
     }
 
