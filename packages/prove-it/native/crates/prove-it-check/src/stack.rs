@@ -5,6 +5,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::panic::resume_unwind;
 
+/// The stack of the thread a check runs on, in the binary and in the native addon: the front end
+/// recurses as deep as TLC's translation of a formula does before it reports TLC's stack overflow,
+/// 2,000 calls of a recursive operator, which a main thread's stack, 1 MiB on Windows, doesn't
+/// hold. It is reserved, not committed.
+pub const RUN_STACK_BYTES: usize = 256 * 1024 * 1024;
+
 /// How deep the search's thread's stack may grow: the evaluator recurses with the expressions and
 /// the values it evaluates. It is reserved, not committed.
 #[cfg(not(target_arch = "wasm32"))]

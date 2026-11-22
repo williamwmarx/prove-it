@@ -40,5 +40,6 @@ pub use messages::Output;
 pub use outcome::{Counts, Outcome, Reported, ReportedState, Thrown};
 pub use overlay::FileOperation;
 pub use plain::Variable;
+pub use stack::RUN_STACK_BYTES;
 pub use transaction::flush_held_on_interrupt;
 pub use zone::Zone;

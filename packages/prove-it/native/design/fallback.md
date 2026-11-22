@@ -4867,8 +4867,8 @@ matches TLC or declines exactly.
   (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A recursion it follows to 600
   nested calls; one that ends past that declines, and one that reaches 2,000 nested calls, which
   overflow TLC's stack whatever each level takes, gets the overflow, as one that never ends does
-  (`F(n) == IF n > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, the `tla-front` test
-  `overflows_on_a_recursion_that_never_ends_and_declines_one_that_ends_past_tlc_stack`). An IF
+  (`F(n) == IF n > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, fixtures
+  `liveness-recursion-endless-{descending,growing}`). An IF
   decides only where its guard may name a parameter: `F(n) == TRUE /\ <>(x = 0) /\ F(n + 1)`
   overflows from the first repeated call (`liveness-recursion-constant-conjunct`), as do the
   shapes of `liveness-recursion-{mutual-cycle,state-argument,state-guard-conjunct,let-state-guard}`,

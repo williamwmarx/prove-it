@@ -3,12 +3,7 @@
 
 mod pages;
 
-use prove_it_check::{Outcome, Output, SystemHost};
-
-/// The stack of the run's thread: the front end recurses as deep as TLC's translation of a
-/// formula does before it reports TLC's stack overflow, which a main thread's stack, 1 MiB on
-/// Windows, doesn't hold.
-const RUN_STACK_BYTES: usize = 64 * 1024 * 1024;
+use prove_it_check::{Outcome, Output, RUN_STACK_BYTES, SystemHost};
 
 fn main() {
     let args: Vec<String> = std::env::args_os()
