@@ -8726,6 +8726,13 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+The Isabelle port declines a theory other than the goal theory `Isabelle.thy_temp` writes (one
+lemma proved by a method): the checking theory `Isabelle.thy_header` and `thy_write` write for a
+module, which marks each obligation with `ML_command` and proves Zenon's with a structured Isar
+proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabelle/zenon/*`,
+`imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
+port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8743,6 +8750,7 @@ tactic only (`Fpfile.query`).
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
+| declining the theories the Isabelle port doesn't read | 769 / 577 / 5 | 320 / 1,053 / 25 |
 
 ### Declines
 
@@ -8778,7 +8786,13 @@ tactic only (`Fpfile.query`).
   (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
   without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
   section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
-  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`).
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`); and a
+  theory other than the goal theory `Isabelle.thy_temp` writes, one lemma proved by a method:
+  the checking theory `Isabelle.thy_header` and `thy_write` write for a module, which marks each
+  obligation with `ML_command` and proves Zenon's with a structured Isar proof (`the checking
+  theory tlapm writes for a module's proofs`, `Isabelle's structured Isar proof`), and a theory
+  of Isabelle/TLA+'s own sources (`a theory beyond the consts and the one lemma tlapm writes a
+  goal as`).
   What tlapm's own encoding
   refuses (`Zenon: unsupported operator Fair`, `Unsupported operator \`-+->\`.`) is no decline:
   Prep reports the failure's message as the attempt's reason (`Method.NotTried`, a `Cantwork`),
@@ -8843,6 +8857,12 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
+  `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
+  no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
+  the Isabelle port now declines beside it, takes the structured Isar proof language (`proof`,
+  `assume`, `have`, `show`, `next`, `qed`, `is` patterns, `of` and `OF`) and Isabelle/TLA+'s own
+  theories.
 
 ### Known wrong outputs
 
