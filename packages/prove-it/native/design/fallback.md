@@ -8558,7 +8558,7 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs the last change count as wrong here until the port follows it.
+of integer powers, each of which the port follows below.
 
 The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
 b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
@@ -8577,6 +8577,27 @@ applies the coalesced operator to the arguments, as it does a user operator's, w
 left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
 proved `F(1) = F(2)`, which tlapm fails.
 
+The port follows b91fb6c's typing of integer powers (`tests/fixtures/tlapm-cli/IntPowers.tla`,
+recorded with b91fb6c): the `IntExpTyping` axiom of its Z3 input (`n_axioms.ml`,
+`intexp_typing`) types `x ^ y` as an integer only where `0 <= y`, beside `x # 0 \/ 1 <= y`, since
+`n ^ (-1)` is the real `1 / n` (tlaplus/tlapm#300), where the port's axiom had no bound on `y`
+and Z3 proved `n ^ (-1) \in Int` for a non-zero integer `n`, which tlapm fails.
+
+The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
+`asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
+for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
+`Classical.flat_rule` does (`Object_Logic.atomize_prems` over each premise), where the port
+refused the rule: so `(auto intro: setEqualI)`, which `IsaWithSetExtensionality` runs and
+`AllIsa` runs third, proves `S = T` from `\A x : x \in S <=> x \in T`
+(`tests/fixtures/tlapm-cli/IsabelleMethods.tla`, recorded with b91fb6c). tlapm's fingerprints
+table keeps one Isabelle result per fingerprint (`Fpfile.add_to_record`), and `Fpfile.order`
+ranks results of different tactics, which `prover_of_method` makes different provers, by their
+methods (`compare (normalize m1) (normalize m2)`: the time limit, then the tactic's text), not a
+proof over a failure, so a later failure of a tactic whose text sorts higher (`force` over
+`(auto intro: setEqualI)`) drops the proof, and `AllIsa`'s third tactic proves again where the
+port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
+tactic only (`Fpfile.query`).
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8586,6 +8607,8 @@ proved `F(1) = F(2)`, which tlapm fails.
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 | with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
+| with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
+| with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8611,8 +8634,10 @@ proved `F(1) = F(2)`, which tlapm fails.
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
     limit, and an input a back end can't read.
-- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, and a method
-  whose encoder can't take the obligation (`smt can't encode …`), where tlapm would try it. tlapm
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
+  whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
+  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
+  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
