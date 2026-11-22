@@ -8500,7 +8500,14 @@ for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares
 `Classical.flat_rule` does (`Object_Logic.atomize_prems` over each premise), where the port
 refused the rule: so `(auto intro: setEqualI)`, which `IsaWithSetExtensionality` runs and
 `AllIsa` runs third, proves `S = T` from `\A x : x \in S <=> x \in T`
-(`tests/fixtures/tlapm-cli/IsabelleMethods.tla`, recorded with b91fb6c).
+(`tests/fixtures/tlapm-cli/IsabelleMethods.tla`, recorded with b91fb6c). tlapm's fingerprints
+table keeps one Isabelle result per fingerprint (`Fpfile.add_to_record`), and `Fpfile.order`
+ranks results of different tactics, which `prover_of_method` makes different provers, by their
+methods (`compare (normalize m1) (normalize m2)`: the time limit, then the tactic's text), not a
+proof over a failure, so a later failure of a tactic whose text sorts higher (`force` over
+`(auto intro: setEqualI)`) drops the proof, and `AllIsa`'s third tactic proves again where the
+port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
+tactic only (`Fpfile.query`).
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|

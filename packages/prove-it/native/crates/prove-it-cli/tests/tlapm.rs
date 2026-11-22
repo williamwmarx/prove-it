@@ -1,5 +1,5 @@
 //! `prove-it tlapm` on the fixtures whose output tlapm 9ed0376 recorded (b91fb6c for
-//! IsabelleMethods): `tests/fixtures/obligations` (what `tlapm -N` writes), and
+//! IsabelleMethods and IsaReuse): `tests/fixtures/obligations` (what `tlapm -N` writes), and
 //! `tests/fixtures/tlapm-cli` (what tlapm writes as it proves, and the theory and fingerprints it
 //! writes into its cache). Each run works in a copy of the fixtures, since tlapm keeps its cache in
 //! the directory it runs in.
@@ -407,7 +407,7 @@ fn proves_and_prints_what_tlapm_prints() {
 // comes back, in an order that depends on timing, which declines.
 #[test]
 fn prints_each_provers_result_in_toolbox_mode() {
-    for name in ["Failures", "Twice", "IsabelleMethods"] {
+    for name in ["Failures", "Twice", "IsabelleMethods", "IsaReuse"] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
         assert_eq!(output.status.code(), Some(0), "{name}");
