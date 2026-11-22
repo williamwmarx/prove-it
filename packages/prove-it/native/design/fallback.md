@@ -3034,22 +3034,6 @@ does, declines 311 and answers none otherwise; with Trace it answers 72,578 and 
 (`trace_simulate`, TLCExtTraceSimTest), which decline. No other run changes. `tests/trace` holds TLC's output beside
 its specs (`reads_the_behavior_as_tlc_through_trace`).
 
-#### -maxSetSize
-
-`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc` suite
-above), and stays declined: TLC's limit isn't the bound alone. `ValueVec.ensureCapacity` throws
-("Attempted to construct a set with too many elements") only when a vector whose array already
-holds `setBound` elements must grow, and caps its growth at `setBound`, so a vector's real limit
-is the larger of its initial capacity and the bound: `new ValueVec()` holds 10, and a vector TLC
-sizes as it builds it never grows. `StateVec.grow` does the same for the successors of a state
-(`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61 sites, with capacities of their own
-(the default 10, the exact size of what it enumerates, `kOutOfN`, a bit count), so with a small
-bound one set of 10 elements builds and another fails. The engine's one bound of 1,000,000
-(`TLCGlobals.setBound`'s default) is exact only because at that size no site's initial capacity
-reaches it. Answering a smaller bound takes each of those sites' capacities, matched to the
-engine's set builders; a single configurable bound would answer the upstream tests that set one
-(`filter_within_default_capacity`, `presized_function_set_ignores_bound`) otherwise than TLC.
-
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
