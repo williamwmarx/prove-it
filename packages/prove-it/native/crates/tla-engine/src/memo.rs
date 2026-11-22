@@ -122,10 +122,8 @@ pub struct MemoTable {
     is_clustered: bool,
     // Whether the table may cluster: it has two keys or more, and has never scattered.
     can_cluster: bool,
-    // The largest id stored since the table last forgot, so that it forgets only if it must, and
-    // the largest value, so that a direct table looks for values to forget only if it must.
+    // The largest id stored since the table last forgot, so that it forgets only if it must.
     largest: Id,
-    largest_value: Id,
     // The most entries it takes.
     maximum: usize,
     // The lookups of the current window since the table filled up, and their hits.
@@ -190,7 +188,6 @@ impl MemoTable {
             is_clustered: false,
             can_cluster: width > 1,
             largest: 0,
-            largest_value: 0,
             maximum: MAXIMUM_ENTRIES,
             full_lookups: 0,
             full_hits: 0,
@@ -397,128 +394,47 @@ impl MemoTable {
 
     /// Forgets every entry that reads or holds an id from `bound` on, ids a store has let go of.
     pub fn forget_from(&mut self, bound: Id) {
-        self.move_from(bound, &[]);
-    }
-
-    /// Forgets every entry that reads or holds an id from `bound` on, but for those whose every
-    /// such id another store took in (`moved[id - bound]`, [`EMPTY`] where it didn't), which the
-    /// table keeps under that store's ids. A table keeps its room, which a search's thread fills
-    /// again at its next level.
-    pub fn move_from(&mut self, bound: Id, moved: &[Id]) {
         if self.largest < bound {
             return;
         }
-        let map = |id: Id| match id.checked_sub(bound) {
-            None => Some(id),
-            Some(index) => moved.get(index as usize).copied().filter(|&id| id != EMPTY),
-        };
-        // What is kept is below the bound, or a moved id, which a later, lower bound may still have
-        // to forget.
-        let mut largest = bound.saturating_sub(1);
+        self.heights
+            .retain(|keys, _| keys.0.iter().all(|&key| key == EMPTY || key < bound));
+        // What is kept is below the bound, which a later, lower bound may still have to forget.
+        self.largest = bound.saturating_sub(1);
         if self.is_direct {
-            let mut moving = Vec::new();
-            if let Some(past) = self.direct.get(bound as usize..) {
-                for (offset, &value) in past.iter().enumerate() {
-                    if value == EMPTY {
-                        continue;
-                    }
-                    self.size -= 1;
-                    let key = bound + offset as Id;
-                    if let (Some(key_moved), Some(value_moved)) = (map(key), map(value)) {
-                        let height = self.direct_heights.get(key as usize).copied().unwrap_or(0);
-                        moving.push((key_moved, value_moved, height));
-                    }
-                }
-            }
             self.direct.truncate(bound as usize);
             self.direct_heights.truncate(bound as usize);
-            if self.largest_value >= bound {
-                let mut largest_value = 0;
-                for value in &mut self.direct {
-                    if *value == EMPTY {
-                        continue;
-                    }
-                    match map(*value) {
-                        Some(value_moved) => {
-                            *value = value_moved;
-                            largest_value = largest_value.max(value_moved);
-                        }
-                        None => {
-                            *value = EMPTY;
-                            self.size -= 1;
-                        }
-                    }
-                }
-                self.largest_value = largest_value;
+            for value in self.direct.iter_mut().filter(|value| **value >= bound) {
+                *value = EMPTY;
             }
-            self.largest = largest.max(self.largest_value);
-            for (key, value, height) in moving {
-                self.store(&[key], value, height);
-            }
+            self.size = self.direct.iter().filter(|&&value| value != EMPTY).count();
             return;
         }
+        let capacity = self.capacity();
         self.size = 0;
         if self.width <= 2 {
-            let width = self.width;
-            let kept: Vec<Packed> = self
-                .packed
-                .iter()
-                .filter(|entry| entry.value != EMPTY)
-                .filter_map(|entry| {
-                    let first = map(entry.key as Id)?;
-                    let second = if width == 2 {
-                        map((entry.key >> 32) as Id)?
-                    } else {
-                        0
-                    };
-                    Some(Packed {
-                        key: u64::from(first) | u64::from(second) << 32,
-                        value: map(entry.value)?,
-                        height: entry.height,
-                    })
-                })
-                .collect();
-            self.packed.fill(EMPTY_PACKED);
-            for entry in kept {
-                largest = largest
-                    .max(entry.value)
-                    .max(entry.key as Id)
-                    .max((entry.key >> 32) as Id);
-                let slot = self.free_packed(entry.key);
-                self.packed[slot] = entry;
-                self.size += 1;
+            let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
+            for entry in old {
+                if entry.value < bound
+                    && (entry.key as Id) < bound
+                    && ((entry.key >> 32) as Id) < bound
+                {
+                    let slot = self.free_packed(entry.key);
+                    self.packed[slot] = entry;
+                    self.size += 1;
+                }
             }
-            self.largest = largest;
             return;
         }
         let stride = self.width + 1;
-        let mut kept: Vec<Id> = Vec::new();
-        let mut heights = HashMap::default();
-        for row in self.wide.chunks_exact(stride).filter(|row| row[0] != EMPTY) {
-            let start = kept.len();
-            if row.iter().all(|&id| match map(id) {
-                Some(id) => {
-                    kept.push(id);
-                    true
-                }
-                None => false,
-            }) {
-                if let Some(&height) = self.heights.get(&height_key(&row[1..])) {
-                    heights.insert(height_key(&kept[start + 1..]), height);
-                }
-            } else {
-                kept.truncate(start);
+        let old = std::mem::replace(&mut self.wide, vec![EMPTY; capacity * stride]);
+        for row in old.chunks_exact(stride) {
+            if row.iter().all(|&id| id < bound) {
+                let slot = self.free_wide(&row[1..]);
+                self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
+                self.size += 1;
             }
         }
-        self.heights = heights;
-        self.wide.fill(EMPTY);
-        for row in kept.chunks_exact(stride) {
-            largest = row.iter().fold(largest, |largest, &id| largest.max(id));
-            let slot = self.free_wide(&row[1..]);
-            self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
-            self.size += 1;
-        }
-        self.largest = largest;
     }
 
     /// The value stored for the keys, or [`EMPTY`].
@@ -627,7 +543,6 @@ impl MemoTable {
         self.largest = keys
             .iter()
             .fold(self.largest.max(value), |largest, &key| largest.max(key));
-        self.largest_value = self.largest_value.max(value);
         if self.is_direct {
             if !self.has_room() {
                 return false;
