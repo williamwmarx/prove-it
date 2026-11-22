@@ -88,6 +88,15 @@ pub struct OperatorLevels {
     non_leibniz: FastSet<usize>,
 }
 
+impl OperatorLevels {
+    /// Whether an application counts the level of its argument at `index`: `OpApplNode.levelCheck`
+    /// takes the operands whose weight is 1, which `OpDefNode.levelCheck` gives a parameter the
+    /// body's level parameters hold.
+    pub fn is_argument_counted(&self, index: usize) -> bool {
+        get_weight(self, index) == 1
+    }
+}
+
 fn create_signature(name: &str, level: u8, max_levels: &[u8], weights: &[u8]) -> OperatorLevels {
     OperatorLevels {
         data: LevelData::new(level),
@@ -382,7 +391,7 @@ impl Scope {
         )
     }
 
-    fn bind_names(&self, names: &[Name]) -> Scope {
+    pub(crate) fn bind_names(&self, names: &[Name]) -> Scope {
         self.bind(
             names
                 .iter()
@@ -1497,6 +1506,24 @@ impl<'a> LevelAnalyzer<'a> {
         }
         levels.formals = formals;
         Ok(levels)
+    }
+
+    /// The levels of a closure: a LAMBDA, or an operator bound with its parameters.
+    pub fn analyze_closure(
+        &self,
+        name: &Name,
+        params: &[OperatorParam],
+        body: &Expr,
+        scope: &Scope,
+    ) -> Result<OperatorLevels> {
+        let formals = params
+            .iter()
+            .map(|param| Formal {
+                name: param.name.clone(),
+                arity: param.arity,
+            })
+            .collect();
+        self.analyze_operator(name, formals, body, scope)
     }
 
     pub fn analyze_definition(

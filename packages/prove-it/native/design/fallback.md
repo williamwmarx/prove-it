@@ -1470,15 +1470,49 @@ by zero, words TLC's failure (`except-*` fixtures), and declines only where that
 warns, which TLC did as it started and doesn't again ("a value TLC computed at startup with a
 warning").
 
-The liveness level of an application of an operator that applies an operator argument counts
-that argument's level, as SANY's does (`Specs.getLevel`, `getLevelParams`), so `<>(Apply(G)...)`
-with `G(k) == x + k` is a state predicate rather than a constant TLC evaluates as it starts. It
-counts it only where the body applies the argument at weight 1: `OpApplNode.levelCheck` adds an
-operand's level parameters only for a weight-1 operand (`BuiltInOperators`), and ENABLED, ',
-UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal quantifiers take theirs with weight
-0. So `Over(F(_)) == ENABLED F(2)` applied to an action `Op` is a state predicate, and
-`PROPERTY Prop` with `Prop == [](Over(Op))` is an invariant TLC reports violated by the initial
-state, not a temporal property.
+The liveness level of an application counts the arguments whose parameters the operator's body
+reads, as SANY's does (`Specs.getLevel` takes SANY's level, and `OpDefNode.levelCheck` weights a
+parameter 1 where the body's level parameters hold it): the front end reads the weights off its
+port of SANY's level check (`levels.rs`), which computes the level parameters node by node, as
+SANY does, through a LET's definitions, a LET function's bounds, and an operator argument the
+body applies (`OpApplNode.levelCheck` adds an operand's level parameters only for a weight-1
+operand, and ENABLED, ', UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the temporal
+quantifiers take theirs with weight 0). So `<>(Apply(G)...)` with `G(k) == x + k` is a state
+predicate rather than a constant TLC evaluates as it starts; `Over(F(_)) == ENABLED F(2)`
+applied to an action `Op` is a state predicate, and `PROPERTY Prop` with `Prop == [](Over(Op))`
+is an invariant TLC reports violated by the initial state, not a temporal property; and `F(x')`
+with `F(p) == x = 0`, `F(p) == LET A == p  B == A IN B` or `F(p) == LET f[i \in p] == i IN 1 \in
+DOMAIN f` is an action where the body reads `p` and a state predicate where it doesn't
+(`tests/level-params`). An operator SANY's level check doesn't accept counts every argument.
+SANY levels an application of a standard module's operator by the module's definition of it,
+which the front end parses for that (`get_standard_definition`): `PickSuccessor(exp)` is of
+`exp`'s level, which `astToLive` raises to the Java method's action level through
+`getLevelBound`, so `PROPERTY P` with `P == []PickSuccessor(TRUE)` is TLC's "Temporal formulas
+containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
+which declined before.
+
+SANY's semantic checks are its code's, not its messages' (`tests/sany-checks`, recorded with the
+jar). `Generator.processExcept` places the tuple of an EXCEPT component's several indexes
+(`![1, 2] = e`) at the ExceptSpec node's heir `2k + 1` for the component at `k`, which is that
+component's for `k = 0` only: the second component's tuple takes the third's place, the one past
+the components takes `=`, the next the right-hand side, and further ones throw
+`java.lang.ArrayIndexOutOfBoundsException: Index 2k + 1 out of bounds for length n + 3` for `n`
+components, which TLC prints as SANY's generator exception after "Parsing or semantic analysis
+failed." (`except-tuple-*`, `except-nested-overflow`). A component ends at the first `]` after
+its last index, which may hold a `]_` the tokens don't pair with a `[` (`![[][A]_x].h`,
+`except-subscript-index`). `TheoremNode.levelCheck` reads the
+statement's `level` field, which `LabelNode.levelCheck` never sets, so a theorem with a labeled
+goal (`THEOREM lbl :: []P`) is checked as constant: its PICK bounds and proof steps are not held
+to a temporal goal's (`labeled-temporal-goal`). `Generator.generateModule` appends an inner
+module's `opDefsInRecursiveSection` to the enclosing module's, so `ModuleNode.levelCheck` checks
+the inner module's recursive section again after the enclosing one's, where an application's
+constraints are those cached from the second pass: `Argument 1 of recursive operator R is primed`
+is reported for the inner module's operator where a top-level section passes
+(`recursive-inner-module`, `recursive-declared-order`, `recursive-top-level`). A DEF clause entry
+with arguments after an identifier prefix (`BY DEF I!Op(1)`) stops `genIdToSelector` with
+"Internal error: IdPrefixElement has other than 2 or 3 heirs." and a Java stack trace, which the
+binary declines (`a DEF clause entry with arguments after an identifier prefix, which SANY ends
+on with an internal error`; `def-prefix-arguments` keeps the jar's output beside the decline).
 
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
@@ -3005,6 +3039,22 @@ it declines every read string outside ASCII there, as `main` does.
 A Json operator writes its file through the run's journal (`tla_values::written`), so a run that
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
+
+#### -maxSetSize
+
+`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc`
+suite of aidenybai/tla-ts at 0341dbe5), and stays declined: TLC's limit isn't the bound alone.
+`ValueVec.ensureCapacity` throws ("Attempted to construct a set with too many elements") only
+when a vector whose array already holds `setBound` elements must grow, and caps its growth at
+`setBound`, so a vector's real limit is the larger of its initial capacity and the bound: `new
+ValueVec()` holds 10, and a vector TLC sizes as it builds it never grows. `StateVec.grow` does the
+same for the successors of a state (`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61
+sites, with capacities of their own (the default 10, the exact size of what it enumerates,
+`kOutOfN`, a bit count), so with a small bound one set of 10 elements builds and another fails.
+The engine models only the default bound, 1,000,000 (`TLCGlobals.setBound`). Answering a smaller
+one takes each of those sites' capacities, matched to the engine's set builders; a single
+configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
+`presized_function_set_ignores_bound`) otherwise than TLC.
 
 #### Declines to win back
 
@@ -6353,6 +6403,40 @@ text (probes of 2026-11-18):
   also lacks the frame of a selection through a single copy, which answers now (see "Call stacks
   of a selection"). The assumption context matches.
 
+The specs of upstream tla-ts's unit tests at 0341dbe5 (`packages/tla-ts/tests/unit`, lifted
+statically and run against the pinned jar: `scratch/upstream/unit` on `upstream-results`) show
+these, each as main b7f832b9 prints it:
+
+- TLCEval of an argument of constant level caches its value in the semantic graph for the run
+  (`TLCEval.tlcEvalConst`), where the evaluation's `Context` is deep-empty: TLC evaluates it once,
+  with the empty state, and the binary at each evaluation. `Inv == x >= 0 /\ TLCEval(Print("b",
+  TRUE))` prints `"b"` once in TLC and at each state natively; `x' = TLCEval(RandomElement(1..1000))`
+  draws once in TLC; and `Inv == TLCEval(Print(v, TRUE))`, whose argument SANY gives constant
+  level (Print's first parameter is unused), fails in TLC on the undefined `v` and holds natively.
+  A zero-arity definition read under a binder sees its caller's context, so whether TLC caches
+  depends on where the definition is read; LET definitions after the first have a context too.
+- The split of the next-state relation (`Tool.getActionsAppl`) evaluates an operator's arguments
+  where SANY gives each constant level (`args[i].getLevel()`), before the configuration's
+  substitutions: `A(C)` with `CONSTANT C <- Lit` and a state-level `Lit` is split into `A(1)`, and
+  `A(Def)` with `Def == x` and `Def <- Alt` is not, where the binary decides on the substituted
+  expression; `A(D(1))` with `D(q) == TLCGet("level") + q` reads the level as TLC starts (0).
+- Strings TLC interns as it splits the next-state relation or builds TLCExt's records rank before
+  those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
+  "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
+  TLC and `{"action", "zzq"}` natively.
+- An initial predicate that leaves a variable undefined after two complete initial states prints
+  TLC's "Computed 2 initial states..." twice in TLC, once natively.
+- Random draws after a trace, not yet traced: `Init == x = RandomElement(1..1000) /\ PrintT(x)` with
+  `Next == RandomElement(1..2) = 3 /\ x' = x` and `-seed 4` prints `731` before the deadlock's trace
+  in both, and after it `882` in TLC and `731` natively, as though the binary's generator hadn't
+  advanced past Next's draw; and with `A == n' = n + 1 /\ x' = RandomElement(1..1000)`, `B ==
+  PrintT(<<"B", n>>) /\ FALSE`, `INVARIANT n < 2` and `POSTCONDITION PrintT(Cardinality(
+  CounterExample.state))`, TLC prints `<<"B", 1>>` where the binary prints `3`.
+- Two prints TLC makes that the binary doesn't, not yet traced: `PROPERTY Prop` with `Prop ==
+  <>[]~S(x)`, `S(v) == v < 0 /\ PrintT("s")` and x from 0 to 4 prints `"s"` once in TLC, though
+  no state makes `v < 0` hold; and `Next == \E i \in {PrintT(<<"split", TLCGet("level")>>)} :
+  TRUE` under `SPECIFICATION Spec` with `Spec == [][Next]_<<>>` prints `<<"split", 1>>` in TLC.
+
 #### Sets past `TLCGlobals.setBound`
 
 TLC builds a set enumeration element by element in a `ValueVec`, which fails once it holds
@@ -6526,6 +6610,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   module's definition"). A failure building a function a definition or a LET defines
   (`f[x \in S] == ...`), which TLC builds in the definition's frame, declines alike ("building a
   function a definition defines").
+
+- A name the configuration gives that is an operator of a standard module the spec extends
+  (`SPECIFICATION Nat`, `INVARIANT IsFiniteSet`, `SPECIFICATION Seq`): `defns` holds it, as the
+  Java method that overrides it, which TLC reports as the name's value ("The value of Nat is equal
+  to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>", the method
+  of the module the spec reached it through), or as its definition. The binary reported the name
+  undefined; it now declines ("a name the configuration gives that is an operator of a standard
+  module"). A module the spec doesn't extend leaves the name undefined, which matches. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `config-builtin-name-*`.
 
 - A TLCGet("spec") record a failure prints whole (`Attempted to select nonexistent field
   "properties" from the record [ inits |-> ..., actions |-> ..., temporals |-> ..., invariants |->
@@ -7257,7 +7350,8 @@ met it (`<...>` stands for a name or a value the reason prints).
   theorem, step or instance <...> where an operator is required`, `a RECURSIVE declaration without a
   place`, `a module named as a fact that SANY may not find`, `a module named in a DEF clause that
   SANY may not find`, `a DEF clause entry in parentheses`, `a DEF clause entry that is neither a
-  name nor an operator symbol`, `an empty USE or HIDE without a place`, `an empty BY without a
+  name nor an operator symbol`, `a DEF clause entry with arguments after an identifier prefix,
+  which SANY ends on with an internal error`, `an empty USE or HIDE without a place`, `an empty BY without a
   place`, `a module in a recursive section, where SANY's generator throws`, `a unit in a recursive
   section without a range`, `a module-level RECURSIVE declaration of <...>, a name already bound`,
   `a LET function in a temporal formula`, `an operator argument that isn't a definition`, `a
@@ -8414,6 +8508,9 @@ of integer powers; the runs those change count as wrong here until the port foll
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
+| with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
+| with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
+| with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8452,6 +8549,12 @@ of integer powers; the runs those change count as wrong here until the port foll
   asserts), and so a machine of more than 99 processors without `--threads`, no module, and
   globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
   empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **A pragma before a proof or a USE that isn't a suppression** (`a pragma before a proof or a
+  USE that isn't a suppression`): Proof.Parser reads the pragma as tokens, so one that doesn't
+  hold `_` or `suppress` alone, as `(*{ sup(* c *)press }*)`, is no suppression, and tlapm's
+  parser fails on what it reads it as (`Unexpected identifier press`, `Could not parse
+  "./SplitPragma.tla" successfully.`, with its backtrace, exit 3; tlapm b91fb6c on
+  `tests/fixtures/obligations/SplitPragma.tla`), which the port doesn't word.
 - **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
   module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
   given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through
@@ -8509,6 +8612,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
   `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
   flight together declines in toolbox mode.
+- M_elab's level check of a step that cites ENABLEDaxioms (`check_usable`, which refuses the
+  directive where an assumption or a cited step is of level above 1, with an `Error:` line on
+  stderr as the module is elaborated) is not ported: the rule is applied whatever the levels, so
+  `tlapm/proofs/enabled/enabled_axioms_level` of the upstream suite is proved where tlapm reports
+  `ENABLEDaxioms depends on assumptions of level > 1`.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
 - A TAB before the module header, on the header's line, shifts the columns printed on that line,

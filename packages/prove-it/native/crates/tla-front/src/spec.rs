@@ -10,6 +10,7 @@ use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::{FrontError, TAUTOLOGY, describe_range, format_range};
 use crate::eval::Evaluator;
+use crate::hash::FastMap;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
@@ -88,8 +89,11 @@ pub fn get_definition<'a>(name: &str, environment: &'a Environment) -> Option<&'
     environment.definitions.get(key)
 }
 
-/// `getLevel` (`liveness.ts`): the level of a formula read in a scope, with the names a binder in
-/// it shadows read as constants.
+/// `Specs.getLevel`: the level of a formula read in a scope, with the names a binder in it
+/// shadows read as constants. SANY's level of the formula, where an application counts the
+/// arguments whose parameters the operator's body reads (`OpDefNode.levelCheck` weights a
+/// parameter 1 where the body's level parameters hold it), and each parameter the level depends
+/// on looked up in the scope to the argument it is bound to, read in the argument's own scope.
 pub fn get_level(
     expression: &Expr,
     scope: Option<&Rc<Scope>>,
@@ -103,23 +107,107 @@ pub fn get_level(
         environment,
         facts,
         shadowed,
-        &LevelWalk::default(),
+        &levels::Scope::default(),
+        &LevelWalk::new(environment),
     )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LevelIdentity {
     Binding(*const Scope),
-    Definition(*const Definition, *const Scope),
+    Definition(*const Definition),
 }
 
 type LevelMemoKey = *const Definition;
 
-#[derive(Default)]
-struct LevelWalk {
+/// The levels SANY gives an operator, where its level check accepts the operator.
+type OperatorLevels = Option<Rc<levels::OperatorLevels>>;
+
+struct LevelWalk<'a> {
     active: std::cell::RefCell<Vec<LevelIdentity>>,
     memo: std::cell::RefCell<std::collections::HashMap<LevelMemoKey, Level>>,
     cycles: std::cell::Cell<u64>,
+    /// SANY's level check, whose weights tell which arguments an application counts.
+    analyzer: levels::LevelAnalyzer<'a>,
+    /// The LET definition each node a LET binds holds, with the scope SANY checks it in.
+    let_definitions: std::cell::RefCell<FastMap<*const Scope, (Rc<Definition>, levels::Scope)>>,
+    /// The levels of a closure bound around the formula, a LAMBDA or an operator passed as an
+    /// argument, by its body.
+    closure_levels: std::cell::RefCell<FastMap<*const Expression, OperatorLevels>>,
+}
+
+impl<'a> LevelWalk<'a> {
+    fn new(environment: &'a Environment) -> LevelWalk<'a> {
+        LevelWalk {
+            active: Default::default(),
+            memo: Default::default(),
+            cycles: Default::default(),
+            analyzer: environment.create_unsubstituted_level_analyzer(),
+            let_definitions: Default::default(),
+            closure_levels: Default::default(),
+        }
+    }
+
+    /// The scope SANY checks the levels of what a node binds in: a LET definition's, or the
+    /// module's for a binding the caller made around the formula.
+    fn get_lexical_scope(&self, node: &Rc<Scope>) -> levels::Scope {
+        self.let_definitions
+            .borrow()
+            .get(&Rc::as_ptr(node))
+            .map(|(_, lexical)| lexical.clone())
+            .unwrap_or_default()
+    }
+
+    /// Keeps each definition a LET bound, with the scope SANY checks it in: the node that binds
+    /// it, as `bind_definitions` makes one per definition, innermost last.
+    fn record_let(
+        &self,
+        bound: Option<&Rc<Scope>>,
+        definitions: &[Rc<Definition>],
+        lexical: &levels::Scope,
+    ) {
+        let mut node = bound;
+        let mut recorded = self.let_definitions.borrow_mut();
+        for definition in definitions.iter().rev() {
+            let Some(current) = node else {
+                break;
+            };
+            recorded.insert(Rc::as_ptr(current), (definition.clone(), lexical.clone()));
+            node = current.parent.as_ref();
+        }
+    }
+
+    /// The levels of a definition, checked in the module's scope as SANY checks it.
+    fn get_definition_levels(&self, definition: &Rc<Definition>) -> OperatorLevels {
+        self.analyzer
+            .analyze_definition(definition, &levels::Scope::default())
+            .ok()
+    }
+
+    /// The levels of the operator a node binds: a LET definition's in the scope of its LET, or
+    /// a closure's with its parameters bound, where the formula's caller made the binding.
+    fn get_binding_levels(
+        &self,
+        node: &Rc<Scope>,
+        name: &Name,
+        params: &[OperatorParam],
+        body: &Expr,
+    ) -> OperatorLevels {
+        if let Some((definition, lexical)) = self.let_definitions.borrow().get(&Rc::as_ptr(node)) {
+            return self.analyzer.analyze_definition(definition, lexical).ok();
+        }
+        let key = Rc::as_ptr(body);
+        if let Some(levels) = self.closure_levels.borrow().get(&key) {
+            return levels.clone();
+        }
+        let levels = self
+            .analyzer
+            .analyze_closure(name, params, body, &levels::Scope::default())
+            .ok()
+            .map(Rc::new);
+        self.closure_levels.borrow_mut().insert(key, levels.clone());
+        levels
+    }
 }
 
 fn get_level_inner(
@@ -128,6 +216,7 @@ fn get_level_inner(
     environment: &Environment,
     facts: &DefinitionFacts,
     shadowed: &[Name],
+    lexical: &levels::Scope,
     walk: &LevelWalk,
 ) -> Level {
     let get_binding_level = |name: &str| {
@@ -154,6 +243,7 @@ fn get_level_inner(
                         environment,
                         facts,
                         &body_shadowed,
+                        &walk.get_lexical_scope(node),
                         walk,
                     );
                     walk.active.borrow_mut().pop();
@@ -180,6 +270,7 @@ fn get_level_inner(
                         environment,
                         facts,
                         &body_shadowed,
+                        &walk.get_lexical_scope(node),
                         walk,
                     );
                     walk.active.borrow_mut().pop();
@@ -229,10 +320,11 @@ fn get_level_inner(
         let tables = Tables::default();
         let _ = map_children(node, &tables, &mut |child, bound| {
             let child_level = if bound.is_empty() {
-                get_level_inner(child, scope, environment, facts, shadowed, walk)
+                get_level_inner(child, scope, environment, facts, shadowed, lexical, walk)
             } else {
                 let shadowed: Vec<Name> = shadowed.iter().chain(bound).cloned().collect();
-                get_level_inner(child, scope, environment, facts, &shadowed, walk)
+                let lexical = lexical.bind_names(bound);
+                get_level_inner(child, scope, environment, facts, &shadowed, &lexical, walk)
             };
             level = level.max(child_level);
             Ok(child.clone())
@@ -244,11 +336,27 @@ fn get_level_inner(
         if shadowed.contains(&name) {
             return None;
         }
-        let (params, body, closure_scope) = resolve_apply_operator(expression, scope, environment)?;
+        // A standard module's operator the front end implements, which SANY levels by the
+        // module's definition of it.
+        let standard = || {
+            let definition = environment.get_standard_definition(&name)?;
+            match &definition.kind {
+                DefinitionKind::Operator { params, .. } => {
+                    Some((params.clone(), definition.body.clone(), None))
+                }
+                DefinitionKind::Function { .. } => None,
+            }
+        };
+        let (params, body, closure_scope) =
+            resolve_apply_operator(expression, scope, environment).or_else(standard)?;
+        let global_definition = || {
+            get_definition(&name, environment)
+                .cloned()
+                .or_else(|| environment.get_standard_definition(&name))
+        };
         // TLC retains the caller context while visiting a global operator body. A local closure
         // instead carries the lexical scope in which it was created.
-        let is_global =
-            !expression.is_locally_resolved() && get_definition(&name, environment).is_some();
+        let is_global = !expression.is_locally_resolved() && global_definition().is_some();
         let body_scope = if is_global {
             scope
         } else {
@@ -265,35 +373,51 @@ fn get_level_inner(
         }
         body_shadowed.extend(formal_names.iter().cloned());
         // The sentinel belongs to the resolved operator, not its possibly shared body. A
-        // local binding also identifies its lexical context; a global definition's caller
-        // context is part of its visit identity.
-        let (identity, memo_key) = if is_global {
-            let definition = get_definition(&name, environment)?;
-            let key = Rc::as_ptr(definition);
+        // local binding also identifies its lexical context; a global definition's body names
+        // nothing of its caller's scope, so only recursion visits it again while it is active,
+        // whatever scope a LET of the caller's body adds.
+        let (identity, memo_key, levels, body_lexical) = if is_global {
+            let definition = global_definition()?;
+            let key = Rc::as_ptr(&definition);
             (
-                LevelIdentity::Definition(key, body_scope.map_or(std::ptr::null(), Rc::as_ptr)),
+                LevelIdentity::Definition(key),
                 Some(key),
+                walk.get_definition_levels(&definition),
+                levels::Scope::default().bind_parameters(&params),
             )
         } else {
             let (node, _) = lookup_scope(scope, &name)?;
-            (LevelIdentity::Binding(Rc::as_ptr(node)), None)
+            (
+                LevelIdentity::Binding(Rc::as_ptr(node)),
+                None,
+                walk.get_binding_levels(node, &name, &params, &body),
+                walk.get_lexical_scope(node).bind_parameters(&params),
+            )
         };
         if walk.active.borrow().contains(&identity) {
             walk.cycles.set(walk.cycles.get().saturating_add(1));
             // The operator lookup is bound to IntValue.One, but ordinary arguments still
             // contribute their bounds in the caller below.
-            return Some((params, Level::Constant));
+            return Some((params, Level::Constant, levels));
         }
         let can_memo = closure_scope.is_none() && scope.is_none() && params.is_empty() && is_global;
         if can_memo
             && let Some(key) = memo_key
             && let Some(&level) = walk.memo.borrow().get(&key)
         {
-            return Some((params, level));
+            return Some((params, level, levels));
         }
         let cycles_before = walk.cycles.get();
         walk.active.borrow_mut().push(identity);
-        let level = get_level_inner(&body, body_scope, environment, facts, &body_shadowed, walk);
+        let level = get_level_inner(
+            &body,
+            body_scope,
+            environment,
+            facts,
+            &body_shadowed,
+            &body_lexical,
+            walk,
+        );
         walk.active.borrow_mut().pop();
         if can_memo
             && walk.cycles.get() == cycles_before
@@ -301,7 +425,7 @@ fn get_level_inner(
         {
             walk.memo.borrow_mut().insert(key, level);
         }
-        Some((params, level))
+        Some((params, level, levels))
     };
     match &expression.kind {
         ExpressionKind::Prime(_) | ExpressionKind::Unchanged(_) | ExpressionKind::Action { .. } => {
@@ -317,14 +441,24 @@ fn get_level_inner(
             is_temporal: true, ..
         } => Level::Temporal,
         ExpressionKind::Identifier { .. } => {
-            user_operator_level().map_or_else(|| get_name_level(expression), |(_, level)| level)
+            user_operator_level().map_or_else(|| get_name_level(expression), |(_, level, _)| level)
         }
         ExpressionKind::Apply { operator, args, .. } => match &**operator {
             "~>" | "-+->" => Level::Temporal,
             "\\cdot" => Level::Action,
             _ => match user_operator_level() {
-                Some((params, mut level)) if params.len() == args.len() => {
-                    for (param, argument) in params.iter().zip(args) {
+                Some((params, mut level, levels)) if params.len() == args.len() => {
+                    for (index, (param, argument)) in params.iter().zip(args).enumerate() {
+                        // `OpApplNode.levelCheck` takes the operands of weight 1, those whose
+                        // parameter the body's level parameters hold, so `F(x')` with `F(p) ==
+                        // x = 0` is state-level. An operator the level check doesn't accept
+                        // counts every argument.
+                        if levels
+                            .as_ref()
+                            .is_some_and(|levels| !levels.is_argument_counted(index))
+                        {
+                            continue;
+                        }
                         if param.arity == 0 {
                             level = level.max(get_level_inner(
                                 argument,
@@ -332,10 +466,10 @@ fn get_level_inner(
                                 environment,
                                 facts,
                                 shadowed,
+                                lexical,
                                 walk,
                             ));
-                        } else if is_operator_parameter_read(expression, scope, environment, param)
-                        {
+                        } else {
                             // `Specs.getLevel` takes SANY's level, which counts the level of an
                             // operator argument that the body applies (`getLevelParams`), where
                             // the body's walk reads the parameter as a constant.
@@ -350,6 +484,7 @@ fn get_level_inner(
                                     environment,
                                     facts,
                                     shadowed,
+                                    lexical,
                                     walk,
                                 ),
                             });
@@ -360,157 +495,28 @@ fn get_level_inner(
                 _ => get_name_level(expression).max(get_children_level(expression)),
             },
         },
+        // `LetInNode.levelCheck` takes the body's level: a definition the body doesn't apply
+        // counts for nothing, and one it applies counts through its application.
+        ExpressionKind::Let {
+            definitions, body, ..
+        } => match bind_definitions(definitions, scope) {
+            Ok(bound) => {
+                let inner = lexical.bind_definitions(definitions);
+                walk.record_let(bound.as_ref(), definitions, &inner);
+                get_level_inner(
+                    body,
+                    bound.as_ref(),
+                    environment,
+                    facts,
+                    shadowed,
+                    &inner,
+                    walk,
+                )
+            }
+            Err(_) => get_children_level(expression),
+        },
         _ => get_children_level(expression),
     }
-}
-
-/// Whether the body of the operator an application applies names one of its operator parameters
-/// where SANY counts it among the body's level parameters: not under a builtin whose operand has
-/// weight 0 (`BuiltInOperators`: ENABLED, ', UNCHANGED, `[A]_v`, `<<A>>_v`, WF, SF, [], <> and the
-/// temporal quantifiers), whose level `OpApplNode.levelCheck` takes as the builtin's own.
-fn is_operator_parameter_read(
-    application: &Expr,
-    scope: Option<&Rc<Scope>>,
-    environment: &Environment,
-    param: &OperatorParam,
-) -> bool {
-    let Some((_, body, _)) = resolve_apply_operator(application, scope, environment) else {
-        return true;
-    };
-    is_parameter_read_in(&body, &param.name, environment, &mut Vec::new())
-}
-
-// Whether `body` reads the operator parameter `name` where SANY counts it among its level
-// parameters. A parameter passed on whole to an operator another definition makes counts only
-// where that operator's own parameter does (`OpApplNode.levelCheck` takes the level parameters
-// of an argument through the operator's `getLevelParams`), as `Over(G)` with `Over(F(_)) ==
-// ENABLED F(2)` reads G under ENABLED alone; an operator a LET defines reads it where it is
-// itself read.
-fn is_parameter_read_in(
-    body: &Expr,
-    name: &Name,
-    environment: &Environment,
-    visiting: &mut Vec<(*const Expression, usize)>,
-) -> bool {
-    let mut locals: Vec<Rc<Definition>> = Vec::new();
-    let mut pending = vec![body.clone()];
-    while let Some(expression) = pending.pop() {
-        let reference = expression.reference();
-        if reference.as_ref() == Some(name) {
-            return true;
-        }
-        if matches!(
-            expression.kind,
-            ExpressionKind::Prime(_)
-                | ExpressionKind::Unchanged(_)
-                | ExpressionKind::Enabled(_)
-                | ExpressionKind::Always(_)
-                | ExpressionKind::Eventually(_)
-                | ExpressionKind::Action { .. }
-                | ExpressionKind::Fairness { .. }
-                | ExpressionKind::UnboundedQuantifier {
-                    is_temporal: true,
-                    ..
-                }
-        ) {
-            continue;
-        }
-        if let ExpressionKind::Let {
-            definitions, body, ..
-        } = &expression.kind
-        {
-            for definition in definitions {
-                match &definition.kind {
-                    DefinitionKind::Operator { .. } => locals.push(definition.clone()),
-                    DefinitionKind::Function { .. } => pending.push(definition.body.clone()),
-                }
-            }
-            pending.push(body.clone());
-            continue;
-        }
-        // An operator a LET of the body defines, read here.
-        let local = |reference: &Option<Name>| {
-            reference.as_ref().and_then(|reference| {
-                locals
-                    .iter()
-                    .rev()
-                    .find(|definition| &definition.name == reference)
-                    .cloned()
-            })
-        };
-        let reads_local = |definition: &Rc<Definition>, visiting: &mut Vec<_>| {
-            let key = (Rc::as_ptr(&definition.body), usize::MAX);
-            if visiting.contains(&key) {
-                return true;
-            }
-            visiting.push(key);
-            let is_read = is_parameter_read_in(&definition.body, name, environment, visiting);
-            visiting.pop();
-            is_read
-        };
-        let called = if expression.is_locally_resolved() {
-            local(&reference).map(|definition| {
-                let params = match &definition.kind {
-                    DefinitionKind::Operator { params, .. } => params.clone(),
-                    DefinitionKind::Function { .. } => Vec::new(),
-                };
-                (params, definition.body.clone(), Some(definition))
-            })
-        } else {
-            match resolve_apply_operator(&expression, None, environment) {
-                Some((params, inner, None)) => Some((params, inner, None)),
-                _ => None,
-            }
-        };
-        if let Some((_, _, Some(definition))) = &called
-            && reads_local(definition, visiting)
-        {
-            return true;
-        }
-        if let ExpressionKind::Apply { args, .. } = &expression.kind
-            && let Some((params, inner, _)) = called
-            && params.len() == args.len()
-        {
-            for (index, (param, argument)) in params.iter().zip(args).enumerate() {
-                let passed = if param.arity > 0
-                    && matches!(argument.kind, ExpressionKind::Identifier { .. })
-                {
-                    let reference = argument.reference();
-                    if reference.as_ref() == Some(name) {
-                        Some(true)
-                    } else if argument.is_locally_resolved()
-                        && let Some(definition) = local(&reference)
-                    {
-                        Some(reads_local(&definition, visiting))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                match passed {
-                    None => pending.push(argument.clone()),
-                    Some(false) => {}
-                    Some(true) => {
-                        let key = (Rc::as_ptr(&inner), index);
-                        if visiting.contains(&key) {
-                            return true;
-                        }
-                        visiting.push(key);
-                        let is_read =
-                            is_parameter_read_in(&inner, &param.name, environment, visiting);
-                        visiting.pop();
-                        if is_read {
-                            return true;
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        pending.extend(expression.children());
-    }
-    false
 }
 
 /// What `expandTemporal` gives: a conjunct with the scope it reads and the name TLC gives it.
@@ -1666,6 +1672,13 @@ fn get_config_operator<'a>(
         .map(crate::environment::ConfigOpDefHeader::definition)
         .or_else(|| get_definition(name, environment));
     let Some(definition) = definition else {
+        // `defns` holds a standard module's operator too: the Java method that overrides it, which
+        // TLC reports as the value of the name (`<Java Method: ...>`), or its definition.
+        if environment.builtins.contains_key(name) {
+            return Err(not_yet(
+                "a name the configuration gives that is an operator of a standard module",
+            ));
+        }
         return Err(FrontError::Config(format!(
             "The {kind} {name} specified in the configuration file\nis not defined in the specification."
         )));
@@ -4359,22 +4372,13 @@ pub fn get_properties(
                     continue;
                 }
                 // `processConfigProps` takes the operand of [] as an invariant where
-                // `getLevelBound` finds it below action level. That bound gives an operator
-                // argument level 0, so that an operator that applies a temporal LAMBDA it is
-                // passed is an invariant, which TLC rejects as it evaluates it.
-                let level = match level(body) {
-                    Level::Temporal
-                        if crate::startup::get_level_bound(
-                            environment,
-                            body,
-                            item.scope.as_ref(),
-                        ) < 2 =>
-                    {
-                        Level::Variable
-                    }
-                    level => level,
-                };
-                if level <= Level::Variable {
+                // `getLevelBound` finds it below action level. That bound counts an operator's
+                // every argument and a LET's every definition, so `[](F(x'))` with `F(p) == x =
+                // 0` is a temporal property, whose operand the liveness checker then takes as
+                // the state predicate SANY levels it as; and it gives an operator argument level
+                // 0, so that an operator that applies a temporal LAMBDA it is passed is an
+                // invariant, which TLC rejects as it evaluates it.
+                if crate::startup::get_level_bound(environment, body, item.scope.as_ref()) < 2 {
                     // TLC names the invariant by the operator the property asserts always holds,
                     // when it applies the operator to no arguments.
                     // SANY names a definition an INSTANCE copies by its path (`I!Inv`,
@@ -4407,23 +4411,24 @@ pub fn get_properties(
                     continue;
                 }
             }
-            match level(conjunct) {
-                Level::Constant | Level::Variable => properties.initial_predicates.push(Property {
+            // `getLevelBound` again, as `processConfigProps` sorts the conjunct by it.
+            match crate::startup::get_level_bound(environment, conjunct, item.scope.as_ref()) {
+                0 | 1 => properties.initial_predicates.push(Property {
                     name: part_name,
                     expression: item.expression,
                     scope: item.scope,
                 }),
-                Level::Action => {
+                3 => properties.liveness.push(Property {
+                    name: name.clone(),
+                    expression: item.expression,
+                    scope: item.scope,
+                }),
+                _ => {
                     return Err(with_warnings(
                         FrontError::Config(get_action_property_message(&part_name, conjunct)),
                         &properties,
                     ));
                 }
-                Level::Temporal => properties.liveness.push(Property {
-                    name: name.clone(),
-                    expression: item.expression,
-                    scope: item.scope,
-                }),
             }
         }
     }
