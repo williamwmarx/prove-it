@@ -162,6 +162,26 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
             )
         };
     }
+    if let (Some((slot, _)), Shape::Constant(key)) = (function.shape.slot(), argument.shape) {
+        return leaf(
+            eval(move |machine| {
+                let function = machine.locals[slot as usize];
+                lazy_function::apply(machine, function, key)
+            }),
+            footprint,
+        );
+    }
+    if let Some((slot, _)) = function.shape.slot() {
+        let argument = argument.eval.clone();
+        return leaf(
+            eval(move |machine| {
+                let function = machine.locals[slot as usize];
+                let key = argument(machine)?;
+                lazy_function::apply(machine, function, key)
+            }),
+            footprint,
+        );
+    }
     let (function, argument) = (function.eval.clone(), argument.eval.clone());
     leaf(
         eval(move |machine| {
