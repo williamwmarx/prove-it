@@ -2312,10 +2312,10 @@ fn check_spec(
     if ir.model.actions.is_empty() {
         match on_search_stack(|| tla_trace::add_actions(&ir)) {
             Ok(split) => ir = split,
-            // TLC evaluates what its split of the next-state relation reaches once, as it starts
-            // (`Tool.getActions`), with its prints, draws and registers, which the engine, taking
-            // the relation whole, would have at each state instead.
-            Err(tla_trace::Unsupported(reason)) if reason == tla_trace::SPLIT_EFFECTS => {
+            // TLC evaluates an \E's bound in its split of the next-state relation once, as it
+            // starts (`Tool.getActions`), with its prints, draws and registers, which the engine,
+            // taking the relation whole, would have at each state instead.
+            Err(tla_trace::Unsupported(reason)) if reason == tla_trace::SPLIT_BOUND_EFFECTS => {
                 return report_not_native(printer, &reason);
             }
             Err(_) => {}

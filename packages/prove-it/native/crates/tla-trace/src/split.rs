@@ -94,9 +94,14 @@ enum Added {
 ///
 /// It also gives each ENABLED atom the actions it splits into, which the search's steps then
 /// answer it from, and labels the steps where some atom is made of only some of them.
-/// Why the split declines what TLC evaluates as it splits the next-state relation, where that has
+/// Why the split refuses what TLC evaluates as it splits the next-state relation, where that has
 /// an effect.
-pub const SPLIT_EFFECTS: &str = "TLC's actions whose split prints, draws or sets a register";
+const SPLIT_EFFECTS: &str = "TLC's actions whose split prints, draws or sets a register";
+
+/// Why the split refuses an \E's bound that has an effect, which TLC evaluates once as it splits
+/// the relation and the engine, taking the relation whole, would evaluate at each state.
+pub const SPLIT_BOUND_EFFECTS: &str =
+    "TLC's actions whose split prints, draws or sets a register in an \\E's bound";
 
 pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     let mut ir = ir.clone();
@@ -612,7 +617,7 @@ impl Splitter<'_, '_> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
             let Ok(set) = self
-                .evaluate(bound.set, &place.context)?
+                .evaluate_bound(bound.set, &place.context)?
                 .and_then(|set| elements(&set))
             else {
                 return Ok(None);
@@ -853,6 +858,18 @@ impl Splitter<'_, '_> {
                 .evaluator
                 .evaluate(definition.body, &Context::default())
                 .is_ok())
+    }
+
+    // An \E's bound the split evaluates, as TLC does when it starts.
+    fn evaluate_bound(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Result<Evaluated<Value>, Unsupported> {
+        if may_have_effect(self.evaluator, node, &mut HashSet::new()) {
+            return Err(Unsupported(SPLIT_BOUND_EFFECTS.into()));
+        }
+        Ok(self.evaluator.evaluate(node, context))
     }
 
     // An expression the split evaluates, as TLC does when it starts. One that may print, draw or
