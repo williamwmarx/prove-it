@@ -1,0 +1,10 @@
+# The specs the Record tlapm workflow records tlapm's output on: each line a spec's path from the
+# repository root, then |, then tlapm's options. The tlapm CLI fixtures under
+# packages/prove-it/tests/fixtures are the expected outputs these recordings give.
+packages/prove-it/tests/fixtures/obligations/Proofs.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/Suppressed.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/Suppressed.tla | --summary
+packages/prove-it/tests/fixtures/obligations/SuppressedComments.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/SuppressedComments.tla | --summary
+packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | --summary

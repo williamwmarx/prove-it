@@ -319,10 +319,12 @@ read-only memo snapshots.
   too: each owns a range of its slots, split by the fingerprint's top bits (the home slot), and
   walks the level's candidates in (parent, step) order, probing and inserting those whose home is in
   its range. The merge then only numbers and imports the new states; a fingerprint whose probe runs
-  past its thread's range, and 0, it probes itself, in order as before. That takes a table without
+  past its thread's range, and 0, it probes itself, in order as before. That took a table without
   indices, which is the binary's (no fingerprint verification), no graph recorded, and no invariant
-  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merge serially. On 4 cores, medians
-  of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
+  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merged serially,
+  and from #369, which keeps the indices on every search with several workers, so did every
+  search, until the fill gave the indices too (merge-fill-indices, under Results). On 4 cores,
+  medians of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
   MCExactInitialSync 7.63 → 7.08 s (−7%), MCbtree 0.398 → 0.371 (−7%), MCMultiNode 2.75 → 2.62
   (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
   (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
@@ -601,6 +603,41 @@ within noise at 4 threads (MCExactInitialSync 6.81 / 6.76 / 7.47 s, Detlefs 1.13
 MCbtree 0.370 / 0.377 / 0.368, MCLamportMutex 1.25 / 1.25 / 1.25). Not built: the store's import
 rewritten for at most 1.3×. Huge pages on the state table, which cut the kernel's part, come first.
 
+### Action properties under a VIEW or symmetry on threads (#372)
+
+Since #237 a model with an action property (`[][A]_v`) under a VIEW or SYMMETRY searched on one
+thread: a thread sharing a level deferred the step's violation as it defers an invariant's, for the
+merge to decide by the key, which is wrong where another thread had found the key, since TLC checks
+an action property on every step, seen or not (`Worker.doNextCheckImplied`). The thread now stops
+the level at that state at once, and the level's rest runs on one thread from there
+(parallel.md, "Stops"). On `depot-ubuntu-24.04-16`, medians of 3, against `main` at b7f832b9, 16
+threads (one thread is unchanged, 1.01×):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain |
+|---|---:|---:|---:|
+| MCabs | 10.63 | 1.22 | 8.7× |
+| FastPaxos | 1.45 | 0.27 | 5.4× |
+| BufferedRandomAccessFile | 1.74 | 0.22 | 7.9× |
+
+The rest of the suite is within noise, and 16 threads go from 2.6× one thread to 3.9× in geomean
+over it. On the 4-core suite, Paxos_MC (symmetry with a PROPERTY) goes 0.61 → 0.30 s on every core.
+
+### Warnings on threads (#374)
+
+Since #369 a level ran on one thread, unpipelined, wherever the spec could raise a runtime
+warning (2143, 2144), which with warnings on, TLC's default and the npm package's, is any spec
+with an EXCEPT. TLC prints each warning's message once (`MP.printWarning`), and the first warning
+of a run once more, since its first message carries the hint to `-nowarning`. The search now
+counts the warnings it reports, and a thread that raises one TLC may still print stops the level
+at that state, as a violation does; a warning TLC never prints again stops nothing. The suites
+pass `-nowarning`, so they show no change: on `depot-ubuntu-24.04-16` and `-4` against `main` at
+b7f832b9 every model is within noise, one thread 1.00×. With warnings on (`bench-suite.ts`
+without `-nowarning`, bench-suite.json on `depot-ubuntu-24.04-4`, medians of 7, against `main`
+at e63fc6c), `main` on every core was 1.04× slower than itself on one thread over the suite, and
+this is 1.5× faster: Commit 0.43 → 0.16 s, MCLamportMutex 2.57 → 0.97, MCbtree 0.94 → 0.33,
+SimpleRegular 0.68 → 0.28, MCBakery 1.00 → 0.56, MCSingleNode 0.47 → 0.24, Paxos_MC 0.64 →
+0.32, philosophers 0.14 → 0.07; one thread 1.00×.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
@@ -631,6 +668,76 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Settled parts of a set
+
+A membership test in a set of records, of functions or of tuples, or in a `\cup`, `\cap` or `\`,
+first runs its set's parts in a round of their own (`Compiler::once_a_round`). That keeps a
+failure or a print where TLC's evaluation of the set would have it. On PaxosCommit, every message
+of every successor is tested against `Message` for `PCTypeOK`'s `msgs \in SUBSET Message`, and
+running `Message`'s record sets' parts again was 26% of the run: `parts_of` 10.9%, `once_a_round`
+9.1% and `once` 6.2%.
+
+Parts whose sets read nothing, neither a variable nor a bound name nor TLC's registers, and that
+print, draw or warn nothing (an empty footprint, which holds those as slots), do the same every
+time they run. A machine runs such a round as before until a run of it neither fails nor nests a
+recursive call, a cached one's height included, nor passes a round that ran earlier in the same
+run of parts without settling (`Machine::run_settled`). From then on it skips the round. A round
+that recursed runs every time, so TLC's stack depth is felt where TLC's is. Codex found three ways
+a static test of recursion missed it on #377: a recursive operator in a field, a LET RECURSIVE in
+one, and a set of records two others share. `prove-it-cli/tests/settled` keeps all of them,
+declining as main does, beside a shallow one that matches TLC.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | PaxosCommit | Geomean | Agreeing |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 23.06 (22.97–24.15) → 15.08 (14.92–15.37) | 1.03× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | — | 1.01× | 18/18 |
+
+### Memo heights beside their values
+
+#369 records, for each memo entry, how deep its evaluation nested recursive calls, so that a hit
+reaches as deep as TLC's evaluation, which keeps no table, and stops where TLC's stack would. The
+heights were kept in a map keyed by the entry's six keys and hashed a byte at a time
+(`IntegerHasher::write`). Every hit then looked its height up there, and every store removed or
+inserted one, once any entry had a height. On MCbtree, `Machine::call_recursive` went from 3.1% to
+7.5% of the run.
+
+A table of one or two keys now keeps the height in its entry, in what was its padding, and reads
+it with the value in one probe. A direct table keeps them in a parallel array once one isn't 0.
+A wider table keeps the map, hashed a word at a time. A store for keys a table already holds
+overwrites them, as the map did, so the heights are the same.
+
+Depot, against `main` at b7f832b9, `native` and `native-base`, one worker:
+
+| Suite, machine, runs | MCbtree | TLCSailfish1 | Geomean | Agreeing |
+|---|---|---|---:|---:|
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | 0.78 → 0.73 | — | 0.99× | 18/18 |
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 0.79 → 0.74 | 3.65 → 3.39 | 1.04× | 15/15 |
+
+On a 4-core runner, with 9 interleaved runs, MCbtree took 0.633 s at fb05e28, 0.773 s at
+8f623123 (#369) and 0.725 s with this change. So it wins back about a third of the loss there.
+
+### Testing in place what a successor needs counted
+
+The 4-core bisect of fb05e28..8f623123 (9 and 7 interleaved runs, one machine) put most of the
+one-worker slowdown on commit, SimpleRegular and MCbtree at #369: 0.271 → 0.308, 0.505 → 0.544
+and 0.649 → 0.785 s. The memo heights above are MCbtree's share. The rest is spread over the
+search loop, which #369 split into calls made for each successor: `set_counts` (only where the
+spec reads TLCGet's counts), `record_step` (only where a graph is kept),
+`holds_action_constraints` and `count_possible` (only where there are any). Each now tests that
+in place, and calls out only for the work.
+
+Depot, against `main` at 5749ccd1, one worker:
+- On one 4-core runner, 11 interleaved runs, with fb05e28 beside them: commit 0.265 / 0.308 →
+  0.294 s, MCbtree 0.666 / 0.749 → 0.735 s and SimpleRegular 0.506 / 0.574 → 0.554 s.
+- `bench-suite.json`, 4 cores, 5 runs: 1.02×, 18/18 agreeing.
+- `perf-suite.json`, 16 cores, 3 runs: 1.00×, 15/15 agreeing.
+
+What is left of #369's cost is spread over the walker's `segment`, `check_complete_successor` and
+the memo lookups. Each carries a check that a new output needs: the held sets, `note_assigned`,
+`Unchanged` warnings, PickSuccessor, DFID and contest tracking.
+
 ### Liveness (`perf-liveness`)
 
 The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
@@ -647,6 +754,223 @@ Two further steps were bounded and not built, since neither clears 1.1× by a sa
 | A flat form of the 60 action checks the checker evaluates as it adds states | 0.3–0.5 s of `add_states`' 1.7 s: 1.07–1.12× | Most of `add_states` is reading the answer tables and building the behavior graphs, which the flat form leaves. |
 
 Together they bound StarkMutex at about 1.25×.
+
+### Pruning `x' \in [S -> T]` by per-key constraints (MCabs), as built
+
+MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
+enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
+`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
+admits would turn 64,000 into about 40.
+
+**TLC's order** (tlaplus d8fb231):
+- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
+  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
+  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
+  at that candidate.
+- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
+  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
+  order.
+- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
+
+**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
+`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
+candidates with f[j] = e(j) for every constrained j.
+
+**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
+Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
+x'[b] for keys b that Ck leaves free.
+
+Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
+be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
+- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
+  one free key, 40 on MCabs.
+- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
+- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
+
+D must be a subset of S; otherwise fall back.
+
+**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
+order of the free keys' values. Successor order, state numbering, traces, and any later Print or
+error therefore stay TLC's. The states-generated and distinct counts count successors only, so
+they are unchanged. Under `-coverage`, don't prune.
+
+**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
+enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
+models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
+successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
+`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. It is
+one spec's idiom, built because it is the suite's weakest model against TLC.
+
+**As built** (`compile/pruned.rs`):
+- The conjuncts between the membership and the quantifier are often operators the walk walks
+  (`IsPrefix` is one), and a walk is not an evaluation: an `\E` walks every binding where
+  evaluation stops at the first TRUE. So the pre-pass runs the compiled walk of those conjuncts,
+  to their end, for each assignment of the free keys, and keeps the assignments it reaches the end
+  for. A skipped function with the same free values walks them the same way.
+- The quantifier is checked by evaluating its own body, `x'[j] = e`, for each j of E and each
+  value of T, bound to a function of the set with that value at j, so the equality is the
+  compiled one, failures included; it must hold for exactly one value of each j.
+- The positions of the survivors in the set are computed from the odometer and each is checked
+  against its function's keys and values, so nothing rests on how the store lays the set out.
+- The static checks: every conjunct before the quantifier is free of effects and reads x' only as
+  `x'[k]`, with k of names bound outside the conjunction, through no prime, UNCHANGED, ENABLED,
+  action or temporal operator, and through definitions that read no next state. At run time each k
+  must be a key outside E.
+- Nothing from the membership through the quantifier may read what TLC keeps beside the state,
+  which a TLCSet after the quantifier, or the search, can change between two functions of the
+  enumeration: no TLCGet or other builtin of TLC's registers, caches, counts, level, files,
+  environment, random draws or trace (`is_steady_builtin`), and no compiled footprint with a
+  search, register, print or warning slot. Codex found the first on #375: a quantifier that
+  compares with TLCGet(1), followed by TLCSet(1, 1).
+- It is off while generating, where the walk streams a set held as built, and where the search
+  keeps the shapes of assigned values for liveness atoms. Coverage is counted by tla-trace's own
+  pass, which this doesn't touch. Anything a pre-pass evaluation prints or warns, and any failure,
+  sends the walk through every function, as before.
+
+`prove-it-cli/tests/pruned` compares fourteen specs with TLC at d8fb231: guards the walk walks, keys
+of numbers, a guard that fails on the first, a middle and the last value of T, a quantifier that
+fails to evaluate or compares a number with a string, a guard reading a key the quantifier fixes,
+a value outside T, a guard that prints, a quantifier over no keys, and a quantifier or a guard
+that reads TLCGet, the level or a register a later TLCSet changes.
+
+**Measured** on Depot against `main` at b7f832b9, `bench-suite.ts` with `native` and
+`native-base`, one worker, median wall seconds with the range:
+
+| Suite, machine, runs | MCabs | Geomean, all models | Models agreeing with TLC |
+|---|---|---:|---:|
+| perf-suite.json, `depot-ubuntu-24.04-16`, 3 | 10.07 (10.04–10.11) → 0.19 (0.19–0.19) | 1.35× | 15/15 |
+| bench-suite.json, `depot-ubuntu-24.04-4`, 5 | not in the suite | 1.00× | 18/18 |
+
+No other model moved outside its range on the 4-core suite, as none has the shape. MCabs is now
+start-up and its 349 states; TLC on one worker takes 34.6 s on the 16-core runner.
+
+### Start-up of the npm package: the keys a check asks for first (seeded-keys)
+
+The npm package runs the native check in-process in rounds (`checkAllSources`): the engine runs
+until it has read keys the caller hasn't answered, returns them, and the caller answers them and
+runs it again from the start. On the CLI path 2PCwithBTM took four rounds (the spec and its
+configuration; 92 keys of modules and directories; the real path of the temp directory; the
+check), each but the last re-doing the front end's work so far, and on the library path three
+(the spec and configuration texts; the built-in modules and the class space; the check). The
+caller now answers before the first round what it holds anyway, so a model whose modules are all
+built in checks in one round on the library path and two on the CLI's.
+
+What the npm CLI costs over the binary, measured on `depot-ubuntu-24.04-4` (medians of 20 runs,
+milliseconds, `main` at 31b00e33 then this):
+
+| Model | Binary | Bare Node | Node CLI, `main` | Node CLI, this |
+|---|---:|---:|---:|---:|
+| 2PCwithBTM | 12.7 | 12.5 | 36.5 | 35.8 |
+| Queue | 21.1 | 12.3 | 41.8 | 42.1 |
+| SyncCons | 22.3 | 14.1 | 51.5 | 43.6 |
+| VoucherRedeem | 26.0 | 12.6 | 47.4 | 45.8 |
+
+So the npm CLI costs about 25 ms over the binary on the smallest models, half of it Node's own
+start, not the 0.23 s a model measured before the check ran in-process; the rounds were worth 1 to
+8 ms of it. On the 4-core container a warm library check of 2PCwithBTM went 22 → 17 ms.
+
+### Liveness atoms on the helpers (atoms-on-helpers)
+
+Timed on 16 cores, the atoms scaled least of the liveness models' phases: 1.5× on StarkMutex and
+1.9× on cf1s_folklore, where the first ENABLED atom took 0.71 s of 2.7 s, almost all of it on the
+search's thread, computing which of TLC's actions changed the subscript from each state and running
+ENABLED on the states the steps don't answer; and each of StarkMutex's 60 action atoms launched the
+helpers twice, once for the steps and once for the stuttering steps. A helper now computes the
+changed actions of its run of states as it answers the atoms, answers an atom's steps and
+stuttering steps in one pass, and runs ENABLED on the states the steps leave unknown, each
+state's evaluation the same on any thread; the search's thread reads what the steps answer and
+evaluates only a state whose subscript failed on a step, or everything where the atoms print or
+`PROVE_IT_LIVE_CHECK` compares the two. On `depot-ubuntu-24.04-16`, medians of 3, against `main`
+at de9ca77d, 16 threads (one thread is within the build-to-build noise of the suite, 2 %):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.60 | 1.33 | 1.20× | 932 → 839 |
+| cf1s_folklore | 2.68 | 1.91 | 1.40× | 2,228 → 976 |
+
+The rest of the suite is within noise. What is left of the liveness check at 16 threads on
+StarkMutex is the search's merge (0.27 s), the atoms (about 0.3 s) and the checker (0.35 s once
+the shared table is read in place, below, of which each behavior's thread spends 0.06 s building
+successor sets, 0.06 s writing nodes and 0.11 s searching its graph); on cf1s_folklore the
+checker's 1.2 s is 0.5 s of successor sets and 0.15 s of consistency rows, each behavior's thread
+again.
+
+### The checker's shared table of action checks, read in place (checker-shared-steps)
+
+Timed per phase on 16 cores, each thread of the liveness checker that built a behavior's graph
+spent most of its time before writing the nodes: StarkMutex's four threads 0.29 s of 0.53 s each
+walking the 60 action checks on every step's row to find them all answered already, since the
+table the threads read ahead (`read_positions`) answered them, after copying each row into a table
+of the thread's own. A step's row is now its position in the shared table where that has every
+check the thread's behaviors make, and a row of the thread's own, copied from it, only where it
+doesn't, and a successor set whose rows are complete skips the checks after one word a row. On
+`depot-ubuntu-24.04-16`, medians of 3, against `main` at c34616b8, 16 threads (one thread, which
+has no shared table, is unchanged):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | RSS MB, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 1.57 | 1.25 | 1.26× | 938 → 785 |
+| cf1s_folklore | 2.66 | 2.71 | noise | 2,243 → 2,234 |
+
+cf1s_folklore has few action checks, so its rows are a few bits and the copy was never its cost:
+of its threads' 1.2 s, 0.5 s builds the successor sets and 0.15 s reads the consistency rows,
+which the next change reads ahead on every thread.
+
+### The checker's successor sets, state checks and consistency read ahead (checker-precompute)
+
+Each state's successor set in TLC's order, its state checks and its consistency with the tableau's
+nodes come from the graph and the tables alone, and each behavior's thread computed them again as
+it added the states. The threads now read them ahead, each a run of the states, as they read the
+action checks: the state checks and consistency rows of each behavior, which its thread takes
+over, and the order of every successor set, which the threads share at 4 bytes a step. TLC's
+SetOfStates orders a set by a capacity that grows with every set that outgrows it, so a first pass
+counts each state's distinct steps, a scan finds the capacity as each set is built, and a second
+pass builds the sets with it. A check with one behavior reads ahead on the workers too. Per
+thread at 16 threads, adding the states went from 1.2 s to about 0.4 s on cf1s_folklore (sets
+0.5 → 0.09 s, consistency 0.15 → 0.08, state checks 0.06 → 0.05) and from 0.53 to about 0.2 s
+on StarkMutex, where writing the nodes (0.06–0.09 s) and searching each graph (0.1–0.14 s) are
+what is left. On `depot-ubuntu-24.04-16`, medians of 3, against `checker-shared-steps` at
+b1a08c45, 16 threads:
+
+| Model | Before, 16 threads | Now, 16 threads | Gain | RSS MB |
+|---|---:|---:|---:|---|
+| cf1s_folklore | 2.75 | 2.35 | 1.17× | 2,235 → 2,229 |
+| StarkMutex | 1.26 | 1.22 | 1.03× | 787 → 790 |
+| SpanTreeRandom | 0.41 | 0.38 | 1.08× | 77 → 84 |
+
+One thread, which builds the sets with the same code and reads nothing ahead, is within noise
+(cf1s_folklore 6.61 → 6.37, StarkMutex 3.04 → 3.08); the rest of the suite is within noise.
+
+### The state table filled on threads, with the indices (merge-fill-indices)
+
+The merge of a shared level has the threads find which candidates are new first, each filling a
+range of the state table's slots (`FingerprintSet::fill`), where the table keeps no indices: a
+graph's edges need the index of each state a step reached, which the fill didn't give. Since
+#369 the table keeps indices on every search with several workers, to tell the states another
+state also steps to, so the fill had run on none of them, and every level's merge probed the
+table once per candidate on one thread: at 16 threads 0.46 s of cf1s_folklore's 2.4 s and
+0.27 s of StarkMutex's 1.3 s, about 40 % of their merges, and a like share of every other
+model's. The fill now gives each candidate's state its index: equal fingerprints share a home
+slot, so a thread decides the fingerprints of its range in the merge's order and the new states
+take the indices they will have, which a second pass over the ranges writes, reading each seen
+candidate's; the fingerprints the threads leave are inserted in order before the indices are
+assigned. The merge imports the new states and records the edges from those indices. A level that
+may reach a bound the merge stops at, on a graph's states or edges, merges as before, as does a
+search that verifies fingerprints by their keys. On `depot-ubuntu-24.04-16`, medians of 3,
+against `main` at 32811017, 16 threads (one thread, which fills nothing, is within noise):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain |
+|---|---:|---:|---:|
+| MCExactInitialSync | 3.06 | 2.10 | 1.46× |
+| PaxosCommit | 2.44 | 2.21 | 1.10× |
+| MCMultiNode | 0.94 | 0.84 | 1.12× |
+| Detlefs | 0.55 | 0.50 | 1.10× |
+| cf1s_folklore | 1.47 | 1.27 | 1.16× |
+| StarkMutex | 0.98 | 1.00 | noise |
+
+StarkMutex merges 115 levels of 2,000 to 10,000 states, each too small for the fill's threads to
+gain on; the rest of the suite is within noise, and 16 threads go from 3.7× one thread to 3.9×
+in geomean over it.
 
 ## Measured and dropped
 
@@ -666,8 +990,10 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
 | Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
 | Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
+| Parse the standard modules once per thread for the startup's level bounds, which a new `LevelBound` parsed on each call | 2PCwithBTM, SyncCons, VoucherRedeem, Queue (`-workers 1`) | Local profile, 40 runs of each: CPU 7.56G → 7.47G samples (1.1%); Depot bench-suite, 15 runs: every model the same, 1.00× | The modules were mostly parsed once per run already; what is left of that parse is 3.6% of a small run, and the rest of the front end's third is lowering, SANY's analysis and two links of the environment. The branch is `standard-levels`. |
 | Read the operands of arithmetic, comparisons and other binary and unary builtins in place (`predicate::Leaf`) rather than through their closures | BufferedRandomAccessFile, MCabs, MCMultiNode, PaxosCommit | 1.66 → 1.59 s, 10.29 → 10.27 s, 5.71 → 5.66 s, 17.9 → 18.6 s | An indirect call to a leaf costs a nanosecond or two; see below. |
 | Intern the integers to 65,535 at reset rather than to 4,096 | BufferedRandomAccessFile | 1.60 → 1.62 s; 2PCwithBTM's start-up 14 → 21 ms | `store.int`'s share is the small integers' own path, not the hash table. |
+| An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
@@ -823,62 +1149,6 @@ Two engine costs grew with the number of threads, and a shared level reported no
 - The tests in `prove-it-check`'s `check.rs` use the ewd998 example's IsSimpleCycle and RingOfNodes, and fail on the code before this change.
 
 ## Designs ready, not built
-
-### Pruning `x' \in [S -> T]` by per-key constraints (MCabs)
-
-MCabs enumerates `cLogs' \in [Servers -> Seq(Terms)]`: 64,000 candidate functions per
-enumeration, filtered by `IsPrefix(cLogs[i], cLogs'[i])` and
-`\A j \in Servers \ {i} : cLogs'[j] = cLogs[j]`. Pruning to the candidates the per-key constraint
-admits would turn 64,000 into about 40.
-
-**TLC's order** (tlaplus d8fb231):
-- `Tool#getNextStates`, `OPCODE_in` on a primed variable (`Tool.java:1422-1466`), evaluates the
-  right side once. For each element of `Enumerable.elements()` it binds `x'` and evaluates the rest
-  of the conjunction, left to right. A FALSE guard abandons the candidate; an error aborts the run
-  at that candidate.
-- `SetOfFcnsValue.Enumerator` (and `DomIVEnumerator` for an interval domain) is an odometer over
-  the domain sorted by TLC's order. The last key varies fastest, and each key's values come in T's
-  order.
-- Under `-coverage` it counts `cm.incSecondary(|S|)` per candidate.
-
-**The shape.** `x' \in [S -> T] /\ C1 /\ … /\ Ck /\ …`, where Ck is a per-key constraint,
-`x'[a] = e` or `\A j \in D : x'[j] = e(j)`, with D and e not mentioning x'. The survivors are the
-candidates with f[j] = e(j) for every constrained j.
-
-**When skipping is exact.** Every skipped candidate must evaluate to FALSE at some conjunct up to
-Ck, without an error or an effect. C1 … C(k-1) must be free of effects, and must read x' only as
-x'[b] for keys b that Ck leaves free.
-
-Errors are positional: TLC raises at the first candidate in its order whose chain errors, which may
-be a skipped candidate that comes before every survivor. To stay exact, run a pre-pass per state:
-- Evaluate C1 … C(k-1) once for each combination of values of the free keys: |T| evaluations for
-  one free key, 40 on MCabs.
-- Evaluate Ck's targets e(j), and check each one's equality with every element of T.
-- If nothing errors, skipping is exact. If anything errors, enumerate in full, as today.
-
-D must be a subset of S; otherwise fall back.
-
-**What stays the same.** With the constrained keys fixed, the odometer visits the survivors in the
-order of the free keys' values. Successor order, state numbering, traces, and any later Print or
-error therefore stay TLC's. The states-generated and distinct counts count successors only, so
-they are unchanged. Under `-coverage`, don't prune.
-
-**Why it isn't built.** A grep of the corpus, tlaplus/Examples included, finds the shape in an
-action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]` is a TypeOK' in a
-`*_proof.tla` or a TLC test model. The 18 `\E f \in [S -> T]` outside proofs are in Init, in
-invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
-(`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
-
-**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
-enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
-models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
-successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
-`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. Built,
-it would take MCabs from 10.2 s toward start-up, and so the suite's geomean by about 1.3×, from one
-spec's idiom.
-
-Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
-compared with TLC.
 
 ### Answering liveness action atoms from the steps the search took
 

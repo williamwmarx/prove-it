@@ -4,7 +4,7 @@
 //! itself off after [`PROBATION`] lookups, as the TypeScript tables do.
 
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 use tla_values::Id;
 
@@ -60,11 +60,15 @@ fn hash_keys(keys: &[Id]) -> u32 {
 struct Packed {
     key: u64,
     value: Id,
+    // How many recursive calls nested below the value's evaluation (`MemoTable::find`), in what
+    // would otherwise be the entry's padding.
+    height: u32,
 }
 
 const EMPTY_PACKED: Packed = Packed {
     key: 0,
     value: EMPTY,
+    height: 0,
 };
 
 #[inline(always)]
@@ -96,6 +100,8 @@ pub struct MemoTable {
     // A table of width 1 is keyed by one id, so while its keys are dense enough its values are an
     // array indexed by the id, read without hashing or probing.
     direct: Vec<Id>,
+    // The heights of a direct table's entries, by key, once one isn't 0.
+    direct_heights: Vec<u32>,
     // Width 1 once it isn't direct, and width 2: open addressing over packed keys.
     packed: Vec<Packed>,
     // Widths 3 to 6: open addressing over rows of the value, then the keys.
@@ -123,20 +129,30 @@ pub struct MemoTable {
     // The lookups of the current window since the table filled up, and their hits.
     full_lookups: u64,
     full_hits: u64,
-    // How many recursive calls nest below each entry whose evaluation made any, by its keys
-    // (`height_key`): TLC keeps no table and evaluates the expression again where it reads it, so
-    // its stack goes that much deeper there.
+    // How many recursive calls nest below each entry of a table of three keys or more whose
+    // evaluation made any, by its keys (`height_key`): TLC keeps no table and evaluates the
+    // expression again where it reads it, so its stack goes that much deeper there. A table of one
+    // or two keys keeps the height beside the value.
     heights: HashMap<HeightKey, u32, BuildHasherDefault<IntegerHasher>>,
 }
 
-/// An entry's keys, padded to six with [`EMPTY`].
-type HeightKey = [Id; 6];
+/// An entry's keys, padded to six with [`EMPTY`], hashed two keys to a word.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HeightKey([Id; 6]);
+
+impl Hash for HeightKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for [low, high] in self.0.as_chunks::<2>().0 {
+            state.write_u64(u64::from(*low) | u64::from(*high) << 32);
+        }
+    }
+}
 
 #[inline(always)]
 fn height_key(keys: &[Id]) -> HeightKey {
     let mut key = [EMPTY; 6];
     key[..keys.len()].copy_from_slice(keys);
-    key
+    HeightKey(key)
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -150,6 +166,7 @@ impl MemoTable {
             } else {
                 Vec::new()
             },
+            direct_heights: Vec::new(),
             packed: if width == 2 {
                 vec![EMPTY_PACKED; INITIAL_CAPACITY]
             } else {
@@ -294,13 +311,15 @@ impl MemoTable {
             return;
         }
         let direct = std::mem::take(&mut self.direct);
+        let heights = std::mem::take(&mut self.direct_heights);
         self.is_direct = false;
         self.size = 0;
         self.mask = INITIAL_CAPACITY - 1;
         self.packed = vec![EMPTY_PACKED; INITIAL_CAPACITY];
         for (key, &value) in direct.iter().enumerate() {
             if value != EMPTY {
-                self.set(&[key as Id], value);
+                let height = heights.get(key).copied().unwrap_or(0);
+                self.store(&[key as Id], value, height);
             }
         }
     }
@@ -320,6 +339,7 @@ impl MemoTable {
         self.is_enabled = false;
         self.heights = HashMap::default();
         self.direct = Vec::new();
+        self.direct_heights = Vec::new();
         self.packed = Vec::new();
         self.wide = Vec::new();
     }
@@ -352,6 +372,7 @@ impl MemoTable {
 
     fn clear(&mut self) {
         self.direct.fill(EMPTY);
+        self.direct_heights.clear();
         self.packed.fill(EMPTY_PACKED);
         self.wide.fill(EMPTY);
         self.size = 0;
@@ -377,11 +398,12 @@ impl MemoTable {
             return;
         }
         self.heights
-            .retain(|keys, _| keys.iter().all(|&key| key == EMPTY || key < bound));
+            .retain(|keys, _| keys.0.iter().all(|&key| key == EMPTY || key < bound));
         // What is kept is below the bound, which a later, lower bound may still have to forget.
         self.largest = bound.saturating_sub(1);
         if self.is_direct {
             self.direct.truncate(bound as usize);
+            self.direct_heights.truncate(bound as usize);
             for value in self.direct.iter_mut().filter(|value| **value >= bound) {
                 *value = EMPTY;
             }
@@ -418,18 +440,27 @@ impl MemoTable {
     /// The value stored for the keys, or [`EMPTY`].
     #[inline(always)]
     pub fn get(&mut self, keys: &[Id]) -> Id {
+        self.find(keys).0
+    }
+
+    /// The value stored for the keys, or [`EMPTY`], and how many recursive calls nested below
+    /// its evaluation.
+    #[inline(always)]
+    pub fn find(&mut self, keys: &[Id]) -> (Id, u32) {
         if !self.open() {
-            return EMPTY;
+            return (EMPTY, 0);
         }
-        let value = if self.is_direct {
-            self.direct.get(keys[0] as usize).copied().unwrap_or(EMPTY)
+        let (value, height) = if self.is_direct {
+            let key = keys[0] as usize;
+            let value = self.direct.get(key).copied().unwrap_or(EMPTY);
+            (value, self.direct_heights.get(key).copied().unwrap_or(0))
         } else if self.width <= 2 {
             let key = pack(keys);
             let mut slot = self.packed_home(key);
             loop {
                 let entry = self.packed[slot];
                 if entry.value == EMPTY || entry.key == key {
-                    break entry.value;
+                    break (entry.value, entry.height);
                 }
                 self.probes += 1;
                 slot = (slot + 1) & self.mask;
@@ -437,7 +468,7 @@ impl MemoTable {
         } else {
             let stride = self.width + 1;
             let mut slot = self.wide_home(keys);
-            loop {
+            let value = loop {
                 let row = &self.wide[slot * stride..(slot + 1) * stride];
                 // Compared key by key, which beats a call to memcmp for six keys or fewer.
                 if row[0] == EMPTY || row[1..].iter().zip(keys).all(|(stored, key)| stored == key) {
@@ -445,7 +476,8 @@ impl MemoTable {
                 }
                 self.probes += 1;
                 slot = (slot + 1) & self.mask;
-            }
+            };
+            (value, self.wide_height(keys, value))
         };
         if self.is_clustered {
             self.review();
@@ -454,13 +486,21 @@ impl MemoTable {
             self.hits += 1;
         }
         self.review_full(value != EMPTY);
-        value
+        (value, height)
+    }
+
+    #[inline(always)]
+    fn wide_height(&self, keys: &[Id], value: Id) -> u32 {
+        if value == EMPTY || self.heights.is_empty() {
+            return 0;
+        }
+        self.heights.get(&height_key(keys)).copied().unwrap_or(0)
     }
 
     /// Stores a value for the keys with how many recursive calls nested below its evaluation,
     /// unless the table is off or full.
     pub fn set_with_height(&mut self, keys: &[Id], value: Id, height: u32) {
-        if !self.set(keys, value) {
+        if !self.store(keys, value, height) || self.width <= 2 {
             return;
         }
         if height > 0 {
@@ -471,16 +511,35 @@ impl MemoTable {
     }
 
     /// How many recursive calls nested below the evaluation of the value stored for the keys.
-    #[inline(always)]
     pub fn height(&self, keys: &[Id]) -> u32 {
-        if self.heights.is_empty() {
-            return 0;
+        if self.is_direct {
+            return self
+                .direct_heights
+                .get(keys[0] as usize)
+                .copied()
+                .unwrap_or(0);
+        }
+        if self.width <= 2 {
+            let key = pack(keys);
+            let mut slot = self.packed_home(key);
+            loop {
+                let entry = self.packed[slot];
+                if entry.value == EMPTY || entry.key == key {
+                    return entry.height;
+                }
+                slot = (slot + 1) & self.mask;
+            }
         }
         self.heights.get(&height_key(keys)).copied().unwrap_or(0)
     }
 
     /// Stores a value for the keys, unless the table is off or full, and says whether it did.
     pub fn set(&mut self, keys: &[Id], value: Id) -> bool {
+        self.store(keys, value, 0)
+    }
+
+    // Stores a value for the keys, and in a table of one or two keys its height.
+    fn store(&mut self, keys: &[Id], value: Id, height: u32) -> bool {
         self.largest = keys
             .iter()
             .fold(self.largest.max(value), |largest, &key| largest.max(key));
@@ -497,7 +556,25 @@ impl MemoTable {
                     self.size += 1;
                 }
                 self.direct[key as usize] = value;
+                if height > 0 || !self.direct_heights.is_empty() {
+                    if self.direct_heights.len() < self.direct.len() {
+                        self.direct_heights.resize(self.direct.len(), 0);
+                    }
+                    self.direct_heights[key as usize] = height;
+                }
                 return true;
+            }
+        }
+        if self.width <= 2 && self.is_enabled {
+            // An evaluation that stored its own keys within it is stored again with its height.
+            let key = pack(keys);
+            let mut slot = self.packed_home(key);
+            while self.packed[slot].value != EMPTY {
+                if self.packed[slot].key == key {
+                    self.packed[slot] = Packed { key, value, height };
+                    return true;
+                }
+                slot = (slot + 1) & self.mask;
             }
         }
         if !self.claim() {
@@ -506,7 +583,7 @@ impl MemoTable {
         if self.width <= 2 {
             let key = pack(keys);
             let slot = self.free_packed(key);
-            self.packed[slot] = Packed { key, value };
+            self.packed[slot] = Packed { key, value, height };
             return true;
         }
         let stride = self.width + 1;

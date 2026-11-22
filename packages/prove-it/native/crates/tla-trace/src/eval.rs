@@ -833,6 +833,9 @@ pub enum StackFrame {
     Node(NodeId),
     /// The first `count` operands of a junction.
     Prefix(NodeId, usize),
+    /// The tuple of the arguments of a function application of several, which SANY builds as a
+    /// node of its own with the application's range (`f[a, b]` is `f[<<a, b>>]`).
+    Arguments(NodeId),
 }
 
 /// Where TLC needed a boolean, which words its failure where the value isn't one: each is an
@@ -4783,7 +4786,9 @@ impl<'ir> Evaluator<'ir> {
             .frames
             .iter()
             .map(|frame| match *frame {
-                StackFrame::Node(node) | StackFrame::Prefix(node, _) => node,
+                StackFrame::Node(node)
+                | StackFrame::Prefix(node, _)
+                | StackFrame::Arguments(node) => node,
             })
             .collect();
         let ir = self.ir;
@@ -6066,20 +6071,18 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    /// UNCHANGED e as an expression (`OPCODE_unchanged` of `Tool#evalImpl`, which an action
+    /// reaches once every variable has a value): `v0.equals(v1)` of e's values in the two states,
+    /// whose failure in the method of a value with a source TLC throws as a FingerprintException.
     pub(crate) fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
         let now = self.evaluate_current_state(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
-        Ok(Value::Bool(equals(&now, &then)?))
+        Ok(Value::Bool(self.sourced_equals(&now, &then)?))
     }
 
-    /// Whether the subscript of `<<A>>_v` is the same in the current state, `now`, as in the next,
-    /// `then`, as TLC compares them with `v1.equals(v2)` (`LNAction.eval`, and `Tool#enabled` for
-    /// an ENABLED). TLC's rerun with its `CallStackTool` gives the values the subscript builds
-    /// their sources, so a comparison that fails in the method of one with a source throws a
-    /// FingerprintException (`TupleValue.equals`), which escapes `Worker#doNextCheckLiveness`
-    /// and which `ModelChecker#doNextFailed` reports with no message: the replay marks the
-    /// failure fingerprinted with those sources.
-    pub(crate) fn subscript_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
+    // `now.equals(then)`, marking the replay's failure fingerprinted with the sources of the
+    // values whose `equals` failed, as TLC's `CallStackTool` gives the values it builds sources.
+    fn sourced_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
         let result = equals(now, then);
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
@@ -6095,9 +6098,30 @@ impl<'ir> Evaluator<'ir> {
                 .collect();
             if !sources.is_empty() {
                 stack.is_fingerprinted = true;
-                stack.is_subscript_fingerprinted = true;
                 stack.fingerprinted_sources = sources;
             }
+        }
+        result
+    }
+
+    /// Whether the subscript of `<<A>>_v` is the same in the current state, `now`, as in the next,
+    /// `then`, as TLC compares them with `v1.equals(v2)` (`LNAction.eval`, and `Tool#enabled` for
+    /// an ENABLED). TLC's rerun with its `CallStackTool` gives the values the subscript builds
+    /// their sources, so a comparison that fails in the method of one with a source throws a
+    /// FingerprintException (`TupleValue.equals`), which escapes `Worker#doNextCheckLiveness`
+    /// and which `ModelChecker#doNextFailed` reports with no message: the replay marks the
+    /// failure fingerprinted with those sources.
+    pub(crate) fn subscript_equals(&mut self, now: &Value, then: &Value) -> Evaluated<bool> {
+        let was_fingerprinted = self
+            .call_stack
+            .as_ref()
+            .is_some_and(|stack| stack.is_fingerprinted);
+        let result = self.sourced_equals(now, then);
+        if let Some(stack) = &mut self.call_stack
+            && stack.is_fingerprinted
+            && !was_fingerprinted
+        {
+            stack.is_subscript_fingerprinted = true;
         }
         result
     }
@@ -8707,7 +8731,9 @@ impl<'ir> Evaluator<'ir> {
             .frames
             .iter()
             .map(|frame| match frame {
-                StackFrame::Node(node) | StackFrame::Prefix(node, _) => self.node(*node).0,
+                StackFrame::Node(node)
+                | StackFrame::Prefix(node, _)
+                | StackFrame::Arguments(node) => self.node(*node).0,
             })
             .collect();
         let Some(&innermost) = nodes.last() else {
@@ -10608,7 +10634,7 @@ impl<'ir> Evaluator<'ir> {
                 if let [bound] = &bounds[..] {
                     self.apply_kept_lazy(bound, body, &own, args[0], context)
                 } else {
-                    self.apply_kept_lazy_several(&bounds, body, args, context)
+                    self.apply_kept_lazy_several(node, &bounds, body, args, context)
                 }
             }
             result => result,
@@ -10622,6 +10648,7 @@ impl<'ir> Evaluator<'ir> {
     // and its domain, the set of tuples of the domains.
     fn apply_kept_lazy_several(
         &mut self,
+        node: NodeId,
         bounds: &[Bound],
         body: NodeId,
         args: &[NodeId],
@@ -10635,15 +10662,7 @@ impl<'ir> Evaluator<'ir> {
             }
             domains.push(set);
         }
-        let argument = if let [arg] = args {
-            self.evaluate(*arg, context)?
-        } else {
-            Value::tuple(
-                args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            )
-        };
+        let argument = self.evaluate_arguments(node, args, context)?;
         if matches!(argument, Value::Lambda(_)) {
             return fail(LAZY_BODY_AT_KEY);
         }
@@ -11235,6 +11254,26 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
+    // The argument of a function application: its one argument, or the tuple of several, which
+    // TLC evaluates in a frame of its own (`OPCODE_fa` evaluates `args[1]`, SANY's `$Tuple`).
+    fn evaluate_arguments(
+        &mut self,
+        application: NodeId,
+        args: &[NodeId],
+        context: &Context,
+    ) -> Evaluated<Value> {
+        if let [arg] = args {
+            return self.evaluate(*arg, context);
+        }
+        self.in_frame(StackFrame::Arguments(application), &mut |evaluator| {
+            Ok(Value::tuple(
+                args.iter()
+                    .map(|&arg| evaluator.evaluate(arg, context))
+                    .collect::<Evaluated<_>>()?,
+            ))
+        })
+    }
+
     fn apply_function_value(
         &mut self,
         node: NodeId,
@@ -11242,16 +11281,7 @@ impl<'ir> Evaluator<'ir> {
         args: &[NodeId],
         context: &Context,
     ) -> Evaluated<Value> {
-        let argument = |evaluator: &mut Self| {
-            if args.len() == 1 {
-                return evaluator.evaluate(args[0], context);
-            }
-            Ok(Value::tuple(
-                args.iter()
-                    .map(|&arg| evaluator.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            ))
-        };
+        let argument = |evaluator: &mut Self| evaluator.evaluate_arguments(node, args, context);
         // A function TLC keeps lazy, a definition's or a LET's, is applied without being built.
         // A LET's LazyValue keeps the function its first use computed, with the domain evaluated
         // then: where the evaluator built it before, TLC holds it built (`toFcnRcd`), and

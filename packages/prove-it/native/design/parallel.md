@@ -32,6 +32,14 @@ how.
   - It adds each candidate whose fingerprint isn't in the set yet, importing its values from the
     thread's overlay into the store (`Store::import`, parts first). That gives the numbering,
     parents, out-degrees and depth of TLC's one worker.
+  - Which candidates are new is found first on the threads (`FingerprintSet::fill`), where no
+    invariant waits on the merge and no fingerprint is verified by its key: each thread owns a
+    range of the table's slots and decides the candidates whose home slot is in it, in the
+    merge's order, since equal fingerprints share a home; a probe that runs past the range, and
+    the fingerprint 0, are left for one thread to insert after them, in order. Where the search
+    records its graph, the fill also gives the new states the indices they take in that order and
+    reads each seen candidate's, so that the merge records the edges without a probe; a level
+    that may reach a bound the merge stops at merges as before.
   - Where the search records a graph for liveness, each thread records its states' steps too,
     each to a state by the index `Candidates::index` gives it: a state found before the level by
     its own, and one the thread found by the index it would have if the thread's states all
@@ -59,7 +67,12 @@ how.
     the search first. Under a VIEW or symmetry the state another thread found first can be another
     state with the same key, whose invariant TLC checks instead, so the thread only records the
     failure, an invariant false or one that fails to evaluate, and the merge stops there only if
-    that successor's key is still new when its parent's turn comes.
+    that successor's key is still new when its parent's turn comes. An action property TLC checks
+    on every step, to a successor seen or not (`Worker.doNextCheckImplied`), so a step that
+    violates one stops the thread at once whichever thread found the successor's key: deferring
+    it as an invariant's failure let the merge pass the state by where another thread had found
+    the key, which is why models with action properties under a VIEW or symmetry (MCabs,
+    FastPaxos, BufferedRandomAccessFile) once ran on one thread.
 - **How many threads.** In the binding, `PROVE_IT_WORKERS`. In the native binary, TLC's
   `-workers` (`auto` is every core), which `PROVE_IT_WORKERS` overrides, so Parity can run on four
   threads under the `-workers 1` its recordings were made with. Either way at most

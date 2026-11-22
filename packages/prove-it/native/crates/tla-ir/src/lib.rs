@@ -54,7 +54,7 @@ pub type TextId = u32;
 /// An index into [`Nodes::arena`].
 pub type NodeId = u32;
 /// A warning raised while TLC evaluates the model, kept in evaluation order with Print.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RuntimeWarning {
     Except { node: NodeId },
     Unchanged { node: NodeId, variable: u32 },

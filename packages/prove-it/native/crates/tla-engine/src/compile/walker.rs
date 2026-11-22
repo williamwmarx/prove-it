@@ -26,7 +26,7 @@ use super::predicate::{Leaf, Predicate, Reject, Test};
 use super::{
     Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
     DefinitionForm, Operator, OperatorBody, OperatorKey, Root, SEARCH_SLOTS, Scope, bind, decline,
-    eval, leaf, lookup, unsupported,
+    eval, leaf, lookup, pruned, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Continue, Eval, Machine, Member, Printed, RuntimeWarning, Step, UNASSIGNED};
@@ -107,7 +107,7 @@ fn target<'m>(machine: &'m mut Machine<'_>, is_init: bool) -> &'m mut Vec<Id> {
 }
 
 // The element at a position of a set, or of the tuple a walk of a universal quantifier also takes.
-fn element_at(machine: &Machine<'_>, id: Id, position: u32) -> Id {
+pub(super) fn element_at(machine: &Machine<'_>, id: Id, position: u32) -> Id {
     if machine.store.kind_of(id) == KIND_SET {
         machine.store.element_at(id, position)
     } else {
@@ -125,7 +125,7 @@ pub(super) struct Ordered {
 impl Ordered {
     /// The enumeration of a bound, which fails where TLC's of the set fails
     /// (`Compiled::check_enumerated`).
-    fn checked(self, set: Compiled) -> Ordered {
+    pub(super) fn checked(self, set: Compiled) -> Ordered {
         let (inner, is_ordered) = (self.eval, self.is_ordered);
         Ordered {
             eval: eval(move |machine| {
@@ -2990,17 +2990,72 @@ impl<'a> Compiler<'a> {
                 then,
             );
         }
+        let pruning = self.get_conjunct_pruning(items, index, context, options, &known);
+        self.pruning = pruning.map(|pruning| (items[index].node, pruning));
         let mut rest = |compiler: &mut Compiler<'a>, known: &Known| {
             compiler.conjunction(items, context, options, index + 1, 0, known.clone(), then)
         };
         let mut shared = Shared::new(&mut rest);
-        self.walk(
+        let walked = self.walk(
             items[index].node,
             context,
             options,
             &known,
             &mut |compiler, known| shared.call(compiler, known),
+        );
+        self.pruning = None;
+        walked
+    }
+
+    // The pruning of the enumeration of the conjunct at `index` where it is `x' \in [D -> T]`,
+    // x unassigned, and the conjuncts after it give one (`pruned`). What fails to compile for it
+    // leaves the walk as it is.
+    fn get_conjunct_pruning(
+        &mut self,
+        items: &Rc<[Item]>,
+        index: usize,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+    ) -> Option<pruned::Pruning> {
+        if options.is_init {
+            return None;
+        }
+        let NodeKind::Apply { name, args } = self.node(items[index].node).1 else {
+            return None;
+        };
+        if name.is_local || self.text(name.text) != "\\in" {
+            return None;
+        }
+        let [element, set] = args.as_slice() else {
+            return None;
+        };
+        let variable = self
+            .get_assignable_index(*element, context, false)
+            .ok()
+            .flatten()?;
+        if known.get(variable) != UNSET {
+            return None;
+        }
+        let following: Vec<NodeId> = items[index + 1..].iter().map(|item| item.node).collect();
+        let (length, keys) = self.get_pruned_prefix(variable, *set, &following, context)?;
+        // The conjuncts before the quantifier, walked to their end, as the pre-pass walks them.
+        let prefix: Rc<[Item]> = items[index + 1..index + 1 + length].into();
+        let after = known.with(variable, SET);
+        let walk = self
+            .conjunction(&prefix, context, options, 0, 0, after, &mut |_, _| Ok(None))
+            .ok()?;
+        let walk = walk.unwrap_or_else(|| step(|machine, on_complete| on_complete(machine)));
+        self.compile_pruning(
+            walk,
+            &following[..length],
+            &keys,
+            following[length],
+            variable,
+            context,
         )
+        .ok()
+        .flatten()
     }
 
     // The conjunction from a conjunct on, past the shortcut's check, which its caller made.
@@ -3150,6 +3205,15 @@ impl<'a> Compiler<'a> {
             let is_streamed = self.held_streams.get(index)?;
             Some((unsorted, Arc::clone(is_streamed)))
         });
+        let pruning = match self.pruning.take() {
+            Some((node, pruning)) if node == guard && state == UNSET && !is_power_set => {
+                Some(pruning)
+            }
+            other => {
+                self.pruning = other;
+                None
+            }
+        };
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let source = self
             .is_printed_variable(variable)
@@ -3214,6 +3278,22 @@ impl<'a> Compiler<'a> {
                 }
                 target(machine, is_init)[index] = UNASSIGNED;
                 machine.assigned -= 1;
+            }
+            let survivors = match &pruning {
+                Some(pruning) if held.is_none() => pruning.survivors(machine, index, id, size),
+                _ => None,
+            };
+            if let Some(survivors) = survivors {
+                machine.assigned += 1;
+                for position in survivors {
+                    let element = machine.store.element_at(id, position);
+                    target(machine, is_init)[index] = element;
+                    machine.note_assigned(index, element);
+                    run_rest(&assigned, machine, on_complete)?;
+                }
+                target(machine, is_init)[index] = UNASSIGNED;
+                machine.assigned -= 1;
+                return Ok(());
             }
             machine.assigned += 1;
             for position in 0..size {

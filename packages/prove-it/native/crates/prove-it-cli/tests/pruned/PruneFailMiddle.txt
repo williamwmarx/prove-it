@@ -1,0 +1,17 @@
+Computing initial states...
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = (a :> 0 @@ b :> 0 @@ c :> 0)
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 5 to line 10, column 38 in PruneFailMiddle
+1. Line 7, column 8 to line 7, column 25 in PruneFailMiddle
+2. Line 8, column 8 to line 8, column 19 in PruneFailMiddle
+3. Line 9, column 8 to line 9, column 30 in PruneFailMiddle
+4. Line 9, column 8 to line 9, column 26 in PruneFailMiddle
+
+
+2 states generated, 2 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 2.
