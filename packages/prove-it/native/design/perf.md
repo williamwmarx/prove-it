@@ -1619,47 +1619,53 @@ row of a table of over 100 MB, each miss stores one, and the table doubles its w
 `MemoTable::store` and `rehash` 2.4 %.
 
 A miss of the table of `e \in S`, S a set the engine builds, now asks `Store::find_in_set` first,
-which answers where `Store::is_member` would answer by scanning the set for the element's id: a
-set of at most 256 elements that isn't a run of integers, neither side holding a function TLC
-keeps lazy or ANY, and no comparison of TLC's search able to fail (the element's shape joins the
-set's). Such a miss also lets its table take no more than 4,096 entries from then on
-(`MemoTable::shorten`): that many rows stay in a core's own cache, where a hit costs less than
-the scan, and a row read from memory costs more. A table full at that size turns off as any full
-table does, where fewer than half of a window's lookups hit, and the membership is then the scan
-alone. Where the scan can't answer, the miss is `is_member`'s as before, failures included. The
-answer is `is_member`'s own either way, so no output changes. `tla-values/tests/store.rs`
-compares the two on every pair of a dozen sets and 26 elements, and `prove-it-cli/tests/held`
-compares five specs with TLC at d8fb231 on one, two and four threads, each testing in more sets
-than the table then takes: records of two shapes, a record of the state and then a number in
-sets of records, which TLC fails to compare, a set that grows past 256 elements and a run of
-integers, sets and tuples, and a model value in sets of numbers. A Parity run that compared
-every answer of the scan with the table's membership, on every model of the corpus on one thread
-and on four, found no difference and no panic (Depot qth3j4ft99, on the first form below).
+which answers where `Store::is_member` would answer by scanning the set for the element's id: a set
+of at most 256 elements that isn't a run of integers, neither side holding a function TLC keeps lazy
+or ANY, and no comparison of TLC's search able to fail (the element's shape joins the set's). Such a
+miss also lets its table take no more than 4,096 entries from then on (`MemoTable::shorten`): that
+many rows stay in a core's own cache, where a hit costs less than the scan, and a row read from
+memory costs more. A table full at that size turns off as any full table does, where fewer than half
+of a window's lookups hit, and the membership is then the scan alone. A hit spares the two sides'
+evaluation too, so the table is shortened only where both are read in place: a variable, a bound
+name, an application or field of them that a fused node reads (`Shape`), or an expression of bound
+names alone, whose own tables are as small as their sets. A membership in a definition of the state,
+as MCMultiNode's `history[x].tx_id \in CommittedTxIDs`, reads the definition's table on every miss,
+and keeps its own whole. Where the scan can't answer, the miss is `is_member`'s as before, failures
+included. The answer is `is_member`'s own either way, so no output changes.
+`tla-values/tests/store.rs` compares the two on every pair of a dozen sets and 26 elements, and
+`prove-it-cli/tests/held` compares five specs with TLC at d8fb231 on one, two and four threads, each
+testing in more sets than the table then takes: records of two shapes, a record of the state and
+then a number in sets of records, which TLC fails to compare, a set that grows past 256 elements and
+a run of integers, sets and tuples, and a model value in sets of numbers. A Parity run that compared
+every answer of the scan with the table's membership, on every model of the corpus on one thread and
+on four, found no difference and no panic (Depot qth3j4ft99, on the first form below).
 
-On `depot-ubuntu-24.04-16` against the integration branch at ba748411, with passed-sets, medians
-of 5 interleaved runs with the range (Depot vdt6qvwgzn):
+On `depot-ubuntu-24.04-16` against the integration branch at 531431ba, with passed-sets, medians
+of 5 interleaved runs with the range (Depot 5c5xlzhslk):
 
 | Model | 1 thread | 16 threads | CPU s at 16 | RSS MB, 1 thread |
 |---|---|---|---|---|
-| PaxosCommit | 13.31 (12.78–13.91) → 10.58 (10.08–11.01), 1.26× | 1.72 (1.63–1.79) → 1.46 (1.44–1.49), 1.18× | 22.4 → 18.1 | 685 → 372 |
-| TLCSailfish1 | 3.14 (3.07–3.25) → 2.86 (2.81–2.89), 1.10× | 0.37 (0.36–0.39) → 0.35 (0.35–0.36) | 4.41 → 4.10 | 160 → 146 |
+| PaxosCommit | 12.57 (12.49–12.89) → 10.12 (9.99–10.30), 1.24× | 1.57 (1.56–1.60) → 1.35 (1.33–1.38), 1.16× | 20.4 → 17.0 | 693 → 370 |
 
-Of PaxosCommit's gain passed-sets is 1.18–1.22× and the tables the rest. At 16 threads its memory
-is 2,345 → 2,198 MB: each thread's share of a table's room was 262,144 entries already.
-MCExactInitialSync is unchanged, 11.82 → 11.82 s and 907 MB. The suite is 1.02× on one thread,
-15 of 15 agreeing with TLC. Three models' medians rose in that run, on a machine whose ranges were
-wide, and were measured again alone: MCLamportMutex 1.74 (1.69–1.91) → 1.99 (1.67–2.08) there,
-1.66 (1.63–1.78) → 1.65 (1.63–1.70) over 9 runs (knxnnv8dmh); StarkMutex 2.37 → 2.46 there,
-2.29 → 2.27 over 9; SpanTreeRandom 0.35 (0.35–0.35) → 0.36 (0.36–0.37) there and
-0.34 (0.34–0.36) → 0.36 (0.35–0.37) over 11 (tf15xpfx7m), which is the build and not the change:
+Of that gain passed-sets is 1.18–1.22× and the tables the rest, and all of the memory. At 16
+threads the memory is 2,355 → 2,202 MB: each thread's share of a table's room was 262,144 entries
+already. MCExactInitialSync is unchanged, 12.44 → 12.47 s and 904 MB, and MCMultiNode 3.51
+(3.49–3.54) → 3.55 (3.51–3.58), 3.58 (3.54–3.80) → 3.61 (3.53–3.92) over 9 runs alone
+(wct3b8c0cz). The suite is 1.02× on one thread and on 16, 15 of 15 agreeing with TLC, no model
+slower beyond its range. `bench-suite.json` on `depot-ubuntu-24.04-4`, 7 runs (57nblzt3lq), is
+1.00× on one thread and on four, 18 of 18 agreeing: `benchmarks/commit` 0.26 → 0.26 s,
+SimpleRegular 0.43 → 0.43, Paxos_MC 0.52 (0.51–0.53) → 0.50 (0.49–0.52), MCLamportMutex 1.77
+(1.68–1.86) → 1.82 (1.67–1.89), and MCDisruptor_MPMC 0.16 → 0.17 at the report's two digits,
+0.17 → 0.17 in the three runs before it. Parity is clean at this form (0th42788p4).
+
+Shortening wherever the scan answered, whatever the two sides read, measured against ba748411
+(vdt6qvwgzn): PaxosCommit 13.31 → 10.58 s and TLCSailfish1 3.14 (3.07–3.25) → 2.86 (2.81–2.89),
+1.10×, which the condition gives up (2.96 → 2.90 with it). On the integration branch at 531431ba
+it cost MCMultiNode 3.58 (3.50–3.74) → 3.82 (3.59–3.96) s (30z3rcnrj3). SpanTreeRandom's median
+moved by the build alone in those runs, 0.34 (0.34–0.36) → 0.36 (0.35–0.37) over 11 (tf15xpfx7m):
 none of its memberships is answered by a scan (its tables hold the same entries with the cap and
 without, by an instrumentation build), and the same build without the call that shortens a table
-measured 0.35 (0.34–0.35) → 0.35 (0.34–0.35) over 11 (cpbz91bs70), as passed-sets alone did
-(rkw7w0m95q). `bench-suite.json` on `depot-ubuntu-24.04-4`, 9 runs (k3h1ssvkb1),
-is 1.00× on one thread and on four, 18 of 18 agreeing: `benchmarks/commit` 0.27 (0.26–0.29) → 0.28
-(0.26–0.29) s, Paxos_MC 0.51 (0.51–0.52) → 0.50 (0.49–0.50), SimpleRegular 0.45 (0.43–0.46) → 0.46
-(0.45–0.48), which earlier runs of these changes put at 0.48 → 0.46, 0.45 → 0.43 and
-0.49 → 0.46 (24t6khh5vx, 61gv8gvgz7, zs3v9lq02d). Parity is clean at this form (bvn5qv63ld).
+measured 0.35 (0.34–0.35) → 0.35 (0.34–0.35) over 11 (cpbz91bs70).
 
 Two earlier forms lost on short models. Scanning before the table on every membership:
 `benchmarks/commit`, whose table of `[kind |-> "prepared", from |-> p] \in messages` is small and
