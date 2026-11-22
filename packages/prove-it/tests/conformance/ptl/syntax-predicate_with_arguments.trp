@@ -1,0 +1,4 @@
+and([
+or([p(a, b)]), 
+or([not p(b, a)])]).
+

@@ -1,186 +1,142 @@
-//! Decides the text tlapm sends LS4, as LS4 does: unsat when the negated obligation has no model,
-//! which proves the obligation.
+//! Decides the text tlapm sends LS4 as `ptl_to_trp -i file | ls4` does: the text is translated to
+//! clauses as `translate` does, LS4 reads them as `Trp2Spec.cc` does, and the clauses are
+//! satisfiable, which fails the obligation, or not, which proves it. Where the translation writes
+//! no clauses, or LS4 can't read what it writes, LS4 reaches no verdict.
+
+use std::collections::HashMap;
 
 use prove_decide::{DecideError, Decision, Limits, Statistic, Verdict};
 
 use crate::tableau::{Formula, Formulas, get_satisfiability};
+use crate::translate::{self, Clauses};
 
-/// Text that isn't LS4 input is a prover error, which tlapm counts as a failure.
-fn not_ls4(expected: &str, found: Option<&str>) -> DecideError {
-    DecideError::Prover(format!(
-        "Expected {expected} in LS4 input, found {}",
-        found.unwrap_or("the end")
-    ))
+/// LS4's identifier buffer (`IDENTBUF_SIZE` in `Trp2Spec.cc`) holds 31 characters; a longer
+/// identifier ends it.
+const IDENTIFIER_LIMIT: usize = 31;
+
+/// Builds the formula the clauses mean, as LS4 reads them: `or([...])` holds at first,
+/// `always(or([...]))` at every time, `next(l)` at the next time and `sometime(l)` at some time.
+#[derive(Default)]
+struct Builder {
+    nodes: Vec<Formula>,
+    atoms: Vec<String>,
+    numbers: HashMap<String, usize>,
 }
 
-/// The tokens of `<->|->|[()~&|]|[\w']+|\S`, on ASCII text.
-fn tokenize(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
-    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'\'';
-    let mut tokens = Vec::new();
-    let mut start = 0;
-    while start < bytes.len() {
-        let rest = &text[start..];
-        let length = if bytes[start].is_ascii_whitespace() || bytes[start] == 0x0b {
-            start += 1;
-            continue;
-        } else if rest.starts_with("<->") {
-            3
-        } else if rest.starts_with("->") {
-            2
-        } else if is_word(bytes[start]) {
-            bytes[start..]
-                .iter()
-                .take_while(|&&byte| is_word(byte))
-                .count()
-        } else {
-            1
-        };
-        tokens.push(&text[start..start + length]);
-        start += length;
-    }
-    tokens
-}
-
-/// LS4's input syntax, as tlapm writes it: every operator is parenthesized except the facts of a
-/// sequent, which are joined by & before ->.
-struct Parser<'a> {
-    tokens: Vec<&'a str>,
-    position: usize,
-    formulas: Formulas,
-}
-
-impl<'a> Parser<'a> {
-    fn peek(&self) -> Option<&'a str> {
-        self.tokens.get(self.position).copied()
-    }
-
-    fn take(&mut self) -> Result<&'a str, DecideError> {
-        let token = self.peek().ok_or_else(|| not_ls4("a formula", None))?;
-        self.position += 1;
-        Ok(token)
-    }
-
+impl Builder {
     fn add(&mut self, formula: Formula) -> usize {
-        self.formulas.nodes.push(formula);
-        self.formulas.nodes.len() - 1
+        self.nodes.push(formula);
+        self.nodes.len() - 1
     }
 
-    fn parse_unary(&mut self) -> Result<usize, DecideError> {
-        let token = self.take()?;
-        match token {
-            "(" => {
-                let inner = self.parse_equiv()?;
-                match self.peek() {
-                    Some(")") => {
-                        self.position += 1;
-                        Ok(inner)
+    /// `trp_ReadId`: an identifier LS4's buffer holds.
+    fn atom(&mut self, name: &str) -> Option<usize> {
+        if name.len() > IDENTIFIER_LIMIT {
+            return None;
+        }
+        let atom = match self.numbers.get(name) {
+            Some(&atom) => atom,
+            None => {
+                self.atoms.push(name.to_owned());
+                self.numbers.insert(name.to_owned(), self.atoms.len() - 1);
+                self.atoms.len() - 1
+            }
+        };
+        Some(self.add(Formula::Atom(atom)))
+    }
+
+    /// `trp_ReadLiteral`: an identifier or `not` one; an argument list is a syntax error.
+    fn literal(&mut self, literal: &translate::Formula) -> Option<usize> {
+        use translate::Formula::*;
+        match literal {
+            Atom(name, args) if args.is_empty() => self.atom(name),
+            NotAtom(name, args) if args.is_empty() => {
+                let atom = self.atom(name)?;
+                Some(self.add(Formula::Not(atom)))
+            }
+            True => self.atom("True"),
+            False => self.atom("False"),
+            _ => None,
+        }
+    }
+
+    /// `trp_ReadClauseCore`: the clause's disjunction, or none where LS4 rejects the clause.
+    fn clause(&mut self, clause: &[translate::Formula], is_universal: bool) -> Option<usize> {
+        use translate::Formula::*;
+        let mut disjunction = None;
+        let mut has_next = false;
+        let mut has_eventuality = false;
+        for literal in clause {
+            let node = match literal {
+                Sometime(inner) => {
+                    if !is_universal || has_next || has_eventuality {
+                        return None;
                     }
-                    found => Err(not_ls4(")", found)),
+                    has_eventuality = true;
+                    let inner = self.literal(inner)?;
+                    self.add(Formula::Eventually(inner))
                 }
-            }
-            "~" | "not" => {
-                let body = self.parse_unary()?;
-                Ok(self.add(Formula::Not(body)))
-            }
-            "always" => {
-                let body = self.parse_unary()?;
-                Ok(self.add(Formula::Always(body)))
-            }
-            "sometime" => {
-                let body = self.parse_unary()?;
-                Ok(self.add(Formula::Eventually(body)))
-            }
-            "next" => {
-                let body = self.parse_unary()?;
-                Ok(self.add(Formula::Next(body)))
-            }
-            _ if token
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'\'') =>
-            {
-                let atoms = &mut self.formulas.atoms;
-                let atom = match atoms.iter().position(|name| name == token) {
-                    Some(atom) => atom,
-                    None => {
-                        atoms.push(token.to_owned());
-                        atoms.len() - 1
+                Next(inner) => {
+                    if !is_universal || has_eventuality {
+                        return None;
                     }
-                };
-                Ok(self.add(Formula::Atom(atom)))
+                    has_next = true;
+                    let inner = self.literal(inner)?;
+                    self.add(Formula::Next(inner))
+                }
+                _ => self.literal(literal)?,
+            };
+            disjunction = Some(match disjunction {
+                Some(left) => self.add(Formula::Or(left, node)),
+                None => node,
+            });
+        }
+        Some(disjunction.unwrap_or_else(|| self.add(Formula::Constant(false))))
+    }
+
+    fn spec(mut self, clauses: &Clauses) -> Option<Formulas> {
+        let mut conjunction = None;
+        let lists = [
+            (&clauses.initial, false),
+            (&clauses.universal, true),
+            (&clauses.step, true),
+            (&clauses.eventuality, true),
+        ];
+        for (list, is_universal) in lists {
+            for clause in list {
+                let mut node = self.clause(clause, is_universal)?;
+                if is_universal {
+                    node = self.add(Formula::Always(node));
+                }
+                conjunction = Some(match conjunction {
+                    Some(left) => self.add(Formula::And(left, node)),
+                    None => node,
+                });
             }
-            _ => Err(not_ls4("a formula", Some(token))),
         }
+        let root = conjunction.unwrap_or_else(|| self.add(Formula::Constant(true)));
+        Some(Formulas {
+            nodes: self.nodes,
+            atoms: self.atoms,
+            root,
+        })
     }
-
-    fn parse_junction(
-        &mut self,
-        operator: &str,
-        parse_operand: fn(&mut Self) -> Result<usize, DecideError>,
-        make: fn(usize, usize) -> Formula,
-    ) -> Result<usize, DecideError> {
-        let mut left = parse_operand(self)?;
-        while self.peek() == Some(operator) {
-            self.position += 1;
-            let right = parse_operand(self)?;
-            left = self.add(make(left, right));
-        }
-        Ok(left)
-    }
-
-    fn parse_conjunction(&mut self) -> Result<usize, DecideError> {
-        self.parse_junction("&", Self::parse_unary, Formula::And)
-    }
-
-    fn parse_implies(&mut self) -> Result<usize, DecideError> {
-        let left = self.parse_junction("|", Self::parse_conjunction, Formula::Or)?;
-        if self.peek() != Some("->") {
-            return Ok(left);
-        }
-        self.position += 1;
-        let right = self.parse_implies()?;
-        Ok(self.add(Formula::Implies(left, right)))
-    }
-
-    fn parse_equiv(&mut self) -> Result<usize, DecideError> {
-        let left = self.parse_implies()?;
-        if self.peek() != Some("<->") {
-            return Ok(left);
-        }
-        self.position += 1;
-        let right = self.parse_equiv()?;
-        Ok(self.add(Formula::Equiv(left, right)))
-    }
-}
-
-fn parse_ls4(text: &str) -> Result<Formulas, DecideError> {
-    if !text.is_ascii() {
-        return Err(DecideError::Prover("Expected ASCII LS4 input".into()));
-    }
-    let mut parser = Parser {
-        tokens: tokenize(text),
-        position: 0,
-        formulas: Formulas {
-            nodes: Vec::new(),
-            atoms: Vec::new(),
-            root: 0,
-        },
-    };
-    parser.formulas.root = parser.parse_equiv()?;
-    if let Some(token) = parser.peek() {
-        return Err(DecideError::Prover(format!(
-            "Expected the end of LS4 input, found {token}"
-        )));
-    }
-    Ok(parser.formulas)
 }
 
 /// The verdict, with the steps as its one statistic, each a check of the limits.
 pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
-    let formulas = parse_ls4(text)?;
-    let verdict: Verdict = get_satisfiability(&formulas, &mut || {
-        limits.is_step_limit_reached() || limits.is_canceled() || limits.is_past_deadline()
-    });
+    // The translation checks the stop as it goes; the tableau's steps count against the limits.
+    let formulas = translate::translate(text, &mut || {
+        limits.is_canceled() || limits.is_past_deadline()
+    })
+    .ok()
+    .and_then(|clauses| Builder::default().spec(&clauses));
+    let verdict = match formulas {
+        Some(formulas) => get_satisfiability(&formulas, &mut || {
+            limits.is_step_limit_reached() || limits.is_canceled() || limits.is_past_deadline()
+        }),
+        None => Verdict::Unknown,
+    };
     Ok(Decision {
         verdict,
         statistics: vec![("steps", Statistic::Count(limits.steps()))],

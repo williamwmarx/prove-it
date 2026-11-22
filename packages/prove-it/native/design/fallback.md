@@ -8769,6 +8769,20 @@ proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabel
 `imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
 port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
 
+The PTL decider reads LS4's input as `ptl_to_trp -i file | ls4` reads it (`Params.ls4`):
+tlapm's `translate` (`translate/` at b91fb6c) lexes `=>` and `<=>` beside `->` and `<->`, a `;`
+comment, `not`, `until` and `unless`, `!` and `?` quantifiers over `[X]`, `True` and `False`,
+and the past `alwaysp` and `sometimep`, parses with ocamlyacc's precedences (`until` below
+`unless`, `<->`, `|`, `->` and `&`, all left associative, each prefix operator above them) and
+writes LS4 clauses by renaming (`dsnf`), with a constant inside a clause printed as the atom
+`True` or `False`, so `sometime False` is satisfiable to LS4 (tla-ts calls this a bug of
+`string_of_formula` and records `unsat` as correct; the port prints LS4's `sat`); it writes no
+clauses for a parse error, the reserved word `skolem`, a lowercase bound variable or a past
+operator (`Illegal1`), and LS4 (`Trp2Spec.cc`) rejects an atom with arguments, so each such input
+reaches no verdict (`unknown`), where the port's own reader rejected every spelling and operator
+but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/conformance/ptl`'s
+`.trp` recordings and `syntax-*.ls4`).
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8790,6 +8804,7 @@ port answered `unknown` on its outer syntax error and Isabelle checks the proofs
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
+| with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 
 ### Declines
 
