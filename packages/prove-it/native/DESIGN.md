@@ -1746,9 +1746,10 @@ code made this design change, the code wins, and this records how:
     on the micro-benchmark; the chosen closures 1.4 µs.
 - **Memo (3.2).** The tables, their hashing, probation and direct tables are `memo.ts`'s. Keys of
   width two or less aren't packed into a `u64` yet (M7). `Options { is_memo_off,
-  is_epoch_checked }` are `PROVE_IT_MEMO=off`, which turns off the memo tables, epoch caches and
-  values computed once, and `PROVE_IT_EPOCH_CHECK=1`, which evaluates again on each epoch cache hit
-  and panics if the value differs, which the binding's `catch_unwind` turns into an
+  is_epoch_checked }` are `PROVE_IT_MEMO=off`, which turns off the memo tables, epoch caches,
+  values computed once and sets kept that passed a test of their elements (`Machine::holds_all`),
+  and `PROVE_IT_EPOCH_CHECK=1`, which evaluates again on each epoch cache hit, and tests again each
+  element `holds_all` passes over, and panics if the value differs, which the binding's `catch_unwind` turns into an
   `EngineInvariantError` (3.4). `replay` reads both from the environment; M5's `check()` is to take
   them from the TypeScript side.
 - **Deep nesting.** Evaluation recurses with the expression and with TLA+ recursion, so it runs

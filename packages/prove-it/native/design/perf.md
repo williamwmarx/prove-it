@@ -1097,7 +1097,7 @@ set reads nothing and the remembered run nested no recursive call. TLC's
 `SubsetValue.member` (SubsetValue.java:94–115 at d8fb231) tests the elements in order and stops
 at the first that fails, so the answer and any failure are the same. It is a different mechanism
 from the cache of membership by element dropped above, which paid a table lookup for each
-element it no longer tested.
+element it no longer tested. It is built: passed-sets, below.
 
 ### One standard module parsed, when one of its definitions is read (parse-one-module)
 
@@ -1532,6 +1532,143 @@ returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `fi
 cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
 again, and the tuples `<<v, c>>`.
 
+### The elements a set that passed already holds (passed-sets)
+
+PaxosCommit's `PCTypeOK` tests `msgs \in SUBSET Message` on each of 888,713 sets of messages, every
+message of each against a union of five sets of records: 18.7 % of the one-thread run
+(thread-claims, above). A new `msgs` is nearly always the set a state just checked held, with one
+message more.
+
+TLC's `SubsetValue.member` (SubsetValue.java:94–115 at d8fb231) takes the elements of the value in
+its normalized order (`SetEnumValue.elements`, which normalizes first) and asks the base set's
+`member` of each: it answers FALSE at the first that isn't one, and fails where a test fails.
+`EnumerableValue.isSubsetEq` (EnumerableValue.java:45–60) is the same loop for `S \subseteq T`.
+The engine's loops were the same. Where the base set's footprint is empty, `Machine::holds_all`
+now keeps, for that place in the spec, the set that last passed whole, and of the next set tests
+only the elements the kept one lacks: it walks the two together, both in TLC's order, and passes
+over an element it finds in the kept set within four places of the last one found there. An
+element further on is only tested again. Why passing over an element changes nothing TLC does:
+
+- **Order.** Every element is still visited in the set's order, and the ones passed over hold, so
+  the first that doesn't hold, or whose test fails, is the first of all of them: the answer is
+  the same, and so is the failure, at the same element with the same elements tested before it.
+- **A test that fails rather than answers.** A set is kept only where every test answered TRUE,
+  and an element passed over has the id of one of those. Equal ids are equal values, but for a
+  value that is or holds a function TLC keeps lazy, or ANY (`Store::comparison_can_fail`); a set
+  holding one is never kept.
+- **A base set that reads something.** An empty footprint is the condition under which a round of
+  parts settles (above): the set reads no variable, bound name, register or count of the search
+  and prints, draws and warns nothing, which the footprint holds as slots. Any other base set
+  tests every element, as before. `TLCCache` with a constant key leaves a footprint empty; its
+  cache only gains entries, so an element's test finds every value it found before.
+- **The base set's own evaluation.** TLC evaluates T before it tests anything, and the engine
+  still runs T's parts on every test (`Machine::run_parts`), settled or not.
+- **Recursion.** A cached value makes TLC's stack as deep where it is read as where it was
+  computed. A set is kept only where the whole run of tests nested no recursive call, the height
+  of a cached one included, so the tests passed over reach no deeper than the place itself. A
+  base set whose test recurses is tested in full every time, and stops where TLC's stack would.
+- **What a test prints.** A set is kept only where the run added nothing to the output, warnings
+  included.
+- **Threads.** Each machine keeps its own sets, and `Machine::forget_from` drops one whose id the
+  overlay lets go of.
+
+`PROVE_IT_MEMO=off` turns the keeping off, and `PROVE_IT_EPOCH_CHECK=1` tests each element it
+passes over and panics unless it holds. `prove-it-cli/tests/passed` compares ten specs with TLC at
+d8fb231 on one thread and with every level shared between two and four: sets that grow and
+shrink, with a set of subsets inside; a message outside the set after five that passed; two added
+at once, one outside the set and one whose test fails, in either order of TLC's; the same under
+`\subseteq`; a base set that reads a variable and shrinks under a set that passed; and a base set
+whose test recurses 100 deep, and 1,700 deep under a recursion as deep, which the engine declines
+as TLC's stack overflows. The test fails where the height or the footprint is ignored, or the
+kept set is searched wrongly. A Parity run with the check forced on, each element passed over
+tested again on every model of the corpus on one thread and on four, found no difference and no
+panic (Depot b08mdxc523).
+
+On `depot-ubuntu-24.04-16` against the integration branch at ba748411, medians of 5 interleaved
+runs with the range:
+
+| Run | PaxosCommit, 1 thread | 16 threads | CPU s at 16 |
+|---|---|---|---|
+| r3slvll58b | 13.20 (12.73–13.35) → 11.19 (10.94–11.34), 1.18× | 1.74 (1.59–1.81) → 1.53 (1.45–1.62) | 23.1 → 19.7 |
+| r59kprcvnc, the suite | 14.61 (13.98–14.98) → 12.01 (11.52–12.45), 1.22× | 1.81 (1.73–1.89) → 1.62 (1.58–1.72) | 23.0 → 20.4 |
+
+Memory is unchanged (685 MB), on MCExactInitialSync too (907 MB; 12.39 → 12.10 s on one thread in
+f2dhv7cmmw, the ranges overlapping). The invariants went from 18.7 % of PaxosCommit's one-thread
+profile to 4.4 % (Depot jfcw8p8n9v): what is left is the walk of the two sets, one message's
+test and the memo lookups of the other two conjuncts.
+
+**Where the machine keeps them.** With the sets kept in a field among the machine's other caches,
+the suite's models that never test a subset moved by the build alone: MCMultiNode 3.90
+(3.88–3.90) → 4.02 (3.97–4.04) s, MCLamportMutex 1.66 → 1.69, Detlefs 1.79 → 1.81, and GameOfLife
+0.92 → 0.89 the other way (kprsrdjfmc; r59kprcvnc the same signs). The field shifted the machine's
+hot fields by 24 bytes. Declared last, it leaves them where they were, and the same suite has no
+model slower beyond its range (f2dhv7cmmw: MCMultiNode 3.96 (3.94–4.12) → 4.04 (3.95–4.12),
+MCLamportMutex 1.80 → 1.79, Detlefs 1.91 → 1.94 with ranges 1.88–1.94 and 1.89–1.98, cf1s_folklore
+4.83 → 4.70).
+
+### The table of a membership answered by id, kept within the cache (held-sets)
+
+PaxosCommit's memo tables by lookups, one thread, after the change above (an instrumentation
+build): two tables of four keys, `[type |-> "phase2b", …] \in msgs` of `Decide` under each of its
+two values, keyed by `msgs` and three bound names, took 10.2 and 8.0 million lookups, hit 58 % and
+47 %, filled at 4,194,304 entries each and turned off. A miss there costs little: the store
+answers a record's membership in a set of records by its id (Membership by id, above), a scan of
+at most a few dozen ids. The tables cost more than they saved: each lookup of a new `msgs` reads a
+row of a table of over 100 MB, each miss stores one, and the table doubles its way to the cap.
+`perf` (Depot jfcw8p8n9v): the lookups of four keys 3.3 % of the run by themselves,
+`MemoTable::store` and `rehash` 2.4 %.
+
+A miss of the table of `e \in S`, S a set the engine builds, now asks `Store::find_in_set` first,
+which answers where `Store::is_member` would answer by scanning the set for the element's id: a
+set of at most 256 elements that isn't a run of integers, neither side holding a function TLC
+keeps lazy or ANY, and no comparison of TLC's search able to fail (the element's shape joins the
+set's). Such a miss also lets its table take no more than 4,096 entries from then on
+(`MemoTable::shorten`): that many rows stay in a core's own cache, where a hit costs less than
+the scan, and a row read from memory costs more. A table full at that size turns off as any full
+table does, where fewer than half of a window's lookups hit, and the membership is then the scan
+alone. Where the scan can't answer, the miss is `is_member`'s as before, failures included. The
+answer is `is_member`'s own either way, so no output changes. `tla-values/tests/store.rs`
+compares the two on every pair of a dozen sets and 26 elements, and `prove-it-cli/tests/held`
+compares five specs with TLC at d8fb231 on one, two and four threads, each testing in more sets
+than the table then takes: records of two shapes, a record of the state and then a number in
+sets of records, which TLC fails to compare, a set that grows past 256 elements and a run of
+integers, sets and tuples, and a model value in sets of numbers. A Parity run that compared
+every answer of the scan with the table's membership, on every model of the corpus on one thread
+and on four, found no difference and no panic (Depot qth3j4ft99, on the first form below).
+
+On `depot-ubuntu-24.04-16` against the integration branch at ba748411, with passed-sets, medians
+of 5 interleaved runs with the range (Depot vdt6qvwgzn):
+
+| Model | 1 thread | 16 threads | CPU s at 16 | RSS MB, 1 thread |
+|---|---|---|---|---|
+| PaxosCommit | 13.31 (12.78–13.91) → 10.58 (10.08–11.01), 1.26× | 1.72 (1.63–1.79) → 1.46 (1.44–1.49), 1.18× | 22.4 → 18.1 | 685 → 372 |
+| TLCSailfish1 | 3.14 (3.07–3.25) → 2.86 (2.81–2.89), 1.10× | 0.37 (0.36–0.39) → 0.35 (0.35–0.36) | 4.41 → 4.10 | 160 → 146 |
+
+Of PaxosCommit's gain passed-sets is 1.18–1.22× and the tables the rest. At 16 threads its memory
+is 2,345 → 2,198 MB: each thread's share of a table's room was 262,144 entries already.
+MCExactInitialSync is unchanged, 11.82 → 11.82 s and 907 MB. The suite is 1.02× on one thread,
+15 of 15 agreeing with TLC. Three models' medians rose in that run, on a machine whose ranges were
+wide, and were measured again alone: MCLamportMutex 1.74 (1.69–1.91) → 1.99 (1.67–2.08) there,
+1.66 (1.63–1.78) → 1.65 (1.63–1.70) over 9 runs (knxnnv8dmh); StarkMutex 2.37 → 2.46 there,
+2.29 → 2.27 over 9; SpanTreeRandom 0.35 (0.35–0.35) → 0.36 (0.36–0.37) there and
+0.34 (0.34–0.36) → 0.36 (0.35–0.37) over 11 (tf15xpfx7m), which is the build and not the change:
+none of its memberships is answered by a scan (its tables hold the same entries with the cap and
+without, by an instrumentation build), and the same build without the call that shortens a table
+measured 0.35 (0.34–0.35) → 0.35 (0.34–0.35) over 11 (cpbz91bs70), as passed-sets alone did
+(rkw7w0m95q). `bench-suite.json` on `depot-ubuntu-24.04-4`, 9 runs (k3h1ssvkb1),
+is 1.00× on one thread and on four, 18 of 18 agreeing: `benchmarks/commit` 0.27 (0.26–0.29) → 0.28
+(0.26–0.29) s, Paxos_MC 0.51 (0.51–0.52) → 0.50 (0.49–0.50), SimpleRegular 0.45 (0.43–0.46) → 0.46
+(0.45–0.48), which earlier runs of these changes put at 0.48 → 0.46, 0.45 → 0.43 and
+0.49 → 0.46 (24t6khh5vx, 61gv8gvgz7, zs3v9lq02d). Parity is clean at this form (bvn5qv63ld).
+
+Two earlier forms lost on short models. Scanning before the table on every membership:
+`benchmarks/commit`, whose table of `[kind |-> "prepared", from |-> p] \in messages` is small and
+always hits, 0.29 (0.27–0.30) → 0.34 (0.33–0.48) s on 4 cores (Depot zs3v9lq02d), and FastPaxos
+1.36 (1.35–1.38) → 1.41 (1.38–1.47) on 16 (lg947s9lv7), for PaxosCommit 13.69 → 10.34 s. Scanning
+before the table once the table held 4,096 entries, a closure around the table's own:
+`benchmarks/commit` 0.27 (0.26–0.27) → 0.28 (0.28–0.29) s (n9sccjh2r8), the call through one more
+closure on every hit, for PaxosCommit 12.89 → 9.98 s (qrrhz8p0m0).
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1560,6 +1697,8 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Find a tuple of integers in a grid, a set or domain of every tuple of a box of integers in order (`IS_GRID`, marked as the store interns it), by its components | GameOfLife (`sc` over 6 × 6 tuples, `grid` over 4 × 4) | Callgrind, one worker: 14.10 G → 14.99 G instructions; `find_in_block` 1.70 G → 2.40 G with the scan | Reading the first and last keys' and the key's components, a dozen metadata reads, costs more than scanning 36 ids eight at a time, and checking each new block's keys as it is interned cost 0.3 G more. Not measured on Depot. |
 | Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
 | Lend the search's machine's memo tables to the threads, read where a thread's own table misses, and merge into them at each level's end what the threads stored in the level, a table as long as it answers at least as many lookups as it took entries (`shared-memo`) | the suite, on top of the claims | 16 threads, medians of 5, Depot qxdcqqwh5z against `main`, beside the claims alone in ljdt1stsmj: PaxosCommit 1.89 s, 23.9 CPU s (1.92 s, 24.8); TLCSailfish1 0.45 → 2.62 s, 5.5 → 9.4 CPU s; MCLamportMutex 0.53 → 0.84; MCbtree 0.19 → 0.35; BufferedRandomAccessFile 0.21 → 0.33; MCMultiNode 0.86 → 0.96 | The merge is on the search's thread, a table a thread at best, and a table that earns its sharing is one whose entries are many: TLCSailfish1's merges took 2 s of wall for the lookups they saved. PaxosCommit gained 0.9 CPU s of the 3 its EXCEPT costs on 16 threads; why no more wasn't measured (the shared table takes at most a thread's share of the room, 262,144 entries, where one thread keeps 380,904, and an entry whose value the merge didn't import from its thread is dropped). What might work is a table the threads write as they go, with no merge. |
+| Test of `f \in [S -> T]` only the values that differ from those of the function that last passed there, with its keys (`Machine::holds_all_values`, the function's analogue of passed-sets), exact by the same argument and by a Parity run with every value passed over tested again (b08mdxc523) | SimpleRegular, MCLamportMutex, MCExactInitialSync | 4 cores, medians of 7: SimpleRegular 0.45 (0.44–0.49) → 0.43 (0.42–0.45) s with it (61gv8gvgz7) and 0.48 (0.45–0.51) → 0.46 (0.45–0.49) with passed-sets alone (24t6khh5vx); MCLamportMutex 1.75 → 1.77 and 1.84 → 1.79. 16 cores, medians of 5: MCExactInitialSync 12.73 → 12.70 s with it (kprsrdjfmc) and 12.22 → 12.54 without (r59kprcvnc), 907 MB in both | A `TypeOK` conjunct is a memo table keyed by its variable, which hits wherever the variable's value was seen: MCExactInitialSync's five functions take 27 to 6,993 values over 9.6 million states, and the test runs only on a miss. MCLamportMutex's `network` is new in most states, but the inner set of functions keeps the last row it tested, which may be another process's, and the whole of its `TypeOK` is 3.9 % of the run. The branch is `passed-values`. |
+| Scan a set for the element's id before the binary search of a union with one element, and keep the last pair of shapes joined beside the map of joins | PaxosCommit | 16 cores, medians of 7, with passed-sets: 13.12 (12.61–14.67) → 11.14 (10.61–11.78) s (txlp6r4d46), against 13.20 → 11.19 for passed-sets alone (r3slvll58b) | Within the run-to-run range. `Store::union` is 11.8 % of the run and its comparisons 4.8 %, `join_distinct` 2.3 % (Depot jfcw8p8n9v), but a scan saves only the comparisons of a message sent again, and the map's lookup of one pair is already a multiply and a probe. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
 closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's
