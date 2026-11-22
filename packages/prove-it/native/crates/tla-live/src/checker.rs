@@ -195,6 +195,29 @@ impl StepResults {
         self.values[bit / 64] |= read(&from.values) << (bit % 64);
     }
 
+    /// Copies every row of another's, of the same width, into the rows from `row` on, which have
+    /// nothing set: whole words at a time, each shifted to where the rows start.
+    fn copy_rows(&mut self, row: usize, from: &StepResults) {
+        let (start, length) = (row * self.stride, from.count * from.stride);
+        let (first, shift) = (start / 64, start % 64);
+        let words = length.div_ceil(64);
+        let copy = |into: &mut [u64], bits: &[u64]| {
+            for (at, &word) in bits[..words].iter().enumerate() {
+                let word = if at + 1 == words && length % 64 != 0 {
+                    word & ((1 << (length % 64)) - 1)
+                } else {
+                    word
+                };
+                into[first + at] |= word << shift;
+                if shift != 0 && word >> (64 - shift) != 0 {
+                    into[first + at + 1] |= word >> (64 - shift);
+                }
+            }
+        };
+        copy(&mut self.checked, &from.checked);
+        copy(&mut self.values, &from.values);
+    }
+
     fn mask(&self, ids: impl Iterator<Item = usize>) -> Vec<u64> {
         let mut mask = vec![0; self.stride.div_ceil(64)];
         for id in ids {
@@ -1790,8 +1813,9 @@ fn slot_order(
 
 /// The successor sets of the expanded states in TLC's order, built on threads: first how many
 /// distinct steps each state has, which says whether its set outgrows the slots, since the
-/// stuttering step goes in last; then the multiplier as each set is built, which the sets before
-/// it grew; then each run of states' sets with theirs.
+/// stuttering step goes in last, and how long its set is; then the multiplier as each set is
+/// built, which the sets before it grew; then each run of states' sets with theirs, written where
+/// the lengths before it put it.
 fn order_sets(graph: &Graph<'_>, threads: usize) -> Orders {
     let expanded = graph.expanded();
     let entries_of = |state: usize, entries: &mut Vec<(u32, u32)>| {
@@ -1803,32 +1827,37 @@ fn order_sets(graph: &Graph<'_>, threads: usize) -> Orders {
             (step.target, step.real)
         }));
     };
-    let distinct: Vec<u32> = on_runs(expanded, threads, |start, end| {
+    // Each state's distinct steps, and whether one of them is its stuttering step.
+    let distinct: Vec<Vec<(u32, bool)>> = on_runs(expanded, threads, |start, end| {
         let (mut entries, mut slots, mut order) = (Vec::new(), Vec::new(), Vec::new());
         (start..end)
             .map(|state| {
                 entries_of(state, &mut entries);
                 slot_order(&entries, graph.fingerprints, 1, &mut slots, &mut order);
-                order.len() as u32
+                let stutter = (state as u32, state as u32);
+                (order.len() as u32, entries.contains(&stutter))
             })
-            .collect::<Vec<u32>>()
-    })
-    .concat();
+            .collect()
+    });
     let mut changes = vec![(0, 1)];
     let mut multiplier = 1;
-    for (state, &distinct) in distinct.iter().enumerate() {
+    let mut offsets = Vec::with_capacity(expanded + 1);
+    let mut length = 0;
+    for (state, &(distinct, is_stuttering)) in distinct.iter().flatten().enumerate() {
         if distinct as usize >= (SUCCESSOR_CAPACITY * multiplier) >> 1 {
             multiplier += 1;
             changes.push((state + 1, multiplier));
         }
+        offsets.push(length);
+        length += distinct as usize + usize::from(!is_stuttering);
     }
-    let changes = &changes;
-    let runs: Vec<(Vec<usize>, Vec<u32>)> = on_runs(expanded, threads, |start, end| {
+    offsets.push(length);
+    let mut positions = vec![0; length];
+    let (changes, offsets_of) = (&changes, &offsets);
+    let order_run = |start: usize, end: usize, positions: &mut [u32]| {
         let mut next = changes.partition_point(|&(at, _)| at <= start);
         let mut multiplier = changes[next - 1].1;
         let (mut entries, mut slots, mut order) = (Vec::new(), Vec::new(), Vec::new());
-        let mut offsets = Vec::with_capacity(end - start + 1);
-        let mut positions = Vec::new();
         for state in start..end {
             while changes.get(next).is_some_and(|&(at, _)| at <= state) {
                 multiplier = changes[next].1;
@@ -1836,7 +1865,6 @@ fn order_sets(graph: &Graph<'_>, threads: usize) -> Orders {
             }
             entries_of(state, &mut entries);
             entries.push((state as u32, state as u32));
-            offsets.push(positions.len());
             slot_order(
                 &entries,
                 graph.fingerprints,
@@ -1844,20 +1872,34 @@ fn order_sets(graph: &Graph<'_>, threads: usize) -> Orders {
                 &mut slots,
                 &mut order,
             );
-            positions.extend_from_slice(&order);
+            let at = offsets_of[state] - offsets_of[start];
+            positions[at..at + order.len()].copy_from_slice(&order);
         }
-        (offsets, positions)
+    };
+    let share = expanded.div_ceil(threads.max(1)).max(1);
+    std::thread::scope(|scope| {
+        let mut rest = &mut positions[..];
+        let handles: Vec<_> = (0..expanded)
+            .step_by(share)
+            .map(|start| {
+                let end = (start + share).min(expanded);
+                let (own, left) =
+                    std::mem::take(&mut rest).split_at_mut(offsets_of[end] - offsets_of[start]);
+                rest = left;
+                let order_run = &order_run;
+                std::thread::Builder::new()
+                    .stack_size(STACK_BYTES)
+                    .spawn_scoped(scope, move || order_run(start, end, own))
+                    .expect("a thread for the liveness checker")
+            })
+            .collect();
+        for handle in handles {
+            handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        }
     });
-    let mut orders = Orders::default();
-    for (offsets, positions) in runs {
-        let base = orders.positions.len();
-        orders
-            .offsets
-            .extend(offsets.iter().map(|offset| base + offset));
-        orders.positions.extend(positions);
-    }
-    orders.offsets.push(orders.positions.len());
-    orders
+    Orders { offsets, positions }
 }
 
 /// A state's row of consistency with a tableau's nodes as the tables answer it, where they answer
@@ -2011,17 +2053,13 @@ fn read_positions(
     positions.add(graph.edges.len() + count);
     let mut row = 0;
     for (edges, _) in &runs {
-        for from_row in 0..edges.count {
-            positions.copy_row(row, edges, from_row);
-            row += 1;
-        }
+        positions.copy_rows(row, edges);
+        row += edges.count;
     }
     row = graph.edges.len();
     for (_, stutters) in &runs {
-        for from_row in 0..stutters.count {
-            positions.copy_row(row, stutters, from_row);
-            row += 1;
-        }
+        positions.copy_rows(row, stutters);
+        row += stutters.count;
     }
     positions
 }
