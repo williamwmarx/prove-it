@@ -69,6 +69,30 @@ how.
     at that state, which the one-thread path then expands and stops at.
   - A thread's caches forget only what they hold of its overlay's own values (`forget_from`), so
     memo tables, fingerprints and symmetry images stay warm from level to level.
+- **A state's invariants are checked once.** A state several of a level's states step to is new
+  to every thread that expands one of them, so each checked its invariants: on PaxosCommit the
+  threads found 2.8 million candidates for 1.3 million states at 4 threads. TLC's worker checks
+  the invariants of a successor only where its put into the set of fingerprints finds it unseen
+  (`Worker.addElement`, `isSeenState`), once a state whichever worker gets there. So the
+  threads of a level share a table of the fingerprints claimed (`Claims`, a compare-and-swap a
+  state), and a thread checks a state new to it only where it is the first to claim it; it keeps
+  the state as its candidate either way, for the merge's order.
+  - An invariant holds of a state or doesn't whichever thread asks: nothing a shared level
+    evaluates reads how the state was reached. Which invariants a check skips, those reading
+    only variables the step left unchanged, differs by parent, but the parent is a state of the
+    model, of which they hold.
+  - What a check finds belongs to the first state of the level that steps to the state, which
+    may be another thread's that left the check to the claimer. So a thread that stops, at a
+    violation, an error or a warning TLC may print, hands over the fingerprints it claimed in
+    that expansion, and the merge stops the level at the first state with a candidate of one of
+    them, if that is before the thread's own stop: one thread expands that state again and
+    finds what TLC's one worker finds there (`prove-it-cli/tests/claims.rs`).
+  - The table is sized to the level and never grows: a fingerprint its probe can't place is
+    every asking thread's to check, as before.
+  - Off where two states can share a fingerprint and differ in their invariants: under a VIEW
+    or symmetry, where each occurrence carries its own state, and under `PROVE_IT_FP_VERIFY`.
+    Without them a collision of two states' fingerprints, which TLC's own verdict already
+    rests on not happening, has the claimer check its state for both.
 - **Stops (4.2).** A thread that stops at state `p` lowers an atomic `stop` to `p` and quits. The
   others finish every state before `stop` and skip the rest.
   - The merge keeps the candidates and generated counts of the states before `stop`. The rest of
