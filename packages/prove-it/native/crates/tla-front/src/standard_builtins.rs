@@ -185,7 +185,7 @@ pub const MASTER: &[StandardModule] = &[
         extends: &[],
         operators: &[
             StandardOperator { name: "AssertEq", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([14, 1, 20, 14]) },
-            StandardOperator { name: "AssertError", arity: 2, flags: 5, params: Some(&[0, 0]), range: Some([23, 1, 26, 72]) },
+            StandardOperator { name: "AssertError", arity: 2, flags: 4, params: Some(&[0, 0]), range: Some([23, 1, 26, 72]) },
             StandardOperator { name: "TLCGetOrDefault", arity: 2, flags: 1, params: Some(&[0, 0]), range: Some([30, 1, 31, 17]) },
             StandardOperator { name: "TLCGetAndSet", arity: 4, flags: 1, params: Some(&[0, 2, 0, 0]), range: Some([33, 1, 35, 57]) },
             StandardOperator { name: "Trace", arity: 0, flags: 1, params: Some(&[]), range: Some([41, 1, 57, 6]) },
@@ -195,7 +195,7 @@ pub const MASTER: &[StandardModule] = &[
             StandardOperator { name: "TLCDefer", arity: 1, flags: 5, params: Some(&[0]), range: Some([122, 1, 134, 6]) },
             StandardOperator { name: "TLCNoOp", arity: 1, flags: 0, params: Some(&[0]), range: Some([138, 1, 145, 5]) },
             StandardOperator { name: "PickSuccessor", arity: 1, flags: 5, params: Some(&[0]), range: Some([148, 1, 162, 37]) },
-            StandardOperator { name: "TLCCache", arity: 2, flags: 5, params: Some(&[0, 0]), range: Some([166, 1, 173, 12]) },
+            StandardOperator { name: "TLCCache", arity: 2, flags: 4, params: Some(&[0, 0]), range: Some([166, 1, 173, 12]) },
             StandardOperator { name: "TLCFP", arity: 1, flags: 0, params: Some(&[0]), range: Some([175, 1, 181, 24]) },
             StandardOperator { name: "TLCEvalDefinition", arity: 1, flags: 1, params: Some(&[0]), range: Some([185, 1, 190, 6]) },
         ],

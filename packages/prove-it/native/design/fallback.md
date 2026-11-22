@@ -4737,6 +4737,38 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A constant-level definition through TLCCache or AssertError that the configuration names, found
+  in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
+  `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
+  `AssertError(m, e)` at the level of their arguments, and `processConstantDefns` computes such a
+  definition as TLC starts: `Inv == TLCCache(FALSE, {})` as the invariant is "The invariant of Inv
+  is equal to FALSE" (exit 151), as a property or a constraint likewise, and TRUE warns as a
+  constant invariant does. The front end's builtin table marked both state-level, so the binary
+  checked such an invariant in each state ("Invariant Inv is violated by the initial state").
+  Fixtures `tlcext-constant-*`.
+
+- The call stack of a failure in an argument of a function application of several, found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5. SANY parses `f[a, b]` as `f[<<a, b>>]`, a
+  `$Tuple` node with the application's range, which `OPCODE_fa` evaluates (`args[1]`), so TLC's
+  call stack holds the application's range twice before the failing argument's: `x' = x + [i
+  \in 0..2, j \in 1..2 |-> i][1 \div x, 1]` lists `Line 8, column 18 to line 8, column 60` twice,
+  where the trace evaluator listed it once (`StackFrame::Arguments`). Fixtures
+  `function-arguments-frame-*`.
+
+- A failing comparison in UNCHANGED, found in the specs of upstream tla-ts's unit tests at
+  0341dbe5. `processUnchanged` compares a variable with its assigned successor value as
+  `val0.equals(val1)`, the current value the receiver, so `x' = {1} /\ UNCHANGED x /\ y' = 0`
+  from `x = 0` fails with "Attempted to check equality of integer 0 with non-integer: {1}" where
+  the trace evaluator compared the other way ("... of the set {1} with the value: 0"). And once
+  every variable has a value, `getNextStates0` evaluates the conjuncts left as expressions
+  (`getNextStatesAllAssigned`), where UNCHANGED e is `OPCODE_unchanged`'s
+  `eval(e, s0).equals(eval(e, s1))`: a value with a source whose `equals` fails, the tuple of
+  `UNCHANGED <<x>>` or the set of `UNCHANGED {x}`, throws a FingerprintException, which TLC
+  reports as "TLC was unable to fingerprint" headed by that value's source, as it does a
+  subscript's (`subscript_equals`); the trace evaluator reported the nested expressions. Under
+  `~` or another operator UNCHANGED is that expression too. Fixtures `unchanged-variable-current-
+  receiver*`, `unchanged-tuple-*` and `unchanged-set-all-assigned`.
+
 - A record in the value of a function TLC kept lazy, printed. TLC prints its fields as written
   where the engine printed them as TLC sorts them (by when it interned each name): a LET
   definition or an operator's argument whose function constructor TLC first computed with
@@ -5403,6 +5435,11 @@ declined, "a postcondition: TLCGet", until the postcondition evaluator read that
   THEN 1 ELSE 2` declines alike.
 
 #### Known wrong outputs
+
+A constant-level definition through TLCDefer that the configuration names (`Inv == TLCDefer(FALSE)`
+as the invariant): TLCDefer's Java method sets no `minLevel` either, so TLC computes the
+definition as it starts, to TRUE, and warns of a constant invariant, where the binary checks it in
+each state, as main does. The engine's packaged TLCDefer marker keeps the builtin state-level.
 
 An EXCEPT of a function constructor over a set of strings a constant definition names, applied
 to a number (`S == {"b", "a"}`, `[[x \in S |-> x] EXCEPT !["a"] = 2][1]`), fails comparing the
@@ -8366,7 +8403,8 @@ of integer powers; the runs those change count as wrong here until the port foll
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
-| with suppressed proofs | 723 / 574 / 54 | 292 / 1,042 / 64 |
+| with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
+| with suppressed proofs | 723 / 574 / 54 | 313 / 1,042 / 43 |
 
 ### Declines
 
