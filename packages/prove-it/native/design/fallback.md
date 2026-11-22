@@ -8628,8 +8628,8 @@ tactic only (`Fpfile.query`).
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 | with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
-| with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
-| with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
+| with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 319 / 1,042 / 37 |
+| with ENABLEDaxioms' level check | 765 / 574 / 12 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 765 / 574 / 12 | 321 / 1,042 / 35 |
 
 ### Declines
