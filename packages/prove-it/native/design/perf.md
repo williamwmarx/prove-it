@@ -1027,6 +1027,77 @@ pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 
 than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
 2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
 
+### A state's invariants checked by the first thread to reach it (thread-claims)
+
+PaxosCommit took 32 CPU seconds on 16 threads for 14.5 s of one thread's work. Three things were
+measured on `depot-ubuntu-24.04-16` before anything was built (Depot sjrgmttms3, a build with
+symbols and frame pointers):
+
+- **Not memory bandwidth.** Sixteen one-worker runs at once each take 16.2–16.5 s against
+  15.6 s for one alone (4 at once 15.0–15.1 s, 8 at once 15.5–15.8 s): 5 %. That is the
+  experiment "Memo tables and the memory layout" left for 16 cores.
+- **The threads' CPU by their number**, with the claims below: 15.4 s on one worker, 18.8 on 2,
+  19.8 on 4, 21.4 on 8 and 26.2 on 16. Two threads already cost 3.3 s more than one: the
+  shared level's own path (an overlay's two tables to intern in, `Fingerprints<Overlaid>`,
+  `Candidates::find`), whatever the number of threads.
+- **Duplicated evaluation.** A state that several of a level's states step to is new to every
+  thread that expands one of them, and each checked its invariants: the threads kept 2.84
+  million candidates for the 1.32 million states at 4 threads. PCTypeOK's
+  `msgs \in SUBSET Message` is 18.7 % of the one-thread run (`compile_subset`'s test with all
+  it calls), so the invariant was paid for several times over.
+
+A level's threads now share a table of the fingerprints claimed (`Claims`, parallel.md), and a
+thread checks the invariants of a state new to it only where it claims it first, as TLC's worker
+checks a successor only where its put into the set of fingerprints finds it unseen
+(`Worker.addElement`). Against `main` at f6c3600e, medians of 5 interleaved runs with the range,
+and the CPU seconds at 16 threads (Depot z2gswkz028):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | CPU s at 16, `main` → now |
+|---|---:|---:|---:|---|
+| PaxosCommit | 2.48 (2.37–2.54) | 2.05 (1.97–2.11) | 1.21× | 33.6 → 26.9 |
+| TLCSailfish1 | 0.46 (0.45–0.47) | 0.41 (0.40–0.42) | 1.12× | 5.65 → 4.85 |
+| MCLamportMutex | 0.52 (0.50–0.53) | 0.50 (0.49–0.51) | 1.04× | 5.18 → 4.92 |
+
+Two earlier runs of the same change with a table twice as large agree: PaxosCommit 2.31
+(2.25–2.48) → 1.92 (1.88–1.97) s and 31.1 → 24.8 CPU s, TLCSailfish1 0.42 → 0.39 and
+MCLamportMutex 0.53 → 0.50 (ljdt1stsmj, the suite), and PaxosCommit 2.37 (2.35–2.47) → 2.05
+(1.94–2.09) against `main` at d13f0073 (3dsfwb62dl).
+
+One thread is unchanged (1.01× over the suite, within the build-to-build noise; PaxosCommit
+14.66 → 14.69 s), and the rest of the suite is within its range on 16 threads. The table of
+claims is four times the level's states, rounded up to a power of two, 8 bytes a slot:
+MCExactInitialSync's peak RSS at 16 threads goes from 1,681 to 1,722 MB.
+
+What is left of PaxosCommit's 16-thread CPU, by `perf` against one thread: seconds of self time
+among the 150 hottest symbols of each run (14.0 s and 23.1 s of them), and the EXCEPT with all
+it calls:
+
+| Where | One thread | 16 threads |
+|---|---:|---:|
+| EXCEPT of `aState` (`compile_except` with all it calls: `intern_patched`, `except_nested`, `lazy_function::except`) | 0.1 | 3.1 |
+| `Fingerprints`: `shift_by_table`, `get_child`, `compute_new`, `extend_known` | 0.64 | 1.44 |
+| Memo lookups, stores and rehashes | 1.9 | 3.0 |
+| `Machine::forget_from`, each thread at each level | 0 | 0.47 |
+| `Claims::claim`, a shared line a state | 0 | 0.42 |
+| `Candidates::find` against `States::find` | 0.09 | 0.39 |
+| `intern_block`, `find_in_block` | 0.83 | 1.55 |
+| `malloc`, `free`, `realloc`, page clearing | 0.20 | 0.67 |
+
+The EXCEPT is the largest. It is evaluated where a memo table of three keys misses, and on one
+thread the largest of those, 380,904 entries, answers 95 % of its 7.9 million lookups; each
+thread fills a table of its own. Sharing the tables between the threads was measured and
+dropped (below); the rest is spread thin.
+
+Next, from the same profile: `msgs \in SUBSET Message` tests every message of every new set,
+18.7 % of one thread and 11.8 % of the 16 threads' CPU, though a new `msgs` is its parent's or a
+sibling's with one message more. A test that remembers the last set it found inside `Message`
+and tests only the elements that set doesn't hold would leave one test a state, where the base
+set reads nothing and the remembered run nested no recursive call. TLC's
+`SubsetValue.member` (SubsetValue.java:94–115 at d8fb231) tests the elements in order and stops
+at the first that fails, so the
+answer and any failure are the same. It is a different mechanism from the cache of membership
+by element dropped above, which paid a table lookup for each element it no longer tested.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1052,6 +1123,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
 | Resolve and copy a graph's steps to the graph on the threads after a level's merge, rather than on the merge's thread as it numbers the states (`edges-on-threads`) | cf1s_folklore, StarkMutex | 16 threads, medians of 3: 1.37 → 1.36 s, 0.79 → 0.77 s; the suite within noise | Copying 22 million steps is a few milliseconds; the per-candidate timers of the merge's instrumentation had inflated its share to 20 % of the merge. The parallel copy spawns threads a level for nothing. |
 | Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
+| Lend the search's machine's memo tables to the threads, read where a thread's own table misses, and merge into them at each level's end what the threads stored in the level, a table as long as it answers at least as many lookups as it took entries (`shared-memo`) | the suite, on top of the claims | 16 threads, medians of 5, Depot qxdcqqwh5z against `main`, beside the claims alone in ljdt1stsmj: PaxosCommit 1.89 s, 23.9 CPU s (1.92 s, 24.8); TLCSailfish1 0.45 → 2.62 s, 5.5 → 9.4 CPU s; MCLamportMutex 0.53 → 0.84; MCbtree 0.19 → 0.35; BufferedRandomAccessFile 0.21 → 0.33; MCMultiNode 0.86 → 0.96 | The merge is on the search's thread, a table a thread at best, and a table that earns its sharing is one whose entries are many: TLCSailfish1's merges took 2 s of wall for the lookups they saved. PaxosCommit gained 0.9 CPU s of the 3 its EXCEPT costs on 16 threads; why no more wasn't measured (the shared table takes at most a thread's share of the room, 262,144 entries, where one thread keeps 380,904, and an entry whose value the merge didn't import from its thread is dropped). What might work is a table the threads write as they go, with no merge. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
 closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's
