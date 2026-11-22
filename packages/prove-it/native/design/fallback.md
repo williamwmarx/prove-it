@@ -4041,6 +4041,17 @@ after the selection's: the front end puts a `$Nop` at the INSTANCE around the pa
 (`Lowering::get_selection_substitution`), so the frame prints. A selection through a copy of a
 copy, and one whose failure is in a substitute, print wrong; see "Known wrong outputs".
 
+A selection reads the copy's body as the instantiated module wrote it, under the substitutions
+(`selectorToNode` walks a `SubstInNode`'s body and wraps the part selected in it again): where an
+INSTANCE substitutes a LAMBDA for an operator parameter, the front end writes the parameter's
+application `F(C)` as `LET LAMBDA(y) == y + 1 IN LAMBDA(C)`, whose operands a selector takes as
+`F(C)`'s (`instances::get_substituted_lambda_application`), so `I!Val!1!1` of `Val == {F(C)}`
+under `F <- LAMBDA y : y + 1, C <- 4` is 4, as TLC's, where the binary took the LET's one operand
+and printed 5, and `!2` of `F(C, 7)` is 7 where it declined ("A LET/IN expression has only one
+operand", an error tla-front raises); a failure in the part selected is reported through the
+INSTANCE's frame, as TLC's (`tests/instance-selections`, recorded with the jar; the upstream unit
+case `subexpressions_test/c0006`).
+
 #### A constraint that fails on a successor
 
 `Worker.addElement` evaluates the state constraints of every successor, seen or not, before the
