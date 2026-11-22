@@ -15,7 +15,10 @@ use crate::expression::{
 };
 use crate::module::{Declaration, ModuleUnit, ModuleUnitCore, Mule, MutateMode};
 use crate::operators::{Fixity, lookup_operator};
-use crate::pragma::{OldMethod, Position, find_pragma, read_new_method, read_old_method};
+use crate::pragma::{
+    Lexical, OldMethod, Position, find_pragma, find_pragma_before, read_lexical, read_new_method,
+    read_old_method,
+};
 use crate::proof::{
     Counter, Omission, Proof, ProofCore, ProofProps, QedStep, Step, StepCore, StepNumber, Usable,
     UseDef, UseDefCore, get_unique,
@@ -152,11 +155,6 @@ fn get_index(position: u32) -> usize {
     (position as usize).wrapping_sub(1)
 }
 
-/// `lines[line].indexOf(needle, from)` on UTF-16 code units.
-fn find_units(line: &[u16], needle: &[u16], from: usize) -> Option<usize> {
-    (from..=line.len().checked_sub(needle.len())?).find(|&start| line[start..].starts_with(needle))
-}
-
 fn get_utf16_length(text: &str) -> u32 {
     text.encode_utf16().count() as u32
 }
@@ -247,6 +245,12 @@ fn proof_props(location: Option<Locus>, step: Option<StepNumber>) -> ProofProps 
 pub struct Source {
     file: Rc<str>,
     lines: Vec<Vec<u16>>,
+    lexical: Lexical,
+    /// Where each pragma a construct owns opens: tlapm's grammar reads a method pragma as part
+    /// of the definition, axiom or proof it follows (`defn`'s `optional (use read_new_method)`,
+    /// Proof.Parser's `read_method`), so the USE, HIDE or proof after it finds no pragma there.
+    /// The units and steps are converted in order, so an owner marks its pragma first.
+    owned_pragmas: std::cell::RefCell<std::collections::HashSet<Position>>,
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
 }
@@ -257,12 +261,15 @@ pub fn create_source(
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
 ) -> Source {
+    let lines: Vec<Vec<u16>> = text
+        .split('\n')
+        .map(|line| line.encode_utf16().collect())
+        .collect();
     Source {
         file: Rc::from(file),
-        lines: text
-            .split('\n')
-            .map(|line| line.encode_utf16().collect())
-            .collect(),
+        lexical: read_lexical(&lines),
+        lines,
+        owned_pragmas: std::cell::RefCell::default(),
         counter,
         is_expanding_tuples,
     }
@@ -280,7 +287,8 @@ impl Source {
     }
 
     fn with_pragma(&self, locus: Locus) -> Locus {
-        let Some(open) = find_pragma(
+        let Some(pragma) = find_pragma(
+            &self.lexical,
             &self.lines,
             Position {
                 line: get_index(locus.end_line),
@@ -289,31 +297,84 @@ impl Source {
         ) else {
             return locus;
         };
-        let needle: Vec<u16> = "}*)".encode_utf16().collect();
-        for index in open.line..self.lines.len() {
-            let from = if index == open.line { open.column } else { 0 };
-            if let Some(close) = find_units(&self.lines[index], &needle, from) {
-                return Locus {
-                    end_line: index as u32 + 1,
-                    end_column: close as u32 + 4,
-                    ..locus
-                };
-            }
+        let Some(close) = pragma.close else {
+            return locus;
+        };
+        Locus {
+            end_line: close.line as u32 + 1,
+            end_column: close.column as u32 + 1,
+            ..locus
         }
-        locus
+    }
+
+    /// The pragma after the node that ends at `end`, which the node's parser read as its
+    /// method pragma, now owned by the node.
+    fn own_pragma(&self, end: &ast::Position) {
+        let pragma = find_pragma(
+            &self.lexical,
+            &self.lines,
+            Position {
+                line: get_index(end.line),
+                column: end.column as usize,
+            },
+        );
+        if let Some(pragma) = pragma {
+            self.owned_pragmas.borrow_mut().insert(pragma.open);
+        }
+    }
+
+    /// Proof.Parser's `suppress`: where the suppression pragma before the keyword at `start`
+    /// opens, if there is one. A pragma the construct before the keyword owns is none.
+    fn get_suppression(&self, start: &ast::Position) -> Result<Option<Locus>> {
+        let Some((pragma, is_suppression)) = find_pragma_before(
+            &self.lexical,
+            &self.lines,
+            Position {
+                line: get_index(start.line),
+                column: get_index(start.column),
+            },
+        ) else {
+            return Ok(None);
+        };
+        if self.owned_pragmas.borrow().contains(&pragma.open) {
+            return Ok(None);
+        }
+        if !is_suppression {
+            // What tlapm's parser makes of a pragma there isn't recorded yet.
+            return Err(ObligationError::Unsupported(
+                "a pragma before a proof or a USE that isn't a suppression".to_owned(),
+            ));
+        }
+        let opening = pragma.open;
+        Ok(Some(Locus {
+            file: self.file.clone(),
+            start_line: u32::try_from(opening.line + 1).unwrap_or(u32::MAX),
+            start_column: u32::try_from(opening.column + 1).unwrap_or(u32::MAX),
+            end_line: start.line,
+            end_column: start.column,
+        }))
+    }
+
+    fn is_suppressed(&self, start: &ast::Position) -> Result<bool> {
+        Ok(self.get_suppression(start)?.is_some())
     }
 
     fn get_method(&self, range: Option<&ast::SourceRange>) -> Result<Option<OldMethod>> {
         let Some(range) = range else {
             return Ok(None);
         };
-        read_old_method(
+        let method = read_old_method(
+            &self.lexical,
             &self.lines,
             Position {
                 line: get_index(range.end.line),
                 column: range.end.column as usize,
             },
-        )
+        )?;
+        if method.is_some() {
+            self.own_pragma(&range.end);
+        }
+        Ok(method)
     }
 
     /// A method pragma belongs to the node it follows, whose locus then takes it in.
@@ -1106,6 +1167,7 @@ impl Source {
         };
         let methods = match &definition.location.range {
             Some(range) => read_new_method(
+                &self.lexical,
                 &self.lines,
                 Position {
                     line: get_index(range.end.line),
@@ -1114,6 +1176,11 @@ impl Source {
             )?,
             None => None,
         };
+        if methods.is_some()
+            && let Some(range) = &definition.location.range
+        {
+            self.own_pragma(&range.end);
+        }
         Ok(Defn {
             core: match methods {
                 Some(methods) => DefnCore::Bpragma {
@@ -1308,7 +1375,10 @@ impl Source {
         Ok(match &proof.kind {
             ast::ProofKind::Obvious { keyword } => Proof {
                 core: ProofCore::Obvious,
-                props: self.with_method(keyword)?,
+                props: ProofProps {
+                    is_suppressed: self.is_suppressed(&keyword.start)?,
+                    ..self.with_method(keyword)?
+                },
             },
             ast::ProofKind::Omitted { keyword } => Proof {
                 core: ProofCore::Omitted(Omission::Explicit),
@@ -1331,6 +1401,7 @@ impl Source {
                         location: Some(location),
                         step: Some(StepNumber::Unnamed { level, id: 0 }),
                         method: self.get_method(proof.location.range.as_ref())?,
+                        is_suppressed: self.is_suppressed(&keyword.start)?,
                         ..ProofProps::default()
                     },
                 }
@@ -1414,6 +1485,7 @@ impl Source {
                 core,
                 props: ProofProps {
                     step: Some(number.clone()),
+                    is_suppressed: self.is_suppressed(&step.statement.start)?,
                     ..self.with_method(&step.head)?
                 },
             })
@@ -1443,6 +1515,7 @@ impl Source {
                         location,
                         step: Some(number),
                         method: self.get_method(body.location.range.as_ref())?,
+                        is_suppressed: self.is_suppressed(&body.keyword.start)?,
                         ..ProofProps::default()
                     },
                 })
@@ -1664,7 +1737,12 @@ impl Source {
                         },
                         usable: self.convert_usable(&use_or_hide.facts, &use_or_hide.defs)?,
                     },
-                    location: self.get_use_locus(&use_or_hide.keyword, &use_or_hide.defs),
+                    // Module.Parser reads the pragma before USE or HIDE, so its locus starts there.
+                    location: merge_loci(
+                        self.get_suppression(&use_or_hide.keyword.start)?.as_ref(),
+                        self.get_use_locus(&use_or_hide.keyword, &use_or_hide.defs)
+                            .as_ref(),
+                    ),
                 });
             }
             ast::ModuleUnit::Module(module) => {
@@ -2277,6 +2355,10 @@ mod tests {
         entries.push(("step", props.step.as_ref().map(step_number)));
         entries.push(("method", props.method.as_ref().map(method)));
         entries.push(("useLocation", props.use_location.as_ref().map(locus)));
+        entries.push((
+            "isSuppressed",
+            props.is_suppressed.then_some(Json::Bool(true)),
+        ));
         entries
     }
 

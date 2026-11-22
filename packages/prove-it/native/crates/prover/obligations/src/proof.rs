@@ -69,6 +69,9 @@ pub struct ProofProps {
     pub obligations: Option<Vec<Obligation>>,
     pub method: Option<OldMethod>,
     pub use_location: Option<Locus>,
+    /// Props.supp: a suppression pragma precedes the step or proof, whose obligations are kept but
+    /// not emitted (Proof.Gen.collect's obgetter).
+    pub is_suppressed: bool,
 }
 
 #[derive(Clone, Debug)]

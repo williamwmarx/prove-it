@@ -8460,6 +8460,7 @@ of integer powers; the runs those change count as wrong here until the port foll
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
 | with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
+| with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8498,6 +8499,12 @@ of integer powers; the runs those change count as wrong here until the port foll
   asserts), and so a machine of more than 99 processors without `--threads`, no module, and
   globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
   empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **A pragma before a proof or a USE that isn't a suppression** (`a pragma before a proof or a
+  USE that isn't a suppression`): Proof.Parser reads the pragma as tokens, so one that doesn't
+  hold `_` or `suppress` alone, as `(*{ sup(* c *)press }*)`, is no suppression, and tlapm's
+  parser fails on what it reads it as (`Unexpected identifier press`, `Could not parse
+  "./SplitPragma.tla" successfully.`, with its backtrace, exit 3; tlapm b91fb6c on
+  `tests/fixtures/obligations/SplitPragma.tla`), which the port doesn't word.
 - **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
   module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
   given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through

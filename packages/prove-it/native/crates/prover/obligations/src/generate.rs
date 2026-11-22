@@ -853,6 +853,8 @@ impl Generator {
 }
 
 // collect: a QED's obligations come before its sibling steps', and a step's own before its proof's.
+// Proof.Gen.collect's obgetter: a suppressed proof's or USE step's obligations are made and
+// counted, but not emitted.
 fn collect(proof: &Proof) -> Vec<Obligation> {
     fn visit_proof(item: &Proof, obligations: &mut Vec<Obligation>) {
         if let ProofCore::Steps { steps, qed } = &item.core {
@@ -862,12 +864,16 @@ fn collect(proof: &Proof) -> Vec<Obligation> {
             }
             return;
         }
-        if let Some(own) = &item.props.obligations {
+        if let (Some(own), false) = (&item.props.obligations, item.props.is_suppressed) {
             obligations.extend(own.iter().cloned());
         }
     }
     fn visit_step(step: &Step, obligations: &mut Vec<Obligation>) {
-        if let (StepCore::Use { .. }, Some(own)) = (&step.core, &step.props.obligations) {
+        if let (StepCore::Use { .. }, Some(own), false) = (
+            &step.core,
+            &step.props.obligations,
+            step.props.is_suppressed,
+        ) {
             obligations.extend(own.iter().cloned());
         }
         if let Some(proof) = get_step_proof(step) {
@@ -1265,6 +1271,7 @@ mod tests {
             obligations: None,
             method: optional(&fields[3], read_method),
             use_location: read_locus(&fields[4]),
+            is_suppressed: false,
         }
     }
 
