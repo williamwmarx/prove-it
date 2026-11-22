@@ -10,7 +10,7 @@ use tla_values::json;
 use tla_values::print::{Construction, is_printable, write_constructed};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind,
+    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind, is_tested_set_kind,
 };
 use tla_values::transfer::UNENCODABLE;
 use tla_values::{
@@ -44,6 +44,18 @@ pub(crate) const UNNUMBERED_MODEL_VALUE: &str =
 pub(crate) const ENUMERATED_NAT: &str = "enumerated Nat";
 pub(crate) const ENUMERATED_STRING: &str = "enumerated STRING";
 pub(crate) const ENUMERATED_SEQ: &str = "enumerated Seq(S)";
+
+// Whether evaluating the expression reads no memo table keyed by a variable: a value a fused node
+// reads in place, or one of bound names alone, whose tables are as small as their sets.
+fn is_read_in_place(compiled: &Compiled) -> bool {
+    !matches!(compiled.shape, Shape::Other | Shape::SimulationRun(_))
+        || compiled.footprint.vars.is_empty() && compiled.footprint.primes.is_empty()
+}
+
+// The most entries the memo table of a membership takes once a miss was answered by scanning a
+// short set for the element's id: a longer table no longer stays in a core's own cache, and a row
+// read from memory costs more than the scan.
+const SHORT_TABLE: usize = 1 << 12;
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -448,10 +460,18 @@ impl Compiler<'_> {
         leaf(eval(|_| Err(Bail(INDEX_REPLACED))), Footprint::default())
     }
 
+    /// A place for `Machine::holds_all` to keep the set whose elements last passed membership in
+    /// `set`, where the set reads nothing, so that the test of an element does the same each
+    /// time.
+    fn allocate_pass_in(&mut self, set: &Compiled) -> Option<usize> {
+        (set.footprint.width() == 0 && !self.options.is_memo_off).then(|| self.allocate_pass())
+    }
+
     /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
     pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
         let base_member = self.member_test(base);
         let base_parts = Self::parts_of(base);
+        let pass = self.allocate_pass_in(base);
         Compiled {
             is_normalized: false,
             subset_base: Some(Box::new(base.clone())),
@@ -479,6 +499,9 @@ impl Compiler<'_> {
                 // TLC fails on anything it can't enumerate, untyped model values included.
                 if machine.store.kind_of(element) != KIND_SET {
                     return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                if let Some(pass) = pass {
+                    return machine.holds_all(pass, element, &base_member);
                 }
                 for index in 0..machine.store.size_of(element) {
                     let value = machine.store.element_at(element, index);
@@ -1186,16 +1209,21 @@ impl Compiler<'_> {
             // TLC evaluates T before it tests S's elements in it (OPCODE_subseteq), which runs
             // the tests TLC makes as it builds T even where S is empty.
             let right_parts = Self::parts_of(right);
+            let pass = self.allocate_pass_in(right);
             eval(move |machine| {
                 let set = evaluate_set(machine, &left_eval, "expected a set")?;
                 machine.run_parts(&right_parts)?;
                 let before = machine.effects();
                 let mut is_subset = TRUE;
-                for index in 0..machine.store.size_of(set) {
-                    let element = machine.store.element_at(set, index);
-                    if !test(machine, element)? {
-                        is_subset = FALSE;
-                        break;
+                if let Some(pass) = pass {
+                    is_subset = bool_id(machine.holds_all(pass, set, &test)?);
+                } else {
+                    for index in 0..machine.store.size_of(set) {
+                        let element = machine.store.element_at(set, index);
+                        if !test(machine, element)? {
+                            is_subset = FALSE;
+                            break;
+                        }
                     }
                 }
                 // A test may evaluate T's parts again, which an effect shows.
@@ -4102,6 +4130,36 @@ impl Compiler<'_> {
                                 None => through_table(machine),
                             }
                         }))
+                    }
+                    // A set the engine builds, short enough to scan, answers a miss by the
+                    // element's id, for less than a row of a table grown past a core's cache
+                    // costs: such a miss lets its table take no more entries than that. That
+                    // holds only where neither side reads a table of its own that grows with
+                    // the states, which a hit of this one would have spared.
+                    None if set.member.is_none()
+                        && set.infinite.is_none()
+                        && !is_interval
+                        && is_read_in_place(&element)
+                        && is_read_in_place(&set)
+                        && self.takes_table(&compiled) =>
+                    {
+                        let table = self.program.memo_tables.len();
+                        let (element, set) = (element.eval.clone(), set.eval.clone());
+                        let scanned = compiled.with_eval(eval(move |machine| {
+                            let value = element(machine)?;
+                            let set = set(machine)?;
+                            if let Some(found) = machine.store.find_in_set(set, value) {
+                                machine.tables[table].shorten(SHORT_TABLE);
+                                return Ok(bool_id(found == is_in));
+                            }
+                            if !is_tested_set_kind(machine.store.kind_of(set)) {
+                                return Err(Bail("membership in a non-set"));
+                            }
+                            Ok(bool_id(machine.store.is_member(value, set)? == is_in))
+                        }));
+                        let cached = self.cached(scanned);
+                        debug_assert_eq!(self.program.memo_tables.len(), table + 1);
+                        cached
                     }
                     _ => compiled,
                 }

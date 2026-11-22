@@ -1604,6 +1604,25 @@ impl Store {
 
     // Whether a set holds an element's id, where no comparison of the two can fail: a short set
     // is scanned, and a run of integers or a long set searched.
+    /// Whether a set holds an element, where [`Self::is_member`] answers by scanning the set for
+    /// the element's id: a set short enough to scan, with neither holding a function TLC keeps
+    /// lazy or ANY, and no comparison of TLC's search able to fail. Elsewhere, `None`.
+    pub fn find_in_set(&mut self, set: Id, element: Id) -> Option<bool> {
+        let meta = *self.meta(set);
+        let size = meta.size as usize;
+        if meta.kind != KIND_SET
+            || size == 0
+            || size > SCANNED_SIZE
+            || meta.flags & IS_INT_RUN != 0
+            || self.comparison_can_fail(set)
+            || self.comparison_can_fail(element)
+            || !self.is_member_by_id(element, set)
+        {
+            return None;
+        }
+        Some(position_of(self.words(meta.payload as usize, size), element).is_some())
+    }
+
     fn holds_id(&mut self, set: Id, element: Id) -> Outcome<bool> {
         if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0 {
             return Ok(position_of(self.set_elements(set), element).is_some());

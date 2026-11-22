@@ -247,10 +247,12 @@ fn decline<T>(what: impl Display) -> Compiling<T> {
 /// Settings that change how compiled code caches, never what it computes.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
-    /// PROVE_IT_MEMO=off: no memo table, epoch cache or value computed once.
+    /// PROVE_IT_MEMO=off: no memo table, epoch cache or value computed once, and no set kept
+    /// that passed a test of its elements (`Machine::holds_all`).
     pub is_memo_off: bool,
     /// PROVE_IT_EPOCH_CHECK=1: evaluate again on each hit of an epoch cache, and panic if the
-    /// value differs.
+    /// value differs; test again each element `Machine::holds_all` passes over, and panic if it
+    /// doesn't pass.
     pub is_epoch_checked: bool,
 }
 
@@ -1922,6 +1924,11 @@ impl<'a> Compiler<'a> {
         self.program.round_count - 1
     }
 
+    pub(crate) fn allocate_pass(&mut self) -> usize {
+        self.program.pass_count += 1;
+        self.program.pass_count - 1
+    }
+
     fn allocate_runtime(&mut self) -> usize {
         self.program.recursives.push(None);
         self.program.recursives.len() - 1
@@ -1970,6 +1977,17 @@ impl<'a> Compiler<'a> {
                 machine.epoch_lookup(cache, &slots, &inner)
             }))
         }
+    }
+
+    /// Whether `cached` gives the expression a memo table, the next the program numbers.
+    pub(crate) fn takes_table(&self, compiled: &Compiled) -> bool {
+        let width = compiled.footprint.without_slots(&[WARNING_SLOT]).width();
+        !matches!(compiled.shape, Shape::Constant(_))
+            && !compiled.is_printing()
+            && !compiled.uses_registers()
+            && !self.options.is_memo_off
+            && compiled.is_costly
+            && (1..=MAXIMUM_MEMO_WIDTH).contains(&width)
     }
 
     /// An operator whose operands are values the compiler holds, evaluated as it compiles, so

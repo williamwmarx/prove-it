@@ -1107,3 +1107,80 @@ fn tells_a_key_of_a_function_as_membership_in_its_domain_does() {
     assert_eq!(store.find_in_domain(sequence, numbers[1]), Some(false));
     assert_eq!(store.find_in_domain(sequence, texts[0]), None);
 }
+
+// An element in a set as a scan for its id tells it, against the membership the store answers:
+// wherever the scan tells, the membership says the same and doesn't fail, and it tells of records
+// of two shapes in a set of them, but of nothing in a long set, a run of integers, or a set that
+// holds ANY.
+#[test]
+fn tells_an_element_of_a_short_set_as_membership_does() {
+    let mut store = Store::new();
+    rank(&mut store, &["a", "b", "c"]);
+    let numbers = ints(&mut store, &[-1, 0, 1, 2, 3, 4, 5, 7, 20, 40]);
+    let texts = [
+        str(&mut store, "a"),
+        str(&mut store, "b"),
+        str(&mut store, "z"),
+    ];
+    let models = [store.model(&utf16("m")), store.model(&utf16("n"))];
+    let any = store.any();
+    let pair = store.tuple_of(&numbers[2..4]);
+    let records = [
+        store.function_of(&texts[..1], &numbers[..1]).unwrap(),
+        store.function_of(&texts[..1], &numbers[1..2]).unwrap(),
+        store.function_of(&texts[..2], &numbers[..2]).unwrap(),
+        store
+            .function_of(&texts[..2], &[texts[0], numbers[0]])
+            .unwrap(),
+    ];
+    let inner = store.set_of(&numbers[..2]).unwrap();
+    let mut elements: Vec<Id> = vec![TRUE, FALSE, EMPTY_SET, EMPTY_TUPLE, any, pair, inner];
+    elements.extend(&numbers);
+    elements.extend(texts);
+    elements.extend(models);
+    elements.extend(records);
+    let long: Vec<Id> = (0..300).map(|key| store.int(3 * key).unwrap()).collect();
+    let sparse = ints(&mut store, &[1, 3, 7, 20]);
+    let mut sets = vec![EMPTY_SET];
+    for members in [
+        &numbers[1..4],
+        &long[..],
+        &sparse[..],
+        &texts[..2],
+        &models[..],
+        &[TRUE, FALSE][..],
+        &[pair][..],
+        &records[..3],
+        &records[..],
+        &[inner, EMPTY_SET][..],
+        &[numbers[2], texts[0]][..],
+        &[any][..],
+    ] {
+        if let Ok(set) = store.set_of(members) {
+            sets.push(set);
+        }
+    }
+    let mut told = 0;
+    for &set in &sets {
+        for &element in &elements {
+            let member = store.is_member(element, set);
+            if let Some(found) = store.find_in_set(set, element) {
+                assert_eq!(member.ok(), Some(found), "{set} {element}");
+                told += 1;
+            }
+        }
+    }
+    assert!(told >= 50, "{told}");
+    let messages = store.set_of(&records[..3]).unwrap();
+    assert_eq!(store.find_in_set(messages, records[0]), Some(true));
+    assert_eq!(store.find_in_set(messages, records[2]), Some(true));
+    let absent = store.function_of(&texts[..1], &numbers[2..3]).unwrap();
+    assert_eq!(store.find_in_set(messages, absent), Some(false));
+    let run = store.set_of(&numbers[1..4]).unwrap();
+    assert_eq!(store.find_in_set(run, numbers[2]), None);
+    let many = store.set_of(&long).unwrap();
+    assert_eq!(store.find_in_set(many, long[5]), None);
+    let held = store.set_of(&[any]).unwrap();
+    assert_eq!(store.find_in_set(held, numbers[0]), None);
+    assert_eq!(store.find_in_set(EMPTY_SET, numbers[0]), None);
+}

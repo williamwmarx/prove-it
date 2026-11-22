@@ -1,0 +1,33 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ msgs = {}
+/\ bound = 5
+
+State 2: <Next line 5, col 28 to line 5, col 66 of module PassedState>
+/\ msgs = {1}
+/\ bound = 5
+
+State 3: <Next line 5, col 28 to line 5, col 66 of module PassedState>
+/\ msgs = {1, 2}
+/\ bound = 5
+
+State 4: <Next line 5, col 28 to line 5, col 66 of module PassedState>
+/\ msgs = {1, 2, 3}
+/\ bound = 5
+
+State 5: <Next line 6, col 12 to line 6, col 78 of module PassedState>
+/\ msgs = {1, 2, 3}
+/\ bound = 4
+
+State 6: <Next line 6, col 12 to line 6, col 78 of module PassedState>
+/\ msgs = {1, 2, 3}
+/\ bound = 3
+
+State 7: <Next line 6, col 12 to line 6, col 78 of module PassedState>
+/\ msgs = {1, 2, 3}
+/\ bound = 2
+
+34 states generated, 11 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
