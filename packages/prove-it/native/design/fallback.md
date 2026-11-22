@@ -8492,7 +8492,14 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs those change count as wrong here until the port follows them.
+of integer powers; the runs the other two change count as wrong here until the port follows
+them.
+
+The port follows b91fb6c's coalescing of a declared non-constant operator's application
+(`tests/fixtures/tlapm-cli/FreshOperator.tla`, recorded with b91fb6c): `Coalesce.coalesce_modal`
+applies the coalesced operator to the arguments, as it does a user operator's, where the port
+left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
+proved `F(1) = F(2)`, which tlapm fails.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
