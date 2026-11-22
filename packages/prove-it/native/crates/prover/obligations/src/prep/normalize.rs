@@ -13,10 +13,10 @@ use crate::anonymize::{Anonymizer, AnonymizerHost, create_anonymizer};
 use crate::equality::is_equal_expr;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Bound, BoundDomain, Builtin, Bullet, ContextMap, Defn, DefnCore, ExceptPoint, ExceptSpec, Expr,
-    ExprCore, ExprProps, Field, Hyp, HypCore, Hyps, ObligationWarning, Quantifier, ScopeRef,
-    Sequent, Visibility, apply_builtin, at, expr, get_children, map_children, map_except_specs,
-    map_hyp, to_index,
+    Bound, BoundDomain, Builtin, Bullet, Channel, ContextMap, Defn, DefnCore, ExceptPoint,
+    ExceptSpec, Expr, ExprCore, ExprProps, Field, Hyp, HypCore, Hyps, Locus, ObligationWarning,
+    Quantifier, ScopeRef, Sequent, Visibility, Warn, apply_builtin, at, expr, get_children,
+    map_children, map_except_specs, map_hyp, to_index,
 };
 use crate::pragma::OldMethod;
 use crate::prep::enabled_axioms::implication_to_enabled;
@@ -348,8 +348,12 @@ pub fn normalize_sequent(sequent: &Sequent) -> Result<Sequent> {
 }
 
 /// The anonymizer's instance expander and warning sink: Expr.Anon's anon, which only meets the names
-/// that lambdification binds, so it never expands an instance.
-struct LambdifyHost;
+/// that lambdification binds, so it never expands an instance, and warns of nothing the frontend
+/// doesn't; what it would warn of is kept for the frontend's sink.
+#[derive(Default)]
+struct LambdifyHost {
+    warnings: Vec<ObligationWarning>,
+}
 
 impl AnonymizerHost for LambdifyHost {
     fn expand_instance(
@@ -361,12 +365,20 @@ impl AnonymizerHost for LambdifyHost {
         Err(ObligationError::assert_failure())
     }
 
-    fn on_warning(&mut self, _warning: ObligationWarning) {}
+    fn on_warning(&mut self, warning: ObligationWarning) {
+        self.warnings.push(warning);
+    }
 }
 
 // expand_enabled_cdot: the first frontend the methods cite, in tlapm's order, transforms the
-// obligation. Its soundness checks throw a TlaProverError, as tlapm then runs no backend.
-fn expand_enabled_cdot(sequent: Sequent, frontends: &[String]) -> Result<Sequent> {
+// obligation. Its soundness checks throw a TlaProverError, as tlapm then runs no backend. What a
+// frontend prints as it runs goes to `warn`.
+fn expand_enabled_cdot(
+    sequent: Sequent,
+    frontends: &[String],
+    at: Option<&Locus>,
+    warn: &mut Warn,
+) -> Result<Sequent> {
     let has = |name: &str| frontends.iter().any(|frontend| frontend == name);
     let is_enabled = has("expandenabled");
     let is_cdot = has("expandcdot");
@@ -377,7 +389,14 @@ fn expand_enabled_cdot(sequent: Sequent, frontends: &[String]) -> Result<Sequent
             return check_level_change(&sequent);
         }
         if has("enabledaxioms") {
-            return implication_to_enabled(&sequent);
+            // Prep.expand_enabled_cdot prints this where M_elab found the directive cited, which
+            // is where it is a method. M_elab's level check of the citing step is not ported:
+            // the rule is applied whatever the assumptions' levels.
+            warn(ObligationWarning {
+                text: "expr has ENABLEDaxioms property ===".to_owned(),
+                channel: Channel::Stdout,
+            });
+            return implication_to_enabled(&sequent, at, warn);
         }
         return Ok(sequent);
     }
@@ -386,11 +405,12 @@ fn expand_enabled_cdot(sequent: Sequent, frontends: &[String]) -> Result<Sequent
         value: Cell::new(0),
     }));
     let expression = expr(ExprCore::Sequent { sequent });
+    let mut host = LambdifyHost::default();
     let result = if is_enabled || is_cdot {
         expand_action_operators(
             &mut anonymizer,
-            &mut LambdifyHost,
-            &mut |_| {},
+            &mut host,
+            warn,
             &None,
             &expression,
             ActionOptions {
@@ -402,8 +422,8 @@ fn expand_enabled_cdot(sequent: Sequent, frontends: &[String]) -> Result<Sequent
     } else {
         lambdify(
             &mut anonymizer,
-            &mut LambdifyHost,
-            &mut |_| {},
+            &mut host,
+            warn,
             &None,
             &expression,
             Some(ActionOptions {
@@ -413,18 +433,24 @@ fn expand_enabled_cdot(sequent: Sequent, frontends: &[String]) -> Result<Sequent
             }),
         )?
     };
+    for warning in host.warnings {
+        warn(warning);
+    }
     match &result.core {
         ExprCore::Sequent { sequent } => Ok(sequent.clone()),
         _ => Err(ObligationError::assert_failure()),
     }
 }
 
-/// normalize_expand: expand_defs, Elab.normalize, then the frontends the obligation cites.
-/// `methods` defaults to `find_methods` of the obligation.
+/// normalize_expand: expand_defs, Elab.normalize, then the frontends the obligation cites, which
+/// print what they do to `warn`, naming the obligation's place `at`. `methods` defaults to
+/// `find_methods` of the obligation.
 pub fn normalize_expand(
     sequent: &Sequent,
     method: Option<&OldMethod>,
     methods: Option<&FoundMethods>,
+    at: Option<&Locus>,
+    warn: &mut Warn,
 ) -> Result<Sequent> {
     let found;
     let methods = match methods {
@@ -437,6 +463,8 @@ pub fn normalize_expand(
     expand_enabled_cdot(
         normalize_sequent(&expand_defs(sequent, true)?)?,
         &methods.frontends,
+        at,
+        warn,
     )
 }
 
@@ -684,6 +712,8 @@ mod tests {
             &sequent,
             method.as_ref(),
             method.is_none().then_some(&found),
+            None,
+            &mut |_| {},
         );
         for (key, wanted) in outcomes {
             let actual = match key {
@@ -713,7 +743,13 @@ mod tests {
                         _ => panic!("unknown outcome {key}"),
                     };
                     print_outcome(
-                        normalize_expand(&sequent, method.as_ref(), Some(&frontends)),
+                        normalize_expand(
+                            &sequent,
+                            method.as_ref(),
+                            Some(&frontends),
+                            None,
+                            &mut |_| {},
+                        ),
                         print_sequent,
                     )
                 }

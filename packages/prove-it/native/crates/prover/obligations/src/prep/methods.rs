@@ -46,7 +46,8 @@ const LS4_SECONDS: f64 = 10.0;
 const RLIMIT_BASE: f64 = 3_000_000.0;
 const MAX_RLIMIT: f64 = 4_294_967_295.0;
 
-fn is_frontend(prover: &str) -> bool {
+/// Whether the method rewrites an obligation rather than proving it.
+pub fn is_frontend(prover: &str) -> bool {
     FRONTENDS.contains(&prover)
 }
 

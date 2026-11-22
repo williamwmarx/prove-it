@@ -8450,6 +8450,7 @@ of integer powers; the runs those change count as wrong here until the port foll
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
 | with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
+| with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8545,6 +8546,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
   `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
   flight together declines in toolbox mode.
+- M_elab's level check of a step that cites ENABLEDaxioms (`check_usable`, which refuses the
+  directive where an assumption or a cited step is of level above 1, with an `Error:` line on
+  stderr as the module is elaborated) is not ported: the rule is applied whatever the levels, so
+  `tlapm/proofs/enabled/enabled_axioms_level` of the upstream suite is proved where tlapm reports
+  `ENABLEDaxioms depends on assumptions of level > 1`.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
 - A TAB before the module header, on the header's line, shifts the columns printed on that line,

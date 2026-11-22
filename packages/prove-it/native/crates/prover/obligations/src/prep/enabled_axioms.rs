@@ -6,8 +6,8 @@ use std::collections::BTreeSet;
 use crate::equality::is_equal_expr;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Builtin, Expr, ExprCore, HypCore, Hyps, ScopeRef, Sequent, Visibility, adjoin, adjoin_all,
-    expr, get_scope_at, map_scoped, to_index,
+    Builtin, Channel, Expr, ExprCore, HypCore, Hyps, Locus, ObligationWarning, ScopeRef, Sequent,
+    Visibility, Warn, adjoin, adjoin_all, expr, get_at_prefix, get_scope_at, map_scoped, to_index,
 };
 use crate::levels::get_level_info;
 use crate::substitution::shift_expr;
@@ -213,7 +213,11 @@ fn get_rule(scope: &ScopeRef, goal: &Expr) -> Result<Option<Rule>> {
 /// implication_to_enabled: the goal follows by the rule its form calls for when a visible fact is
 /// the rule's premise and others say that both operands are in BOOLEAN, or the premise is an
 /// equivalence. The goal then becomes TRUE; otherwise tlapm records the obligation as not tried.
-pub fn implication_to_enabled(sequent: &Sequent) -> Result<Sequent> {
+pub fn implication_to_enabled(
+    sequent: &Sequent,
+    at: Option<&Locus>,
+    warn: &mut Warn,
+) -> Result<Sequent> {
     let goal_scope = adjoin_all(&None, &sequent.context);
     let rule = get_rule(&goal_scope, &sequent.active)?;
     let mut is_premise = false;
@@ -304,6 +308,13 @@ pub fn implication_to_enabled(sequent: &Sequent) -> Result<Sequent> {
         return Err(ObligationError::prover(
             "ENABLEDaxioms proof directive did not succeed.\n",
         ));
+    }
+    // Util.printf ~at ~prefix:"[INFO]", whose message starts and ends with a line break.
+    if let Some(rule) = &rule {
+        warn(ObligationWarning {
+            text: format!("{}[INFO]\nProved {}\n", get_at_prefix(at), rule.name),
+            channel: Channel::Stdout,
+        });
     }
     Ok(Sequent {
         context: sequent.context.clone(),

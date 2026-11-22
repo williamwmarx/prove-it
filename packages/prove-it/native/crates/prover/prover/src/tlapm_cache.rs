@@ -31,13 +31,19 @@ const MAGIC_NUMBER: i64 = 20210223;
 const RECORD_SIZE: usize = 23;
 
 // Each prover's field in V13.str and constructor in V13.meth, in the order the TypeScript's
-// `PROVERS` lists them.
-const PROVERS: [(&str, usize, u8); 5] = [
-    ("zenon", 1, 1),
-    ("isabelle", 2, 0),
-    ("smt", 10, 8),
-    ("z3", 11, 9),
-    ("ls4", 17, 16),
+// `PROVERS` lists them, then the frontends whose refusal Prep.normalize_expand saves, whose
+// constructors carry no argument.
+const PROVERS: [(&str, usize, u8, bool); 10] = [
+    ("zenon", 1, 1, false),
+    ("isabelle", 2, 0, false),
+    ("smt", 10, 8, false),
+    ("z3", 11, 9, false),
+    ("ls4", 17, 16, false),
+    ("expandenabled", 18, 6, true),
+    ("expandcdot", 19, 8, true),
+    ("lambdify", 20, 9, true),
+    ("enabledaxioms", 21, 10, true),
+    ("levelcomparison", 22, 11, true),
 ];
 
 const FAIL_METHOD: i64 = 5;
@@ -51,11 +57,11 @@ fn corrupted() -> ObligationError {
     ObligationError::proof("corrupted fingerprint file")
 }
 
-fn get_prover(prover: &str) -> Option<(usize, u8)> {
+fn get_prover(prover: &str) -> Option<(usize, u8, bool)> {
     PROVERS
         .iter()
         .find(|known| known.0 == prover)
-        .map(|known| (known.1, known.2))
+        .map(|known| (known.1, known.2, known.3))
 }
 
 fn get_field(value: Option<&MarshalValue>, index: usize) -> Option<&MarshalValue> {
@@ -223,7 +229,7 @@ fn decode_result(prover: &str, result: Option<&MarshalValue>) -> Option<Attempt>
 /// Fpfile.fp_writes, whose date counts months from 0. None for a prover the file has no field for.
 fn encode_result(attempt: &Attempt, version: &str, now: LocalTime) -> Option<MarshalValue> {
     let method = &attempt.attempt.method;
-    let (_, tag) = get_prover(&method.prover)?;
+    let (_, tag, is_constant) = get_prover(&method.prover)?;
     let timeout = MarshalValue::Float(
         method
             .rlimit
@@ -269,7 +275,17 @@ fn encode_result(attempt: &Attempt, version: &str, now: LocalTime) -> Option<Mar
         vec![block(
             0,
             vec![
-                block(0, vec![outcome, block(tag, vec![argument])]),
+                block(
+                    0,
+                    vec![
+                        outcome,
+                        if is_constant {
+                            MarshalValue::Int(i64::from(tag))
+                        } else {
+                            block(tag, vec![argument])
+                        },
+                    ],
+                ),
                 block(0, date.to_vec()),
                 MarshalValue::Text(version.into()),
                 MarshalValue::Text(version.into()),
@@ -346,7 +362,7 @@ impl KnownResults {
         let mut results = OrderedMap::new();
         for (fingerprint, record) in table.iter() {
             let mut attempts = OrderedMap::new();
-            for (prover, field, _) in PROVERS {
+            for (prover, field, _, _) in PROVERS {
                 let stored = record.get(field);
                 if let Some(attempt) = decode_result(prover, get_field(stored, 0)) {
                     attempts.insert(
@@ -385,7 +401,7 @@ impl KnownResults {
                 .clone()
                 .unwrap_or_else(|| vec![MarshalValue::Int(0); RECORD_SIZE]);
             for (prover, known_attempt) in known.attempts.iter() {
-                let (field, _) = get_prover(prover).ok_or_else(|| {
+                let (field, _, _) = get_prover(prover).ok_or_else(|| {
                     ObligationError::proof(format!("no fingerprint field for the prover {prover}"))
                 })?;
                 let result = match &known_attempt.stored {
@@ -430,7 +446,7 @@ mod tests {
             let mut table = FingerprintTable::new();
             load_fingerprints(&mut table, &bytes, false, "").expect("a fingerprints file");
             for (_, record) in table.iter() {
-                for (prover, field, _) in PROVERS {
+                for (prover, field, _, _) in PROVERS {
                     let stored = record.get(field);
                     let Some(attempt) = decode_result(prover, get_field(stored, 0)) else {
                         continue;
