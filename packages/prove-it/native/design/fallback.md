@@ -4872,7 +4872,12 @@ matches TLC or declines exactly.
   decides only where its guard may name a parameter: `F(n) == TRUE /\ <>(x = 0) /\ F(n + 1)`
   overflows from the first repeated call (`liveness-recursion-constant-conjunct`), as do the
   shapes of `liveness-recursion-{mutual-cycle,state-argument,state-guard-conjunct,let-state-guard}`,
-  and `liveness-recursion-ending-past-stack` ends at 700 calls and declines. Fixtures `liveness-recursion-depth-{100,200,500,900}`,
+  and `liveness-recursion-ending-past-stack` ends at 700 calls and declines. An argument stays the
+  expression TLC's `LazyValue` holds, compared by the expression and the scope it is read in, and
+  by value only where the body of the call it is in read it: an argument the body never reads
+  isn't computed (`liveness-recursion-unread-argument`, `\A i, j, k \in 1..1000 : TRUE`), and the
+  level of `Ignore(x)` stays the expression's (`liveness-recursion-argument-level-bound`, two
+  branches). Fixtures `liveness-recursion-depth-{100,200,500,900}`,
   `liveness-recursion-state-guard` and `liveness-recursion-unevaluated-argument-read`, where a guard
   reads the argument that fails, which TLC reports as its evaluation error, as the binary does.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found

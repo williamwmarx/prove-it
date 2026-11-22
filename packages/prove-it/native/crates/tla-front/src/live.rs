@@ -14,8 +14,9 @@ use crate::errors::{FrontError, TAUTOLOGY, describe_range};
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
-    Binding, Expanded, Property, Scope, ScopeOf, bind_definitions, bind_operator_arguments,
-    get_definition, get_level, lookup_scope, resolve_apply_operator,
+    Binding, Expanded, Property, Scope, ScopeOf, ThunkLevels, bind_definitions,
+    bind_operator_arguments, get_definition, get_level_keeping, lookup_scope,
+    resolve_apply_operator,
 };
 use crate::tlc_messages::is_eval_exception;
 
@@ -35,29 +36,15 @@ const MAXIMUM_RECURSION: usize = 600;
 const OVERFLOWING_RECURSION: usize = 2000;
 
 /// An argument of a recursive call, as the translation compares calls to find one it is already in.
+#[derive(PartialEq)]
 enum Argument {
-    /// A constant argument's value.
-    Value(ConfigValue),
     /// An argument above constant level, which the translation can't decide on, so that TLC
     /// expands every branch of the call again whatever its value.
     Variable,
-    /// A constant argument that fails to evaluate: the expression it is and the scope it is
-    /// evaluated in, which a parameter passed on as it is keeps (`bind_operator_arguments`).
-    Unevaluated(*const Expression, *const Scope),
-}
-
-impl PartialEq for Argument {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Argument::Value(left), Argument::Value(right)) => left == right,
-            (Argument::Variable, Argument::Variable) => true,
-            (
-                Argument::Unevaluated(left, left_scope),
-                Argument::Unevaluated(right, right_scope),
-            ) => left == right && left_scope == right_scope,
-            _ => false,
-        }
-    }
+    /// A constant argument: the expression it is and the scope it is read in, which a parameter
+    /// passed on as it is keeps (`bind_operator_arguments`), and none for one that names nothing a
+    /// scope binds.
+    Constant(*const Expression, *const Scope),
 }
 
 /// Whether an expression may name what an operator's parameters or a LET bind, through a name
@@ -78,12 +65,13 @@ fn may_name_local(expression: &Expr) -> bool {
 }
 
 /// A call of a recursive operator the translation is in: the operator's body, the scope it closes
-/// over and its arguments, and how many constant expressions the translation had evaluated when
-/// it made the call.
+/// over, its arguments with the node that binds each as a thunk, and how many constant
+/// expressions the translation had evaluated when it made the call.
 struct RecursiveCall {
     body: *const Expression,
     scope: *const Scope,
     arguments: Vec<Argument>,
+    nodes: Vec<Option<Rc<Scope>>>,
     evaluations: usize,
 }
 
@@ -92,19 +80,17 @@ impl RecursiveCall {
         self.body == other.body && self.scope == other.scope
     }
 
-    /// Whether each argument is of the same kind in both calls, a constant's value, above constant
-    /// level or one that fails to evaluate, so that what the translation can decide of one it can
-    /// decide of the other: a guard that read one that fails would have failed with it.
+    /// Whether each argument is of the same kind in both calls, constant or above constant level,
+    /// so that what the translation can decide of one it can decide of the other.
     fn has_arguments_of_kinds(&self, other: &RecursiveCall) -> bool {
         self.arguments.len() == other.arguments.len()
-            && self.arguments.iter().zip(&other.arguments).all(|pair| {
-                matches!(
-                    pair,
-                    (Argument::Value(_), Argument::Value(_))
-                        | (Argument::Variable, Argument::Variable)
-                        | (Argument::Unevaluated(..), Argument::Unevaluated(..))
-                )
-            })
+            && self
+                .arguments
+                .iter()
+                .zip(&other.arguments)
+                .all(|(left, right)| {
+                    matches!(left, Argument::Variable) == matches!(right, Argument::Variable)
+                })
     }
 }
 
@@ -211,6 +197,8 @@ struct Converter<'a> {
     /// How many constant expressions that may name a parameter the translation has evaluated to
     /// decide what it expands, which is what an argument's value can decide (`count_decision`).
     evaluations: std::cell::Cell<usize>,
+    /// The levels of the recursive calls' arguments, kept from one call to the next.
+    thunk_levels: ThunkLevels,
     /// Whether the translation followed more nested recursive calls than TLC's stack surely
     /// holds, so that TLC may have overflowed where it didn't.
     is_past_tlc_stack: bool,
@@ -223,7 +211,13 @@ struct Converter<'a> {
 
 impl Converter<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
-        get_level(expression, scope, self.environment, self.facts, &[])
+        get_level_keeping(
+            expression,
+            scope,
+            self.environment,
+            self.facts,
+            &self.thunk_levels,
+        )
     }
 
     /// Counts a constant expression the translation evaluates to decide what it expands, where an
@@ -401,56 +395,34 @@ impl Converter<'_> {
                 .iter()
                 .map(|argument| self.argument(argument, scope))
                 .collect(),
+            nodes: Vec::new(),
             evaluations: self.evaluations.get(),
         });
-        let bound = match &call {
-            // The value of a constant argument, which the translation has computed for the call,
-            // is what its LazyValue gives each time TLC reads it, and reading it as a value keeps
-            // each level from reading the arguments of every call above it.
-            Some(call) => {
-                let mut bound = closure_scope;
-                for ((param, argument), value) in params.iter().zip(args).zip(&call.arguments) {
-                    bound = match value {
-                        Argument::Value(value)
-                            if param.arity == 0
-                                && !matches!(
-                                    argument.kind,
-                                    ExpressionKind::String { .. } | ExpressionKind::Number { .. }
-                                ) =>
-                        {
-                            Some(Rc::new(Scope {
-                                name: param.name.clone(),
-                                binding: Binding::Value(value.clone()),
-                                parent: bound,
-                            }))
-                        }
-                        _ => bind_operator_arguments(
-                            std::slice::from_ref(param),
-                            std::slice::from_ref(argument),
-                            bound,
-                            scope,
-                            self.environment,
-                        )?,
-                    };
-                }
-                bound
-            }
-            None => bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?,
-        };
-        let Some(call) = call else {
+        let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
+        let Some(mut call) = call else {
             let expanded = self.expand(&body, bound.as_ref(), expression, scope);
             return Self::expanded_call(expression, expanded, false);
         };
+        call.nodes = params
+            .iter()
+            .map(|param| match lookup_scope(bound.as_ref(), &param.name) {
+                Some((node, Binding::Thunk { .. })) => {
+                    self.thunk_levels.register(node);
+                    Some(node.clone())
+                }
+                _ => None,
+            })
+            .collect();
         // TLC's translation recurses until its stack overflows (`createStackOverflowError`) on a
-        // call it is already in with the same constant arguments, as on its Github1389Loops and,
-        // where the argument is a state's, Github1389StateGuard; and on a call of an operator it
-        // is in that it reached evaluating nothing an argument could decide, with arguments of
-        // the same kinds, as through an IF on the state alone (`IF x = 0 THEN <>P ELSE Reach(n +
-        // 1)`), which it expands again and again whatever their values. An argument above
-        // constant level that becomes a constant (`F(0)` in `F(x)`) can make a guard decidable.
+        // call it is already in with the same arguments, as on its Github1389Loops and, where the
+        // argument is a state's, Github1389StateGuard; and on a call of an operator it is in that
+        // it reached evaluating nothing an argument could decide, with arguments of the same
+        // kinds, as through an IF on the state alone (`IF x = 0 THEN <>P ELSE Reach(n + 1)`),
+        // which it expands again and again whatever their values. An argument above constant
+        // level that becomes a constant (`F(0)` in `F(x)`) can make a guard decidable.
         if self.recursion.iter().any(|entered| {
             entered.is_of(&call)
-                && (entered.arguments == call.arguments
+                && (self.has_same_arguments(entered, &call)
                     || (entered.evaluations == call.evaluations
                         && entered.has_arguments_of_kinds(&call)))
         }) {
@@ -469,36 +441,59 @@ impl Converter<'_> {
     }
 
     /// An argument of a recursive call, for comparing the call with those the translation is in.
+    /// It isn't evaluated: TLC computes an argument only where the body reads it.
     fn argument(&self, argument: &Expr, scope: Option<&Rc<Scope>>) -> Argument {
         if self.level(argument, scope) != Level::Constant {
             return Argument::Variable;
         }
-        match self
-            .evaluator
-            .map(|evaluator| evaluator.evaluate(argument, scope))
+        let (mut argument, mut scope) = (argument.clone(), scope.cloned());
+        while matches!(argument.kind, ExpressionKind::Identifier { .. })
+            && argument.is_locally_resolved()
         {
-            Some(Ok(value)) => Argument::Value(value),
-            _ => {
-                // A parameter is the expression its binding holds, in the binding's scope.
-                let reference = argument.reference().unwrap_or_default();
-                let thunk = matches!(argument.kind, ExpressionKind::Identifier { .. })
-                    .then(|| lookup_scope(scope, &reference))
-                    .flatten();
-                match thunk {
-                    Some((node, Binding::Thunk { expression, scope })) => Argument::Unevaluated(
-                        Rc::as_ptr(expression),
-                        scope
-                            .resolve(node)
-                            .as_ref()
-                            .map_or(std::ptr::null(), Rc::as_ptr),
-                    ),
-                    _ => Argument::Unevaluated(
-                        Rc::as_ptr(argument),
-                        scope.map_or(std::ptr::null(), Rc::as_ptr),
-                    ),
-                }
-            }
+            let Some((
+                node,
+                Binding::Thunk {
+                    expression,
+                    scope: of,
+                },
+            )) = lookup_scope(scope.as_ref(), &argument.reference().unwrap_or_default())
+            else {
+                break;
+            };
+            let next = (expression.clone(), of.resolve(node));
+            (argument, scope) = next;
         }
+        Argument::Constant(
+            Rc::as_ptr(&argument),
+            match &scope {
+                Some(scope) if may_name_local(&argument) => Rc::as_ptr(scope),
+                _ => std::ptr::null(),
+            },
+        )
+    }
+
+    /// Whether a call has the arguments of one the translation is in: each the same expression in
+    /// the same scope, or above constant level in both, or of the same value where the body of the
+    /// call it is in read it, as TLC reads it there.
+    fn has_same_arguments(&self, entered: &RecursiveCall, call: &RecursiveCall) -> bool {
+        entered.arguments.len() == call.arguments.len()
+            && (0..call.arguments.len()).all(|position| {
+                if entered.arguments[position] == call.arguments[position] {
+                    return true;
+                }
+                let (Some(evaluator), Some(Some(read)), Some(Some(node))) = (
+                    self.evaluator,
+                    entered.nodes.get(position),
+                    call.nodes.get(position),
+                ) else {
+                    return false;
+                };
+                evaluator.computed_thunk(read).is_some_and(|value| {
+                    evaluator
+                        .evaluate_thunk(node)
+                        .is_ok_and(|other| other == value)
+                })
+            })
     }
 
     /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
@@ -801,6 +796,7 @@ pub fn get_liveness(
         depth: 0,
         recursion: Vec::new(),
         evaluations: std::cell::Cell::new(0),
+        thunk_levels: ThunkLevels::default(),
         is_past_tlc_stack: false,
         call_levels: HashMap::new(),
         is_substituted: false,
