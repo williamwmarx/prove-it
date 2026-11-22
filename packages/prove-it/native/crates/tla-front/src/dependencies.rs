@@ -371,10 +371,7 @@ fn is_evaluated_once(definition: &Definition, flags: u32) -> bool {
 fn is_fact(definition: &Definition) -> bool {
     matches!(
         definition.kind,
-        DefinitionKind::Operator {
-            body_range: None,
-            ..
-        }
+        DefinitionKind::Operator { is_fact: true, .. }
     )
 }
 

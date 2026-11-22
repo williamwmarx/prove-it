@@ -641,7 +641,9 @@ pub fn definition(value: &Definition) -> Json {
         ("location", Some(location(&value.location))),
     ];
     match &value.kind {
-        DefinitionKind::Operator { params, body_range } => {
+        DefinitionKind::Operator {
+            params, body_range, ..
+        } => {
             fields.push(("kind", Some(text("Operator"))));
             fields.push(("params", Some(list(params, param))));
             fields.push(("bodyRange", body_range.as_ref().map(range)));
