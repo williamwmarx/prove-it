@@ -3346,7 +3346,8 @@ fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
 // variable is assigned, which fails naming those that aren't; and in assumptions, of a spec
 // without variables and with them. The engine declines where TLC's record of a state has its
 // variables in another order than their names, and where TLC's rebuild of the trace evaluates
-// again a next-state relation that prints, and with two workers.
+// again a next-state relation that prints, primed, where TLC fails in the successor the walk
+// assigns with an exception, and with two workers.
 #[test]
 fn reads_the_behavior_as_tlc_through_trace() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/trace");
@@ -3400,6 +3401,7 @@ fn reads_the_behavior_as_tlc_through_trace() {
             "2",
             "TLCExt's Trace, the behavior the engine doesn't keep",
         ),
+        ("TracePrimed", "1", "TLCExt's Trace in a primed context"),
     ] {
         let (output, run) = run_front(
             &format!("trace-{name}-{workers}"),

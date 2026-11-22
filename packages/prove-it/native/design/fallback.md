@@ -3022,6 +3022,8 @@ properties to check, where TLC finds the trace otherwise or the engine evaluates
 search; where TLC's record of a state, which holds its variables in TLC's order unnormalized and
 prints them so (`RecordValue(TLCState)`), differs from the engine's, in the order of their
 names ("TLCExt's Trace of variables TLC orders otherwise than their names", as `VARIABLES y, x`);
+primed ("TLCExt's Trace in a primed context"), which TLC evaluates in the successor the walk
+assigns and fails at with an exception it reports as unexpected, as `x' = (Trace')[1].x`;
 and where TLC's rebuild evaluates again an initial predicate, or a next-state relation, that may
 print, draw or set a register ("TLCExt's Trace, whose rebuild evaluates again what may have an
 effect"): TLC prints again what they print as it rebuilds the states before the one it gives the
@@ -3031,8 +3033,8 @@ of aidenybai/tla-ts at 0341dbe5 (72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_O
 `JDK_JAVA_OPTIONS` unset, adjudicated by the pinned jar) main answers 72,567 runs as the jar
 does, declines 311 and answers none otherwise; with Trace it answers 72,578 and declines 300. The
 11 runs are TLCExtTraceTest and the `tlc_ext/trace_*` tests but the two of a simulation
-(`trace_simulate`, TLCExtTraceSimTest), which decline. No other run changes. `tests/trace` holds TLC's output beside
-its specs (`reads_the_behavior_as_tlc_through_trace`).
+(`trace_simulate`, TLCExtTraceSimTest), which decline. No other run changes. `tests/trace` holds
+TLC's output beside its specs (`reads_the_behavior_as_tlc_through_trace`).
 
 #### Declines to win back
 

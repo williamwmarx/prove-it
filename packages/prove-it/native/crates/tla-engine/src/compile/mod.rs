@@ -5745,6 +5745,15 @@ impl<'a> Compiler<'a> {
                     .compile_definition_reference(self.ir.definitions[index as usize], context);
             }
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
+                // TLC evaluates a primed Trace in the successor, which the walk assigns part by
+                // part, and fails there as it isn't assigned (`TLCExt.getTrace`), with an
+                // exception it reports otherwise than the failures the engine words.
+                if context.is_primed && self.builtin_name(index) == "Trace" {
+                    return Ok(leaf(
+                        eval(|_| Err(Bail("TLCExt's Trace in a primed context"))),
+                        Footprint::default(),
+                    ));
+                }
                 return self.compile_nullary_builtin(index);
             }
             _ => {}
