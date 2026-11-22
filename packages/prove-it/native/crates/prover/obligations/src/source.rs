@@ -1535,12 +1535,31 @@ impl Source {
             ast::StepBody::Have(expression) => with_step_method(StepCore::Have {
                 expression: self.convert_expression(expression, false)?,
             }),
-            ast::StepBody::Take { names, bounds, .. } => with_step_method(StepCore::Take {
-                bounds: if names.is_empty() {
-                    self.convert_bounds(bounds, false)?
-                } else {
-                    get_unbounded(&get_names(names))
-                },
+            ast::StepBody::Take {
+                names,
+                name_ranges,
+                bounds,
+            } => with_step_method(if names.is_empty() {
+                StepCore::Take {
+                    bounds: self.convert_bounds(bounds, false)?,
+                    name_loci: bounds
+                        .iter()
+                        .map(|bound| match &bound.pattern {
+                            ast::BoundPattern::Name { ranges, .. } => {
+                                ranges.first().map(|range| self.get_range_locus(range))
+                            }
+                            ast::BoundPattern::Tuple { .. } => None,
+                        })
+                        .collect(),
+                }
+            } else {
+                StepCore::Take {
+                    bounds: get_unbounded(&get_names(names)),
+                    name_loci: name_ranges
+                        .iter()
+                        .map(|range| Some(self.get_range_locus(range)))
+                        .collect(),
+                }
             }),
             ast::StepBody::Witness(expressions) => with_step_method(StepCore::Witness {
                 expressions: self.convert_expressions(expressions, false)?,
@@ -2456,7 +2475,7 @@ mod tests {
             StepCore::Have { expression: had } => {
                 ("Have", vec![("expression", Some(expression(had)))])
             }
-            StepCore::Take { bounds } => ("Take", vec![("bounds", Some(list(bounds, bound)))]),
+            StepCore::Take { bounds, .. } => ("Take", vec![("bounds", Some(list(bounds, bound)))]),
             StepCore::Witness { expressions: items } => {
                 ("Witness", vec![("expressions", Some(expressions(items)))])
             }

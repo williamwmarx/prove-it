@@ -951,7 +951,7 @@ impl Pass<'_> {
                     with_core(StepCore::Have { expression }),
                 ))
             }
-            StepCore::Take { bounds } => {
+            StepCore::Take { bounds, name_loci } => {
                 let (inner, mapped) = self.bounds(context, bounds)?;
                 let universal = at_props(
                     ExprCore::Quant {
@@ -966,7 +966,10 @@ impl Pass<'_> {
                         &adjoin_step(&self.bump_context(&inner, 1), &number, universal, &item),
                         1,
                     ),
-                    with_core(StepCore::Take { bounds: mapped }),
+                    with_core(StepCore::Take {
+                        bounds: mapped,
+                        name_loci: name_loci.clone(),
+                    }),
                 ))
             }
             StepCore::Witness { expressions } => {
@@ -1466,7 +1469,9 @@ mod tests {
             ),
             StepCore::Hide { usable } => format!("(hide {})", show_usable(usable)),
             StepCore::Have { expression } => format!("(have {})", show_expr(expression)),
-            StepCore::Take { bounds } => format!("(take [{}])", show_list(bounds, show_bound)),
+            StepCore::Take { bounds, .. } => {
+                format!("(take [{}])", show_list(bounds, show_bound))
+            }
             StepCore::Witness { expressions } => {
                 format!("(witness {})", show_list(expressions, show_expr))
             }
@@ -17511,6 +17516,7 @@ mod tests {
                                     domain: BoundDomain::NoDomain,
                                 },
                             ],
+                            name_loci: Vec::new(),
                         },
                         props: props(76, Some(StepNumber::Unnamed { level: 1, id: 4 })),
                     },
