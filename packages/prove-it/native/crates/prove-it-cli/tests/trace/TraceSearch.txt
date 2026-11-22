@@ -1,0 +1,45 @@
+Computing initial states...
+<<"con", 1>>
+<<"inv", 1, 1, <<[a |-> 1, b |-> 1]>>>>
+<<"con", 1>>
+<<"inv", 1, 2, <<[a |-> 1, b |-> 2]>>>>
+Computed 2 initial states...
+<<"con", 1>>
+<<"inv", 2, 1, <<[a |-> 2, b |-> 1]>>>>
+<<"con", 1>>
+<<"inv", 2, 2, <<[a |-> 2, b |-> 2]>>>>
+<<"con", 2>>
+<<"act", 1, 2, <<[a |-> 1, b |-> 1]>>>>
+<<"con", 2>>
+<<"act", 1, 0, <<[a |-> 1, b |-> 1]>>>>
+<<"inv", 0, 0, <<[a |-> 1, b |-> 1], [a |-> 0, b |-> 0]>>>>
+<<"con", 2>>
+<<"act", 1, 2, <<[a |-> 1, b |-> 2]>>>>
+<<"inv", 2, 0, <<[a |-> 1, b |-> 2], [a |-> 2, b |-> 0]>>>>
+<<"con", 2>>
+<<"act", 1, 0, <<[a |-> 1, b |-> 2]>>>>
+<<"inv", 0, 2, <<[a |-> 1, b |-> 2], [a |-> 0, b |-> 2]>>>>
+<<"con", 2>>
+<<"act", 2, 0, <<[a |-> 2, b |-> 1]>>>>
+<<"con", 2>>
+<<"act", 2, 1, <<[a |-> 2, b |-> 1]>>>>
+<<"inv", 1, 0, <<[a |-> 2, b |-> 1], [a |-> 1, b |-> 0]>>>>
+<<"con", 2>>
+<<"act", 2, 0, <<[a |-> 2, b |-> 2]>>>>
+<<"con", 2>>
+<<"act", 2, 1, <<[a |-> 2, b |-> 2]>>>>
+<<"inv", 1, 2, <<[a |-> 1, b |-> 1], [a |-> 0, b |-> 0], [a |-> 1, b |-> 2]>>>>
+<<"inv", 2, 2, <<[a |-> 1, b |-> 1], [a |-> 0, b |-> 0], [a |-> 2, b |-> 2]>>>>
+<<"inv", 0, 2, <<[a |-> 1, b |-> 2], [a |-> 2, b |-> 0], [a |-> 0, b |-> 2]>>>>
+<<"inv", 1, 2, <<[a |-> 1, b |-> 2], [a |-> 2, b |-> 0], [a |-> 1, b |-> 2]>>>>
+<<"inv", 1, 1, <<[a |-> 1, b |-> 2], [a |-> 0, b |-> 2], [a |-> 1, b |-> 1]>>>>
+<<"inv", 2, 0, <<[a |-> 1, b |-> 2], [a |-> 0, b |-> 2], [a |-> 2, b |-> 0]>>>>
+<<"inv", 2, 2, <<[a |-> 2, b |-> 1], [a |-> 1, b |-> 0], [a |-> 2, b |-> 2]>>>>
+<<"inv", 0, 2, <<[a |-> 2, b |-> 1], [a |-> 1, b |-> 0], [a |-> 0, b |-> 2]>>>>
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.2E-18
+20 states generated, 8 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 2 and the 95th percentile is 2).

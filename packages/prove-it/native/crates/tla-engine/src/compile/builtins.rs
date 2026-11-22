@@ -289,6 +289,69 @@ pub(crate) const JSON_SERIALIZE_NOT_SEQUENCE: &str =
     "JsonSerialize of a value that isn't a sequence or a record";
 
 impl Compiler<'_> {
+    /// TLCExt's Trace (`Machine::trace`), whose value is a function of the behavior the search
+    /// keeps, the level, which tells the state it expands from a successor, and the state. TLC
+    /// gives each state's record with its variables in its order, unnormalized, and prints it so
+    /// (`RecordValue(TLCState)`), where the engine's records are in the order of their fields: the
+    /// engine stops where the two differ, and where the search doesn't keep the behavior, so that
+    /// a spec that never evaluates Trace, such as one that serializes it only once an invariant
+    /// fails, still searches here.
+    fn compile_trace(&mut self) -> Compiled {
+        let order: Vec<usize> = self
+            .ir
+            .tlc_order
+            .iter()
+            .map(|&variable| variable as usize)
+            .collect();
+        let keys: Vec<Id> = order
+            .iter()
+            .map(|&variable| {
+                let units: Vec<u16> = self
+                    .text(self.ir.variables[variable])
+                    .encode_utf16()
+                    .collect();
+                self.store.str(&units)
+            })
+            .collect();
+        let is_ordered = keys.windows(2).all(|pair| {
+            self.store
+                .compare(pair[0], pair[1])
+                .is_ok_and(|order| order < 0)
+        });
+        let footprint = Footprint {
+            vars: (0..self.ir.variables.len() as u32).collect(),
+            primes: Vec::new(),
+            slots: vec![super::LEVEL_SLOT, super::TRACE_SLOT],
+        };
+        if !self.is_native {
+            return leaf(eval(|_| Err(Bail(crate::machine::TRACE_UNKEPT))), footprint);
+        }
+        if !is_ordered {
+            return leaf(
+                eval(|_| {
+                    Err(Bail(
+                        "TLCExt's Trace of variables TLC orders otherwise than their names",
+                    ))
+                }),
+                footprint,
+            );
+        }
+        self.is_trace_read = true;
+        let shape = self.store.create_record_shape(&keys);
+        let model = &self.ir.model;
+        let is_init_effectful = self.may_have_effect(model.init, &mut HashSet::new());
+        let is_next_effectful = model
+            .next
+            .is_some_and(|next| self.may_have_effect(next, &mut HashSet::new()));
+        self.program.trace_record = Some(crate::machine::TraceRecord {
+            shape,
+            order,
+            is_init_effectful,
+            is_next_effectful,
+        });
+        leaf(eval(|machine| machine.trace()), footprint)
+    }
+
     pub(crate) fn compile_nullary_builtin(&mut self, index: Index) -> Compiling<Compiled> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
@@ -301,14 +364,8 @@ impl Compiler<'_> {
         if builtin.flags & Builtin::INDEX_REPLACED != 0 {
             return Ok(Self::index_replaced());
         }
-        // TLCExt's Trace, the behavior up to the state, which the engine doesn't keep: a spec that
-        // never evaluates it, such as one that serializes it only once an invariant fails, still
-        // searches here, and one that does hands over then.
         if name == "Trace" {
-            return Ok(leaf(
-                eval(|_| Err(Bail("TLCExt's Trace, the behavior the engine doesn't keep"))),
-                Footprint::default(),
-            ));
+            return Ok(self.compile_trace());
         }
         if name == "Any"
             && builtin.flags & (Builtin::STATE_LEVEL | Builtin::TABLE | Builtin::DECLINED) == 0

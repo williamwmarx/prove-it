@@ -31,7 +31,7 @@ use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 use crate::compile::builtins::{PROBED_REGISTER_FAILS, PROBED_REGISTER_SET};
 use crate::compile::{
     CompileError, Compiler, DISTINCT_SLOT, ENUMERATED_INT, ENUMERATED_NAT, ENUMERATED_SEQ,
-    ENUMERATED_STRING, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options, SymmetryElements,
+    ENUMERATED_STRING, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options, SymmetryElements, TRACE_SLOT,
 };
 use crate::context::{
     Atom, EngineContext, Startup, StartupDefinition, StartupSymmetry, count_possible,
@@ -889,6 +889,7 @@ pub(crate) const SEQ_COMPARED: &str = "compared Seq(S) with a non-overridden val
 // function, which fails in TLC only where it built the value as a record, and which the evaluator
 // of failures evaluates again.
 const TLC_FAILURES: &[&str] = &[
+    crate::machine::TRACE_OF_INCOMPLETE_STATE,
     "a temporal formula in a state",
     "enumerated ANY",
     tla_values::fingerprint::ANY_FINGERPRINT.0,
@@ -1595,6 +1596,9 @@ struct Search<'r, T, E = Dense> {
     // Whether the spec reads the counts TLCGet gives of the search but the distinct states
     // (`Search::set_counts`).
     is_counted: bool,
+    // Whether the search keeps the behavior up to the state it expands for TLCExt's Trace
+    // (`Machine::trace`).
+    is_trace_kept: bool,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
     is_dfid: bool,
@@ -1690,6 +1694,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             reporter,
             is_distinct_read,
             is_counted: false,
+            is_trace_kept: false,
             is_continued: false,
             is_dfid: false,
             startup: None,
@@ -2018,6 +2023,21 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         let zero = machine.store.int(0)?;
         machine.set_slot(LEVEL_SLOT, zero);
         Ok(())
+    }
+
+    // The records of the states from an initial state to the one the search expands, for
+    // TLCExt's Trace: TLC's trace of the state (`getTraceInfo`), the parents the state was first
+    // found by, and the state.
+    fn keep_trace(&self, machine: &mut Machine<'_>) {
+        let behavior: Vec<Id> = self
+            .states
+            .path(self.expanding)
+            .iter()
+            .map(|state| machine.state_record(state))
+            .collect();
+        let behavior = machine.store.tuple_of(&behavior);
+        machine.set_slot(TRACE_SLOT, behavior);
+        machine.trace_epoch = Some(self.expansion_epoch);
     }
 
     fn set_expanded_current(&self, machine: &mut Machine<'_>) {
@@ -2623,6 +2643,9 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         self.dfid_all_done = true;
         self.dfid_all_nonleaf = true;
         self.expansion_epoch = machine.next_epoch();
+        if self.is_trace_kept {
+            self.keep_trace(machine);
+        }
         self.level_id = machine.store.int(self.level as i64)?;
         self.next_level_id = machine.store.int(self.level as i64 + 1)?;
         // TLC's main thread finds the initial states and enqueues them all before its workers
@@ -4188,7 +4211,16 @@ fn run_startup(
         ] {
             machine.set_slot(slot, zero);
         }
-        check_assumptions(machine, startup, 0, is_native)?
+        // TLC evaluates the assumptions in an empty state, whose Trace is its record where the
+        // spec has no variables and fails otherwise (`TLCExt.getTrace`).
+        let kept = machine.trace_epoch;
+        if machine.program.trace_record.is_some() {
+            machine.set_slot(TRACE_SLOT, tla_values::store::EMPTY_TUPLE);
+            machine.trace_epoch = Some(u64::MAX);
+        }
+        let assumed = check_assumptions(machine, startup, 0, is_native);
+        machine.trace_epoch = kept;
+        assumed?
     };
     Ok(Unconfirmed::new(Started {
         printed,
@@ -4935,6 +4967,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_count_read = compiler.is_count_read;
+    let is_trace_read = compiler.is_trace_read;
     let is_cached = compiler.is_cached || compiler.is_tlc_cache_used;
     let is_ranking = compiler.is_ranking;
     let is_printing = compiler.is_printing;
@@ -4971,6 +5004,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !compiler.is_cached
         && !is_distinct_read
         && !settings.is_continued
+        && !is_trace_read
         && !(model.is_recording_graph && settings.test_live_check_at.is_some())
         // The online checker adds each state as it is expanded, between the expansions, and the
         // held prints come out between them: neither may meet a level the threads share.
@@ -5065,6 +5099,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.is_dfid = settings.dfid.is_some();
     search.is_contest_tracked = settings.workers > 1;
     search.is_counted = is_count_read;
+    // TLC's trace of a state is the one its workers wrote (`TLCTrace`), found again from the
+    // fingerprints of a VIEW or symmetry's representative, where the search keeps the states it
+    // reached; the liveness checker evaluates its atoms off the search.
+    search.is_trace_kept = is_trace_read
+        && settings.workers == 1
+        && settings.dfid.is_none()
+        && !settings.is_continued
+        && !model.is_recording_graph
+        && !is_symmetric
+        && context.view.is_none();
     search.is_print_race_tracked = settings.workers > 1 && settings.dfid.is_none();
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
@@ -5257,6 +5301,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.reset_assigned();
         let zero = machine.store.int(0)?;
         machine.set_slot(LEVEL_SLOT, zero);
+        if search.is_trace_kept {
+            machine.set_slot(TRACE_SLOT, tla_values::store::EMPTY_TUPLE);
+            machine.trace_epoch = Some(u64::MAX);
+        }
         search.set_distinct(&mut machine, 0)?;
         search.set_counts(&mut machine, 0, 0, 1)?;
         // TLC stops before it computes the initial states, at a time of its threads' choosing.

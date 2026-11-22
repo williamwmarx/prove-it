@@ -138,7 +138,10 @@ pub(crate) const ATOM_WARNING: &str =
 pub const GENERATED_SLOT: u32 = 7;
 pub const QUEUE_SLOT: u32 = 8;
 pub const INITIAL_SLOT: u32 = 9;
-const SEARCH_SLOTS: [u32; 9] = [
+/// TLCExt's Trace: the tuple of the records of the states from an initial state to the one the
+/// search expands (`Machine::trace`).
+pub const TRACE_SLOT: u32 = 10;
+const SEARCH_SLOTS: [u32; 10] = [
     LEVEL_SLOT,
     NEXT_LEVEL_SLOT,
     DISTINCT_SLOT,
@@ -148,6 +151,7 @@ const SEARCH_SLOTS: [u32; 9] = [
     GENERATED_SLOT,
     QUEUE_SLOT,
     INITIAL_SLOT,
+    TRACE_SLOT,
 ];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
@@ -1155,6 +1159,8 @@ pub struct Compiler<'a> {
     /// (`Search::set_counts`): the states generated, the initial ones, those left on the queue,
     /// and the diameter where the search checks no temporal property.
     pub is_count_read: bool,
+    /// Whether the spec reads TLCExt's Trace, which the search then keeps (`Machine::trace`).
+    pub is_trace_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     /// Ordered warning events may be produced during evaluation.
@@ -1348,6 +1354,7 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_simulated_diameter_read: false,
             is_count_read: false,
+            is_trace_read: false,
             is_printing: false,
             is_warning: false,
             is_unchanged_warning: false,

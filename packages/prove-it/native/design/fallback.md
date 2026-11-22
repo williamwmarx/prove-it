@@ -3006,6 +3006,33 @@ A Json operator writes its file through the run's journal (`tla_values::written`
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
 
+#### TLCExt's Trace
+
+`TLCExt.getTrace` gives the records of the states from an initial state to the one it is
+evaluated in, which TLC rebuilds from its trace file (`getTraceInfo`) and the engine keeps as the
+search goes: as it expands a state it makes the tuple of the records of the path the search found
+it by (`Search::keep_trace`), the parents TLC writes to its trace too, which Trace is as Next and
+an action constraint read it; in a successor, as an invariant or a state constraint reads it, and
+in an initial state, Trace is that tuple and the state's record (`Machine::trace`). In the initial
+predicate before every variable is assigned, in an assumption and in a postcondition, TLC fails
+naming the variables unassigned, in the order of their names, which the trace evaluator words
+as TLC does; a spec without variables has `<<[]>>` in an assumption. The engine declines Trace ("TLCExt's Trace, the behavior the engine doesn't keep")
+with more than one worker, `-dfid`, `-continue`, `-simulate`, a VIEW, SYMMETRY or temporal
+properties to check, where TLC finds the trace otherwise or the engine evaluates off the search; where TLC's record of a state, which holds its variables in TLC's order unnormalized
+and prints them so (`RecordValue(TLCState)`), differs from the engine's, in the order of their
+names ("TLCExt's Trace of variables TLC orders otherwise than their names", as `VARIABLES y, x`);
+and where TLC's rebuild evaluates again an initial predicate, or a next-state relation, that may
+print, draw or set a register ("TLCExt's Trace, whose rebuild evaluates again what may have an
+effect"): TLC prints again what they print as it rebuilds the states before the one it gives the
+trace of. The trace of an invariant's violation, which TLC rebuilds through a next-state relation
+that reads Trace, still declines ("rebuilding a trace: the builtin Trace"), as does an ALIAS that
+reads Trace in the trace TLC prints ("rebuilding a trace: Trace with an unproven Java method
+origin"). On the `tlc` suite of aidenybai/tla-ts at 0341dbe5 (72,878 runs) this answers 11 runs
+main declined, as the pinned jar does, and changes no other: TLCExtTraceTest and the
+`tlc_ext/trace_*` tests but those of a simulation (`trace_simulate`, TLCExtTraceSimTest) and of
+an ALIAS (`trace_alias`, TLCExtTraceAliasTest), which decline. `tests/trace` holds TLC's output
+beside its specs (`reads_the_behavior_as_tlc_through_trace`).
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
