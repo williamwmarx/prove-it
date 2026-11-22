@@ -4838,6 +4838,17 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A property or a specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F ==
+  F /\ WF_x(Next)`, found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016,
+  c0019). TLC's expansion of the formula recurses until the JVM's stack overflows, and it reports
+  the StackOverflowError (1005, exit 255), as it does for a global `RECURSIVE F` with `F == F /\
+  ...`. The front end caught that recursion for a global definition only, so the binary's expansion
+  recursed until its own stack overflowed and the process aborted (exit 134). It now keeps the LET
+  definitions it is expanding as it keeps the global ones, and reports the overflow where one is
+  reached again in its own expansion. A deep but finite expansion still completes: 600 nested
+  conjunctions (`endless-expansion-finite-nesting`) and 1,100, which TLC completes too and which
+  the release build follows, though the debug build's own stack doesn't; past about 1,500, SANY's
+  parser gives out first. Fixtures `endless-expansion-*`.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
   in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
   `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
@@ -6724,16 +6735,6 @@ violation).
   prints a value TLC never initialized`, a failure whose message prints a value TLC never initialized, a
   THEOREM's or an ASSUME's of an INSTANCE, whose `toString` throws a NullPointerException with a
   text that depends on the class holding it, where the evaluator writes `null`.
-- A temporal formula whose expansion doesn't end, which TLC overflows its stack on ("a temporal
-  formula whose expansion doesn't end, which TLC overflows its stack on"): a property or a
-  specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F == F /\
-  WF_x(Next)`. TLC's expansion of the formula recurses until the JVM's stack overflows and reports
-  the StackOverflowError (1005, exit 255); the binary's expansion recursed until its own stack
-  overflowed, aborting the process (exit 134, or past the conformance suite's 120 s where the
-  search's stack is larger). The expansion now declines past 1,024 levels, deeper than any spec
-  nests. Found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016, c0019);
-  fixtures `endless-expansion-*`.
-
 - _Track (see "_Track, _Counts, _CheckName and _PrintCounts"), the engine's reasons: `_Track`
   (where the context can't print), `_Track on several workers`, `_Track in a spec that reads or
   sets registers otherwise`, `_Track of constants, which TLC may compute as it starts`, `a _Track

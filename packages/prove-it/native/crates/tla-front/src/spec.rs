@@ -603,13 +603,11 @@ pub struct Expansion<'a> {
     pub unroll_is_independent: std::cell::Cell<bool>,
     pub has_action_substitutions: std::cell::Cell<bool>,
     label_probe: std::cell::Cell<bool>,
-    /// How deep the expansion is, which a recursion that never ends (a LET's `RECURSIVE F` with
-    /// `F == F /\ ...`) takes past any spec's nesting, where TLC overflows its stack.
-    depth: std::cell::Cell<usize>,
+    /// The bindings the expansion is in, each the scope that holds it and its expression: one
+    /// reached again in its own expansion, as a LET's `RECURSIVE F` with `F == F /\ ...`, recurses
+    /// until TLC's stack overflows, as a global definition does.
+    expanding_bindings: std::cell::RefCell<Vec<(*const Scope, *const Expr)>>,
 }
-
-/// The deepest expansion the front end follows.
-const MAX_EXPANSION_DEPTH: usize = 1024;
 
 impl Expansion<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
@@ -914,25 +912,6 @@ impl Expansion<'_> {
         is_substituted: bool,
         name: Option<Name>,
     ) -> Result<Vec<Expanded>> {
-        if self.depth.get() >= MAX_EXPANSION_DEPTH {
-            return Err(not_yet(
-                "a temporal formula whose expansion doesn't end, which TLC overflows its stack on",
-            ));
-        }
-        self.depth.set(self.depth.get() + 1);
-        let expanded = self.expand_at_depth(expression, scope, expanding, is_substituted, name);
-        self.depth.set(self.depth.get() - 1);
-        expanded
-    }
-
-    fn expand_at_depth(
-        &self,
-        expression: &Expr,
-        scope: Option<&Rc<Scope>>,
-        expanding: &[*const Definition],
-        is_substituted: bool,
-        name: Option<Name>,
-    ) -> Result<Vec<Expanded>> {
         let had_action_substitutions = self.has_action_substitutions.get();
         let local_substitution = expression.is_locally_resolved()
             && expression.reference().is_some_and(|name| {
@@ -1152,57 +1131,61 @@ impl Expansion<'_> {
                     None
                 };
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
-                    let is_let_definition = matches!(scope, ScopeOf::Own);
-                    let name = if is_let_definition {
-                        Some(written.clone())
-                    } else {
-                        name
-                    };
-                    let scope = scope.resolve(node);
-                    // `processConfigSpec` takes a LET's definition without parameters as the
-                    // `OpDefNode` it is, whose body it takes whole where `getLevelBound` finds it
-                    // of state level, the argument a parameter in it reads (`S(y) == LET D == y
-                    // IN Init /\ D`, `Spec == S(x = 1 /\ x)`) unsplit, worded at the body where
-                    // it comes to a definition (`S(G)`). A body that comes to another name is left
-                    // to the reading of such a name, and one the expansion doesn't split reads as
-                    // the expansion reads it.
-                    let read = read_through(expression, scope.as_ref());
-                    let is_definition = names_global_definition(&read, self.environment);
-                    if self.is_specification
-                        && !self.is_property
-                        && is_let_definition
-                        && (is_definition
-                            || !matches!(read.kind, ExpressionKind::Identifier { .. }))
-                        && self.level(expression, scope.as_ref()) == Level::Variable
-                    {
-                        let expanded = self.expand(
-                            expression,
-                            scope.as_ref(),
-                            expanding,
-                            is_substituted,
-                            name.clone(),
-                        );
-                        if let Ok(expanded) = expanded
-                            && expanded.len() == 1
-                            && !is_definition
-                        {
-                            return Ok(expanded);
-                        }
-                        return Ok(vec![Expanded {
-                            is_property_fairness: false,
-                            has_substitutions: self.has_action_substitutions.get(),
-                            expression: expression.clone(),
-                            scope,
-                            name,
-                        }]);
+                    let key: (*const Scope, *const Expr) = (Rc::as_ptr(node), expression);
+                    if self.expanding_bindings.borrow().contains(&key) {
+                        // TLC recurses until its stack overflows.
+                        return Err(FrontError::StackOverflow);
                     }
-                    return self.expand(
-                        expression,
-                        scope.as_ref(),
-                        expanding,
-                        is_substituted,
-                        name,
-                    );
+                    self.expanding_bindings.borrow_mut().push(key);
+                    let expanded = (|| {
+                        let is_let_definition = matches!(scope, ScopeOf::Own);
+                        let name = if is_let_definition {
+                            Some(written.clone())
+                        } else {
+                            name
+                        };
+                        let scope = scope.resolve(node);
+                        // `processConfigSpec` takes a LET's definition without parameters as the
+                        // `OpDefNode` it is, whose body it takes whole where `getLevelBound` finds it
+                        // of state level, the argument a parameter in it reads (`S(y) == LET D == y
+                        // IN Init /\ D`, `Spec == S(x = 1 /\ x)`) unsplit, worded at the body where
+                        // it comes to a definition (`S(G)`). A body that comes to another name is left
+                        // to the reading of such a name, and one the expansion doesn't split reads as
+                        // the expansion reads it.
+                        let read = read_through(expression, scope.as_ref());
+                        let is_definition = names_global_definition(&read, self.environment);
+                        if self.is_specification
+                            && !self.is_property
+                            && is_let_definition
+                            && (is_definition
+                                || !matches!(read.kind, ExpressionKind::Identifier { .. }))
+                            && self.level(expression, scope.as_ref()) == Level::Variable
+                        {
+                            let expanded = self.expand(
+                                expression,
+                                scope.as_ref(),
+                                expanding,
+                                is_substituted,
+                                name.clone(),
+                            );
+                            if let Ok(expanded) = expanded
+                                && expanded.len() == 1
+                                && !is_definition
+                            {
+                                return Ok(expanded);
+                            }
+                            return Ok(vec![Expanded {
+                                is_property_fairness: false,
+                                has_substitutions: self.has_action_substitutions.get(),
+                                expression: expression.clone(),
+                                scope,
+                                name,
+                            }]);
+                        }
+                        self.expand(expression, scope.as_ref(), expanding, is_substituted, name)
+                    })();
+                    self.expanding_bindings.borrow_mut().pop();
+                    return expanded;
                 }
                 let definition = if self.environment.constants.contains_key(&reference) {
                     None
@@ -2527,7 +2510,7 @@ pub fn read_specification(
         unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
         has_action_substitutions: std::cell::Cell::new(false),
         label_probe: std::cell::Cell::new(false),
-        depth: std::cell::Cell::new(0),
+        expanding_bindings: std::cell::RefCell::new(Vec::new()),
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
@@ -4288,7 +4271,7 @@ pub fn get_properties(
         unroll_is_independent: std::cell::Cell::new(!environment.has_java_override_index),
         has_action_substitutions: std::cell::Cell::new(false),
         label_probe: std::cell::Cell::new(false),
-        depth: std::cell::Cell::new(0),
+        expanding_bindings: std::cell::RefCell::new(Vec::new()),
     };
     for name in &config.properties {
         let Some(definition) =
