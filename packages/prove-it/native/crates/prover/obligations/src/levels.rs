@@ -9,8 +9,9 @@ use std::rc::Rc;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
     Bound, BoundDomain, Builtin, DefnCore, ExceptPoint, Expr, ExprCore, Hyp, HypCore,
-    IdentityCache, Level, Scope, ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh, get_fresh,
-    get_local_defn, get_param_fresh, get_scope_at, hyp, is_builtin_apply, map_accumulate,
+    IdentityCache, Level, Scope, ScopeRef, adjoin, adjoin_all, get_bound_fresh, get_bounded_fresh,
+    get_fresh, get_local_defn, get_param_fresh, get_scope_at, hyp, is_builtin_apply,
+    map_accumulate,
 };
 
 /// The TypeScript's `params` is a `Set` that is only unioned, filtered and tested for membership,

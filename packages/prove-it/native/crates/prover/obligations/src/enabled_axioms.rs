@@ -40,9 +40,9 @@ fn get_target<'context>(
     expression: &Expr,
 ) -> Option<&'context Hyp> {
     match &expression.core {
-        ExprCore::Ix { index: offset } => {
-            usize::try_from(index as isize - offset).ok().and_then(|at| context.get(at))
-        }
+        ExprCore::Ix { index: offset } => usize::try_from(index as isize - offset)
+            .ok()
+            .and_then(|at| context.get(at)),
         _ => None,
     }
 }
