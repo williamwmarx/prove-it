@@ -197,8 +197,8 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
 its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
-TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34
-and 35), which the TypeScript report printed: whether to port 1.7.4's generator differences or
+TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34,
+35 and 39), which the TypeScript report printed: whether to port 1.7.4's generator differences or
 retire them with 1.7.4 is open.
 
 SANY's messages come from the port of its generator and levelCheck, which declines a message whose
@@ -5032,6 +5032,14 @@ matches TLC or declines exactly.
   that fails at startup`, `front_constants/substitute-conjunct-failing`), where taking J for a K
   had it answer that no error was found.
 
+- A FingerprintException thrown in an operator argument a Java method applies, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `MethodValue.apply` catches it as any exception and
+  rethrows the method's EvalException ("Attempted to apply the operator overridden by the Java
+  method ... SelectSeq ..."), so TLC prints the frames the FingerprintException froze, the failing
+  value's source among them, with the nested expressions (`SelectSeq(<<1>>, LAMBDA k : {x} =
+  <<x>>)`, SortSeq's comparison likewise), where the binary reported "TLC was unable to
+  fingerprint". The trace evaluator now turns the sources into frames there, as it does
+  for an `EvaluatingValue` (`catch_fingerprint`). Fixtures `java-method-f*`.
 - A constant definition held as a filter, or a `\cup`, `\cap`, `\` or UNION TLC keeps lazy,
   whose part prints, draws or sets a register, counted, compared or printed (`S == {x \in 1..3 :
   PrintT(x)}`, `Cardinality(S) > 0`): TLC converts the one value it keeps at the first such use

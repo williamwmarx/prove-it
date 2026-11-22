@@ -349,6 +349,7 @@ pub fn check_sources(arguments: &[HostValue]) -> HookResult {
 }
 
 fn check(arguments: &[HostValue]) -> HookResult {
+    let _tokens = tla_front::lexer::SharedTokens::start();
     let [args, known, machine] = arguments else {
         return Err("checkSources takes the arguments, what is known and the machine".into());
     };

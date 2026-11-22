@@ -51,19 +51,24 @@ how.
     leading bits as the table doubles, so each thread moves a range of the old table to the same
     range of the new one, whose pages it writes before it reads them (`commit`), or each page
     would be the kernel's page of zeros first and be replaced under every thread's eyes.
-  - Where the fill ran and the search records no graph, the threads add the new states too
-    (`Search::add_filled`): the candidates' order gives each new state its place, so each thread
-    copies the new states of a share of the runs and counts each parent's. The values a thread's
-    overlay made are imported afterwards, state by state in that order, which is the order adding
-    them one by one imports them in, so the store numbers its values the same.
+  - Where the fill ran, the threads add the new states too (`Search::add_filled`): the
+    candidates' order gives each new state its place, so each thread copies the new states of a
+    share of the runs and counts each parent's. The values a thread's overlay made are imported
+    afterwards, state by state in that order, which is the order adding them one by one imports
+    them in, so the store numbers its values the same. Where the search records a graph, the
+    same thread copies its share's steps (`copy_steps`), each parent's at the place the steps'
+    counts before it give, each target resolved through the fill's index of its state; the
+    shares are cut by candidates and steps together. A graph that keeps the states its steps
+    reached (a VIEW or symmetry) merges as below, since those states are imported between the
+    new states, parent by parent.
   - Where the search records a graph for liveness, each thread records its states' steps too,
     each to a state by the index `Candidates::index` gives it: a state found before the level by
     its own, and one the thread found by the index it would have if the thread's states all
-    joined the store (the slots of those `Candidates::find` returns are marked `SEEN`). The merge
-    resolves each of a parent's candidates to the index it takes, its own or that of the state
-    with its key found first, and then appends the parent's steps in the order generated,
-    duplicates included, with their labels and, under a VIEW or symmetry, the states they reached,
-    imported. Its successor and new-state counts, its edge offset and the depth so far, TLC's
+    joined the store (the slots of those `Candidates::find` returns are marked `SEEN`). Where the
+    threads don't add them, the merge resolves each of a parent's candidates to the index it
+    takes, its own or that of the state with its key found first, and then appends the parent's
+    steps in the order generated, duplicates included, with their labels and, under a VIEW or
+    symmetry, the states they reached, imported. Its successor and new-state counts, its edge offset and the depth so far, TLC's
     diameter, follow: the graph of TLC's one worker. The bounds the one-thread search checks
     before it expands a state of a graph (`MAXIMUM_GRAPH_STATES`, 32-bit indices) stop the merge
     at that state, which the one-thread path then expands and stops at.
@@ -155,8 +160,9 @@ how.
   speed on Commit: the record-field position hint, now written only when it changes, and a
   thread's registers next to another's, now on cache lines of their own.
 - **Not done.** The merge was the serial part, 10–25% of a level's time on Commit at four threads
-  on the 4-core cloud machine; what is left of it on one thread is the graph's steps, where one
-  is recorded, and the states' arrays growing. A collision that only
+  on the 4-core cloud machine; what is left of it on one thread is the states' arrays growing,
+  the import of the values the threads made, and, under a VIEW or symmetry with a graph, the
+  whole merge. A collision that only
   `PROVE_IT_FP_VERIFY` would count can be counted differently on more than one thread, since a
   thread compares a duplicate with its own first occurrence.
 

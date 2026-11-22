@@ -421,7 +421,7 @@ type GetUnitReferences<'a> = dyn FnMut(Option<&Name>, &mut FastMap<String, Rc<Mo
 /// A module's source read into tokens once, and parsed from them once.
 struct ModuleText {
     text: Option<String>,
-    tokens: Rc<Vec<Token>>,
+    tokens: Rc<[Token]>,
     ranges: OrderedMap<String, (usize, usize)>,
     module: RefCell<Option<Rc<Module>>>,
 }
@@ -537,13 +537,13 @@ impl<'a> TlcOrder<'a> {
         {
             return Ok(known.clone());
         }
-        let tokens = match &text {
-            None => Vec::new(),
+        let tokens: Rc<[Token]> = match &text {
+            None => Rc::from(Vec::new()),
             Some(text) => tokenize(text)?,
         };
         let read = Rc::new(ModuleText {
             ranges: get_ranges(&tokens),
-            tokens: Rc::new(tokens),
+            tokens,
             module: RefCell::new(None),
             text: text.clone(),
         });

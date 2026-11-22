@@ -10,7 +10,7 @@ use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::{FrontError, TAUTOLOGY, describe_range, format_range};
 use crate::eval::Evaluator;
-use crate::hash::FastMap;
+use crate::hash::{FastMap, FastSet};
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
@@ -112,7 +112,7 @@ pub fn get_level(
     )
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LevelIdentity {
     Binding(*const Scope),
     Definition(*const Definition),
@@ -124,7 +124,7 @@ type LevelMemoKey = *const Definition;
 type OperatorLevels = Option<Rc<levels::OperatorLevels>>;
 
 struct LevelWalk<'a> {
-    active: std::cell::RefCell<Vec<LevelIdentity>>,
+    active: std::cell::RefCell<FastSet<LevelIdentity>>,
     memo: std::cell::RefCell<std::collections::HashMap<LevelMemoKey, Level>>,
     cycles: std::cell::Cell<u64>,
     /// SANY's level check, whose weights tell which arguments an application counts.
@@ -175,6 +175,103 @@ impl<'a> LevelWalk<'a> {
             recorded.insert(Rc::as_ptr(current), (definition.clone(), lexical.clone()));
             node = current.parent.as_ref();
         }
+    }
+
+    /// The level of a global operator's body without parameters, read in no scope, which the
+    /// memo holds once a walk without a cycle gave it: after the operators the body names that
+    /// the memo doesn't hold, each after those its body names, so that a chain of definitions is
+    /// walked one at a time rather than each within the walk of the one naming it.
+    fn get_operator_level(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+        facts: &DefinitionFacts,
+    ) -> Level {
+        let mut entered: FastSet<*const Definition> =
+            [Rc::as_ptr(definition)].into_iter().collect();
+        let mut pending = vec![(
+            definition.clone(),
+            self.get_named_operators(&definition.body, environment),
+        )];
+        while let Some((_, named)) = pending.last_mut() {
+            if let Some(next) = named.pop() {
+                if !entered.insert(Rc::as_ptr(&next)) {
+                    continue;
+                }
+                let named = self.get_named_operators(&next.body, environment);
+                pending.push((next, named));
+                continue;
+            }
+            let (next, _) = pending.pop().expect("the entry");
+            if !Rc::ptr_eq(&next, definition) {
+                self.walk_operator(&next, environment, facts);
+            }
+        }
+        self.walk_operator(definition, environment, facts)
+    }
+
+    fn walk_operator(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+        facts: &DefinitionFacts,
+    ) -> Level {
+        let key = Rc::as_ptr(definition);
+        if let Some(&level) = self.memo.borrow().get(&key) {
+            return level;
+        }
+        let identity = LevelIdentity::Definition(key);
+        let cycles_before = self.cycles.get();
+        self.active.borrow_mut().insert(identity);
+        let level = get_level_inner(
+            &definition.body,
+            None,
+            environment,
+            facts,
+            &[],
+            &levels::Scope::default(),
+            self,
+        );
+        self.active.borrow_mut().remove(&identity);
+        if self.cycles.get() == cycles_before {
+            self.memo.borrow_mut().insert(key, level);
+        }
+        level
+    }
+
+    /// The global operators without parameters an expression names outside a local binding, as
+    /// `get_operator_level` walks them, whose level the memo doesn't hold and whose walk isn't
+    /// under way; a RECURSIVE operator is walked where it is named, as its cycle is counted
+    /// there.
+    fn get_named_operators(
+        &self,
+        expression: &Expr,
+        environment: &Environment,
+    ) -> Vec<Rc<Definition>> {
+        let mut named = Vec::new();
+        let mut seen: FastSet<*const Definition> = FastSet::default();
+        let mut pending = vec![expression.clone()];
+        while let Some(expression) = pending.pop() {
+            if matches!(
+                expression.kind,
+                ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. }
+            ) && !expression.is_locally_resolved()
+                && let Some(name) = expression.reference()
+                && let Some(definition) = get_definition(&name, environment)
+                && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && !definition.is_recursive
+                && seen.insert(Rc::as_ptr(definition))
+                && !self.memo.borrow().contains_key(&Rc::as_ptr(definition))
+                && !self
+                    .active
+                    .borrow()
+                    .contains(&LevelIdentity::Definition(Rc::as_ptr(definition)))
+            {
+                named.push(definition.clone());
+            }
+            pending.extend(expression.children());
+        }
+        named
     }
 
     /// The levels of a definition, checked in the module's scope as SANY checks it.
@@ -236,7 +333,7 @@ fn get_level_inner(
                         Level::Temporal
                     }
                 } else {
-                    walk.active.borrow_mut().push(identity);
+                    walk.active.borrow_mut().insert(identity);
                     let level = get_level_inner(
                         expression,
                         scope.resolve(node).as_ref(),
@@ -246,7 +343,7 @@ fn get_level_inner(
                         &walk.get_lexical_scope(node),
                         walk,
                     );
-                    walk.active.borrow_mut().pop();
+                    walk.active.borrow_mut().remove(&identity);
                     level
                 }
             }
@@ -263,7 +360,7 @@ fn get_level_inner(
                     walk.cycles.set(walk.cycles.get().saturating_add(1));
                     Level::Constant
                 } else {
-                    walk.active.borrow_mut().push(identity);
+                    walk.active.borrow_mut().insert(identity);
                     let level = get_level_inner(
                         body,
                         scope.resolve(node).as_ref(),
@@ -273,7 +370,7 @@ fn get_level_inner(
                         &walk.get_lexical_scope(node),
                         walk,
                     );
-                    walk.active.borrow_mut().pop();
+                    walk.active.borrow_mut().remove(&identity);
                     level
                 }
             }
@@ -376,12 +473,11 @@ fn get_level_inner(
         // local binding also identifies its lexical context; a global definition's body names
         // nothing of its caller's scope, so only recursion visits it again while it is active,
         // whatever scope a LET of the caller's body adds.
-        let (identity, memo_key, levels, body_lexical) = if is_global {
+        let (identity, definition, levels, body_lexical) = if is_global {
             let definition = global_definition()?;
-            let key = Rc::as_ptr(&definition);
             (
-                LevelIdentity::Definition(key),
-                Some(key),
+                LevelIdentity::Definition(Rc::as_ptr(&definition)),
+                Some(definition.clone()),
                 walk.get_definition_levels(&definition),
                 levels::Scope::default().bind_parameters(&params),
             )
@@ -400,15 +496,15 @@ fn get_level_inner(
             // contribute their bounds in the caller below.
             return Some((params, Level::Constant, levels));
         }
-        let can_memo = closure_scope.is_none() && scope.is_none() && params.is_empty() && is_global;
-        if can_memo
-            && let Some(key) = memo_key
-            && let Some(&level) = walk.memo.borrow().get(&key)
+        if closure_scope.is_none()
+            && scope.is_none()
+            && params.is_empty()
+            && let Some(definition) = definition
         {
+            let level = walk.get_operator_level(&definition, environment, facts);
             return Some((params, level, levels));
         }
-        let cycles_before = walk.cycles.get();
-        walk.active.borrow_mut().push(identity);
+        walk.active.borrow_mut().insert(identity);
         let level = get_level_inner(
             &body,
             body_scope,
@@ -418,13 +514,7 @@ fn get_level_inner(
             &body_lexical,
             walk,
         );
-        walk.active.borrow_mut().pop();
-        if can_memo
-            && walk.cycles.get() == cycles_before
-            && let Some(key) = memo_key
-        {
-            walk.memo.borrow_mut().insert(key, level);
-        }
+        walk.active.borrow_mut().remove(&identity);
         Some((params, level, levels))
     };
     match &expression.kind {

@@ -12,6 +12,9 @@ use crate::symmetry::IntegerHasher;
 
 /// An empty entry, which no id is: ids count up from 0 and stop well short of it.
 pub const EMPTY: Id = u32::MAX;
+// The value of an entry being forgotten, until the entries that probed past it are placed again
+// (`MemoTable::forget_stored`): no id either.
+const GONE: Id = EMPTY - 1;
 
 const PROBATION: u64 = 1 << 13;
 const MINIMUM_HIT_RATE: f64 = 0.2;
@@ -134,6 +137,13 @@ pub struct MemoTable {
     // expression again where it reads it, so its stack goes that much deeper there. A table of one
     // or two keys keeps the height beside the value.
     heights: HashMap<HeightKey, u32, BuildHasherDefault<IntegerHasher>>,
+    // Once the table has forgotten, as a thread's does at every level: where it stored since it
+    // last did, a direct table's keys or the slots of the others, so that forgetting again costs
+    // what was stored and not the table's room. None before that, and once a rehash has moved the
+    // entries, until the table next forgets.
+    stored: Option<Vec<u32>>,
+    // The bound the table last forgot from: every entry stored before then is below it.
+    floor: Id,
 }
 
 /// An entry's keys, padded to six with [`EMPTY`], hashed two keys to a word.
@@ -192,6 +202,8 @@ impl MemoTable {
             full_lookups: 0,
             full_hits: 0,
             heights: HashMap::default(),
+            stored: None,
+            floor: 0,
         }
     }
 
@@ -206,6 +218,14 @@ impl MemoTable {
     /// Takes no more than `maximum` entries from now on.
     pub fn limit(&mut self, maximum: usize) {
         self.maximum = maximum;
+    }
+
+    /// Takes no more than `maximum` entries from now on, nor more than it took before: its
+    /// misses cost less than a row of a longer table. Full, it turns off as any table does
+    /// where too few lookups hit.
+    #[inline]
+    pub(crate) fn shorten(&mut self, maximum: usize) {
+        self.maximum = self.maximum.min(maximum);
     }
 
     pub fn width(&self) -> usize {
@@ -239,6 +259,7 @@ impl MemoTable {
     }
 
     fn rehash(&mut self, capacity: usize) {
+        self.stored = None;
         self.probes = 0;
         self.mask = capacity - 1;
         if self.width <= 2 {
@@ -317,6 +338,7 @@ impl MemoTable {
         }
         let direct = std::mem::take(&mut self.direct);
         let heights = std::mem::take(&mut self.direct_heights);
+        self.stored = None;
         self.is_direct = false;
         self.size = 0;
         self.mask = INITIAL_CAPACITY - 1;
@@ -348,6 +370,7 @@ impl MemoTable {
 
     fn turn_off(&mut self) {
         self.is_enabled = false;
+        self.stored = None;
         self.heights = HashMap::default();
         self.direct = Vec::new();
         self.direct_heights = Vec::new();
@@ -389,6 +412,9 @@ impl MemoTable {
         self.size = 0;
         self.probes = 0;
         self.heights.clear();
+        if let Some(stored) = &mut self.stored {
+            stored.clear();
+        }
     }
 
     // Makes room for a new entry, or says the table takes no more.
@@ -405,13 +431,40 @@ impl MemoTable {
 
     /// Forgets every entry that reads or holds an id from `bound` on, ids a store has let go of.
     pub fn forget_from(&mut self, bound: Id) {
+        if !self.is_enabled {
+            return;
+        }
         if self.largest < bound {
+            // Nothing it holds goes, so nothing it stored since it last forgot may go later.
+            if bound >= self.floor
+                && let Some(stored) = &mut self.stored
+            {
+                stored.clear();
+                self.floor = bound;
+            }
             return;
         }
         self.heights
             .retain(|keys, _| keys.0.iter().all(|&key| key == EMPTY || key < bound));
         // What is kept is below the bound, which a later, lower bound may still have to forget.
         self.largest = bound.saturating_sub(1);
+        let mut stored = match self.stored.take() {
+            Some(stored) if bound >= self.floor => {
+                self.forget_stored(bound, &stored);
+                stored
+            }
+            _ => {
+                self.forget_all(bound);
+                Vec::new()
+            }
+        };
+        stored.clear();
+        self.stored = Some(stored);
+        self.floor = bound;
+    }
+
+    // `forget_from` by every entry the table has room for, into a new array for a hashed table.
+    fn forget_all(&mut self, bound: Id) {
         if self.is_direct {
             self.direct.truncate(bound as usize);
             self.direct_heights.truncate(bound as usize);
@@ -445,6 +498,106 @@ impl MemoTable {
                 self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
                 self.size += 1;
             }
+        }
+    }
+
+    // `forget_from` by the entries stored since the table last forgot, the only ones that may
+    // hold an id from the bound on: each of those that does goes, and in a hashed table the
+    // entries of its run, which may have probed past it, are placed again.
+    fn forget_stored(&mut self, bound: Id, stored: &[u32]) {
+        if self.is_direct {
+            for &key in stored {
+                let value = self.direct.get(key as usize).copied().unwrap_or(EMPTY);
+                if value != EMPTY && (key >= bound || value >= bound) {
+                    self.direct[key as usize] = EMPTY;
+                    self.size -= 1;
+                }
+            }
+            self.direct.truncate(bound as usize);
+            self.direct_heights.truncate(bound as usize);
+            return;
+        }
+        let stride = self.width + 1;
+        let is_packed = self.width <= 2;
+        for &slot in stored {
+            let slot = slot as usize;
+            let is_forgotten = if is_packed {
+                let entry = self.packed[slot];
+                entry.value < GONE
+                    && (entry.value >= bound
+                        || (entry.key as Id) >= bound
+                        || ((entry.key >> 32) as Id) >= bound)
+            } else {
+                let row = &self.wide[slot * stride..(slot + 1) * stride];
+                row[0] < GONE && row.iter().any(|&id| id >= bound)
+            };
+            if is_forgotten {
+                self.set_value(slot, GONE);
+                self.size -= 1;
+            }
+        }
+        let mut packed = Vec::new();
+        let mut wide = Vec::new();
+        for &slot in stored {
+            let mut slot = slot as usize;
+            if self.value_at(slot) != GONE {
+                continue;
+            }
+            // The run's first entry that goes: the entries before it stay where they are.
+            let mut before = (slot + self.mask) & self.mask;
+            while self.value_at(before) != EMPTY {
+                if self.value_at(before) == GONE {
+                    slot = before;
+                }
+                before = (before + self.mask) & self.mask;
+            }
+            packed.clear();
+            wide.clear();
+            while self.value_at(slot) != EMPTY {
+                if self.value_at(slot) != GONE {
+                    if is_packed {
+                        packed.push(self.packed[slot]);
+                    } else {
+                        wide.extend_from_slice(&self.wide[slot * stride..(slot + 1) * stride]);
+                    }
+                }
+                self.set_value(slot, EMPTY);
+                slot = (slot + 1) & self.mask;
+            }
+            for &entry in &packed {
+                let slot = self.free_packed(entry.key);
+                self.packed[slot] = entry;
+            }
+            for row in wide.chunks_exact(stride) {
+                let slot = self.free_wide(&row[1..]);
+                self.wide[slot * stride..(slot + 1) * stride].copy_from_slice(row);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn value_at(&self, slot: usize) -> Id {
+        if self.width <= 2 {
+            self.packed[slot].value
+        } else {
+            self.wide[slot * (self.width + 1)]
+        }
+    }
+
+    #[inline(always)]
+    fn set_value(&mut self, slot: usize, value: Id) {
+        if self.width <= 2 {
+            self.packed[slot].value = value;
+        } else {
+            self.wide[slot * (self.width + 1)] = value;
+        }
+    }
+
+    // Notes where the table stored, once it forgets.
+    #[inline(always)]
+    fn note_stored(&mut self, place: usize) {
+        if let Some(stored) = &mut self.stored {
+            stored.push(place as u32);
         }
     }
 
@@ -567,6 +720,7 @@ impl MemoTable {
                     self.size += 1;
                 }
                 self.direct[key as usize] = value;
+                self.note_stored(key as usize);
                 if height > 0 || !self.direct_heights.is_empty() {
                     if self.direct_heights.len() < self.direct.len() {
                         self.direct_heights.resize(self.direct.len(), 0);
@@ -583,6 +737,7 @@ impl MemoTable {
             while self.packed[slot].value != EMPTY {
                 if self.packed[slot].key == key {
                     self.packed[slot] = Packed { key, value, height };
+                    self.note_stored(slot);
                     return true;
                 }
                 slot = (slot + 1) & self.mask;
@@ -595,6 +750,7 @@ impl MemoTable {
             let key = pack(keys);
             let slot = self.free_packed(key);
             self.packed[slot] = Packed { key, value, height };
+            self.note_stored(slot);
             return true;
         }
         let stride = self.width + 1;
@@ -602,6 +758,7 @@ impl MemoTable {
         let row = &mut self.wide[slot * stride..(slot + 1) * stride];
         row[0] = value;
         row[1..].copy_from_slice(keys);
+        self.note_stored(slot);
         true
     }
 }
@@ -953,6 +1110,72 @@ mod tests {
                 assert_eq!(table.get(&keys(key)), EMPTY, "width {width}, key {key}");
             }
             assert_eq!(table.size(), 0);
+        }
+    }
+
+    // A table that forgets by what it stored since it last forgot keeps what one that forgets
+    // by every entry keeps, level after level of a thread: bounds that rise, each level storing
+    // entries below its bound and from it on, with a table small enough to stay clustered or
+    // scattered and one that grows as it goes.
+    #[test]
+    fn forgets_by_what_it_stored_what_it_forgets_by_every_entry() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut draw = move |below: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as u32 % below
+        };
+        for width in 1..=6 {
+            for stores in [40usize, 3000, 20000] {
+                let mut logged = MemoTable::new(width);
+                let mut whole = MemoTable::new(width);
+                let mut bound = 50u32;
+                let mut known: Vec<Vec<Id>> = Vec::new();
+                for level in 0..12 {
+                    for _ in 0..stores {
+                        let keys: Vec<Id> = (0..width)
+                            .map(|index| {
+                                if index == 0 {
+                                    draw(8)
+                                } else {
+                                    draw(bound + 60)
+                                }
+                            })
+                            .collect();
+                        let value = draw(bound + 60);
+                        if logged.get(&keys) == EMPTY {
+                            logged.set(&keys, value);
+                        }
+                        if whole.get(&keys) == EMPTY {
+                            whole.set(&keys, value);
+                        }
+                        // Hits enough to stay on past its probation.
+                        for _ in 0..2 {
+                            assert_eq!(logged.get(&keys), whole.get(&keys));
+                        }
+                        known.push(keys);
+                    }
+                    let forgotten = if level % 5 == 4 { bound - 20 } else { bound };
+                    logged.forget_from(forgotten);
+                    whole.stored = None;
+                    whole.forget_from(forgotten);
+                    assert_eq!(logged.size(), whole.size(), "width {width}, level {level}");
+                    for keys in &known {
+                        assert_eq!(
+                            logged.get(keys),
+                            whole.get(keys),
+                            "width {width}, level {level}, keys {keys:?}"
+                        );
+                    }
+                    known.retain(|keys| {
+                        let kept = logged.get(keys);
+                        whole.get(keys) != EMPTY && kept != EMPTY
+                    });
+                    assert!(logged.is_enabled() && whole.is_enabled());
+                    bound += 40;
+                }
+            }
         }
     }
 
