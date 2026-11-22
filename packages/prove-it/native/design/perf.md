@@ -1058,6 +1058,56 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### The paths of a value-heavy step (value-paths)
+
+GameOfLife and TLCSailfish1 spend their time in many small steps of a few dozen instructions,
+none hot alone. Per state, GameOfLife builds `sc` once (its table, keyed by `grid`, hits 15 of
+16 lookups) and runs `Sum` eight levels deep for each of 16 cells: 128 bodies, each a test
+`S = {}`, two memo hits (the CHOOSE and `S \ {x}`, keyed by `S`, of which there are 128 in all),
+`f[x]` on 36 tuple keys and an addition, about 1,100 instructions a body with the call's own
+machinery. `Sum`'s table, keyed by `sc` and `S`, hits 10% in its probation and is off, rightly:
+a state's chains share few suffixes. TLCSailfish1's time is the memo tables of `dag` (28 M
+lookups, one value a state), `<<v, c>>` of `Children` (21.8 M) and of `Descendants` (7.6 M), and
+membership of those tuples in `es`. Six changes, each to a path every model takes:
+- A value's known shape is read in place, and equal shapes join in place, with the rest of each
+  out of line (it saved and restored a dozen registers on every read); the joins of distinct
+  shapes are a map hashed by one multiply, where SipHash was 1.4% of TLCSailfish1.
+- `equals` tells two sets of different sizes apart in place, as `equals_sets` did after three
+  calls; a scan for an id compares eight at a time without branching, the last eight
+  overlapping, where `position` compared one at a time.
+- A memo table's miss, its hit on a value whose evaluation recursed, its end of probation and its
+  scattering are out of the line of a plain hit.
+- The constructors an application's function may be (`applying_construction`) are numbered in
+  the program, where each application cloned an `Arc` and dropped it: two atomic operations on
+  each of GameOfLife's 9.4 M applications.
+- A function a bound name or a constant holds is applied as a read: TLC's KeepLazy changes
+  nothing of a value already computed, so what `function_value` did there is only to drop the
+  mark of an outer application where the arguments aren't values, which the read still does.
+- The search of a sorted block by comparison is out of the line of the searches by id.
+
+Callgrind, one worker: GameOfLife 16.32 G → 13.93 G instructions; TLCSailfish1 53.96 G with the
+first change and half the second → 51.64 G with the first four. On `depot-ubuntu-24.04-16`,
+medians with the range (CPU at 16 threads):
+
+| Run | Model | `main`, 1 thread | Now, 1 thread | `main`, 16 | Now, 16 |
+|---|---|---|---|---|---|
+| zm5lpxf7cx, first four, 7 runs | GameOfLife | 1.12 (1.05–1.13) | 1.01 (0.96–1.04) | 0.15 | 0.14 |
+| nr25jjxtrn, first four, 7 runs | TLCSailfish1 | 3.56 (3.54–3.60) | 3.26 (3.23–3.30) | 0.45 (5.47) | 0.42 (5.05) |
+| mwnn6tn0k9, all six, the suite, 5 runs | GameOfLife | 1.07 (1.06–1.08) | 0.94 (0.92–0.95) | 0.14 (1.21) | 0.14 (1.11) |
+| mwnn6tn0k9 | TLCSailfish1 | 3.54 (3.45–3.81) | 3.13 (3.06–3.20) | 0.43 (5.31) | 0.40 (4.76) |
+
+Over the suite one thread is 1.02× `main` and 16 threads about 1.04× in geomean, 15/15 agreeing;
+the other models are within their ranges. cf1s_folklore's median rose there (6.26 → 6.79, ranges
+6.10–6.84 and 5.91–6.84); over 9 interleaved runs alone (twvg40b90b) it is 6.33 → 6.21.
+
+What is left on GameOfLife, `perf` on the 16-core runner: the recursive call (`call_recursive`,
+`evaluate_recursive` and the call's closure, which swap the parameters' slots and save the
+body's, 16%), the memo hits (6%), the closure of the addition above each call (7%, where the
+returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `find_in_block`,
+`apply_other`: 16%) and `S = {}` (5%). On TLCSailfish1 the memo hits of two keys are 18% of the
+cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
+again, and the tuples `<<v, c>>`.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1082,6 +1132,7 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
 | Resolve and copy a graph's steps to the graph on the threads after a level's merge, rather than on the merge's thread as it numbers the states (`edges-on-threads`) | cf1s_folklore, StarkMutex | 16 threads, medians of 3: 1.37 → 1.36 s, 0.79 → 0.77 s; the suite within noise | Copying 22 million steps is a few milliseconds; the per-candidate timers of the merge's instrumentation had inflated its share to 20 % of the merge. The parallel copy spawns threads a level for nothing. |
+| Find a tuple of integers in a grid, a set or domain of every tuple of a box of integers in order (`IS_GRID`, marked as the store interns it), by its components | GameOfLife (`sc` over 6 × 6 tuples, `grid` over 4 × 4) | Callgrind, one worker: 14.10 G → 14.99 G instructions; `find_in_block` 1.70 G → 2.40 G with the scan | Reading the first and last keys' and the key's components, a dozen metadata reads, costs more than scanning 36 ids eight at a time, and checking each new block's keys as it is interned cost 0.3 G more. Not measured on Depot. |
 | Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
