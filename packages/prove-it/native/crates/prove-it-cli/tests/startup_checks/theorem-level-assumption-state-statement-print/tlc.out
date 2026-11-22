@@ -1,0 +1,17 @@
+exit 150
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 1
+
+line 6, col 1 to line 6, col 24 of module M
+
+Level error: assumptions must be level 0 (Constant), 
+but this one has level 1.
+
+
+Error: Parsing or semantic analysis failed.
