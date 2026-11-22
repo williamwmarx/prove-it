@@ -8593,6 +8593,17 @@ recorded with b91fb6c): the `IntExpTyping` axiom of its Z3 input (`n_axioms.ml`,
 `n ^ (-1)` is the real `1 / n` (tlaplus/tlapm#300), where the port's axiom had no bound on `y`
 and Z3 proved `n ^ (-1) \in Int` for a non-zero integer `n`, which tlapm fails.
 
+The port follows Module.Elab's check of the ENABLEDaxioms directive
+(`check_enabled_axioms_usage`, `check_enabled_axioms_map`; `tests/fixtures/tlapm-cli/EnabledLevel.tla`,
+recorded with b91fb6c): in a theorem whose simplified proof cites the directive, each leaf takes
+the highest level of the assumptions it depends on, a fact's expression or the level stored for
+the step a fact names (an assertion's proof level, or its sequent's, capped as `m_elab.ml`
+caps it), and a leaf citing the directive beside an assumption of level above 1 gets an `Error:`
+note at its location as the module is elaborated and the property `enabledaxioms` false, which
+`Prep.expand_enabled_cdot` refuses (`ENABLEDaxioms depends on assumptions of level > 1`) where
+the port applied the rule whatever the levels and proved `ENABLED B <=> ENABLED C` from
+`B <=> C` for actions `B` and `C`, which tlapm fails.
+
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
 for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
@@ -8619,6 +8630,7 @@ tactic only (`Fpfile.query`).
 | with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
 | with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 | with Isabelle's simp, flat_rule and result ranking | 764 / 574 / 13 | 313 / 1,042 / 43 |
+| with ENABLEDaxioms' level check | 765 / 574 / 12 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8722,11 +8734,6 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
   `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
   flight together declines in toolbox mode.
-- M_elab's level check of a step that cites ENABLEDaxioms (`check_usable`, which refuses the
-  directive where an assumption or a cited step is of level above 1, with an `Error:` line on
-  stderr as the module is elaborated) is not ported: the rule is applied whatever the levels, so
-  `tlapm/proofs/enabled/enabled_axioms_level` of the upstream suite is proved where tlapm reports
-  `ENABLEDaxioms depends on assumptions of level > 1`.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
 - A TAB before the module header, on the header's line, shifts the columns printed on that line,

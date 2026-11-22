@@ -123,6 +123,7 @@ pub fn encode_for_backend(
         &obligation.sequent,
         obligation.method.as_ref(),
         Some(&methods),
+        obligation.is_enabled_axioms_sound,
         None,
         &mut |_| {},
     )?;
@@ -162,6 +163,7 @@ pub fn encode_proof_theory(
                     &obligation.sequent,
                     obligation.method.as_ref(),
                     None,
+                    obligation.is_enabled_axioms_sound,
                     None,
                     &mut |_| {},
                 )?)?,
