@@ -255,6 +255,7 @@ impl Polynomial {
 
 // A table that shifts a fingerprint by a fixed number of zero bytes: entry [k][b] holds the shift
 // of the fingerprint whose byte k is b and whose other bytes are zero.
+#[derive(Clone)]
 struct ShiftTable([[u64; 256]; 8]);
 
 impl ShiftTable {
@@ -373,9 +374,66 @@ impl Entries for Dense {
     }
 }
 
-/// The fingerprints a search computed of its store's values, which the caches of a parallel
-/// level's threads read in place while the store doesn't change.
-pub struct SharedFingerprints(Arc<Vec<ValueFingerprint>>);
+/// The fingerprints a search computed of its store's values, and the tables that shift by the
+/// lengths it met, which the caches of a parallel level's threads read in place while the store
+/// doesn't change: an entry's table number means the same in every thread.
+pub struct SharedFingerprints {
+    entries: Arc<Vec<ValueFingerprint>>,
+    tables: Arc<Tables>,
+}
+
+/// The tables that shift by each length met, numbered from 1 in the order made, and the number
+/// of each length's, or UNKNOWN_TABLE: by length up to SHORT_LENGTHS, which a state's tails are
+/// found by once per state, and in a map past it.
+#[derive(Default)]
+struct Tables {
+    lengths: Vec<Box<ShiftTable>>,
+    short_numbers: Vec<i32>,
+    length_numbers: HashMap<u64, i32>,
+}
+
+impl Tables {
+    fn number_of(&self, length: u64) -> Option<i32> {
+        let known = if length < SHORT_LENGTHS as u64 {
+            self.short_numbers.get(length as usize).copied()
+        } else {
+            self.length_numbers.get(&length).copied()
+        };
+        known.filter(|&number| number != UNKNOWN_TABLE)
+    }
+
+    // Records the number of a length's table.
+    fn set_number(&mut self, length: u64, number: i32) {
+        if length < SHORT_LENGTHS as u64 {
+            if self.short_numbers.is_empty() {
+                self.short_numbers.resize(SHORT_LENGTHS, UNKNOWN_TABLE);
+            }
+            self.short_numbers[length as usize] = number;
+        } else {
+            self.length_numbers.insert(length, number);
+        }
+    }
+
+    // Each length with a table, and the table's number.
+    fn numbers(&self) -> impl Iterator<Item = (u64, i32)> + '_ {
+        self.short_numbers
+            .iter()
+            .enumerate()
+            .filter(|&(_, &number)| number != UNKNOWN_TABLE)
+            .map(|(length, &number)| (length as u64, number))
+            .chain(
+                self.length_numbers
+                    .iter()
+                    .map(|(&length, &number)| (length, number)),
+            )
+    }
+
+    fn clear(&mut self) {
+        self.lengths.clear();
+        self.short_numbers.clear();
+        self.length_numbers.clear();
+    }
+}
 
 /// The entries of a parallel level's thread's cache: those of the store's values below `bound`
 /// in the search's, else in `misses` where the thread computed them, and of the thread's own
@@ -394,7 +452,8 @@ impl Entries for Overlaid {
         self.entry(id).is_computed
     }
 
-    // An id below the thread's own wraps past the end of its entries.
+    // An id below the thread's own wraps past the end of its entries. A search's entry's table
+    // number is one of the tables the thread's cache shares with it.
     #[inline(always)]
     fn entry(&self, id: Id) -> ValueFingerprint {
         match self.values.get(id.wrapping_sub(self.bound) as usize) {
@@ -402,11 +461,7 @@ impl Entries for Overlaid {
             None if id < self.bound => {
                 let base = self.base.as_ref().and_then(|base| base.get(id as usize));
                 match base.filter(|entry| entry.is_computed) {
-                    // A length table's number is the search's cache's own.
-                    Some(entry) => ValueFingerprint {
-                        table: UNKNOWN_TABLE,
-                        ..*entry
-                    },
+                    Some(&entry) => entry,
                     None => self.misses.get(&id).copied().unwrap_or_default(),
                 }
             }
@@ -454,11 +509,12 @@ pub struct Fingerprints<E = Dense> {
     values: E,
     // Shifts by 2^j zero bytes.
     powers: Vec<Box<ShiftTable>>,
-    lengths: Vec<Box<ShiftTable>>,
-    // The number of each length's table, or UNKNOWN_TABLE: by length up to SHORT_LENGTHS, which a
-    // state's tails are found by once per state, and in a map past it.
-    short_numbers: Vec<i32>,
-    length_numbers: HashMap<u64, i32>,
+    // This cache's own length tables, numbered after the shared ones.
+    tables: Tables,
+    // The search's length tables a thread's cache reads while attached, and how many they are,
+    // which its own numbers go on from, kept past detaching for `absorb` to tell them apart.
+    shared: Option<Arc<Tables>>,
+    shared_count: usize,
 }
 
 const SHORT_LENGTHS: usize = 1 << 12;
@@ -472,12 +528,17 @@ impl Fingerprints {
     /// Lends the fingerprints computed so far to the caches of a parallel level's threads, until
     /// [`Fingerprints::take_back`].
     pub fn share(&mut self) -> SharedFingerprints {
-        SharedFingerprints(Arc::new(std::mem::take(&mut self.values.0)))
+        SharedFingerprints {
+            entries: Arc::new(std::mem::take(&mut self.values.0)),
+            tables: Arc::new(std::mem::take(&mut self.tables)),
+        }
     }
 
     /// Takes back what [`Fingerprints::share`] lent, once the threads' caches let go of it.
     pub fn take_back(&mut self, shared: SharedFingerprints) {
-        self.values.0 = Arc::into_inner(shared.0).expect("the fingerprints, once threads let go");
+        self.values.0 =
+            Arc::into_inner(shared.entries).expect("the fingerprints, once threads let go");
+        self.tables = Arc::into_inner(shared.tables).expect("the tables, once threads let go");
     }
 
     /// Adds what a thread's cache computed: the fingerprints of the store's values it computed,
@@ -491,18 +552,36 @@ impl Fingerprints {
             .zip(&entries.values)
             .filter(|&(id, _)| id != EMPTY_SLOT);
         let misses = entries.misses.iter().map(|(&id, entry)| (id, entry));
+        let shared_count = overlay.shared_count as i32;
         for (id, entry) in own.chain(misses) {
             if !entry.is_computed || self.values.is_computed(id) {
                 continue;
             }
-            // A length table's number is the thread's cache's own.
+            // A table the thread made is numbered its own way; one it shared is this cache's.
             self.values.set(
                 id,
                 ValueFingerprint {
-                    table: UNKNOWN_TABLE,
+                    table: if entry.table > shared_count {
+                        UNKNOWN_TABLE
+                    } else {
+                        entry.table
+                    },
                     ..*entry
                 },
             );
+        }
+        // The tables the thread made for lengths this cache had none for, for every thread to
+        // share from the next level on.
+        for (length, number) in overlay.tables.numbers() {
+            if self.tables.number_of(length).is_some()
+                || self.tables.lengths.len() >= MAXIMUM_LENGTH_TABLES
+            {
+                continue;
+            }
+            let table = &overlay.tables.lengths[(number - shared_count) as usize - 1];
+            self.tables.lengths.push(table.clone());
+            self.tables
+                .set_number(length, self.tables.lengths.len() as i32);
         }
     }
 }
@@ -513,12 +592,17 @@ impl Fingerprints<Overlaid> {
     pub fn attach(&mut self, shared: &SharedFingerprints, bound: Id) {
         self.values.clear();
         self.values.bound = bound;
-        self.values.base = Some(Arc::clone(&shared.0));
+        self.values.base = Some(Arc::clone(&shared.entries));
+        // This cache's own tables are numbered after the shared ones, which may have grown.
+        self.tables.clear();
+        self.shared = Some(Arc::clone(&shared.tables));
+        self.shared_count = shared.tables.lengths.len();
     }
 
     /// Lets go of what [`Fingerprints::attach`] lent, keeping what this cache computed.
     pub fn detach(&mut self) {
         self.values.base = None;
+        self.shared = None;
     }
 }
 
@@ -530,9 +614,9 @@ impl<E: Entries> Fingerprints<E> {
             generation: None,
             values: E::default(),
             powers: Vec::new(),
-            lengths: Vec::new(),
-            short_numbers: Vec::new(),
-            length_numbers: HashMap::new(),
+            tables: Tables::default(),
+            shared: None,
+            shared_count: 0,
         }
     }
 
@@ -585,16 +669,15 @@ impl<E: Entries> Fingerprints<E> {
     // The number of the table that shifts by a length, made only while fewer than `cap` tables
     // exist, or NO_TABLE.
     fn get_table_under(&mut self, length: u64, cap: usize) -> i32 {
-        let is_short = length < SHORT_LENGTHS as u64;
-        let known = if is_short {
-            self.short_numbers.get(length as usize).copied()
-        } else {
-            self.length_numbers.get(&length).copied()
-        };
-        if let Some(number) = known.filter(|&number| number != UNKNOWN_TABLE) {
+        if let Some(number) = self
+            .shared
+            .as_ref()
+            .and_then(|shared| shared.number_of(length))
+            .or_else(|| self.tables.number_of(length))
+        {
             return number;
         }
-        if self.lengths.len() >= cap {
+        if self.shared_count + self.tables.lengths.len() >= cap {
             return NO_TABLE;
         }
         // The powers it is built from, made before the closure borrows them.
@@ -611,22 +694,20 @@ impl<E: Entries> Fingerprints<E> {
             }
             fingerprint
         });
-        self.lengths.push(table);
-        let number = self.lengths.len() as i32;
-        if is_short {
-            self.short_numbers.resize(SHORT_LENGTHS, UNKNOWN_TABLE);
-            self.short_numbers[length as usize] = number;
-        } else {
-            self.length_numbers.insert(length, number);
-        }
+        self.tables.lengths.push(table);
+        let number = (self.shared_count + self.tables.lengths.len()) as i32;
+        self.tables.set_number(length, number);
         number
     }
 
     fn shift_by_table(&mut self, number: i32, fingerprint: u64, length: u64) -> u64 {
-        if number > 0 {
-            self.lengths[number as usize - 1].shift(fingerprint)
-        } else {
-            self.shift_by_powers(fingerprint, length)
+        if number <= 0 {
+            return self.shift_by_powers(fingerprint, length);
+        }
+        let number = number as usize - 1;
+        match &self.shared {
+            Some(shared) if number < self.shared_count => shared.lengths[number].shift(fingerprint),
+            _ => self.tables.lengths[number - self.shared_count].shift(fingerprint),
         }
     }
 
