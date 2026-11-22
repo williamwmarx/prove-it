@@ -8558,7 +8558,7 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs the last two change count as wrong here until the port follows them.
+of integer powers; the runs the last change count as wrong here until the port follows it.
 
 The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
 b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
@@ -8571,6 +8571,12 @@ too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the por
 `x = 0 => (x = 0)'` from `CASE x = 0` or `HAVE x = 0`, `[]b` from `USE b`, `[](c = x)` from
 `PICK c : c = x` and `[](c \in {x})` from `NEW c \in {x}`, which tlapm fails.
 
+The port follows b91fb6c's coalescing of a declared non-constant operator's application
+(`tests/fixtures/tlapm-cli/FreshOperator.tla`, recorded with b91fb6c): `Coalesce.coalesce_modal`
+applies the coalesced operator to the arguments, as it does a user operator's, where the port
+left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
+proved `F(1) = F(2)`, which tlapm fails.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8579,6 +8585,7 @@ too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the por
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
+| with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
 
 ### Declines
 
