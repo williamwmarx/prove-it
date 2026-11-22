@@ -770,6 +770,7 @@ pub fn answer_atoms(
     is_live_checked: bool,
     is_printing: bool,
     diameters: &Diameters<'_>,
+    asked: Option<&[bool]>,
     helpers: &mut [Machine<'_>],
 ) -> Result<Vec<Table>, &'static str> {
     let mut known = graph
@@ -807,6 +808,15 @@ pub fn answer_atoms(
     for (position, atom) in atoms.iter().enumerate() {
         if let Some(table) = pending.remove(&position) {
             tables.push(table);
+            continue;
+        }
+        if asked.is_some_and(|asked| asked.get(position) != Some(&true)) {
+            tables.push(Table {
+                answers: Vec::new(),
+                is_from_steps: false,
+                unknown: Some("an atom the checker doesn't read".into()),
+                prints: Vec::new(),
+            });
             continue;
         }
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
