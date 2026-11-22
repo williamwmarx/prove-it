@@ -4057,6 +4057,17 @@ after the selection's: the front end puts a `$Nop` at the INSTANCE around the pa
 (`Lowering::get_selection_substitution`), so the frame prints. A selection through a copy of a
 copy, and one whose failure is in a substitute, print wrong; see "Known wrong outputs".
 
+A selection reads the copy's body as the instantiated module wrote it, under the substitutions
+(`selectorToNode` walks a `SubstInNode`'s body and wraps the part selected in it again): where an
+INSTANCE substitutes a LAMBDA for an operator parameter, the front end writes the parameter's
+application `F(C)` as `LET LAMBDA(y) == y + 1 IN LAMBDA(C)`, whose operands a selector takes as
+`F(C)`'s (`instances::get_substituted_lambda_application`), so `I!Val!1!1` of `Val == {F(C)}`
+under `F <- LAMBDA y : y + 1, C <- 4` is 4, as TLC's, where the binary took the LET's one operand
+and printed 5, and `!2` of `F(C, 7)` is 7 where it declined ("A LET/IN expression has only one
+operand", an error tla-front raises); a failure in the part selected is reported through the
+INSTANCE's frame, as TLC's (`tests/instance-selections`, recorded with the jar; the upstream unit
+case `subexpressions_test/c0006`).
+
 #### A constraint that fails on a successor
 
 `Worker.addElement` evaluates the state constraints of every successor, seen or not, before the
@@ -8467,6 +8478,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 ### What matches
 
 - Every fixture tlapm 9ed0376 recorded in `tests/fixtures/obligations` and `tests/fixtures/tlapm-cli`
+  (b91fb6c for `FactTimes`)
   (`prove-it-cli/tests/tlapm.rs`, `unit/cli.test.ts`): stdout, stderr and the exit status, with
   `-N`, `--toolbox`, `--line`, `--printallobs`, `--strict`, `--summary`, `--nofp`, `--cleanfp`, and
   over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
@@ -8492,7 +8504,18 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs those change count as wrong here until the port follows them.
+of integer powers; the runs the last two change count as wrong here until the port follows them.
+
+The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
+b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
+gives them in their context (`Proof.Simplify`), always where the formula is closed under `[]`
+and otherwise only now, where the port gave them the scope's time; a USE of a name that is no fact
+or step of a proof, such as a declared variable, takes the scope's time (`Proof.Gen.gen_step`),
+where the port gave it always; and the membership fact `Pltl.expand_domains` makes of `NEW c \in
+S` takes the time of `S` shifted under `c`, where the port judged `S` as written, one hypothesis
+too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the port proved
+`x = 0 => (x = 0)'` from `CASE x = 0` or `HAVE x = 0`, `[]b` from `USE b`, `[](c = x)` from
+`PICK c : c = x` and `[](c \in {x})` from `NEW c \in {x}`, which tlapm fails.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
@@ -8501,6 +8524,7 @@ of integer powers; the runs those change count as wrong here until the port foll
 | with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
+| with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 
 ### Declines
 
