@@ -1,0 +1,7 @@
+
+\* TLAPM version b91fb6c
+\* launched at 2026-11-22 22:51:12 with command line:
+\* /home/runner/work/tmp/tlapm-install/bin/tlapm --toolbox 0 0 --threads 1 TrivialMethod.tla
+
+(* created new ".tlacache/TrivialMethod.tlaps/TrivialMethod.thy" *)
+(* fingerprints written in ".tlacache/TrivialMethod.tlaps/fingerprints" *)
