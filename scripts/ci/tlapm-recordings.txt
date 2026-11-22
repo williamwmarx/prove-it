@@ -22,3 +22,6 @@ packages/prove-it/tests/fixtures/tlapm-cli/IsaReuse.tla | --toolbox 0 0 --thread
 packages/prove-it/tests/fixtures/tlapm-cli/EnabledLevel.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/ZenonUnsupported.tla | --toolbox 0 0 --threads 1
 packages/prove-it/tests/fixtures/tlapm-cli/IsaRules.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/everythingisafcn_test.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/function_except_tuple_soundness_gh201_test.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/ZeroSeconds.tla | --toolbox 0 0 --threads 1
