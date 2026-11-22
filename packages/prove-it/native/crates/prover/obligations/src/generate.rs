@@ -110,7 +110,7 @@ fn get_assumed_facts(offset: usize, sequent: &Sequent) -> Result<Vec<Expr>> {
     Ok(facts)
 }
 
-fn get_step_definition(step: &Step, body: Expr, time: Time) -> Result<Hyp> {
+pub(crate) fn get_step_definition(step: &Step, body: Expr, time: Time) -> Result<Hyp> {
     let Some(number) = &step.props.step else {
         return Err(ObligationError::assert_failure());
     };
@@ -230,7 +230,11 @@ fn get_fact_time(context: &[Hyp], fact: &ExprNode, time: Time) -> Time {
     }
 }
 
-fn set_definition(visibility: Visibility, context: Vec<Hyp>, def: &UseDef) -> Result<Vec<Hyp>> {
+pub(crate) fn set_definition(
+    visibility: Visibility,
+    context: Vec<Hyp>,
+    def: &UseDef,
+) -> Result<Vec<Hyp>> {
     let index = match &def.core {
         UseDefCore::Dx { index } => *index,
         UseDefCore::Dvar { name } => {
@@ -264,7 +268,7 @@ fn is_domain_match(fact: &ExprNode, domain: &ExprNode) -> bool {
     })
 }
 
-fn set_expression(
+pub(crate) fn set_expression(
     on_warning: &mut Warn,
     visibility: Visibility,
     fact: &Expr,
@@ -330,6 +334,7 @@ fn obligate(sequent: Sequent, from: &ProofProps, kind: ObligationKind) -> Obliga
         location: from.location.clone(),
         kind,
         method: from.method.clone(),
+        is_enabled_axioms_sound: from.is_enabled_axioms_sound,
     }
 }
 
@@ -1272,6 +1277,7 @@ mod tests {
             method: optional(&fields[3], read_method),
             use_location: read_locus(&fields[4]),
             is_suppressed: false,
+            is_enabled_axioms_sound: None,
         }
     }
 

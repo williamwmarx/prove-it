@@ -323,6 +323,7 @@ impl Run<'_> {
             &obligation.sequent,
             obligation.method.as_ref(),
             Some(methods),
+            obligation.is_enabled_axioms_sound,
             obligation.locus.as_ref(),
             &mut |warning| notes.push(warning),
         );
