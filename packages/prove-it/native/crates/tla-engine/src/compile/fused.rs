@@ -10,7 +10,7 @@ use tla_values::{Bail, Id, check_set_insertion};
 use super::lazy_function;
 use super::nodes::assign_bound;
 use super::predicate::{self, Predicate, Test};
-use super::{Compiled, Filter, Shape, bool_id, eval, leaf};
+use super::{Compiled, Filter, Interval, Shape, bool_id, eval, leaf};
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine};
 
@@ -34,6 +34,10 @@ pub(crate) fn interval_bounds(
     let high = high(machine)?;
     let low = expect_int(machine, low)?;
     let high = expect_int(machine, high)?;
+    checked_bounds(low, high)
+}
+
+fn checked_bounds(low: i32, high: i32) -> Outcome<Option<(i32, i32)>> {
     if high < low {
         return Ok(None);
     }
@@ -41,6 +45,14 @@ pub(crate) fn interval_bounds(
         return Err(Bail("an interval too large to build"));
     }
     Ok(Some((low, high)))
+}
+
+/// `interval_bounds` of an interval, read in place where the compiler holds its bounds.
+fn bounds_of(machine: &mut Machine<'_>, interval: &Interval) -> Outcome<Option<(i32, i32)>> {
+    match interval.known {
+        Some((low, high)) => checked_bounds(low, high),
+        None => interval_bounds(machine, &interval.low, &interval.high),
+    }
 }
 
 /// The number of elements of `a..b` (`IntervalValue.size`), its bounds checked as the interval's
@@ -73,7 +85,7 @@ pub(crate) fn interval(machine: &mut Machine<'_>, low: &Eval, high: &Eval) -> Ou
 /// ForallInterval and ExistsInterval: `\A x \in a..b : P`, a name over an interval at each level,
 /// counted through without building the interval, its body's predicate walked in the loop.
 pub(crate) fn quantify_intervals(
-    levels: Vec<(u32, (Eval, Eval), bool)>,
+    levels: Vec<(u32, Interval, bool)>,
     body: Predicate,
     is_forall: bool,
 ) -> Eval {
@@ -87,7 +99,7 @@ pub(crate) fn quantify_intervals(
 // name varying fastest (`ContextEnumerator`), until one decides the quantifier.
 fn quantify_levels(
     machine: &mut Machine<'_>,
-    levels: &[(u32, (Eval, Eval), bool)],
+    levels: &[(u32, Interval, bool)],
     body: &Test,
     is_forall: bool,
 ) -> Outcome<bool> {
@@ -101,10 +113,10 @@ fn quantify_levels(
     };
     let mut is_empty = false;
     let mut last = None;
-    for ((_, (low, high), is_shared), counter) in levels.iter().zip(counters.iter_mut()) {
+    for ((_, interval, is_shared), counter) in levels.iter().zip(counters.iter_mut()) {
         let level = match last {
             Some(level) if *is_shared => level,
-            _ => interval_bounds(machine, low, high)?,
+            _ => bounds_of(machine, interval)?,
         };
         last = Some(level);
         match level {

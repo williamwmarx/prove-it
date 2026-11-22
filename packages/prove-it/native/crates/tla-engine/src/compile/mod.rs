@@ -52,7 +52,10 @@ use tla_values::store::{FALSE, KIND_BOOL, KIND_INT, KIND_SET, KIND_STRING, Outco
 use tla_values::{Bail, Id, Store};
 
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Key, Machine, Member, Parts, Program, Recursive, Step};
+use crate::machine::{
+    BINDING_KEYS, BoundName, Eval, Key, Machine, Member, Parts, Program, Recursive, Step,
+    ThroughKey,
+};
 use crate::memo::EPOCH_KEYS;
 
 /// What TLCGet reads of TLC's search, at slots of their own so that an expression that reads one
@@ -155,6 +158,10 @@ const SEARCH_SLOTS: [u32; 10] = [
 ];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
+/// How many nodes an expression is written with from which a read of a name bound to it finds
+/// the value kept rather than evaluate it again (`Compiler::bound_once`): `Head(network[q][p])`
+/// is, and `f[i]` or `m.clock` isn't, which costs less to evaluate than to keep.
+const WEIGHTY_NODES: u32 = 5;
 const MAXIMUM_EXPANSION: u32 = 2000;
 /// The builtins that write a value's text, or keep a value another may write.
 const TEXT_BUILTINS: [&str; 7] = [
@@ -247,10 +254,13 @@ fn decline<T>(what: impl Display) -> Compiling<T> {
 /// Settings that change how compiled code caches, never what it computes.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
-    /// PROVE_IT_MEMO=off: no memo table, epoch cache or value computed once.
+    /// PROVE_IT_MEMO=off: no memo table, epoch cache or value computed once, and no set kept
+    /// that passed a test of its elements (`Machine::holds_all`).
     pub is_memo_off: bool,
-    /// PROVE_IT_EPOCH_CHECK=1: evaluate again on each hit of an epoch cache, and panic if the
-    /// value differs.
+    /// PROVE_IT_EPOCH_CHECK=1: evaluate again on each hit of an epoch cache, or of a memo table
+    /// keyed by the values of names bound once (`Machine::lookup_through`), and panic if the
+    /// value differs; test again each element `Machine::holds_all` passes over, and panic if it
+    /// doesn't pass.
     pub is_epoch_checked: bool,
 }
 
@@ -326,6 +336,15 @@ impl Shape {
     }
 }
 
+/// The bounds of `a..b`.
+#[derive(Clone)]
+pub(crate) struct Interval {
+    pub low: Eval,
+    pub high: Eval,
+    /// Both bounds, where they are integers the compiler holds.
+    pub known: Option<(i32, i32)>,
+}
+
 /// A set filter's parts, for a Cardinality of it that counts without building it.
 pub(crate) struct Filter {
     pub set: Eval,
@@ -386,7 +405,7 @@ pub struct Compiled {
     pub(crate) parts: Option<Parts>,
     pub(crate) shape: Shape,
     /// For `a..b`: its bounds, which a quantifier over it counts through without the set.
-    pub(crate) interval: Option<(Eval, Eval)>,
+    pub(crate) interval: Option<Interval>,
     pub(crate) filter: Option<Arc<Filter>>,
     /// For a boolean: the fused predicate a parent can walk in place of calling it.
     pub(crate) predicate: Option<Arc<predicate::Predicate>>,
@@ -421,6 +440,8 @@ pub struct Compiled {
     /// compiled set isn't one, as a model's constant, or a union, intersection or difference TLC
     /// reduces.
     pub(crate) is_reducible: bool,
+    /// Whether evaluating it is a lookup in a memo table of two keys or more, which hashes them.
+    pub(crate) is_hashed: bool,
 }
 
 impl Compiled {
@@ -616,6 +637,7 @@ impl Compiled {
             eval,
             shape: Shape::Other,
             predicate: None,
+            is_hashed: false,
             ..self.clone()
         }
     }
@@ -652,6 +674,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         subset_base: None,
         is_irreducible: false,
         is_reducible: false,
+        is_hashed: false,
     }
 }
 
@@ -704,6 +727,54 @@ fn memo_lookup(table: usize, keys: &[Key], inner: Eval) -> Eval {
         5 => with::<5>(table, keys, inner),
         _ => with::<MAXIMUM_MEMO_WIDTH>(table, keys, inner),
     }
+}
+
+// `memo_lookup` of an expression that reads names bound once, keyed by their values.
+fn memo_lookup_through(table: usize, keys: &[ThroughKey], inner: Eval, plain: Eval) -> Eval {
+    fn with<const WIDTH: usize>(
+        table: usize,
+        keys: &[ThroughKey],
+        inner: Eval,
+        plain: Eval,
+    ) -> Eval {
+        let keys: [ThroughKey; WIDTH] = keys.try_into().expect("as many keys as the width");
+        eval(move |machine| machine.lookup_through(table, &keys, &inner, &plain))
+    }
+    match keys.len() {
+        1 => with::<1>(table, keys, inner, plain),
+        2 => with::<2>(table, keys, inner, plain),
+        3 => with::<3>(table, keys, inner, plain),
+        4 => with::<4>(table, keys, inner, plain),
+        5 => with::<5>(table, keys, inner, plain),
+        _ => with::<MAXIMUM_MEMO_WIDTH>(table, keys, inner, plain),
+    }
+}
+
+// A read of a name bound once, with its keys in an array of their own length.
+fn binding_read(index: usize, keys: &[Key], inner: Eval) -> Eval {
+    fn with<const WIDTH: usize>(index: usize, keys: &[Key], inner: Eval) -> Eval {
+        let keys: [Key; WIDTH] = keys.try_into().expect("as many keys as the width");
+        eval(move |machine| machine.binding(index, &keys, &inner))
+    }
+    match keys.len() {
+        1 => with::<1>(index, keys, inner),
+        2 => with::<2>(index, keys, inner),
+        3 => with::<3>(index, keys, inner),
+        4 => with::<4>(index, keys, inner),
+        5 => with::<5>(index, keys, inner),
+        _ => with::<BINDING_KEYS>(index, keys, inner),
+    }
+}
+
+// Where a memo table or a name bound once reads the keys of what reads `footprint`.
+fn footprint_keys(footprint: &Footprint) -> Vec<Key> {
+    footprint
+        .vars
+        .iter()
+        .map(|&variable| Key::Current(variable))
+        .chain(footprint.primes.iter().map(|&variable| Key::Next(variable)))
+        .chain(footprint.slots.iter().map(|&slot| Key::Slot(slot)))
+        .collect()
 }
 
 // A boolean whose value is a fused predicate.
@@ -888,6 +959,12 @@ struct Argument {
     /// `deepNormalize` of what Print and PrintT print leave the kept value as it was, and what
     /// normalizes it in place doesn't change its normalized text).
     is_built_alike: bool,
+    /// Whether what it is bound in names it more than once as written, or where a binder or an
+    /// operator of a LET evaluates it for each element or application: a read may then find the
+    /// value an earlier one computed (`Compiler::bound_once`).
+    is_read_again: bool,
+    /// Whether it is bound once, known once it is compiled.
+    is_bound: Cell<bool>,
 }
 
 // The context an argument's expression compiles in.
@@ -1056,7 +1133,7 @@ pub(crate) struct RecursiveFunction {
 impl RecursiveFunction {
     fn footprint(&self) -> Footprint {
         let read = match &*self.body_footprint.borrow() {
-            Some(body) => body.without_slots(&[self.slot]),
+            Some(body) => body.without_slots(&[self.slot]).direct(),
             None => self.assumed.borrow().clone(),
         };
         self.domain.footprint.merge(&read)
@@ -1913,6 +1990,11 @@ impl<'a> Compiler<'a> {
         self.program.round_count - 1
     }
 
+    pub(crate) fn allocate_pass(&mut self) -> usize {
+        self.program.pass_count += 1;
+        self.program.pass_count - 1
+    }
+
     fn allocate_runtime(&mut self) -> usize {
         self.program.recursives.push(None);
         self.program.recursives.len() - 1
@@ -1963,9 +2045,74 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether `cached` gives the expression a memo table, the next the program numbers.
+    pub(crate) fn takes_table(&self, compiled: &Compiled) -> bool {
+        let width = compiled.footprint.without_slots(&[WARNING_SLOT]).width();
+        !matches!(compiled.shape, Shape::Constant(_))
+            && !compiled.is_printing()
+            && !compiled.uses_registers()
+            && !self.options.is_memo_off
+            && compiled.is_costly
+            && (1..=MAXIMUM_MEMO_WIDTH).contains(&width)
+    }
+
+    /// How many memo tables `cached` gives an expression that `takes_table`, numbered from the
+    /// program's next: the one keyed by what it reads, then one keyed by the values of the names
+    /// bound once it reads through.
+    pub(crate) fn tables_taken(&self, compiled: &Compiled) -> usize {
+        let key_footprint = compiled.footprint.without_slots(&[WARNING_SLOT]);
+        1 + usize::from(Self::through_keys(&key_footprint).is_some())
+    }
+
+    fn through_keys(key_footprint: &Footprint) -> Option<Arc<crate::footprint::Through>> {
+        let width = key_footprint.width();
+        key_footprint
+            .through
+            .clone()
+            .filter(|through| through.width() <= width.min(MAXIMUM_MEMO_WIDTH))
+    }
+
+    /// An operator whose operands are values the compiler holds, evaluated as it compiles, so
+    /// that a fused node above it reads the value in place (`Shape::Constant`). The operator
+    /// reads nothing else and has no effect, so its value is the same wherever it is evaluated;
+    /// one that fails stays as compiled, to fail where it is evaluated.
+    pub(crate) fn folded(&mut self, compiled: Compiled, operands: &[&Compiled]) -> Compiled {
+        if !operands
+            .iter()
+            .all(|operand| matches!(operand.shape, Shape::Constant(_)))
+            || compiled.footprint.width() != 0
+            || compiled.is_printing()
+            || compiled.uses_registers()
+        {
+            return compiled;
+        }
+        let program = Program::default();
+        let mut machine = Machine::new(
+            &program,
+            std::mem::replace(self.store, Store::placeholder()),
+        );
+        let value = (compiled.eval)(&mut machine);
+        let is_quiet = machine.output.is_empty();
+        *self.store = machine.store;
+        match value {
+            Ok(id) if is_quiet => Compiled {
+                eval: eval(move |_| Ok(id)),
+                is_costly: false,
+                is_constant: true,
+                shape: Shape::Constant(id),
+                predicate: None,
+                ..compiled
+            },
+            _ => compiled,
+        }
+    }
+
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {
+        if matches!(compiled.shape, Shape::Constant(_)) {
+            return compiled;
+        }
         if compiled.is_printing() || compiled.uses_registers() || self.options.is_memo_off {
             return compiled;
         }
@@ -1981,22 +2128,273 @@ impl<'a> Compiler<'a> {
             let is_constant = compiled.is_constant;
             return self.once(compiled, is_constant);
         }
-        if width > MAXIMUM_MEMO_WIDTH {
-            return self.cached_in_epoch(compiled);
-        }
-        let table = self.allocate_table(width, false);
-        let footprint = &key_footprint;
-        let keys: Vec<Key> = footprint
+        // What reads names bound once is keyed by their values where that takes no more keys:
+        // their expressions read at least what the keys left out name, and often take fewer
+        // values than what they read does.
+        let through = Self::through_keys(&key_footprint);
+        let plain = if width > MAXIMUM_MEMO_WIDTH {
+            self.cached_in_epoch(compiled.clone())
+        } else {
+            let table = self.allocate_table(width, false);
+            let keys = footprint_keys(&key_footprint);
+            Compiled {
+                is_costly: false,
+                is_hashed: width > 1,
+                ..compiled.with_eval(memo_lookup(table, &keys, compiled.eval.clone()))
+            }
+        };
+        let Some(through) = through else {
+            return plain;
+        };
+        let table = self.allocate_table(through.width(), false);
+        let keys: Vec<ThroughKey> = through
             .vars
             .iter()
-            .map(|&variable| Key::Current(variable))
-            .chain(footprint.primes.iter().map(|&variable| Key::Next(variable)))
-            .chain(footprint.slots.iter().map(|&slot| Key::Slot(slot)))
+            .map(|&variable| ThroughKey::Read(Key::Current(variable)))
+            .chain(
+                through
+                    .primes
+                    .iter()
+                    .map(|&variable| ThroughKey::Read(Key::Next(variable))),
+            )
+            .chain(
+                through
+                    .slots
+                    .iter()
+                    .map(|&slot| ThroughKey::Read(Key::Slot(slot))),
+            )
+            .chain(
+                through
+                    .bindings
+                    .iter()
+                    .map(|binding| ThroughKey::Binding(binding.index)),
+            )
             .collect();
         Compiled {
             is_costly: false,
-            ..compiled.with_eval(memo_lookup(table, &keys, compiled.eval.clone()))
+            is_hashed: true,
+            ..compiled.with_eval(memo_lookup_through(
+                table,
+                &keys,
+                compiled.eval.clone(),
+                plain.eval,
+            ))
         }
+    }
+
+    // A LET definition or an operator's argument that what it is bound in may read again, bound
+    // once: its value is kept by what its expression reads (`Machine::binding`), as TLC's
+    // `LazyValue` keeps it for the reads of one evaluation. What reads the name may then be
+    // keyed by that value (`Footprint::through`), unless the value says what the expression
+    // read: it then takes as many values as that does, and a table keyed by it would hit no
+    // more often. And a read of the name finds the value kept where the expression would look
+    // it up in a table by a hash, or where it keys a table and is written with WEIGHTY_NODES
+    // nodes or more; a cheaper expression is evaluated again, which costs less than keeping
+    // it. Only an expression whose evaluation is all it is, with no effect or warning, and
+    // whose value isn't read in place.
+    fn bound_once(&mut self, argument: &Argument, compiled: Compiled) -> Compiled {
+        let key_footprint = compiled.footprint.direct();
+        let width = key_footprint.width();
+        if !argument.is_read_again
+            || self.options.is_memo_off
+            || argument.once_slot.is_some()
+            || argument.is_applied_function
+            || !matches!(compiled.shape, Shape::Other)
+            || compiled.is_constant
+            || compiled.footprint.is_binding()
+            || self.names_bound_once(argument)
+            || !Self::is_eval_only(&compiled)
+            || compiled.interval.is_some()
+            || compiled.domain_of.is_some()
+            || compiled.may_be_infinite()
+            || width == 0
+            || width > BINDING_KEYS
+            || key_footprint
+                .slots
+                .iter()
+                .any(|slot| SEARCH_SLOTS.contains(slot) || *slot == WARNING_SLOT)
+        {
+            return compiled;
+        }
+        let scope = argument_context(argument).scope;
+        let is_key = !self.tells_its_reads(argument.expression, &scope, 0);
+        let is_read = compiled.is_hashed
+            || is_key && self.count_nodes(argument.expression, WEIGHTY_NODES) >= WEIGHTY_NODES;
+        if !is_key && !is_read {
+            return compiled;
+        }
+        argument.is_bound.set(true);
+        let index = self.program.bindings.len();
+        let keys = footprint_keys(&key_footprint);
+        self.program.bindings.push(BoundName {
+            keys: keys.clone().into(),
+            inner: compiled.eval.clone(),
+        });
+        let footprint = if is_key {
+            Footprint::binding(index as u32, &compiled.footprint)
+        } else {
+            compiled.footprint.clone()
+        };
+        if !is_read {
+            return Compiled {
+                footprint,
+                ..compiled
+            };
+        }
+        Compiled {
+            footprint,
+            is_costly: false,
+            ..compiled.with_eval(binding_read(index, &keys, compiled.eval.clone()))
+        }
+    }
+
+    // How many nodes an expression is written with, up to `most`.
+    fn count_nodes(&self, node: NodeId, most: u32) -> u32 {
+        let mut count = 1;
+        for child in self.node(node).1.children() {
+            if count >= most {
+                break;
+            }
+            count += self.count_nodes(child, most - count);
+        }
+        count
+    }
+
+    // Whether an expression is another name bound once, written as that name alone.
+    fn names_bound_once(&self, argument: &Argument) -> bool {
+        let NodeKind::Identifier(name) = self.node(argument.expression).1 else {
+            return false;
+        };
+        name.is_local
+            && lookup(&argument_context(argument).scope, name.text).is_some_and(
+                |found| matches!(&found.binding, Binding::Argument(named) if named.is_bound.get()),
+            )
+    }
+
+    // Whether an expression's value says what each thing it reads is: a variable, a bound name,
+    // a tuple or a record of such, or a definition or a name that stands for one.
+    fn tells_its_reads(&self, node: NodeId, scope: &Option<Rc<Scope>>, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match self.node(node).1 {
+            NodeKind::Number(_) | NodeKind::String(_) => true,
+            NodeKind::Tuple(elements) => elements
+                .iter()
+                .all(|&element| self.tells_its_reads(element, scope, depth + 1)),
+            NodeKind::Record(fields) => fields
+                .iter()
+                .all(|&(_, value)| self.tells_its_reads(value, scope, depth + 1)),
+            NodeKind::Identifier(name) => {
+                if name.is_local
+                    && let Some(found) = lookup(scope, name.text)
+                {
+                    return match &found.binding {
+                        Binding::Slot(_) => true,
+                        Binding::Argument(argument) => self.tells_its_reads(
+                            argument.expression,
+                            &argument_context(argument).scope,
+                            depth + 1,
+                        ),
+                        _ => false,
+                    };
+                }
+                match name.resolution {
+                    Resolution::Variable(_) | Resolution::Constant(_) => true,
+                    Resolution::Definition(index) => {
+                        let definition = self.definition(self.ir.definitions[index as usize]);
+                        definition.flags & Definition::RECURSIVE == 0
+                            && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                            && self.tells_its_reads(definition.body, &None, depth + 1)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    // Whether the expressions name a local name more than once as written, or once where it is
+    // evaluated again and again: in what a binder evaluates for each element, or in an operator
+    // or a function of a LET.
+    fn is_named_again(&self, definitions: &[NodeId], body: NodeId, name: TextId) -> bool {
+        let (once, each) = self.read_once_and_again(definitions, body);
+        self.count_reads_of(0, once, each, name, false) > 1
+    }
+
+    // The expressions of a LET evaluated at most once each time it is, its body and its
+    // definitions without parameters, and those of its operators and functions.
+    fn read_once_and_again(
+        &self,
+        definitions: &[NodeId],
+        body: NodeId,
+    ) -> (Vec<NodeId>, Vec<NodeId>) {
+        let (mut once, mut each) = (Vec::new(), Vec::new());
+        for &definition in definitions {
+            let definition = self.definition(definition);
+            let is_value = definition.flags & Definition::RECURSIVE == 0
+                && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty());
+            if is_value {
+                once.push(definition.body);
+            } else {
+                each.push(definition.body);
+            }
+        }
+        once.push(body);
+        (once, each)
+    }
+
+    // `is_named_again`'s count, up to 2, of the expressions evaluated once and of those
+    // evaluated again and again, after `count`.
+    fn count_reads_of(
+        &self,
+        count: u32,
+        once: Vec<NodeId>,
+        each: Vec<NodeId>,
+        name: TextId,
+        is_repeated: bool,
+    ) -> u32 {
+        let mut count = count;
+        for (children, is_repeated) in [(once, is_repeated), (each, true)] {
+            for child in children {
+                if count > 1 {
+                    return 2;
+                }
+                count += self.count_reads(child, name, is_repeated);
+            }
+        }
+        count.min(2)
+    }
+
+    fn count_reads(&self, node: NodeId, name: TextId, is_repeated: bool) -> u32 {
+        let kind = self.node(node).1;
+        let own = match kind {
+            NodeKind::Identifier(named) | NodeKind::Apply { name: named, .. }
+                if named.is_local && named.text == name =>
+            {
+                1 + u32::from(is_repeated)
+            }
+            _ => 0,
+        };
+        let (once, each): (Vec<NodeId>, Vec<NodeId>) = match kind {
+            NodeKind::Forall { bounds, body }
+            | NodeKind::Exists { bounds, body }
+            | NodeKind::FunctionConstruction { bounds, body, .. } => {
+                (bounds.iter().map(|bound| bound.set).collect(), vec![*body])
+            }
+            NodeKind::SetMap { expression, bounds } => (
+                bounds.iter().map(|bound| bound.set).collect(),
+                vec![*expression],
+            ),
+            NodeKind::Choose { set, body, .. } => (set.iter().copied().collect(), vec![*body]),
+            NodeKind::SetFilter { bound, predicate } => (vec![bound.set], vec![*predicate]),
+            NodeKind::Lambda { body, .. } => (Vec::new(), vec![*body]),
+            NodeKind::Let {
+                definitions, body, ..
+            } => self.read_once_and_again(definitions, *body),
+            _ => (kind.children(), Vec::new()),
+        };
+        self.count_reads_of(own, once, each, name, is_repeated)
     }
 
     fn mark_costly(compiled: Compiled) -> Compiled {
@@ -4840,6 +5238,11 @@ impl<'a> Compiler<'a> {
                         } else {
                             compiled
                         };
+                        let compiled = if may_reach {
+                            compiled
+                        } else {
+                            self.bound_once(argument, compiled)
+                        };
                         argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                         compiled
                     }
@@ -6411,6 +6814,8 @@ impl<'a> Compiler<'a> {
                         is_applied_function,
                         is_named_once,
                         is_built_alike,
+                        is_read_again: self.is_named_again(later, body, definition.name),
+                        is_bound: Cell::new(false),
                     });
                     if once_slot.is_some() {
                         kept_once.push(Rc::clone(&argument));
@@ -6513,6 +6918,8 @@ impl<'a> Compiler<'a> {
                     is_applied_function: false,
                     is_named_once: false,
                     is_built_alike: false,
+                    is_read_again: false,
+                    is_bound: Cell::new(false),
                 });
                 kept_once.push(Rc::clone(&kept));
                 Binding::Argument(kept)
@@ -6538,6 +6945,9 @@ impl<'a> Compiler<'a> {
                     is_applied_function: false,
                     is_named_once: false,
                     is_built_alike: false,
+                    is_read_again: body
+                        .is_some_and(|body| self.is_named_again(&[], body, param.name)),
+                    is_bound: Cell::new(false),
                 }))
             };
             scope = bind(&scope, param.name, binding);
@@ -7058,42 +7468,56 @@ impl<'a> Compiler<'a> {
         let runtime = recursive.runtime;
         // While the body compiles, a call inside it reads what the operator assumes it does.
         let read = match &*recursive.body_footprint.borrow() {
-            Some(body) => body.without_slots(&recursive.slots),
+            Some(body) => body.without_slots(&recursive.slots).direct(),
             None => recursive.assumed.borrow().clone(),
         };
         // TLC evaluates an argument where the body first reads it, after what the body printed
         // or drew before: where one fails, the engine stops rather than order the two.
         let is_body_printing = read.slots.contains(&PRINT_SLOT);
-        let evaluate = eval(move |machine| {
-            if is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
-                return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
-            }
-            let at = machine.stack.len();
-            for argument in &arg_evals {
-                let value = match argument(machine) {
-                    Ok(value) => value,
-                    Err(bail) => {
-                        machine.stack.truncate(at);
-                        if is_body_printing {
-                            return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+        let call = RecursiveCall {
+            runtime,
+            is_body_printing,
+        };
+        let arguments: Vec<predicate::Leaf> =
+            compiled_args.iter().map(predicate::Leaf::of).collect();
+        let fixed = match arguments.len() {
+            1 => Some(call.with::<1>(&arguments, &slots)),
+            2 => Some(call.with::<2>(&arguments, &slots)),
+            3 => Some(call.with::<3>(&arguments, &slots)),
+            _ => None,
+        };
+        let evaluate = fixed.unwrap_or_else(|| {
+            eval(move |machine| {
+                if is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
+                    return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
+                }
+                let at = machine.stack.len();
+                for argument in &arg_evals {
+                    let value = match argument(machine) {
+                        Ok(value) => value,
+                        Err(bail) => {
+                            machine.stack.truncate(at);
+                            if is_body_printing {
+                                return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+                            }
+                            return Err(bail);
                         }
-                        return Err(bail);
-                    }
-                };
-                machine.stack.push(value);
-            }
-            for (offset, &slot) in slots.iter().enumerate() {
-                std::mem::swap(
-                    &mut machine.locals[slot as usize],
-                    &mut machine.stack[at + offset],
-                );
-            }
-            let result = machine.call_recursive(runtime);
-            for (offset, &slot) in slots.iter().enumerate() {
-                machine.locals[slot as usize] = machine.stack[at + offset];
-            }
-            machine.stack.truncate(at);
-            result
+                    };
+                    machine.stack.push(value);
+                }
+                for (offset, &slot) in slots.iter().enumerate() {
+                    std::mem::swap(
+                        &mut machine.locals[slot as usize],
+                        &mut machine.stack[at + offset],
+                    );
+                }
+                let result = machine.call_recursive(runtime);
+                for (offset, &slot) in slots.iter().enumerate() {
+                    machine.locals[slot as usize] = machine.stack[at + offset];
+                }
+                machine.stack.truncate(at);
+                result
+            })
         });
         let footprint = Footprint::merge_all(
             compiled_args
@@ -7223,7 +7647,7 @@ impl<'a> Compiler<'a> {
             let compiled = self.tracking(read, |compiler| compiler.compile(body, body_context))?;
             let slot_end = self.program.slot_count as u32;
             *created.body_footprint.borrow_mut() = Some(compiled.footprint.clone());
-            let body_read = compiled.footprint.without_slots(&created.slots);
+            let body_read = compiled.footprint.without_slots(&created.slots).direct();
             if !((created.is_normalized.get() && !compiled.is_normalized)
                 || (created.is_enumerated.get() && !compiled.is_enumerated)
                 || !body_read.is_within(&created.assumed.borrow()))
@@ -7571,7 +7995,7 @@ impl<'a> Compiler<'a> {
             let slot_start = self.program.slot_count as u32;
             let compiled = self.tracking(read, |compiler| compiler.compile(body, body_context))?;
             let slot_end = self.program.slot_count as u32;
-            let body_read = compiled.footprint.without_slots(&[record.slot]);
+            let body_read = compiled.footprint.without_slots(&[record.slot]).direct();
             if body_read.is_within(&record.assumed.borrow()) {
                 *record.body_footprint.borrow_mut() = Some(compiled.footprint.clone());
                 return Ok((compiled, slot_start, slot_end));
@@ -7837,6 +8261,44 @@ fn slots_footprint(slots: Vec<u32>) -> Footprint {
 enum RecursiveTarget {
     Global(NodeId),
     Local(Rc<Operator>),
+}
+
+/// A call of a recursive operator of a few parameters, whose arguments are read as a fused node
+/// reads its operands and held in place while the body runs.
+#[derive(Clone, Copy)]
+struct RecursiveCall {
+    runtime: usize,
+    is_body_printing: bool,
+}
+
+impl RecursiveCall {
+    fn with<const N: usize>(self, arguments: &[predicate::Leaf], slots: &[u32]) -> Eval {
+        let arguments: [predicate::Leaf; N] = std::array::from_fn(|index| arguments[index].clone());
+        let slots: [u32; N] = std::array::from_fn(|index| slots[index]);
+        eval(move |machine| {
+            if self.is_body_printing && machine.depth >= PRINTING_RECURSION_LIMIT {
+                return Err(Bail(PRINTING_RECURSION_TOO_DEEP));
+            }
+            let mut values = [0; N];
+            for (value, argument) in values.iter_mut().zip(&arguments) {
+                *value = match argument.read(machine) {
+                    Ok(value) => value,
+                    Err(_) if self.is_body_printing => {
+                        return Err(Bail(RECURSIVE_ARGUMENT_FAILED));
+                    }
+                    Err(bail) => return Err(bail),
+                };
+            }
+            for (value, &slot) in values.iter_mut().zip(&slots) {
+                std::mem::swap(&mut machine.locals[slot as usize], value);
+            }
+            let result = machine.call_recursive(self.runtime);
+            for (value, &slot) in values.iter().zip(&slots) {
+                machine.locals[slot as usize] = *value;
+            }
+            result
+        })
+    }
 }
 
 pub(crate) fn call_recursive_function(

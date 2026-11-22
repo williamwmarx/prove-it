@@ -891,6 +891,32 @@ impl Checker {
         Ok(())
     }
 
+    /// The atoms `add_initial_state` may read: those under the state predicates of each tableau's
+    /// initial nodes.
+    pub(crate) fn initially_read(&self) -> Vec<u32> {
+        let mut atoms = Vec::new();
+        let mut pending: Vec<TermId> = (0..self.behaviors.len())
+            .filter_map(|behavior| self.tableau(behavior))
+            .flat_map(|tableau| {
+                tableau.nodes[..tableau.initial_count]
+                    .iter()
+                    .flat_map(|node| node.state_predicates.iter().copied())
+            })
+            .collect();
+        while let Some(term) = pending.pop() {
+            match self.terms.kind(term) {
+                Kind::State(atom) | Kind::Enabled(atom) => atoms.push(atom),
+                Kind::Action { atom, enabled } => {
+                    atoms.extend([Some(atom), enabled].into_iter().flatten())
+                }
+                _ => pending.extend_from_slice(self.terms.children(term)),
+            }
+        }
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms
+    }
+
     fn tableau(&self, behavior: usize) -> Option<&Tableau> {
         self.solutions[self.behaviors[behavior].solution]
             .tableau

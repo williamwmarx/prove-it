@@ -1,0 +1,49 @@
+TLC2 Version 2026.11.22.162128
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 763] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/crates/prove-it-cli/tests/bound-once/let-fails-where-read/M.tla
+Parsing file /tmp/tlc-11405480213426583203/Integers.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-11405480213426583203/TLC.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-11405480213426583203/Naturals.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-11405480213426583203/Sequences.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11405480213426583203/FiniteSets.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-22 16:21:28)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-22 16:21:29.
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 6, col 9 to line 6, col 84 of module M>
+x = 1
+
+State 3: <Next line 6, col 9 to line 6, col 84 of module M>
+x = 2
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 84 in M
+1. Line 6, column 9 to line 6, column 27 in M
+2. Line 6, column 9 to line 6, column 13 in M
+3. Line 6, column 18 to line 6, column 27 in M
+4. Line 6, column 32 to line 6, column 84 in M
+5. Line 6, column 61 to line 6, column 83 in M
+6. Line 6, column 70 to line 6, column 83 in M
+7. Line 6, column 70 to line 6, column 79 in M
+8. Line 6, column 70 to line 6, column 76 in M
+9. Line 4, column 12 to line 4, column 23 in M
+10. Line 4, column 14 to line 4, column 14 in M
+11. Line 6, column 75 to line 6, column 75 in M
+12. Line 6, column 41 to line 6, column 55 in M
+
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-11-22 16:21:29)
