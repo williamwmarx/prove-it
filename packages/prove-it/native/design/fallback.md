@@ -8558,7 +8558,7 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs the last change count as wrong here until the port follows it.
+of integer powers, each of which the port follows below.
 
 The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
 b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
@@ -8577,6 +8577,12 @@ applies the coalesced operator to the arguments, as it does a user operator's, w
 left the arguments off, so `F(1)` and `F(2)` under `NEW STATE F(_)` were one term and the port
 proved `F(1) = F(2)`, which tlapm fails.
 
+The port follows b91fb6c's typing of integer powers (`tests/fixtures/tlapm-cli/IntPowers.tla`,
+recorded with b91fb6c): the `IntExpTyping` axiom of its Z3 input (`n_axioms.ml`,
+`intexp_typing`) types `x ^ y` as an integer only where `0 <= y`, beside `x # 0 \/ 1 <= y`, since
+`n ^ (-1)` is the real `1 / n` (tlaplus/tlapm#300), where the port's axiom had no bound on `y`
+and Z3 proved `n ^ (-1) \in Int` for a non-zero integer `n`, which tlapm fails.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8586,6 +8592,7 @@ proved `F(1) = F(2)`, which tlapm fails.
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
 | with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 | with a declared operator's arguments | 760 / 574 / 17 | 313 / 1,042 / 43 |
+| with the integer power typing | 761 / 574 / 16 | 313 / 1,042 / 43 |
 
 ### Declines
 
