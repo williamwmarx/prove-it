@@ -231,6 +231,7 @@ fn declines_an_error_tlapm_ends_with() {
     for name in [
         "Declaration",
         "Hide",
+        "HideStep",
         "Label",
         "NotFound",
         "Recursive",
