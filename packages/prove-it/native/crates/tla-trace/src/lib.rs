@@ -47,7 +47,7 @@ pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Ver
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_units, format_value};
 pub use rebuild::Rebuilder;
-pub use split::{Described, SpecDescription, add_actions, add_spec};
+pub use split::{Described, SPLIT_BOUND_EFFECTS, SpecDescription, add_actions, add_spec};
 pub use value::RECORD_VALUE_FIELDS;
 pub use value::{Class, LazySet, Set, SetClass, Text, Value, from_store, java_set_class};
 
