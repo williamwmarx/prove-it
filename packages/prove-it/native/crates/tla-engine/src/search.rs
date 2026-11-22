@@ -2861,7 +2861,7 @@ impl Claims {
     const PROBES: usize = 16;
 
     fn new(level: usize) -> Self {
-        let capacity = (level * 8).next_power_of_two().max(1 << 12);
+        let capacity = (level * 4).next_power_of_two().max(1 << 12);
         Self {
             slots: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
             shift: u64::BITS - capacity.trailing_zeros(),
