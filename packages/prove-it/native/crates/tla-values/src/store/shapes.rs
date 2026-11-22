@@ -32,6 +32,7 @@
 //! interval only where the keys are integers (`FcnRcdValue.compareOtherInterval`).
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use super::{
     Id, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE,
@@ -78,7 +79,28 @@ pub(super) struct Shapes {
     of_value: Vec<Shape>,
     terms: Vec<Term>,
     ids: HashMap<Term, Shape>,
-    joins: HashMap<(Shape, Shape), Shape>,
+    // By the two shapes, the lesser in the low half.
+    joins: HashMap<u64, Shape, BuildHasherDefault<PairHasher>>,
+}
+
+/// Hashes the word of a pair of shapes with one multiply.
+#[derive(Default)]
+struct PairHasher(u64);
+
+impl Hasher for PairHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0 ^ value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
 }
 
 impl Shapes {
@@ -140,10 +162,16 @@ impl Shapes {
     }
 
     /// The least class holding both classes' values, or [`NONE`].
+    #[inline]
     pub(super) fn join(&mut self, left: Shape, right: Shape) -> Shape {
         if left == right {
             return left;
         }
+        self.join_distinct(left, right)
+    }
+
+    #[inline(never)]
+    fn join_distinct(&mut self, left: Shape, right: Shape) -> Shape {
         if left == NONE || right == NONE {
             return NONE;
         }
@@ -153,11 +181,12 @@ impl Shapes {
         if right == BOTTOM {
             return left;
         }
-        let key = (left.min(right), left.max(right));
+        let (low, high) = (left.min(right), left.max(right));
+        let key = u64::from(low) | u64::from(high) << 32;
         if let Some(&joined) = self.joins.get(&key) {
             return joined;
         }
-        let joined = self.join_terms(key.0, key.1);
+        let joined = self.join_terms(low, high);
         self.joins.insert(key, joined);
         joined
     }
@@ -374,13 +403,19 @@ impl Store {
         }
     }
 
+    #[inline]
     fn shape_of(&mut self, id: Id) -> Shape {
-        let index = id as usize;
-        if let Some(&shape) = self.shapes.of_value.get(index)
+        if let Some(&shape) = self.shapes.of_value.get(id as usize)
             && shape != UNKNOWN
         {
             return shape;
         }
+        self.found_shape(id)
+    }
+
+    #[inline(never)]
+    fn found_shape(&mut self, id: Id) -> Shape {
+        let index = id as usize;
         let shape = self.find_shape(id);
         if self.shapes.of_value.len() <= index {
             self.shapes.of_value.resize(index + 1, UNKNOWN);

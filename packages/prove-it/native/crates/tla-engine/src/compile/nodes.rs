@@ -1435,18 +1435,22 @@ impl Compiler<'_> {
     // one of these constructors before the one applied: a test or an argument that may is no
     // way through. An EXCEPT of one, with values for its keys and values, is one too.
     pub(super) fn get_applied_constructions(
-        &self,
+        &mut self,
         function: NodeId,
         context: &Context,
-    ) -> Option<Arc<[NodeId]>> {
+    ) -> Option<u32> {
         let mut constructions = Vec::new();
         let within = Within {
             context: Some(context),
             bound: Vec::new(),
         };
         self.collect_applied_constructions(function, &within, &mut constructions, 0);
-        (!constructions.is_empty())
-            .then(|| constructions.into_iter().map(|(body, _)| body).collect())
+        if constructions.is_empty() {
+            return None;
+        }
+        let bodies = constructions.into_iter().map(|(body, _)| body).collect();
+        self.program.constructions.push(bodies);
+        Some(self.program.constructions.len() as u32 - 1)
     }
 
     fn collect_applied_constructions(
@@ -1818,18 +1822,38 @@ impl Compiler<'_> {
         let notes_records = matches!(self.node(function_node).1,
             NodeKind::Identifier(name) if name.is_local)
             && self.names_argument_with_written_records(function_node, context, 0);
-        function.eval = eval(move |machine| {
-            let value = machine.function_value(
-                &evaluate_function,
-                construction.as_ref(),
-                is_applied_to_values,
-            )?;
-            if notes_records && machine.last_kept_lazy_record != value {
-                machine.last_kept_lazy_record = value;
-                machine.kept_lazy_records.insert(value);
+        // A bound name or a constant is read, not evaluated, so KeepLazy changes nothing there:
+        // what is left of `function_value` is dropping the mark of an outer application where
+        // the arguments aren't values. A read that keeps its shape is applied as a read.
+        let is_read = matches!(
+            function.shape,
+            Shape::Slot(_) | Shape::IntSlot(_) | Shape::Constant(_)
+        );
+        if is_read && !notes_records {
+            if !is_applied_to_values {
+                function.shape = Shape::Other;
+                function.eval = eval(move |machine| {
+                    machine.applying_construction = None;
+                    evaluate_function(machine)
+                });
             }
-            Ok(value)
-        });
+        } else {
+            if is_read {
+                function.shape = Shape::Other;
+            }
+            function.eval = eval(move |machine| {
+                let value = machine.function_value(
+                    &evaluate_function,
+                    construction,
+                    is_applied_to_values,
+                )?;
+                if notes_records && machine.last_kept_lazy_record != value {
+                    machine.last_kept_lazy_record = value;
+                    machine.kept_lazy_records.insert(value);
+                }
+                Ok(value)
+            });
+        }
         let args = args
             .iter()
             .map(|&argument| self.compile(argument, context))

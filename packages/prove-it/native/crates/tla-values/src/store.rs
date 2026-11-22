@@ -96,6 +96,35 @@ const LINEAR_SIZE: usize = 16;
 // A set this small whose elements compare without failing is scanned for an id.
 const SCANNED_SIZE: usize = 256;
 const SHORT_SCALAR_SET: usize = 16;
+// The ids a scan compares with the key at once, without a branch between them.
+const SCAN_LANES: usize = 8;
+
+/// The position of the first word equal to the key.
+#[inline(always)]
+fn position_of(words: &[Id], key: Id) -> Option<usize> {
+    #[inline(always)]
+    fn matches(lanes: &[Id], key: Id) -> u32 {
+        let lanes: &[Id; SCAN_LANES] = lanes.try_into().expect("a scan's lanes");
+        lanes.iter().enumerate().fold(0, |mask, (lane, &word)| {
+            mask | u32::from(word == key) << lane
+        })
+    }
+    if words.len() < SCAN_LANES {
+        return words.iter().position(|&word| word == key);
+    }
+    let mut start = 0;
+    while start + SCAN_LANES <= words.len() {
+        let mask = matches(&words[start..start + SCAN_LANES], key);
+        if mask != 0 {
+            return Some(start + mask.trailing_zeros() as usize);
+        }
+        start += SCAN_LANES;
+    }
+    // The last lanes overlap those scanned, which held no match.
+    let last = words.len() - SCAN_LANES;
+    let mask = matches(&words[last..], key);
+    (mask != 0).then(|| last + mask.trailing_zeros() as usize)
+}
 
 // A function whose keys are all strings, which TLC compares only with another record.
 const IS_RECORD: u8 = 1;
@@ -1102,8 +1131,8 @@ impl Store {
     /// TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC
     /// compares composite values element by element up to the first difference, which fails where
     /// those elements are values TLC can't compare. The store bails wherever TLC would fail.
-    /// Equal ids, two booleans, integers or strings, and two tuples of different lengths are told
-    /// apart in place; the rest goes through `equals_other`.
+    /// Equal ids, two booleans, integers or strings, and two tuples or sets of different sizes are
+    /// told apart in place; the rest goes through `equals_other`.
     #[inline(always)]
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
@@ -1120,7 +1149,8 @@ impl Store {
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
         if left_meta.kind == right_meta.kind
             && (left_meta.kind <= KIND_STRING
-                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+                || matches!(left_meta.kind, KIND_TUPLE | KIND_SET)
+                    && left_meta.size != right_meta.size)
         {
             return Ok(false);
         }
@@ -1542,7 +1572,7 @@ impl Store {
     // is scanned, and a run of integers or a long set searched.
     fn holds_id(&mut self, set: Id, element: Id) -> Outcome<bool> {
         if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0 {
-            return Ok(self.set_elements(set).contains(&element));
+            return Ok(position_of(self.set_elements(set), element).is_some());
         }
         Ok(self.find_in_block(set, element)? != -1)
     }
@@ -2028,12 +2058,14 @@ impl Store {
         // A short block, or one of keys no comparison with which can fail, holds the key where it
         // holds its id: TLC's search, by compareTo or equals, would find it there.
         if size <= LINEAR_SIZE || size <= SCANNED_SIZE && self.is_key_comparable(block, key) {
-            let words = self.words(offset, size);
-            return Ok(words
-                .iter()
-                .position(|&word| word == key)
-                .map_or(-1, |index| index as i32));
+            return Ok(position_of(self.words(offset, size), key).map_or(-1, |index| index as i32));
         }
+        self.search_comparing(offset, size, key)
+    }
+
+    // TLC's search of a sorted block by compareTo, out of the line of the searches by id.
+    #[inline(never)]
+    fn search_comparing(&mut self, offset: usize, size: usize, key: Id) -> Outcome<i32> {
         let (mut low, mut high) = (0i64, size as i64 - 1);
         while low <= high {
             let middle = (low + high) >> 1;
@@ -2540,6 +2572,19 @@ pub fn is_function_kind(kind: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_finds_the_position_of_every_id_and_none_of_others() {
+        for length in 0..40 {
+            let words: Vec<Id> = (0..length).map(|index| 3 * index + 1).collect();
+            for (index, &word) in words.iter().enumerate() {
+                assert_eq!(position_of(&words, word), Some(index));
+            }
+            for missing in [0, 2, 3 * length + 1, Id::MAX] {
+                assert_eq!(position_of(&words, missing), None);
+            }
+        }
+    }
 
     #[test]
     fn any_membership_does_not_imply_reflexive_equality() {
