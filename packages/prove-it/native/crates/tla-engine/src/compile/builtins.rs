@@ -10,7 +10,7 @@ use tla_values::json;
 use tla_values::print::{Construction, is_printable, write_constructed};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
-    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind,
+    KIND_TUPLE, NAT, Outcome, STRINGS, TRUE, is_function_kind, is_tested_set_kind,
 };
 use tla_values::transfer::UNENCODABLE;
 use tla_values::{
@@ -44,6 +44,11 @@ pub(crate) const UNNUMBERED_MODEL_VALUE: &str =
 pub(crate) const ENUMERATED_NAT: &str = "enumerated Nat";
 pub(crate) const ENUMERATED_STRING: &str = "enumerated STRING";
 pub(crate) const ENUMERATED_SEQ: &str = "enumerated Seq(S)";
+
+// The most entries the memo table of a membership takes once a miss was answered by scanning a
+// short set for the element's id: a longer table no longer stays in a core's own cache, and a row
+// read from memory costs more than the scan.
+const SHORT_TABLE: usize = 1 << 12;
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -4106,6 +4111,32 @@ impl Compiler<'_> {
                                 None => through_table(machine),
                             }
                         }))
+                    }
+                    // A set the engine builds, short enough to scan, answers a miss by the
+                    // element's id, for less than a row of a table grown past a core's cache
+                    // costs: such a miss lets its table take no more entries than that.
+                    None if set.member.is_none()
+                        && set.infinite.is_none()
+                        && !is_interval
+                        && self.takes_table(&compiled) =>
+                    {
+                        let table = self.program.memo_tables.len();
+                        let (element, set) = (element.eval.clone(), set.eval.clone());
+                        let scanned = compiled.with_eval(eval(move |machine| {
+                            let value = element(machine)?;
+                            let set = set(machine)?;
+                            if let Some(found) = machine.store.find_in_set(set, value) {
+                                machine.tables[table].shorten(SHORT_TABLE);
+                                return Ok(bool_id(found == is_in));
+                            }
+                            if !is_tested_set_kind(machine.store.kind_of(set)) {
+                                return Err(Bail("membership in a non-set"));
+                            }
+                            Ok(bool_id(machine.store.is_member(value, set)? == is_in))
+                        }));
+                        let cached = self.cached(scanned);
+                        debug_assert_eq!(self.program.memo_tables.len(), table + 1);
+                        cached
                     }
                     _ => compiled,
                 }

@@ -1970,6 +1970,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether `cached` gives the expression a memo table, the next the program numbers.
+    pub(crate) fn takes_table(&self, compiled: &Compiled) -> bool {
+        let width = compiled.footprint.without_slots(&[WARNING_SLOT]).width();
+        !compiled.is_printing()
+            && !compiled.uses_registers()
+            && !self.options.is_memo_off
+            && compiled.is_costly
+            && (1..=MAXIMUM_MEMO_WIDTH).contains(&width)
+    }
+
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {

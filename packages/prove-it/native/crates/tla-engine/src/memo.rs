@@ -208,6 +208,14 @@ impl MemoTable {
         self.maximum = maximum;
     }
 
+    /// Takes no more than `maximum` entries from now on, nor more than it took before: its
+    /// misses cost less than a row of a longer table. Full, it turns off as any table does
+    /// where too few lookups hit.
+    #[inline]
+    pub(crate) fn shorten(&mut self, maximum: usize) {
+        self.maximum = self.maximum.min(maximum);
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }
