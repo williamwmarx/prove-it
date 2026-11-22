@@ -11,11 +11,12 @@
 use std::rc::Rc;
 
 use crate::error::{Res, error_exn, thm_exn};
+use crate::pure::conv::{fconv_rule, prems_conv};
 use crate::pure::drule::{make_elim, revcut_rl, thin_rl, zero_var_indexes};
 use crate::pure::goal::select_goal;
 use crate::pure::interrupt::without_limits;
 use crate::pure::logic::{strip_assums_concl, strip_assums_hyp};
-use crate::pure::object_logic::atomize_prems_tac;
+use crate::pure::object_logic::{atomize_prems_conv, atomize_prems_tac};
 use crate::pure::search::best_first;
 use crate::pure::seq::{list_of_seq, seq_head};
 use crate::pure::tactic::{
@@ -77,6 +78,13 @@ pub struct ClassicalData {
     /// The object logic's Trueprop, which Object_Logic.elim_concl looks through.
     pub judgment: Name,
     pub hyp_subst_tacs: Vec<GoalTactic>,
+    /// The atomize rules, newest first, which flat_rule rewrites a rule's premises with.
+    pub atomize: Vec<Thm>,
+}
+
+/// flat_rule: flattens nested meta connectives in a rule's premises.
+fn flat_rule(data: &ClassicalData, rule: &Thm) -> Res<Thm> {
+    fconv_rule(&prems_conv(atomize_prems_conv(&data.atomize)?), rule)
 }
 
 #[derive(Clone)]
@@ -237,23 +245,13 @@ fn is_member(rules: &[ClassicalRule], rule: &ClassicalRule) -> bool {
 /// addI: an unsafe introduction rule, which intro: declares.
 pub fn add_unsafe_intro(context: &ClassicalContext, rule: &Thm) -> Res<Claset> {
     let claset: &Claset = &context.claset;
-    if prems_of(rule).iter().any(|premise| match &**premise {
-        TermNode::App { fun, .. } => match &**fun {
-            TermNode::Const { name, .. } => name.starts_with("Pure."),
-            _ => false,
-        },
-        _ => false,
-    }) {
-        return Err(error_exn(
-            "Rules with meta-level premises are not supported",
-        ));
-    }
-    let dup = dup_intr(&context.data, rule)?;
+    let internal = flat_rule(&context.data, rule)?;
+    let dup = dup_intr(&context.data, &internal)?;
     let entry = ClassicalRule {
         rule: rule.clone(),
-        internal: rule.clone(),
-        swapped: swapify(&context.data, std::slice::from_ref(rule))?,
+        swapped: swapify(&context.data, std::slice::from_ref(&internal))?,
         dup_swapped: swapify(&context.data, std::slice::from_ref(&dup))?,
+        internal,
         dup,
     };
     if is_member(&claset.unsafe_is, &entry) {
@@ -288,7 +286,7 @@ fn add_unsafe_elim(context: &ClassicalContext, rule: &Thm) -> Res<Claset> {
     if nprems(rule) < 1 {
         return Err(error_exn("Ill-formed elimination rule"));
     }
-    let internal = classical_rule(&context.data, rule)?;
+    let internal = classical_rule(&context.data, &flat_rule(&context.data, rule)?)?;
     let entry = ClassicalRule {
         rule: rule.clone(),
         dup: dup_elim(&internal)?,

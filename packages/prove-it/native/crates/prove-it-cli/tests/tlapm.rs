@@ -1,8 +1,8 @@
 //! `prove-it tlapm` on the fixtures whose output tlapm 9ed0376 recorded (b91fb6c for FactTimes,
-//! CaseSplit, FreshOperator and IntPowers):
-//! `tests/fixtures/obligations` (what `tlapm -N` writes), and `tests/fixtures/tlapm-cli` (what
-//! tlapm writes as it proves, and the theory and fingerprints it writes into its cache). Each run
-//! works in a copy of the fixtures, since tlapm keeps its cache in the directory it runs in.
+//! CaseSplit, FreshOperator, IntPowers, IsabelleMethods and IsaReuse): `tests/fixtures/obligations`
+//! (what `tlapm -N` writes), and `tests/fixtures/tlapm-cli` (what tlapm writes as it proves, and
+//! the theory and fingerprints it writes into its cache). Each run works in a copy of the fixtures,
+//! since tlapm keeps its cache in the directory it runs in.
 
 mod common;
 
@@ -414,6 +414,8 @@ fn prints_each_provers_result_in_toolbox_mode() {
         "CaseSplit",
         "FreshOperator",
         "IntPowers",
+        "IsabelleMethods",
+        "IsaReuse",
     ] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
