@@ -1,0 +1,85 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:1:4:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:4:4:9
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:1:6:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:4:6:9
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:4
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:1:4:3
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW STATE F(_),
+       TRUE 
+PROVE  F(1) = F(2)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:4:4:9
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:1:6:3
+@!!status:proved
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:4:6:9
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./FreshOperator.tla", line 4, characters 1-2:
+[ERROR]: Could not prove or check:
+           ASSUME NEW STATE F(_),
+                  Zenon 
+           PROVE  F(1) = F(2)
+File "./FreshOperator.tla", line 1, character 1 to line 7, character 4:
+[ERROR]: 1/4 obligations failed.
+There were backend errors processing module `"FreshOperator"`.

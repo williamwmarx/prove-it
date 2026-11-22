@@ -44,6 +44,7 @@ pub struct PrintedObligation {
     pub kind: ObligationKind,
     pub sequent: Sequent,
     pub method: Option<OldMethod>,
+    pub is_enabled_axioms_sound: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -539,7 +540,7 @@ pub fn get_obligations(
             }
             let text = match &obligation.kind {
                 ObligationKind::Error(message) => message.clone(),
-                _ => format!("{}\n", format_obligation(&obligation.sequent)?),
+                _ => format!("{}\n", format_obligation(&obligation.sequent, false)?),
             };
             obligations.push(PrintedObligation {
                 id: index + 1,
@@ -549,6 +550,7 @@ pub fn get_obligations(
                 kind: obligation.kind,
                 sequent: obligation.sequent,
                 method: obligation.method,
+                is_enabled_axioms_sound: obligation.is_enabled_axioms_sound,
             });
         }
         results.push(ModuleObligations {

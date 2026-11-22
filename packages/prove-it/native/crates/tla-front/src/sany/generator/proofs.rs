@@ -329,6 +329,21 @@ impl ModuleGenerator<'_> {
                 }
                 Fact::Expression(expression) => expression,
             };
+            // `genIdToSelector` takes an entry with arguments after an identifier prefix, as
+            // `A!B(1)`, for a GeneralId whose prefix node it reads as an IdPrefixElement: with
+            // one prefix element it throws an AbortException (`Internal error: IdPrefixElement
+            // has other than 2 or 3 heirs.`), which SANY prints with its Java stack trace, and
+            // with more it reads the elements as selectors they aren't.
+            if let ExpressionKind::Apply { operator, args, .. } = &expression.kind
+                && operator.contains('!')
+                && !args.is_empty()
+                && self.get_application_kind(expression, self.get_operand_span(expression))
+                    == "N_OpApplication"
+            {
+                return not_yet_unlinkable(
+                    "a DEF clause entry with arguments after an identifier prefix, which SANY ends on with an internal error",
+                );
+            }
             if self.report_def_entry(expression) {
                 continue;
             }

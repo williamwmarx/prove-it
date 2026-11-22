@@ -972,6 +972,92 @@ StarkMutex merges 115 levels of 2,000 to 10,000 states, each too small for the f
 gain on; the rest of the suite is within noise, and 16 threads go from 3.7× one thread to 3.9×
 in geomean over it.
 
+### The action atoms of a subscript answered in one pass of the helpers (action-atoms-grouped)
+
+With workers, each action atom was answered in a pass of its own over the helpers, after a pass
+of threads of its own marking the steps its split or pieces take: StarkMutex's 120 action atoms
+took 0.30 s of its 0.96 s at 16 threads, 2.5 ms each, most of it launching the helpers, laying
+each one's overlay and copying the atom's 1.6 MB of answers together, for microseconds of
+evaluation an atom, since the checker asks about no step from a state where the action's
+fairness is disabled. An action atom now carries the key of its subscript, as an ENABLED atom's
+steps do, and the helpers answer it with every action atom after it that has the same key and
+whose ENABLED atom is answered, in one pass: a helper evaluates the subscript on each of its
+states once for them all and marks the state's steps for each atom as it goes, with a loop for
+each kind of mark and none where every step is marked. A check on one worker answers each atom as
+before. On `depot-ubuntu-24.04-16`, medians of 3, against `main` at 38389e36, 16 threads (one
+thread is within the build-to-build noise of the suite, 2 %):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | CPU s at 16, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 0.98 | 0.81 | 1.21× | 5.4 → 4.3 |
+| cf1s_folklore | 1.31 | 1.31 | | 10.7 → 10.6 |
+| SpanTreeRandom | 0.39 | 0.39 | | |
+
+An earlier head of the change built and sorted every state's successors for an action whose every
+step is marked, as cf1s_folklore's Next is, which `taken` never reads: 5 % of its check at 16
+threads, undone before it was opened.
+
+### Effects TLC has only as it starts (startup-only-effects)
+
+SpanTreeRandom gained nothing from threads: 0.40 s on one, 0.38 s on 16. Its `Edges` draws the
+graph with RandomElement, and one flag, `Compiler::is_printing`, stood for anything that prints,
+draws or uses a register anywhere in the model, so the search ran every level on one thread and
+answered the liveness atoms on one. TLC computes `Edges` once as it starts
+(`SpecProcessor.processConstantDefns`) and reads its value from then on, as it checks an
+assumption once: nothing draws once the search runs. The compiler now tells an effect of the
+startup alone from one the search may have ([parallel.md](parallel.md), where a level runs on
+one thread), and only the second keeps the search and the atoms on one thread, holds what the
+search prints for the liveness checker to place, and turns off the walk's read-ahead. So a model
+that prints its constants in an ASSUME, or draws them, shares its levels too. Timed per phase on
+`depot-ubuntu-24.04-16`, ms:
+
+| SpanTreeRandom | Front end, startup | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|---:|
+| One thread | 11 | 223 | 84 | 90 | 412 |
+| 16 threads, `main` | 10 | 221 | 80 | 63 | 378 |
+| 16 threads, now | 15 | 50 | 21 | 43 | 135 |
+
+Of the search's 50 ms, the threads take 32 and the merge 13, on three shared levels of 2,690,
+16,085 and 46,320 states. Medians of 5 against `main` at a747d1d5, each run of one build
+between runs of the other: SpanTreeRandom on 16 threads 0.38 → 0.14 s (2.7×), and 0.40 s on one
+thread before and after. Over the rest of perf-suite.json and bench-suite.json one thread is
+1.004× `main` in geomean and 16 threads 1.001×. On one thread no model of 0.1 s or more moves
+the same way by more than 4 % in both pairings of the builds. On 16 threads, timed in one
+pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 → 2.49 s, less
+than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
+2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
+
+### One standard module parsed, when one of its definitions is read (parse-one-module)
+
+A small run spent 11% of its instructions parsing the twenty standard modules of the pinned TLC,
+twice: the level bound (`startup.rs`) parsed them all into its own copy on the first builtin it
+met, as the row under "Measured and dropped" says, and since #388 the leveling of a builtin's
+application (`spec.rs`) parsed them all again, once per thread, to read SANY's definition of the
+operator, which cost every run that levels one about 8.5 M instructions, a millisecond. Counted
+with callgrind on 2PCwithBTM (`-workers 1`): 132.5 M instructions at 32811017, 141.1 M at
+d82a68e6 after #388, and the per-function difference was that lookup alone. The operator tables
+(`standard_builtins.rs`) say which module defines a name, so one lookup, shared by the level bound
+and the leveling, parses only that module, once, and remembers what each name gave; a run whose
+builtins are all core operators parses none. 2PCwithBTM now takes 123.7 M instructions, SyncCons
+237.5 M → 220.7 M, VoucherRedeem 360.5 M → 346.7 M. Against main at d82a68e6 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 11 interleaved runs: 2PCwithBTM
+14.8 → 13.1, queue 22.8 → 21.0, SyncCons 22.9 → 21.2, VoucherRedeem 26.2 → 23.6, test19 70.2 →
+60.8, commit 290.6 → 282.4, TokenRing 187.8 → 183.0, 1.09× over the seven; the suite, 5 runs,
+1.04× with the models above 0.1 s within their ranges.
+### TLC's overrides table read once (overrides-once)
+
+Every lookup of an override's level, and every scan of a module's overrides as the environment
+links it, read the 165-line `tlc_overrides.tsv` again from its text, splitting the lines and the
+fields and parsing the level: 9 M of the 141 M instructions of a 2PCwithBTM run, 6.7%, between
+`Lines::next` and the closure that splits a line. The table is read once, into a static the
+lookups scan. Counted with callgrind (`-workers 1`): 2PCwithBTM 141.1 M → 125.8 M instructions,
+SyncCons 237.5 M → 223.5 M, VoucherRedeem 360.5 M → 355.7 M. Against main at d82a68e6 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 15 interleaved runs: 2PCwithBTM
+14.1 → 13.4, SyncCons 22.4 → 22.0, VoucherRedeem 24.7 → 24.2, commit 282.9 → 279.1, queue,
+test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 runs, 1.01× with
+every model within its range. The scan is a few thousand instructions a lookup, so it stays a
+scan rather than a map.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -990,11 +1076,13 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
 | Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
 | Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
-| Parse the standard modules once per thread for the startup's level bounds, which a new `LevelBound` parsed on each call | 2PCwithBTM, SyncCons, VoucherRedeem, Queue (`-workers 1`) | Local profile, 40 runs of each: CPU 7.56G → 7.47G samples (1.1%); Depot bench-suite, 15 runs: every model the same, 1.00× | The modules were mostly parsed once per run already; what is left of that parse is 3.6% of a small run, and the rest of the front end's third is lowering, SANY's analysis and two links of the environment. The branch is `standard-levels`. |
+| Parse the standard modules once per thread for the startup's level bounds, which a new `LevelBound` parsed on each call | 2PCwithBTM, SyncCons, VoucherRedeem, Queue (`-workers 1`) | Local profile, 40 runs of each: CPU 7.56G → 7.47G samples (1.1%); Depot bench-suite, 15 runs: every model the same, 1.00× | The modules were mostly parsed once per run already; what is left of that parse is 3.6% of a small run, and the rest of the front end's third is lowering, SANY's analysis and two links of the environment. The branch is `standard-levels`. Parsing only the module a name's definition is in, instead of all twenty, was later built (parse-one-module, under Results). |
 | Read the operands of arithmetic, comparisons and other binary and unary builtins in place (`predicate::Leaf`) rather than through their closures | BufferedRandomAccessFile, MCabs, MCMultiNode, PaxosCommit | 1.66 → 1.59 s, 10.29 → 10.27 s, 5.71 → 5.66 s, 17.9 → 18.6 s | An indirect call to a leaf costs a nanosecond or two; see below. |
 | Intern the integers to 65,535 at reset rather than to 4,096 | BufferedRandomAccessFile | 1.60 → 1.62 s; 2PCwithBTM's start-up 14 → 21 ms | `store.int`'s share is the small integers' own path, not the hash table. |
 | An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
+| Resolve and copy a graph's steps to the graph on the threads after a level's merge, rather than on the merge's thread as it numbers the states (`edges-on-threads`) | cf1s_folklore, StarkMutex | 16 threads, medians of 3: 1.37 → 1.36 s, 0.79 → 0.77 s; the suite within noise | Copying 22 million steps is a few milliseconds; the per-candidate timers of the merge's instrumentation had inflated its share to 20 % of the merge. The parallel copy spawns threads a level for nothing. |
+| Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
 closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's

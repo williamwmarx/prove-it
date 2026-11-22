@@ -1098,6 +1098,9 @@ pub struct Evaluator<'ir> {
     /// `elements` it passes through: where the search stopped at a set it can't enumerate,
     /// which TLC may fail at in a method of a value with a source.
     pub(crate) is_enumerator_placed: bool,
+    /// Whether the evaluator walks the initial predicate, where TLCExt's Trace is the record of
+    /// the state, once all its variables are assigned (`TLCExt.getTrace`).
+    pub(crate) is_initial_walk: bool,
     /// How many UNIONs the evaluator held lazy, as TLC's `UnionValue`.
     lazy_unions: usize,
     /// How many times Print or PrintT failed normalizing a value deeply where the evaluator
@@ -2681,6 +2684,7 @@ impl<'ir> Evaluator<'ir> {
             except_selected: None,
             is_except_placed: false,
             is_enumerator_placed: false,
+            is_initial_walk: false,
             lazy_unions: 0,
             print_normalizations: (0, String::new()),
             failed_startup_uses: 0,
@@ -15602,16 +15606,39 @@ impl<'ir> Evaluator<'ir> {
                     }
                 }
             }
-            // TLCExt's Trace in a POSTCONDITION, which TLC evaluates in a state whose variables
-            // are all unassigned (`TLCExt.getTrace` fails before it reads the checker).
-            "Trace" if self.runtime.is_some() && !self.ir.variables.is_empty() => {
+            // TLCExt's Trace in the initial predicate, and in an assumption and a POSTCONDITION,
+            // which TLC evaluates in a state whose variables are all unassigned: TLC fails where
+            // a variable is unassigned, before it reads the checker, and gives the state's record
+            // otherwise.
+            "Trace"
+                if self.is_initial_walk
+                    || self.is_assumption
+                    || (self.runtime.is_some() && !self.ir.variables.is_empty()) =>
+            {
                 arity(0)?;
-                let mut names: Vec<&str> = self
-                    .ir
-                    .variables
-                    .iter()
-                    .map(|&variable| &*self.ir.texts[variable as usize])
+                self.reads += 1;
+                let mut names: Vec<&str> = (0..self.ir.variables.len())
+                    .filter(|&variable| !self.is_initial_walk || self.current[variable].is_none())
+                    .map(|variable| &*self.ir.texts[self.ir.variables[variable] as usize])
                     .collect();
+                if names.is_empty() {
+                    let fields = self
+                        .ir
+                        .tlc_order
+                        .iter()
+                        .map(|&variable| {
+                            let name =
+                                &self.ir.texts[self.ir.variables[variable as usize] as usize];
+                            (
+                                self.text_of(name.encode_utf16().collect()),
+                                self.current[variable as usize]
+                                    .clone()
+                                    .expect("an assigned variable"),
+                            )
+                        })
+                        .collect();
+                    return Ok(Value::tuple(vec![Value::record(fields)?]));
+                }
                 names.sort_unstable();
                 let inner = TlcMessage {
                     text: format!(

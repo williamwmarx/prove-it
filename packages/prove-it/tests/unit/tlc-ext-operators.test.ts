@@ -41,11 +41,19 @@ describe("TLCExt operators match TLC", () => {
     ]);
   });
 
-  it("declines Trace with no state", async () => {
-    await expectDeclined(
-      getFixture("TraceAssume"),
-      "an assumption that fails to evaluate: evaluating the assumption again: the builtin Trace",
-    );
+  // TLC's output at d8fb231: an assumption has no state, whose unassigned variables Trace names.
+  it("fails Trace in an assumption, naming the variables unassigned", async () => {
+    const result = await checkFixture("TraceAssume");
+    expect([result.status, result.violations[0]?.headline]).toEqual([
+      "assumption-violation",
+      [
+        "Evaluating assumption line 7, col 8 to line 7, col 19 of module TraceAssume failed.",
+        "Attempted to apply the operator overridden by the Java method",
+        "public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException,",
+        "but it produced the following error:",
+        "In evaluating TLCExt!Trace, the state is not completely specified yet (variables x, y undefined).",
+      ].join("\n"),
+    ]);
   });
 
   it("picks every seen successor without asking", async () => {

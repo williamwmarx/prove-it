@@ -1,0 +1,10 @@
+TLC2 Version 2026.11.21.201612 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 17045] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/packages/prove-it/native/crates/prove-it-cli/tests/level-params/let-used/M.tla
+Parsing file /tmp/tlc-17350904990162641365/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/tools/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-21 22:38:18)
+Error: The formula A at line 6, col 15 to line 6, col 20 of module M is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action A holds in *every* step of the behavior, define a temporal property: Let A be the formula at line 6, col 15 to line 6, col 20 of module M; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).
+Finished in 00s at (2026-11-21 22:38:18)
