@@ -8726,6 +8726,19 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+Two of the suite's runs, `imported/bugs/everythingisafcn_test` and
+`imported/regression_tests/function_except_tuple_soundness_gh201_test` (tlapm's own tests
+`test/bugs/everythingisafcn_test.tla` and
+`test/regression_tests/function_except_tuple_soundness_gh201_test.tla`), are set aside from the
+counts below, neither matched nor wrong: the suite's recording differs from tlapm b91fb6c on
+Depot. On an obligation Zenon can't prove, Zenon reaches its memory limit before its time limit
+on some machines and not others, and tlapm copies `Zenon error: could not find a proof within
+the memory size limit` to its stdout where it does (`prove.ml`, line 1302). The suite's recording
+has no such line; tlapm b91fb6c built from source on Depot (run qmqp0fxmhb, 2026-11-22) prints
+it on both, as the port does, before the `.thy` and fingerprints lines, and exits 10. Both are
+listed for the Record tlapm job (`tests/fixtures/tlapm-cli`), whose recording on Depot is what
+the port is held to.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8743,6 +8756,7 @@ tactic only (`Fpfile.query`).
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
+| with the two runs Zenon's memory limit decides set aside | 769 / 577 / 3 | 321 / 1,042 / 35 |
 
 ### Declines
 
