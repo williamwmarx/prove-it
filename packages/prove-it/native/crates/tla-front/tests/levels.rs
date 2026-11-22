@@ -420,6 +420,19 @@ fn analyzes_the_caller_of_an_instanced_recursive_operator_within_its_analysis() 
     );
 }
 
+// A definition analyzed ahead of its caller whose analysis fails leaves nothing analyzed, its LETs'
+// definitions included, so its caller's analysis meets the failure again: SANY rejects the action
+// under [] in Local, which the analyzer reaches within R's analysis and leaves not native.
+#[test]
+fn leaves_a_failed_let_of_a_recursive_operators_callee_not_native() {
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nVARIABLE x\nRECURSIVE R(_)\nD(n) == LET Local == [](x' = x) IN Local\nR(n) == D(n)\n====\n"
+    ));
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nVARIABLE x\nRECURSIVE R(_)\nD(n) == LET L1 == LET L2 == [](x' = x) IN L2 IN L1 /\\ n\nR(n) == D(n)\n====\n"
+    ));
+}
+
 // A chain of definitions, each naming the next, is analyzed one definition at a time: an analyzer
 // that starts from the first doesn't hold the stack through the analysis of each one named, so
 // the chain's length is no limit of it.

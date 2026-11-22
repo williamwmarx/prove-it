@@ -505,6 +505,9 @@ pub struct LevelAnalyzer<'a> {
     /// The definitions whose analysis can read the levels assumed of another definition, which
     /// are analyzed only where they are named, since the order of the analyses decides them.
     entangled: RefCell<FastSet<usize>>,
+    /// The definitions analyzed, in the order their analyses started, so that a failed analysis
+    /// ahead of its caller takes back the levels of each definition it analyzed.
+    started: RefCell<Vec<usize>>,
 }
 
 fn get_name(expression: &Expression) -> Name {
@@ -519,6 +522,7 @@ impl<'a> LevelAnalyzer<'a> {
             definition_levels: RefCell::default(),
             analyzing: RefCell::default(),
             entangled: RefCell::default(),
+            started: RefCell::default(),
         }
     }
 
@@ -1582,7 +1586,8 @@ impl<'a> LevelAnalyzer<'a> {
     /// a RECURSIVE section, reads the levels assumed of the one its analysis entered the cycle
     /// at. The analysis of the definition then finds them analyzed, and analyzes the rest where
     /// it reaches them, as do the definitions after one whose analysis fails, which is analyzed
-    /// again where it is named so that the error is the body's.
+    /// again where it is named so that the error is the body's, as is each definition its
+    /// analysis analyzed, whose levels its failure leaves those assumed.
     fn analyze_named_definitions(&self, definition: &Rc<Definition>, scope: &Scope) {
         let mut entered: FastSet<usize> = [Rc::as_ptr(definition) as usize].into_iter().collect();
         // Each definition entered, with the definitions its body names and whether it is
@@ -1622,13 +1627,17 @@ impl<'a> LevelAnalyzer<'a> {
                     .insert(Rc::as_ptr(&next) as usize);
                 continue;
             }
+            let started = self.started.borrow().len();
             if self
                 .analyze_definition_alone(&next, &Scope::default())
                 .is_err()
             {
-                self.definition_levels
-                    .borrow_mut()
-                    .remove(&(Rc::as_ptr(&next) as usize));
+                // The definition and those its analysis analyzed, as of its LETs, are analyzed
+                // again where they are named.
+                let mut levels = self.definition_levels.borrow_mut();
+                for address in self.started.borrow_mut().drain(started..) {
+                    levels.remove(&address);
+                }
                 return;
             }
         }
@@ -1651,6 +1660,7 @@ impl<'a> LevelAnalyzer<'a> {
             DefinitionKind::Function { .. } => Vec::new(),
         };
         // A recursive reference reads the levels of a definition being analyzed as these.
+        self.started.borrow_mut().push(address);
         self.definition_levels.borrow_mut().insert(
             address,
             (
