@@ -1,0 +1,5 @@
+{
+  "root": "LetRecursiveSection",
+  "version": "master",
+  "test": "rejects a LET whose definition applies a recursive operator before its definition, as SANY checks the recursive section"
+}

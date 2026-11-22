@@ -1039,7 +1039,107 @@ impl<'a> LevelAnalyzer<'a> {
                 add(&mut data.arg_params, key);
             }
         }
+        if self.fails_in_recursive_section(definitions, &inner) {
+            return Err(FrontError::NotYet(
+                "a LET's recursive section, which SANY level-checks with its recursive operators' levels preset".to_owned(),
+            ));
+        }
         Ok(data)
+    }
+
+    /// Whether `ModuleNode.levelCheck`'s first pass over a LET's recursive section fails, which
+    /// the analysis here, analyzing a recursive operator where it is named, may not. SANY checks
+    /// the section's definitions in order with each recursive operator's levels preset, its own
+    /// level constant and each argument read and allowed up to an action's, so that a definition
+    /// naming it before its own check reads those, and its own body reads them of itself. The
+    /// levels it finds are kept only for the pass.
+    fn fails_in_recursive_section(&self, definitions: &[Rc<Definition>], scope: &Scope) -> bool {
+        let Some(last) = definitions
+            .iter()
+            .rposition(|definition| definition.is_recursive)
+        else {
+            return false;
+        };
+        let section = &definitions[..=last];
+        let saved_levels = self.definition_levels.borrow().clone();
+        let saved_entangled = self.entangled.borrow().clone();
+        let started = self.started.borrow().len();
+        let get_formals = |definition: &Definition| match &definition.kind {
+            DefinitionKind::Operator { params, .. } => params
+                .iter()
+                .map(|param| Formal {
+                    name: param.name.clone(),
+                    arity: param.arity,
+                })
+                .collect(),
+            DefinitionKind::Function { .. } => Vec::new(),
+        };
+        // The section's definitions, and the LETs' within them, are analyzed afresh for the pass.
+        let mut nested = Vec::new();
+        for definition in section {
+            collect_let_definitions(&definition.body, &mut nested);
+        }
+        {
+            let mut levels = self.definition_levels.borrow_mut();
+            for definition in section.iter().chain(&nested) {
+                levels.remove(&(Rc::as_ptr(definition) as usize));
+            }
+        }
+        for definition in section.iter().filter(|definition| definition.is_recursive) {
+            let formals: Vec<Formal> = get_formals(definition);
+            self.definition_levels.borrow_mut().insert(
+                Rc::as_ptr(definition) as usize,
+                (
+                    definition.clone(),
+                    Rc::new(OperatorLevels {
+                        data: LevelData::default(),
+                        name: definition.name.clone(),
+                        max_levels: vec![ACTION_LEVEL; formals.len()],
+                        weights: vec![1; formals.len()],
+                        min_max_levels: vec![Vec::new(); formals.len()],
+                        conditions: FastSet::default(),
+                        non_leibniz: FastSet::default(),
+                        formals,
+                    }),
+                ),
+            );
+        }
+        let fails = section.iter().any(|definition| {
+            if !definition.is_recursive {
+                return self.analyze_definition(definition, scope).is_err();
+            }
+            let Some(preset) = self.get_cached_levels(definition) else {
+                return true;
+            };
+            match self.analyze_operator(
+                &definition.name,
+                get_formals(definition),
+                &definition.body,
+                scope,
+            ) {
+                Err(_) => true,
+                Ok(mut levels) => {
+                    // `OpDefNode.levelCheck` never lowers a level or a weight, nor raises a
+                    // maximum.
+                    levels.data.level = levels.data.level.max(preset.data.level);
+                    for (index, level) in levels.max_levels.iter_mut().enumerate() {
+                        *level = (*level).min(preset.max_levels[index]);
+                    }
+                    for (index, weight) in levels.weights.iter_mut().enumerate() {
+                        *weight = (*weight).max(preset.weights[index]);
+                    }
+                    self.definition_levels.borrow_mut().insert(
+                        Rc::as_ptr(definition) as usize,
+                        (definition.clone(), Rc::new(levels)),
+                    );
+                    false
+                }
+            }
+        });
+        *self.definition_levels.borrow_mut() = saved_levels;
+        *self.entangled.borrow_mut() = saved_entangled;
+        self.started.borrow_mut().truncate(started);
+        fails
     }
 
     /// SANY reports a level error of an operator's arguments at the application.
@@ -1999,9 +2099,10 @@ fn check_recursive_arguments(module: &Module, analyzer: &LevelAnalyzer) -> Resul
         if lets.is_empty() {
             continue;
         }
-        let is_analyzed = analyzer
-            .analyze_definition(definition, &Scope::default())
-            .is_ok();
+        let is_analyzed = match analyzer.analyze_definition(definition, &Scope::default()) {
+            Err(FrontError::NotYet(reason)) => return Err(FrontError::NotYet(reason)),
+            analyzed => analyzed.is_ok(),
+        };
         for defined in lets {
             let levels = is_analyzed
                 .then(|| {
