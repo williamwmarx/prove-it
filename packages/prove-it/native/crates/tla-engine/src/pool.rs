@@ -4,12 +4,15 @@
 //! level makes six or seven rounds of them.
 //!
 //! A round gives each thread one job, or a few, and waits for every job to finish, as
-//! `std::thread::scope` would, so a job may borrow what the round's caller holds. Between rounds a
-//! thread spins briefly, since the rounds of one level follow each other closely, and then parks
-//! until the next.
+//! `std::thread::scope` would, so a job may borrow what the round's caller holds: the jobs are
+//! posted within a [`Pool::scope`], which joins every job before it returns, and a pool runs one
+//! scope, and one round of it, at a time. Between rounds a thread spins briefly, since the rounds
+//! of one level follow each other closely, and then parks until the next.
 
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -43,6 +46,8 @@ struct Shared {
 pub struct Pool {
     shared: Arc<Shared>,
     threads: Vec<JoinHandle<()>>,
+    /// Held by the scope that uses the pool, so that no two overlap.
+    scoped: Mutex<()>,
 }
 
 impl Pool {
@@ -65,7 +70,11 @@ impl Pool {
                     .expect("a thread for the search")
             })
             .collect();
-        Self { shared, threads }
+        Self {
+            shared,
+            threads,
+            scoped: Mutex::new(()),
+        }
     }
 
     pub fn threads(&self) -> usize {
@@ -75,72 +84,122 @@ impl Pool {
     /// Runs the jobs, job `i` on thread `i % threads`, and returns what each gave, in order, once
     /// every job is done. A job that panics makes this panic, after the round's other jobs are
     /// done. The jobs may borrow from the caller: none outlives this call.
-    pub fn run<'a, R, F>(&self, jobs: impl IntoIterator<Item = F>) -> Vec<R>
+    pub fn run<'env, R, F>(&self, jobs: impl IntoIterator<Item = F>) -> Vec<R>
     where
-        R: Send + 'a,
-        F: FnOnce() -> R + Send + 'a,
+        R: Send + 'env,
+        F: FnOnce() -> R + Send + 'env,
+    {
+        self.scope(|scope| scope.run(jobs))
+    }
+
+    /// Runs `f` with a scope that posts rounds of jobs to the pool, as `std::thread::scope` does
+    /// with threads: every job is done before this returns, so a job may borrow anything that
+    /// outlives the call, and a borrow of a value made inside `f` is rejected. A pool runs one
+    /// scope at a time.
+    pub fn scope<'env, F, T>(&self, f: F) -> T
+    where
+        F: for<'scope> FnOnce(&'scope Scope<'scope, 'env>) -> T,
+    {
+        let scoped = match self.scoped.try_lock() {
+            Ok(scoped) => scoped,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => panic!("a pool runs one scope at a time"),
+        };
+        let scope = Scope {
+            pool: self,
+            posted: Cell::new(0),
+            _scoped: scoped,
+            scope: PhantomData,
+        };
+        // The jobs are joined whether `f` returns or panics.
+        let _joining = Joining(&scope);
+        f(&scope)
+    }
+}
+
+/// A scope that posts rounds of jobs to a pool ([`Pool::scope`]).
+pub struct Scope<'scope, 'env: 'scope> {
+    pool: &'scope Pool,
+    /// How many jobs the round that was posted last has, which `done` counts to.
+    posted: Cell<usize>,
+    _scoped: MutexGuard<'scope, ()>,
+    scope: PhantomData<&'scope mut &'env ()>,
+}
+
+/// Joins a scope's round as the scope ends, on a return or a panic of its closure.
+struct Joining<'s, 'scope, 'env>(&'s Scope<'scope, 'env>);
+
+impl Drop for Joining<'_, '_, '_> {
+    fn drop(&mut self) {
+        self.0.wait();
+    }
+}
+
+impl<'scope, 'env> Scope<'scope, 'env> {
+    /// Runs the jobs, job `i` on thread `i % threads`, and returns what each gave, in order, once
+    /// every job is done. A job that panics makes this panic, after the round's other jobs are
+    /// done.
+    pub fn run<R, F>(&'scope self, jobs: impl IntoIterator<Item = F>) -> Vec<R>
+    where
+        R: Send + 'env,
+        F: FnOnce() -> R + Send + 'env,
     {
         self.post(jobs).join()
     }
 
     /// Starts a round of jobs, job `i` on thread `i % threads`, and returns it to join: the
-    /// caller may do its own work while the jobs run. The jobs may borrow from the caller: none
-    /// outlives the round, which waits for every job as it is joined or dropped.
-    pub fn post<'a, R, F>(&self, jobs: impl IntoIterator<Item = F>) -> Round<'_, R>
+    /// caller may do its own work while the jobs run. A round posted while the one before it
+    /// still runs waits for it first, so a pool runs one round at a time, and the scope joins
+    /// the round whether or not it is joined here.
+    pub fn post<R, F>(&'scope self, jobs: impl IntoIterator<Item = F>) -> Round<'scope, 'env, R>
     where
-        R: Send + 'a,
-        F: FnOnce() -> R + Send + 'a,
+        R: Send + 'env,
+        F: FnOnce() -> R + Send + 'env,
     {
+        self.wait();
         let mut results: Vec<Slot<R>> = Vec::new();
         let posted: Vec<Option<Job>> = jobs
             .into_iter()
             .map(|job| {
                 let slot: Slot<R> = Arc::default();
                 results.push(slot.clone());
-                let job: Box<dyn FnOnce() + Send + 'a> = Box::new(move || {
+                let job: Box<dyn FnOnce() + Send + 'env> = Box::new(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
                     *slot
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(result);
                 });
-                // SAFETY: the job borrows from the caller for `'a`, and the round it belongs to
-                // waits for every job to run to its end before it is joined or dropped
-                // (`Round::wait`), so nothing a job borrows is dropped while it can run.
+                // SAFETY: the job borrows only what lives for `'env`, which outlives the scope
+                // (`Pool::scope`), and the scope waits for every job it posted before it ends,
+                // on a return or a panic (`Joining`), so nothing a job borrows is dropped while
+                // the job can run.
                 Some(unsafe { erase(job) })
             })
             .collect();
         let count = posted.len();
-        self.shared.done.store(0, Ordering::Release);
+        let shared = &self.pool.shared;
+        shared.done.store(0, Ordering::Release);
         {
-            let mut queue = self
-                .shared
+            let mut queue = shared
                 .posted
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             queue.jobs = posted;
-            self.shared.number.fetch_add(1, Ordering::Release);
+            shared.number.fetch_add(1, Ordering::Release);
         }
-        self.shared.is_posted.notify_all();
+        shared.is_posted.notify_all();
+        self.posted.set(count);
         Round {
-            pool: self,
-            count,
-            results: Some(results),
+            scope: self,
+            results,
         }
     }
-}
 
-/// A round of jobs a pool runs, joined for what they gave.
-pub struct Round<'p, R> {
-    pool: &'p Pool,
-    count: usize,
-    results: Option<Vec<Slot<R>>>,
-}
-
-impl<R> Round<'_, R> {
     fn is_done(&self) -> bool {
-        self.pool.shared.done.load(Ordering::Acquire) >= self.count
+        self.pool.shared.done.load(Ordering::Acquire) >= self.posted.get()
     }
 
+    /// Waits for the round posted last, if any.
     fn wait(&self) {
         // The caller parks rather than spins: a round's jobs run for milliseconds on every core.
         let shared = &self.pool.shared;
@@ -159,14 +218,20 @@ impl<R> Round<'_, R> {
             }
         }
     }
+}
 
+/// A round of jobs a scope posted, joined for what they gave.
+pub struct Round<'scope, 'env, R> {
+    scope: &'scope Scope<'scope, 'env>,
+    results: Vec<Slot<R>>,
+}
+
+impl<R> Round<'_, '_, R> {
     /// What each job gave, in order, once every job is done. A job that panicked makes this
     /// panic, after the round's other jobs are done.
-    pub fn join(mut self) -> Vec<R> {
-        self.wait();
+    pub fn join(self) -> Vec<R> {
+        self.scope.wait();
         self.results
-            .take()
-            .expect("the round's results, joined once")
             .into_iter()
             .map(|slot| {
                 slot.lock()
@@ -179,15 +244,7 @@ impl<R> Round<'_, R> {
     }
 }
 
-impl<R> Drop for Round<'_, R> {
-    fn drop(&mut self) {
-        if self.results.is_some() {
-            self.wait();
-        }
-    }
-}
-
-/// Forgets a job's lifetime, for a round that outlives it; see `Pool::post`.
+/// Forgets a job's lifetime, for the queue the threads take jobs from; see `Scope::post`.
 unsafe fn erase<'b>(job: Box<dyn FnOnce() + Send + 'b>) -> Job {
     unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + 'b>, Job>(job) }
 }
@@ -258,6 +315,28 @@ fn serve(shared: &Shared, index: usize, threads: usize) {
     }
 }
 
+/// A job may borrow only what outlives the scope: a value made inside it is rejected.
+///
+/// ```compile_fail,E0597
+/// let pool = tla_engine::pool::Pool::new(1, 1 << 20);
+/// pool.scope(|scope| {
+///     let local = vec![1u64];
+///     let round = scope.post([()].map(|_| || local.len()));
+///     round.join()
+/// });
+/// ```
+///
+/// A round may not leave its scope.
+///
+/// ```compile_fail
+/// let pool = tla_engine::pool::Pool::new(1, 1 << 20);
+/// let data = vec![1u64];
+/// let round = pool.scope(|scope| scope.post([()].map(|_| || data.len())));
+/// round.join();
+/// ```
+#[cfg(doctest)]
+pub struct ScopeBorrows;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_writes_through_a_borrow_the_round_holds() {
+    fn a_job_writes_through_a_borrow_the_scope_holds() {
         let pool = Pool::new(2, 1 << 20);
         let mut counts = vec![0usize; 2];
         {
@@ -347,18 +426,62 @@ mod tests {
     fn a_posted_round_is_joined_after_the_caller_works() {
         let pool = Pool::new(2, 1 << 20);
         let counter = AtomicUsize::new(0);
-        let round = {
+        let (mut given, own) = pool.scope(|scope| {
             let counter = &counter;
-            pool.post([1usize, 10].map(|add| move || counter.fetch_add(add, Ordering::AcqRel)))
-        };
-        let own: u64 = (0..1000).sum();
-        let mut given = round.join();
+            let round = scope
+                .post([1usize, 10].map(|add| move || counter.fetch_add(add, Ordering::AcqRel)));
+            let own: u64 = (0..1000).sum();
+            (round.join(), own)
+        });
         given.sort_unstable();
         assert_eq!(counter.load(Ordering::Acquire), 11);
         assert!(
             given == vec![0, 1] || given == vec![0, 10],
             "{given:?} after summing to {own}"
         );
+    }
+
+    #[test]
+    fn sequential_scopes_and_rounds_each_complete_their_own_jobs() {
+        let pool = Pool::new(2, 1 << 20);
+        let mut totals = Vec::new();
+        for scope_number in 0..3u64 {
+            let base = scope_number * 100;
+            let total = pool.scope(|scope| {
+                // A round posted while the one before runs waits for it: every job of the first
+                // is counted, and every result of the second is its own.
+                let first = scope.post((0..4u64).map(|i| {
+                    move || {
+                        std::thread::sleep(Duration::from_millis(2));
+                        base + i
+                    }
+                }));
+                let second = scope.post((0..3u64).map(|i| move || base + 10 + i));
+                let second = second.join();
+                let first = first.join();
+                assert_eq!(first, vec![base, base + 1, base + 2, base + 3]);
+                assert_eq!(second, vec![base + 10, base + 11, base + 12]);
+                first.iter().sum::<u64>() + second.iter().sum::<u64>()
+            });
+            totals.push(total);
+        }
+        assert_eq!(totals, vec![39, 739, 1439]);
+    }
+
+    #[test]
+    fn a_forgotten_round_is_joined_as_its_scope_ends() {
+        let pool = Pool::new(2, 1 << 20);
+        let counter = AtomicUsize::new(0);
+        pool.scope(|scope| {
+            let round = scope.post((0..2).map(|_| {
+                || {
+                    std::thread::sleep(Duration::from_millis(5));
+                    counter.fetch_add(1, Ordering::AcqRel);
+                }
+            }));
+            std::mem::forget(round);
+        });
+        assert_eq!(counter.load(Ordering::Acquire), 2);
     }
 
     #[test]

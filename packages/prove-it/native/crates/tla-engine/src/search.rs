@@ -3897,9 +3897,8 @@ impl Search<'_, States> {
         // Each worker writes files for the check this thread runs ([`tla_values::written`]).
         let journal = tla_values::written::current();
         let count = workers.len();
-        let round = level
-            .pool
-            .post(workers.iter_mut().zip(&counts).map(|(worker, counts)| {
+        let expanded: Vec<Expanded> = level.pool.scope(|scope| {
+            let round = scope.post(workers.iter_mut().zip(&counts).map(|(worker, counts)| {
                 let (shared, store, fingerprints, signal, journal) =
                     (&shared, &store, &fingerprints, &signal, &journal);
                 move || {
@@ -3909,40 +3908,41 @@ impl Search<'_, States> {
                     expand_claimed(worker, shared, counts, signal)
                 }
             }));
-        // TLC reports its progress on a timer while its workers run, whatever their depth
-        // (AbstractChecker.runTLC, ModelChecker.runTLCContinueDoing). The timer only wakes
-        // this thread to report.
-        let mut progress_at = progress_at;
-        let mut state = signal.lock();
-        while state.finished < count {
-            if state.is_test_claimed && !state.is_test_reported {
-                report(reporter);
-                state.is_test_reported = true;
-                signal.wake.notify_all();
-                continue;
-            }
-            let now = Instant::now();
-            state = match progress_at.as_deref_mut() {
-                Some(at) if now >= *at => {
-                    *at = now + PROGRESS_INTERVAL;
+            // TLC reports its progress on a timer while its workers run, whatever their depth
+            // (AbstractChecker.runTLC, ModelChecker.runTLCContinueDoing). The timer only wakes
+            // this thread to report.
+            let mut progress_at = progress_at;
+            let mut state = signal.lock();
+            while state.finished < count {
+                if state.is_test_claimed && !state.is_test_reported {
                     report(reporter);
-                    state
+                    state.is_test_reported = true;
+                    signal.wake.notify_all();
+                    continue;
                 }
-                Some(at) => {
-                    signal
+                let now = Instant::now();
+                state = match progress_at.as_deref_mut() {
+                    Some(at) if now >= *at => {
+                        *at = now + PROGRESS_INTERVAL;
+                        report(reporter);
+                        state
+                    }
+                    Some(at) => {
+                        signal
+                            .wake
+                            .wait_timeout(state, *at - now)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .0
+                    }
+                    None => signal
                         .wake
-                        .wait_timeout(state, *at - now)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .0
-                }
-                None => signal
-                    .wake
-                    .wait(state)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            };
-        }
-        drop(state);
-        let expanded: Vec<Expanded> = round.join();
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                };
+            }
+            drop(state);
+            round.join()
+        });
         for worker in workers.iter_mut() {
             worker.machine.store.detach();
             worker.fingerprints.detach();
