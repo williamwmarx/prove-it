@@ -114,7 +114,7 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
       "TLCExt's Trace",
       `${HEAD}Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x, Len(Trace)>>)\nInv == x < 3\n====`,
       "INIT Init\nNEXT Next\nINVARIANT Inv",
-      "the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep",
+      "the engine stopped: TLCExt's Trace, whose rebuild evaluates again what may have an effect",
     ],
   ])("declines the trace's prints of %s", async (_, source, config, reason) => {
     await expectDeclined({ source, config }, reason);
