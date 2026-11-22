@@ -122,7 +122,12 @@ how.
   `-workers` (`auto` is every core), which `PROVE_IT_WORKERS` overrides, so Parity can run on four
   threads under the `-workers 1` its recordings were made with. Either way at most
   `available_parallelism`, since more threads than the machine runs at once only take turns. The
-  coordinator waits on the threads it spawned, and no thread spins.
+  threads are a pool (`pool.rs`), started at the first shared level and kept to the search's end:
+  a level's rounds of work, its expansion, the fingerprint table's growth and fill and the copy
+  of its new states, each post one job per thread and wait for every job, as a scope of threads
+  would, so a job may borrow what the round's caller holds. Between rounds a thread spins 50 µs,
+  since a level's rounds follow each other closely, then parks. The search's own thread parks
+  while it waits on a round.
 - **The first level** is the initial states, and is shared like any other.
 - **Where it runs on one thread.** A level runs on one thread when:
   - it has fewer than `PROVE_IT_SHARED_LEVEL` states (default 2,048, `MINIMUM_SHARED_LEVEL` as
@@ -154,11 +159,10 @@ how.
 - **Contention.** Two things threads wrote to that they all read made two threads each run at half
   speed on Commit: the record-field position hint, now written only when it changes, and a
   thread's registers next to another's, now on cache lines of their own.
-- **Not done.** Threads are spawned for each shared level; keeping them alive between levels would
-  save the spawn, unmeasured. The merge was the serial part, 10–25% of a level's time on Commit at
-  four threads on the 4-core cloud machine; what is left of it on one thread is the states'
-  arrays growing, the import of the values the threads made, and, under a VIEW or symmetry with
-  a graph, the whole merge. A collision that only
+- **Not done.** The merge was the serial part, 10–25% of a level's time on Commit at four threads
+  on the 4-core cloud machine; what is left of it on one thread is the states' arrays growing,
+  the import of the values the threads made, and, under a VIEW or symmetry with a graph, the
+  whole merge. A collision that only
   `PROVE_IT_FP_VERIFY` would count can be counted differently on more than one thread, since a
   thread compares a duplicate with its own first occurrence.
 
