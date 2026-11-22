@@ -1491,6 +1491,29 @@ which the front end parses for that (`get_standard_definition`): `PickSuccessor(
 containing actions must be of forms <>[]A or []<>A." (`tlcext_builtins/PickSuccessorProperty`),
 which declined before.
 
+SANY's semantic checks are its code's, not its messages' (`tests/sany-checks`, recorded with the
+jar). `Generator.processExcept` places the tuple of an EXCEPT component's several indexes
+(`![1, 2] = e`) at the ExceptSpec node's heir `2k + 1` for the component at `k`, which is that
+component's for `k = 0` only: the second component's tuple takes the third's place, the one past
+the components takes `=`, the next the right-hand side, and further ones throw
+`java.lang.ArrayIndexOutOfBoundsException: Index 2k + 1 out of bounds for length n + 3` for `n`
+components, which TLC prints as SANY's generator exception after "Parsing or semantic analysis
+failed." (`except-tuple-*`, `except-nested-overflow`). A component ends at the first `]` after
+its last index, which may hold a `]_` the tokens don't pair with a `[` (`![[][A]_x].h`,
+`except-subscript-index`). `TheoremNode.levelCheck` reads the
+statement's `level` field, which `LabelNode.levelCheck` never sets, so a theorem with a labeled
+goal (`THEOREM lbl :: []P`) is checked as constant: its PICK bounds and proof steps are not held
+to a temporal goal's (`labeled-temporal-goal`). `Generator.generateModule` appends an inner
+module's `opDefsInRecursiveSection` to the enclosing module's, so `ModuleNode.levelCheck` checks
+the inner module's recursive section again after the enclosing one's, where an application's
+constraints are those cached from the second pass: `Argument 1 of recursive operator R is primed`
+is reported for the inner module's operator where a top-level section passes
+(`recursive-inner-module`, `recursive-declared-order`, `recursive-top-level`). A DEF clause entry
+with arguments after an identifier prefix (`BY DEF I!Op(1)`) stops `genIdToSelector` with
+"Internal error: IdPrefixElement has other than 2 or 3 heirs." and a Java stack trace, which the
+binary declines (`a DEF clause entry with arguments after an identifier prefix, which SANY ends
+on with an internal error`; `def-prefix-arguments` keeps the jar's output beside the decline).
+
 An error in a function's bounds can still decline under the failed-startup confirmation guard,
 which does not yet distinguish the bounds from a body TLC may keep lazy. A CHOOSE over an
 unresolved lazy UNION can also reach that guard; a concrete class alone does not prove that
@@ -3017,6 +3040,22 @@ A Json operator writes its file through the run's journal (`tla_values::written`
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
 
+#### -maxSetSize
+
+`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc`
+suite of aidenybai/tla-ts at 0341dbe5), and stays declined: TLC's limit isn't the bound alone.
+`ValueVec.ensureCapacity` throws ("Attempted to construct a set with too many elements") only
+when a vector whose array already holds `setBound` elements must grow, and caps its growth at
+`setBound`, so a vector's real limit is the larger of its initial capacity and the bound: `new
+ValueVec()` holds 10, and a vector TLC sizes as it builds it never grows. `StateVec.grow` does the
+same for the successors of a state (`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61
+sites, with capacities of their own (the default 10, the exact size of what it enumerates,
+`kOutOfN`, a bit count), so with a small bound one set of 10 elements builds and another fails.
+The engine models only the default bound, 1,000,000 (`TLCGlobals.setBound`). Answering a smaller
+one takes each of those sites' capacities, matched to the engine's set builders; a single
+configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
+`presized_function_set_ignores_bound`) otherwise than TLC.
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
@@ -4017,6 +4056,17 @@ an INSTANCE with substitutions makes (`I!V(1)!L`, `I!X!L`, `J!V(1)!L` through an
 after the selection's: the front end puts a `$Nop` at the INSTANCE around the part selected
 (`Lowering::get_selection_substitution`), so the frame prints. A selection through a copy of a
 copy, and one whose failure is in a substitute, print wrong; see "Known wrong outputs".
+
+A selection reads the copy's body as the instantiated module wrote it, under the substitutions
+(`selectorToNode` walks a `SubstInNode`'s body and wraps the part selected in it again): where an
+INSTANCE substitutes a LAMBDA for an operator parameter, the front end writes the parameter's
+application `F(C)` as `LET LAMBDA(y) == y + 1 IN LAMBDA(C)`, whose operands a selector takes as
+`F(C)`'s (`instances::get_substituted_lambda_application`), so `I!Val!1!1` of `Val == {F(C)}`
+under `F <- LAMBDA y : y + 1, C <- 4` is 4, as TLC's, where the binary took the LET's one operand
+and printed 5, and `!2` of `F(C, 7)` is 7 where it declined ("A LET/IN expression has only one
+operand", an error tla-front raises); a failure in the part selected is reported through the
+INSTANCE's frame, as TLC's (`tests/instance-selections`, recorded with the jar; the upstream unit
+case `subexpressions_test/c0006`).
 
 #### A constraint that fails on a successor
 
@@ -6576,6 +6626,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   (`f[x \in S] == ...`), which TLC builds in the definition's frame, declines alike ("building a
   function a definition defines").
 
+- A name the configuration gives that is an operator of a standard module the spec extends
+  (`SPECIFICATION Nat`, `INVARIANT IsFiniteSet`, `SPECIFICATION Seq`): `defns` holds it, as the
+  Java method that overrides it, which TLC reports as the name's value ("The value of Nat is equal
+  to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>", the method
+  of the module the spec reached it through), or as its definition. The binary reported the name
+  undefined; it now declines ("a name the configuration gives that is an operator of a standard
+  module"). A module the spec doesn't extend leaves the name undefined, which matches. Found in the
+  specs of upstream tla-ts's unit tests at 0341dbe5; fixtures `config-builtin-name-*`.
+
 - A TLCGet("spec") record a failure prints whole (`Attempted to select nonexistent field
   "properties" from the record [ inits |-> ..., actions |-> ..., temporals |-> ..., invariants |->
   ..., impliedinits |-> ..., impliedtemporals |-> ..., variables |-> ..., actionconstraints |->
@@ -7296,7 +7355,8 @@ met it (`<...>` stands for a name or a value the reason prints).
   theorem, step or instance <...> where an operator is required`, `a RECURSIVE declaration without a
   place`, `a module named as a fact that SANY may not find`, `a module named in a DEF clause that
   SANY may not find`, `a DEF clause entry in parentheses`, `a DEF clause entry that is neither a
-  name nor an operator symbol`, `an empty USE or HIDE without a place`, `an empty BY without a
+  name nor an operator symbol`, `a DEF clause entry with arguments after an identifier prefix,
+  which SANY ends on with an internal error`, `an empty USE or HIDE without a place`, `an empty BY without a
   place`, `a module in a recursive section, where SANY's generator throws`, `a unit in a recursive
   section without a range`, `a module-level RECURSIVE declaration of <...>, a name already bound`,
   `a LET function in a temporal formula`, `an operator argument that isn't a definition`, `a
@@ -8422,6 +8482,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 ### What matches
 
 - Every fixture tlapm 9ed0376 recorded in `tests/fixtures/obligations` and `tests/fixtures/tlapm-cli`
+  (b91fb6c for `FactTimes`)
   (`prove-it-cli/tests/tlapm.rs`, `unit/cli.test.ts`): stdout, stderr and the exit status, with
   `-N`, `--toolbox`, `--line`, `--printallobs`, `--strict`, `--summary`, `--nofp`, `--cleanfp`, and
   over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
@@ -8447,12 +8508,27 @@ what tlapm writes. Measured with a port of its harness (`scratch/upstream` on th
 the recording, declines where it prints `not native yet`, and is wrong otherwise. tlapm b91fb6c
 is 20 commits past the 9ed0376 these fixtures record, which changed the time of HAVE, CASE, PICK
 and USE facts and of a NEW bound, the arguments of declared non-constant operators and the typing
-of integer powers; the runs those change count as wrong here until the port follows them.
+of integer powers; the runs the last two change count as wrong here until the port follows them.
+
+The port follows b91fb6c's times (`tests/fixtures/tlapm-cli/FactTimes.tla`, recorded with
+b91fb6c): a HAVE's or CASE's fact and a PICK's body take the time `Temporal_props.compute_time`
+gives them in their context (`Proof.Simplify`), always where the formula is closed under `[]`
+and otherwise only now, where the port gave them the scope's time; a USE of a name that is no fact
+or step of a proof, such as a declared variable, takes the scope's time (`Proof.Gen.gen_step`),
+where the port gave it always; and the membership fact `Pltl.expand_domains` makes of `NEW c \in
+S` takes the time of `S` shifted under `c`, where the port judged `S` as written, one hypothesis
+too deep. Each gave PTL a fact as `[]` of itself that holds only now, so the port proved
+`x = 0 => (x = 0)'` from `CASE x = 0` or `HAVE x = 0`, `[]b` from `USE b`, `[](c = x)` from
+`PICK c : c = x` and `[](c \in {x})` from `NEW c \in {x}`, which tlapm fails.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
+| with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
+| with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
+| with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
+| with tlapm's fact times | 759 / 574 / 18 | 313 / 1,042 / 43 |
 
 ### Declines
 
@@ -8491,6 +8567,12 @@ of integer powers; the runs those change count as wrong here until the port foll
   asserts), and so a machine of more than 99 processors without `--threads`, no module, and
   globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
   empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **A pragma before a proof or a USE that isn't a suppression** (`a pragma before a proof or a
+  USE that isn't a suppression`): Proof.Parser reads the pragma as tokens, so one that doesn't
+  hold `_` or `suppress` alone, as `(*{ sup(* c *)press }*)`, is no suppression, and tlapm's
+  parser fails on what it reads it as (`Unexpected identifier press`, `Could not parse
+  "./SplitPragma.tla" successfully.`, with its backtrace, exit 3; tlapm b91fb6c on
+  `tests/fixtures/obligations/SplitPragma.tla`), which the port doesn't word.
 - **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
   module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
   given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through
@@ -8548,6 +8630,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   can't encode the operator Print`, cvc3 and Cooper), and 1 differs,
   `parse_function_comma_args.tla` #2 above. With more threads, a module where two decisions are in
   flight together declines in toolbox mode.
+- M_elab's level check of a step that cites ENABLEDaxioms (`check_usable`, which refuses the
+  directive where an assumption or a cited step is of level above 1, with an `Error:` line on
+  stderr as the module is elaborated) is not ported: the rule is applied whatever the levels, so
+  `tlapm/proofs/enabled/enabled_axioms_level` of the upstream suite is proved where tlapm reports
+  `ENABLEDaxioms depends on assumptions of level > 1`.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
 - A TAB before the module header, on the header's line, shifts the columns printed on that line,

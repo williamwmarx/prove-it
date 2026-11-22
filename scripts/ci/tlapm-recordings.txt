@@ -8,3 +8,7 @@ packages/prove-it/tests/fixtures/obligations/SuppressedComments.tla | -N --toolb
 packages/prove-it/tests/fixtures/obligations/SuppressedComments.tla | --summary
 packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | -N --toolbox 0 0 --printallobs
 packages/prove-it/tests/fixtures/obligations/SplitPragma.tla | --summary
+packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | -N --toolbox 0 0 --printallobs
+packages/prove-it/tests/fixtures/obligations/OwnedPragma.tla | --summary
+packages/prove-it/tests/fixtures/tlapm-cli/FactTimes.tla | --toolbox 0 0 --threads 1
+packages/prove-it/tests/fixtures/tlapm-cli/CaseSplit.tla | --toolbox 0 0 --threads 1

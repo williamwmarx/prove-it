@@ -4939,58 +4939,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_ranking = compiler.is_ranking;
     let is_printing = compiler.is_printing;
     let is_warning = compiler.is_warning;
-    // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
-    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
     let is_picking = compiler.is_picking;
-    let is_pipelined = settings.dfid.is_none()
-        && !is_warning
-        && !is_printing
-        && !is_lambda_built
-        && !compiler.is_cached
-        && !is_distinct_read
-        && context.view.is_none()
-        && model.startup.symmetry.is_none()
-        && !settings.is_live_checked;
-    // A level's states are shared between threads where the order of the steps across states
-    // shows nowhere but in the states found and the graph the merge records in that order: nothing
-    // prints or reads the count of distinct states, and no test asks for a check of the graph at
-    // a state inside a level. A warning may be raised, since a thread that raises one TLC may
-    // print stops the level at its state (`expand_claimed`).
-    // More threads than the machine runs at once would only take turns.
-    let thread_count = settings
-        .threads
-        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
-    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
-    let is_shared = thread_count > 1
-        && !compiler.is_ranking
-        && !is_picking
-        && !compiler.is_printing
-        && !is_lambda_built
-        && !compiler.is_cached
-        && !is_distinct_read
-        && !settings.is_continued
-        && !(model.is_recording_graph && settings.test_live_check_at.is_some())
-        // The online checker adds each state as it is expanded, between the expansions, and the
-        // held prints come out between them: neither may meet a level the threads share.
-        && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
-        && !settings.is_live_checked
-        && context.possible.is_empty();
-    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
-    // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
-    // it in the order it first evaluates each expression), or anything prints, draws or reads or
-    // sets TLC's registers: a helper machine has none of the search's registers or generator.
-    let atom_threads = if compiler.is_ranking
-        || is_warning
-        || compiler.is_printing
-        || is_lambda_built
-        || compiler.is_tlc_cache_used
-    {
-        1
-    } else {
-        thread_count
-    };
+    let is_compiled_cached = compiler.is_cached;
+    let is_tlc_cache_used = compiler.is_tlc_cache_used;
+    let is_effect_past_startup = compiler.is_printing_past_startup;
+    let startup_effect_onces = std::mem::take(&mut compiler.startup_effect_onces);
     let program = Program {
         evaluation_budget: settings.test_evaluations,
         ..compiler.finish()
@@ -5011,6 +4965,64 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         Ok(group) => group,
         Err(outcome) => return *outcome,
     };
+    // Whether anything may print, draw, or read or write a register or a file from here on. What
+    // does so only in an assumption, or in a constant definition TLC computed once as it started
+    // (`processConstantDefns`), has done it: every use of such a definition reads the value the
+    // startup kept. One the startup kept no value of is evaluated again at each use.
+    let is_printing_on = is_printing
+        && (is_effect_past_startup
+            || startup_effect_onces.iter().any(|&once| {
+                matches!(
+                    machine.onces[once],
+                    crate::memo::EMPTY | crate::machine::RETRIED_ONCE
+                )
+            }));
+    // Checking a successor once the walk reaches the next reorders nothing anyone can see where
+    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
+    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
+    let is_pipelined = settings.dfid.is_none()
+        && !is_warning
+        && !is_printing_on
+        && !is_lambda_built
+        && !is_compiled_cached
+        && !is_distinct_read
+        && context.view.is_none()
+        && model.startup.symmetry.is_none()
+        && !settings.is_live_checked;
+    // A level's states are shared between threads where the order of the steps across states
+    // shows nowhere but in the states found and the graph the merge records in that order: nothing
+    // prints or reads the count of distinct states, and no test asks for a check of the graph at
+    // a state inside a level. A warning may be raised, since a thread that raises one TLC may
+    // print stops the level at its state (`expand_claimed`).
+    // More threads than the machine runs at once would only take turns.
+    let thread_count = settings
+        .threads
+        .min(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
+    let is_shared = thread_count > 1
+        && !is_ranking
+        && !is_picking
+        && !is_printing_on
+        && !is_lambda_built
+        && !is_compiled_cached
+        && !is_distinct_read
+        && !settings.is_continued
+        && !(model.is_recording_graph && settings.test_live_check_at.is_some())
+        // The online checker adds each state as it is expanded, between the expansions: it may
+        // not meet a level the threads share.
+        && !(model.is_recording_graph && context.is_live_registered)
+        && !settings.is_live_checked
+        && context.possible.is_empty();
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
+    // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
+    // it in the order it first evaluates each expression), or anything prints, draws or reads or
+    // sets TLC's registers: a helper machine has none of the search's registers or generator.
+    let atom_threads =
+        if is_ranking || is_warning || is_printing_on || is_lambda_built || is_tlc_cache_used {
+            1
+        } else {
+            thread_count
+        };
     // The initial states draw on from where the startup left the generator.
     let startup_random = machine.random.state();
     machine.startup_random = startup_random;
@@ -5070,7 +5082,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
     search.is_picking = is_picking;
-    search.held = (model.is_recording_graph && is_printing).then(Vec::new);
+    search.held = (model.is_recording_graph && is_printing_on).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
         labels: context

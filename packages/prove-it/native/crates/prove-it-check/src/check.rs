@@ -5642,24 +5642,110 @@ IsSimpleCycle(S, r) ==
         assert!(threads > 1);
     }
 
-    // A constant TLC computed at startup that draws keeps the search on one thread, which reads
-    // the value drawn.
-    #[test]
-    fn keeps_a_search_that_draws_on_one_thread() {
+    // What one thread and four find in a model whose levels the threads may share, and how many
+    // threads shared one.
+    fn get_found_on_threads(name: &str, body: &str, config: &str) -> (String, String, usize) {
         let ir = lower(
-            "Drawn",
-            "---- MODULE Drawn ----\nEXTENDS Integers, TLC\nDrawn == RandomElement(1..1000000)\nVARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = Drawn\nSpec == Init /\\ [][Next]_<<n, d>>\n====\n",
-            "SPECIFICATION Spec\n",
+            name,
+            &format!("---- MODULE {name} ----\nEXTENDS Integers, TLC\n{body}====\n"),
+            config,
         );
+        // The native checker's search, which follows TLC's registers.
         let settings = |threads| Settings {
             threads,
             minimum_shared_level: 1,
+            is_violation_reported: true,
             ..Settings::default()
         };
         let (one, _) = get_found(&ir, &settings(1));
         let (four, threads) = get_found(&ir, &settings(4));
+        (one, four, threads)
+    }
+
+    const COUNTER: &str = "VARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = Drawn\nSpec == Init /\\ [][Next]_<<n, d>>\n";
+
+    // A constant that draws TLC computes once as it starts (SpecProcessor.processConstantDefns),
+    // and nothing draws again: the threads share the levels and read the value drawn, which is in
+    // every state they fingerprint.
+    #[test]
+    fn shares_the_levels_of_a_search_whose_only_draw_tlc_made_at_startup() {
+        let (one, four, threads) = get_found_on_threads(
+            "Drawn",
+            &format!("Drawn == RandomElement(1..1000000)\n{COUNTER}"),
+            "SPECIFICATION Spec\n",
+        );
         assert_eq!(four, one);
-        assert_eq!(threads, 1);
+        assert!(threads > 1);
+    }
+
+    // An assumption prints as TLC checks it, before the initial states, and never again.
+    #[test]
+    fn shares_the_levels_of_a_search_whose_only_print_is_an_assumption() {
+        let (one, four, threads) = get_found_on_threads(
+            "Assumed",
+            &format!("Drawn == 7\nASSUME PrintT(<<\"drawn\", Drawn>>)\n{COUNTER}"),
+            "SPECIFICATION Spec\n",
+        );
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // What prints, draws or reads a register as the search goes keeps it on one thread: in the
+    // next-state relation, in an invariant, and in an operator, which the compiler keeps by its
+    // definition, that both a constant and the next-state relation apply.
+    #[test]
+    fn keeps_a_search_that_prints_or_draws_as_it_goes_on_one_thread() {
+        for (name, body, config) in [
+            (
+                "Stepped",
+                "VARIABLE n\nInit == n = 0\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ PrintT(k)\nSpec == Init /\\ [][Next]_n\n".to_string(),
+                "SPECIFICATION Spec\n",
+            ),
+            (
+                "Checked",
+                format!("Drawn == 7\n{COUNTER}Inv == RandomElement({{n}}) = n\n"),
+                "SPECIFICATION Spec\nINVARIANT Inv\n",
+            ),
+            (
+                "Applied",
+                "Pick(S) == RandomElement(S)\nDrawn == Pick(1..1000000)\nVARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = Pick({Drawn})\nSpec == Init /\\ [][Next]_<<n, d>>\n".to_string(),
+                "SPECIFICATION Spec\n",
+            ),
+            (
+                "Registered",
+                "ASSUME TLCSet(1, 7)\nDrawn == 7\nVARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = TLCGet(1)\nSpec == Init /\\ [][Next]_<<n, d>>\n".to_string(),
+                "SPECIFICATION Spec\n",
+            ),
+        ] {
+            let (one, four, threads) = get_found_on_threads(name, &body, config);
+            assert_eq!(four, one, "{name}");
+            assert_eq!(threads, 1, "{name}");
+        }
+    }
+
+    // An effect a constant has through an operator it applies or a definition its LET makes is
+    // compiled with that definition, which the compiler may use again: only one written in the
+    // constant's own body counts as made at startup.
+    #[test]
+    fn keeps_a_search_on_one_thread_where_a_constant_draws_through_another_definition() {
+        for (name, constant) in [
+            (
+                "Through",
+                "Pick(S) == RandomElement(S)\nDrawn == Pick(1..1000000)\n",
+            ),
+            (
+                "Let",
+                "Drawn == LET Picked == RandomElement(1..1000000) IN Picked\n",
+            ),
+        ] {
+            let (one, four, threads) = get_found_on_threads(
+                name,
+                &format!("{constant}{COUNTER}"),
+                "SPECIFICATION Spec\n",
+            );
+            assert_eq!(four, one, "{name}");
+            assert_eq!(threads, 1, "{name}");
+        }
     }
 
     // The progress a search reported: states generated, distinct and left on the queue.

@@ -1,0 +1,26 @@
+TLC2 Version 2026.11.21.201612 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 15878] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/probe/subexp-h/M.tla
+Parsing file /tmp/tlc-10210346796595715869/Naturals.tla (jar:file:/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/tools/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-22 01:36:57)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-22 01:36:57.
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 11, column 9 to line 11, column 24 in M
+1. Line 11, column 14 to line 11, column 24 in M
+2. Line 8, column 1 to line 8, column 54 in M
+3. Line 6, column 11 to line 6, column 18 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in 00s at (2026-11-22 01:36:57)

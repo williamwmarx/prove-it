@@ -1474,10 +1474,10 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         }
         Generated::Declined(reason) => return Err(not_yet(&reason)),
         // SANY's generator throws on the root module, the last SANY analyzes.
-        Generated::Exception(index) if index + 1 == order.len() => {
-            return push_generator_exception(loader, &order, &root, GENERATOR_EXCEPTION);
+        Generated::Exception(index, exception) if index + 1 == order.len() => {
+            return push_generator_exception(loader, &order, &root, &exception);
         }
-        Generated::Exception(_) => {
+        Generated::Exception(..) => {
             return Err(not_yet("SANY's generator exception before the root module"));
         }
     };

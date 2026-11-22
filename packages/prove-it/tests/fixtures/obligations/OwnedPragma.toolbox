@@ -1,0 +1,26 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:5:19:5:45
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT C
+PROVE  SMT
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:7:19:7:26
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT C,
+       SMT == TRUE
+PROVE  SMT
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:2
+@!!END
+
