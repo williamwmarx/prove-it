@@ -19,7 +19,7 @@ use prove_obligations::expression::{
 };
 use prove_obligations::index::PrintedObligation;
 use prove_obligations::prep::fingerprint::get_fingerprint;
-use prove_obligations::prep::methods::{FoundMethods, Method, find_methods, is_frontend};
+use prove_obligations::prep::methods::{FoundMethods, Method, find_methods};
 use prove_obligations::prep::normalize::{
     expand_defs, is_trivial, normalize_expand, normalize_sequent,
 };
@@ -41,8 +41,9 @@ pub struct Request {
     pub priority: usize,
 }
 
-/// How the caller answered a request: the backend's verdict, or the message of the
-/// `TlaProverError` it threw, which tlapm counts as a failure, or of a `TlaUnsupportedError`.
+/// How the caller answered a request: the backend's verdict; the message of the failure that
+/// kept the backend from running, which tlapm reports as the attempt's reason (`Method.NotTried`,
+/// a `Cantwork`); or that of a `TlaUnsupportedError`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
     Decided {
@@ -67,24 +68,14 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct Attempt {
     pub attempt: ProofAttempt,
+    /// Why the method didn't prove the obligation, as tlapm's `reason` names it: `false`,
+    /// `timeout`, or the message of a failure that kept the backend from running (`Cantwork`).
     pub reason: Option<String>,
     pub verdict: Option<Verdict>,
     pub time_used_ms: Option<f64>,
-}
-
-impl Attempt {
-    /// Whether Prove It couldn't try the method: it has no backend for it, or can't encode the
-    /// obligation for it.
-    pub fn is_skipped(&self) -> bool {
-        !self.attempt.is_proved
-            && !self.attempt.is_reused
-            && !is_frontend(&self.attempt.method.prover)
-            && self.verdict.is_none()
-            && self
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason != "false" && reason != "timeout")
-    }
+    /// Whether Prove It couldn't try the method where tlapm does: it has no backend for it, or
+    /// can't encode the obligation for it.
+    pub is_skipped: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -376,6 +367,7 @@ impl Run<'_> {
             reason: Some(message.clone()),
             verdict: None,
             time_used_ms: None,
+            is_skipped: false,
         };
         self.save(fingerprint.to_owned(), refusal.clone());
         task.attempts.push(refusal);
@@ -738,6 +730,7 @@ impl Run<'_> {
                     }),
                     verdict: Some(verdict),
                     time_used_ms: Some(time_used_ms),
+                    is_skipped: false,
                 }
             }
             Answer::Unsupported(message) => {
@@ -759,9 +752,10 @@ impl Run<'_> {
                         is_proved: false,
                         is_reused: false,
                     },
-                    reason: Some("false".to_owned()),
+                    reason: Some(message),
                     verdict: None,
                     time_used_ms: None,
+                    is_skipped: false,
                 }
             }
         };
@@ -864,6 +858,7 @@ fn skip(task: &mut Task, method: &Method, reason: String) {
         reason: Some(reason.clone()),
         verdict: None,
         time_used_ms: None,
+        is_skipped: true,
     });
     task.failures.push(MethodFailure {
         reason,

@@ -1,0 +1,6 @@
+---- MODULE HideStep ----
+THEOREM TRUE
+<1>1. TRUE OBVIOUS
+<1> HIDE <1>1
+<1> QED OBVIOUS
+====

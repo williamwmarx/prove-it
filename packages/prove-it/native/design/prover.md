@@ -472,7 +472,8 @@ obligations read `tla-front`'s AST (`ast.rs`, which mirrors `src/ast.ts`). What 
 - a syntax failure in the shape tlapm prints, `{reason, line, column, isEnd}` (today
   `TlaSyntaxError.failure`).
 
-`regroup.ts` (tlapm's `Pco.resolve`, 99 lines: `SUBSET S \ T` is `SUBSET (S \ T)` to tlapm) is
+`regroup.ts` (tlapm's `Pco.resolve`, 99 lines: `SUBSET S \ T` is `SUBSET (S \ T)` to tlapm, and
+the port takes in a postfix operator the same way, so `ENABLED x'` is `ENABLED (x')`) is
 not part of the parse: `source.ts` applies it while converting. It moves with the obligations
 (P5b), so `tla-front`'s AST stays a faithful parse in both modes. Pragmas `(*{ … }*)` are comments
 to the lexer and `obligations/pragma.ts` reads them from the source text, so they need nothing.
