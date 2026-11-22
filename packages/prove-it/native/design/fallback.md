@@ -8449,6 +8449,7 @@ of integer powers; the runs those change count as wrong here until the port foll
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
 | with Zenon's signatures | 718 / 574 / 59 | 313 / 1,042 / 43 |
+| with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
 
 ### Declines
 

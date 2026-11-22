@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use crate::expression::Locus;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObligationError {
     /// `TlaProofError`: `failure` is tlapm's `Failure` text when it raised one, and `exception` the
@@ -15,6 +17,10 @@ pub enum ObligationError {
     },
     /// `TlaProverError`: a backend can't take an obligation.
     Prover(String),
+    /// A method pragma tlapm can't read (`Prep.compute_meth`): it warns with `Errors.err` where
+    /// the pragma or its use is, then fails with "error in prover specification", which
+    /// `Prep.ship` catches, leaving the obligation untreated.
+    Method { message: String, at: Option<Locus> },
     /// `TlaUnsupportedError`.
     Unsupported(String),
     /// `TlaSyntaxError`.
@@ -22,6 +28,25 @@ pub enum ObligationError {
 }
 
 pub type Result<T> = std::result::Result<T, ObligationError>;
+
+/// OCaml's `%S`: the string's bytes in quotes, as `String.escaped` writes them.
+pub fn quote_ocaml(text: &str) -> String {
+    let mut quoted = String::from("\"");
+    for byte in text.bytes() {
+        match byte {
+            b'"' => quoted.push_str("\\\""),
+            b'\\' => quoted.push_str("\\\\"),
+            b'\n' => quoted.push_str("\\n"),
+            b'\t' => quoted.push_str("\\t"),
+            b'\r' => quoted.push_str("\\r"),
+            8 => quoted.push_str("\\b"),
+            b' '..=b'~' => quoted.push(char::from(byte)),
+            other => quoted.push_str(&format!("\\{other:03}")),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
 
 /// JSON.stringify of a string, as `TlaProofError` quotes its failure.
 pub fn quote_json(text: &str) -> String {
@@ -98,6 +123,7 @@ impl ObligationError {
         match self {
             Self::Proof { message, .. }
             | Self::Prover(message)
+            | Self::Method { message, .. }
             | Self::Unsupported(message)
             | Self::Syntax(message) => message,
         }
@@ -108,6 +134,7 @@ impl ObligationError {
         match self {
             Self::Proof { .. } => "TlaProofError",
             Self::Prover(_) => "TlaProverError",
+            Self::Method { .. } => "TlaMethodError",
             Self::Unsupported(_) => "TlaUnsupportedError",
             Self::Syntax(_) => "TlaSyntaxError",
         }

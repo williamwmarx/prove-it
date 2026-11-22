@@ -972,6 +972,31 @@ StarkMutex merges 115 levels of 2,000 to 10,000 states, each too small for the f
 gain on; the rest of the suite is within noise, and 16 threads go from 3.7× one thread to 3.9×
 in geomean over it.
 
+### The action atoms of a subscript answered in one pass of the helpers (action-atoms-grouped)
+
+With workers, each action atom was answered in a pass of its own over the helpers, after a pass
+of threads of its own marking the steps its split or pieces take: StarkMutex's 120 action atoms
+took 0.30 s of its 0.96 s at 16 threads, 2.5 ms each, most of it launching the helpers, laying
+each one's overlay and copying the atom's 1.6 MB of answers together, for microseconds of
+evaluation an atom, since the checker asks about no step from a state where the action's
+fairness is disabled. An action atom now carries the key of its subscript, as an ENABLED atom's
+steps do, and the helpers answer it with every action atom after it that has the same key and
+whose ENABLED atom is answered, in one pass: a helper evaluates the subscript on each of its
+states once for them all and marks the state's steps for each atom as it goes, with a loop for
+each kind of mark and none where every step is marked. A check on one worker answers each atom as
+before. On `depot-ubuntu-24.04-16`, medians of 3, against `main` at 38389e36, 16 threads (one
+thread is within the build-to-build noise of the suite, 2 %):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | CPU s at 16, `main` → now |
+|---|---:|---:|---:|---|
+| StarkMutex | 0.98 | 0.81 | 1.21× | 5.4 → 4.3 |
+| cf1s_folklore | 1.31 | 1.31 | | 10.7 → 10.6 |
+| SpanTreeRandom | 0.39 | 0.39 | | |
+
+An earlier head of the change built and sorted every state's successors for an action whose every
+step is marked, as cf1s_folklore's Next is, which `taken` never reads: 5 % of its check at 16
+threads, undone before it was opened.
+
 ### Effects TLC has only as it starts (startup-only-effects)
 
 SpanTreeRandom gained nothing from threads: 0.40 s on one, 0.38 s on 16. Its `Edges` draws the
