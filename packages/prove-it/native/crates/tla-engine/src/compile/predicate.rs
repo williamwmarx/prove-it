@@ -329,6 +329,28 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
                 Ok(machine.store.equals(value, constant)? == is_equal)
             })
         }
+        // f[k][j] = c, with k and j bound names.
+        (
+            Leaf::ApplyVar2 {
+                variable,
+                slot,
+                second,
+            },
+            Leaf::Constant(constant),
+        ) => {
+            let (variable, slot, second, constant) = (*variable, *slot, *second, *constant);
+            test(move |machine| {
+                let value = apply_var2(machine, variable, slot, second)?;
+                Ok(machine.store.equals_asked(value, constant)? == is_equal)
+            })
+        }
+        (Leaf::Eval(left), Leaf::Constant(constant)) => {
+            let (left, constant) = (left.clone(), *constant);
+            test(move |machine| {
+                let value = left(machine)?;
+                Ok(machine.store.equals_asked(value, constant)? == is_equal)
+            })
+        }
         _ => {
             let (left, right) = (left.clone(), right.clone());
             test(move |machine| {

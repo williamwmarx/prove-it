@@ -212,6 +212,9 @@ pub struct Program {
     pub(crate) once_count: usize,
     pub(crate) round_count: usize,
     pub(crate) recursives: Vec<Option<Recursive>>,
+    /// The bodies of the function constructors that may be the function of an application,
+    /// each list by the number `Machine::applying_construction` holds.
+    pub(crate) constructions: Vec<Box<[NodeId]>>,
     pub(crate) is_epoch_checked: bool,
     /// What TLC seeds the generator its startup and initial states draw from with, and what a
     /// state's fingerprint is xored with to seed the draws of its expansion.
@@ -344,8 +347,9 @@ pub struct Machine<'p> {
         std::hash::BuildHasherDefault<crate::symmetry::IntegerHasher>,
     >,
     /// Where the function of an application may be the value of a function constructor, the
-    /// bodies of those constructors, until one of them takes it (`Tool`'s OPCODE_fa evaluates it with KeepLazy).
-    pub(crate) applying_construction: Option<Arc<[NodeId]>>,
+    /// bodies of those constructors, by their number in `Program::constructions`, until one of
+    /// them takes it (`Tool`'s OPCODE_fa evaluates it with KeepLazy).
+    pub(crate) applying_construction: Option<u32>,
     /// The function a constructor kept lazy where building it failed, which no cache keeps:
     /// TLC builds it again, at once, where it isn't applied.
     pub(crate) kept_lazy_function: Id,
@@ -529,13 +533,15 @@ impl<'p> Machine<'p> {
 
     /// Notes a value a walk assigned to a variable, where the machine keeps their shapes. A walk
     /// through an instance's action, as ENABLED takes, can assign slots past the spec's variables,
-    /// which no step the search keeps holds.
+    /// which no step the search keeps holds. A value the state being expanded holds, as most of a
+    /// successor's are, was noted when a walk assigned it to that state.
     #[inline(always)]
-    pub(crate) fn note_assigned(&mut self, variable: usize, value: Id) {
+    pub(crate) fn note_assigned(&mut self, variable: usize, value: Id, is_initial: bool) {
         if let Some(join) = self
             .assigned_shapes
             .as_mut()
             .and_then(|joins| joins.get_mut(variable))
+            && (is_initial || self.cur[variable] != value)
         {
             self.store.join_shape(join, value);
         }
@@ -775,6 +781,23 @@ impl<'p> Machine<'p> {
         }
         let read = keys.map(|key| self.read_key(key));
         let (known, height) = self.tables[table].find(&read);
+        if known != EMPTY && height == 0 {
+            return Ok(known);
+        }
+        self.lookup_further(table, &read, known, height, inner)
+    }
+
+    // A lookup that missed, or hit a value whose evaluation nested recursive calls, kept out of
+    // line so that a plain hit stays short.
+    #[inline(never)]
+    fn lookup_further(
+        &mut self,
+        table: usize,
+        read: &[Id],
+        known: Id,
+        height: u32,
+        inner: &Eval,
+    ) -> Outcome<Id> {
         if known != EMPTY {
             self.reach_cached(height)?;
             return Ok(known);
@@ -785,7 +808,7 @@ impl<'p> Machine<'p> {
         let height = self.reached_below(outer);
         let value = value?;
         if self.output.len() == output_at && value != self.kept_lazy_function {
-            self.tables[table].set_with_height(&read, value, height);
+            self.tables[table].set_with_height(read, value, height);
         }
         Ok(value)
     }
@@ -942,14 +965,14 @@ impl<'p> Machine<'p> {
     pub(crate) fn function_value(
         &mut self,
         evaluate: &Eval,
-        construction: Option<&Arc<[NodeId]>>,
+        construction: Option<u32>,
         is_applied_to_values: bool,
     ) -> Outcome<Id> {
         let outer = self.keeping_lazy_function_value;
         let applying = self.applying_construction.take();
         let kept = self.kept_lazy_function;
         self.keeping_lazy_function_value = true;
-        self.applying_construction = construction.cloned();
+        self.applying_construction = construction;
         let result = evaluate(self);
         self.keeping_lazy_function_value = outer;
         self.applying_construction = if is_applied_to_values { applying } else { None };
@@ -959,10 +982,10 @@ impl<'p> Machine<'p> {
 
     /// Whether the constructor of this body is the function an application evaluates.
     pub(crate) fn take_applied_construction(&mut self, body: NodeId) -> bool {
+        let program = self.program;
         let is_applied = self
             .applying_construction
-            .as_ref()
-            .is_some_and(|bodies| bodies.contains(&body));
+            .is_some_and(|bodies| program.constructions[bodies as usize].contains(&body));
         if is_applied {
             self.applying_construction = None;
         }

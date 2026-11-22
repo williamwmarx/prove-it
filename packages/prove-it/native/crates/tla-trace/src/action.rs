@@ -806,6 +806,19 @@ impl<'ir> Evaluator<'ir> {
             {
                 self.guard(node, context, is_init, then)
             }
+            // `getInitStatesAppl` looks a variable the state doesn't assign up as its OpDeclNode,
+            // which isn't a boolean: TLC prints the declaration's range, which the IR doesn't keep.
+            NodeKind::Identifier(name)
+                if is_init
+                    && !name.is_local
+                    && let Resolution::Variable(index) = name.resolution
+                    && self
+                        .current
+                        .get(index as usize)
+                        .is_some_and(Option::is_none) =>
+            {
+                fail("an unassigned variable walked as a conjunct of the initial predicate")
+            }
             NodeKind::Identifier(name) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, is_init, then),
                 // TLC walks the body of the definition the configuration names as its initial

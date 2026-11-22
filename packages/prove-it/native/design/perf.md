@@ -329,7 +329,8 @@ read-only memo snapshots.
   (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
   (TLCSailfish1, FastPaxos and MCLamportMutex checked over 9 runs each), and the models that record
   a graph or run on one thread don't fill.
-- **Measured, not done: growing the table on threads.** Doubling the table takes 220–350 ms at the
+- **Measured, not done then, built since** ("What a shared level did on one thread", under
+  Results)**: growing the table on threads.** Doubling the table takes 220–350 ms at the
   last doubling on MCExactInitialSync, nearly all of it the kernel faulting in 4 KB pages
   (transparent huge pages are `madvise` on the machine measured). Threads rewriting ranges of it
   fault in parallel and contend: 0.6 s slower at 4 threads. With `MADV_HUGEPAGE` on the table it
@@ -1027,6 +1028,77 @@ pairing, the largest moves are MCMultiNode 0.86 → 0.92 s and PaxosCommit 2.64 
 than `main` differed from itself between two rounds on that machine the same day (PaxosCommit
 2.26 and 2.61 s, MCExactInitialSync 1.99 and 2.20 s).
 
+### A state's invariants checked by the first thread to reach it (thread-claims)
+
+PaxosCommit took 32 CPU seconds on 16 threads for 14.5 s of one thread's work. Three things were
+measured on `depot-ubuntu-24.04-16` before anything was built (Depot sjrgmttms3, a build with
+symbols and frame pointers):
+
+- **Not memory bandwidth.** Sixteen one-worker runs at once each take 16.2–16.5 s against
+  15.6 s for one alone (4 at once 15.0–15.1 s, 8 at once 15.5–15.8 s): 5 %. That is the
+  experiment "Memo tables and the memory layout" left for 16 cores.
+- **The threads' CPU by their number**, with the claims below: 15.4 s on one worker, 18.8 on 2,
+  19.8 on 4, 21.4 on 8 and 26.2 on 16. Two threads already cost 3.3 s more than one: the
+  shared level's own path (an overlay's two tables to intern in, `Fingerprints<Overlaid>`,
+  `Candidates::find`), whatever the number of threads.
+- **Duplicated evaluation.** A state that several of a level's states step to is new to every
+  thread that expands one of them, and each checked its invariants: the threads kept 2.84
+  million candidates for the 1.32 million states at 4 threads. PCTypeOK's
+  `msgs \in SUBSET Message` is 18.7 % of the one-thread run (`compile_subset`'s test with all
+  it calls), so the invariant was paid for several times over.
+
+A level's threads now share a table of the fingerprints claimed (`Claims`, parallel.md), and a
+thread checks the invariants of a state new to it only where it claims it first, as TLC's worker
+checks a successor only where its put into the set of fingerprints finds it unseen
+(`Worker.addElement`). Against `main` at f6c3600e, medians of 5 interleaved runs with the range,
+and the CPU seconds at 16 threads (Depot z2gswkz028):
+
+| Model | `main`, 16 threads | Now, 16 threads | Gain | CPU s at 16, `main` → now |
+|---|---:|---:|---:|---|
+| PaxosCommit | 2.48 (2.37–2.54) | 2.05 (1.97–2.11) | 1.21× | 33.6 → 26.9 |
+| TLCSailfish1 | 0.46 (0.45–0.47) | 0.41 (0.40–0.42) | 1.12× | 5.65 → 4.85 |
+| MCLamportMutex | 0.52 (0.50–0.53) | 0.50 (0.49–0.51) | 1.04× | 5.18 → 4.92 |
+
+Two earlier runs of the same change with a table twice as large agree: PaxosCommit 2.31
+(2.25–2.48) → 1.92 (1.88–1.97) s and 31.1 → 24.8 CPU s, TLCSailfish1 0.42 → 0.39 and
+MCLamportMutex 0.53 → 0.50 (ljdt1stsmj, the suite), and PaxosCommit 2.37 (2.35–2.47) → 2.05
+(1.94–2.09) against `main` at d13f0073 (3dsfwb62dl).
+
+One thread is unchanged (1.01× over the suite, within the build-to-build noise; PaxosCommit
+14.66 → 14.69 s), and the rest of the suite is within its range on 16 threads. The table of
+claims is four times the level's states, rounded up to a power of two, 8 bytes a slot:
+MCExactInitialSync's peak RSS at 16 threads goes from 1,681 to 1,722 MB.
+
+What is left of PaxosCommit's 16-thread CPU, by `perf` against one thread: seconds of self time
+among the 150 hottest symbols of each run (14.0 s and 23.1 s of them), and the EXCEPT with all
+it calls:
+
+| Where | One thread | 16 threads |
+|---|---:|---:|
+| EXCEPT of `aState` (`compile_except` with all it calls: `intern_patched`, `except_nested`, `lazy_function::except`) | 0.1 | 3.1 |
+| `Fingerprints`: `shift_by_table`, `get_child`, `compute_new`, `extend_known` | 0.64 | 1.44 |
+| Memo lookups, stores and rehashes | 1.9 | 3.0 |
+| `Machine::forget_from`, each thread at each level | 0 | 0.47 |
+| `Claims::claim`, a shared line a state | 0 | 0.42 |
+| `Candidates::find` against `States::find` | 0.09 | 0.39 |
+| `intern_block`, `find_in_block` | 0.83 | 1.55 |
+| `malloc`, `free`, `realloc`, page clearing | 0.20 | 0.67 |
+
+The EXCEPT is the largest. It is evaluated where a memo table of three keys misses, and on one
+thread the largest of those, 380,904 entries, answers 95 % of its 7.9 million lookups; each
+thread fills a table of its own. Sharing the tables between the threads was measured and
+dropped (below); the rest is spread thin.
+
+Next, from the same profile: `msgs \in SUBSET Message` tests every message of every new set,
+18.7 % of one thread and 11.8 % of the 16 threads' CPU, though a new `msgs` is its parent's or a
+sibling's with one message more. A test that remembers the last set it found inside `Message`
+and tests only the elements that set doesn't hold would leave one test a state, where the base
+set reads nothing and the remembered run nested no recursive call. TLC's
+`SubsetValue.member` (SubsetValue.java:94–115 at d8fb231) tests the elements in order and stops
+at the first that fails, so the answer and any failure are the same. It is a different mechanism
+from the cache of membership by element dropped above, which paid a table lookup for each
+element it no longer tested.
+
 ### One standard module parsed, when one of its definitions is read (parse-one-module)
 
 A small run spent 11% of its instructions parsing the twenty standard modules of the pinned TLC,
@@ -1058,6 +1130,425 @@ test19 and TokenRing within their ranges, 1.02× over the seven; the suite, 5 ru
 every model within its range. The scan is a few thousand instructions a lookup, so it stays a
 scan rather than a map.
 
+### Short runs: what TokenRing and SimpleRegular spend (short-run-costs)
+
+The two models of bench-suite.json furthest behind the rest against TLC on 4 cores, TokenRing
+(0.22 s, 5.6× TLC) and SimpleRegular (0.52 s, 5.5×), in Depot run 46kgrg2dmt, whose columns are
+the native binary and TLC. The shipped binary, Bun's with the engine as an addon, runs them in
+the same time (drhbh6n01c, 11 runs: 0.56 and 0.21 s against the native binary's 0.56 and
+0.20 s). Neither is start-up. Instructions (callgrind) of one worker at main d13f0073, each part
+as the run less the run without it:
+
+| Part | TokenRing, 3.41G | SimpleRegular, 8.47G |
+|---|---:|---:|
+| Start-up and front end (the model at N = 2) | 63M, 2% | 108M, 1% |
+| Search (Init, Next, fingerprints, the state table) | 0.92G, 27% | 5.36G, 63% |
+| Invariants | in the search | 3.1G, 37%: `TypeOK` 1.0G; `\A i : pc[i] \in {"b", "Done"} => x[i] = {1}` 1.5G |
+| Liveness: the atoms | 1.98G, 58% | — |
+| Liveness: the checker | 0.29G, 8% | — |
+| The fingerprints sorted for their distance | 4M | 0.2G, 2% |
+
+- **The atoms, twice.** All 46,656 of TokenRing's states are initial, and the engine answers the
+  atoms once on the initial states, where TLC would stop at one that fails, and again on the
+  whole graph: `UniqueToken`, 15k instructions a state, was evaluated twice for each, and its memo
+  table, keyed by the state, never hits. Now a state predicate that reads nothing the search
+  keeps, prints nor draws (`EngineContext::repeatable_atoms`) keeps its answers on the stored
+  states (`States::atom_answers`, cut back with the states), and every later check of the graph,
+  a periodic one too, evaluates it only on the states added since.
+- **Allocations on every evaluation.** `quantify_levels` built three vectors for each `\A` or `\E`
+  over intervals, 1.1M times in SimpleRegular and 0.9M in TokenRing: 6% and 11% of their
+  instructions in `malloc` and `free`. The levels are now counted in an array on the stack.
+  `Fingerprints::compute_new` built its stack for each new value, and `compute_one` a vector of
+  each composite's parts: the stack is now kept between calls and the parts visited in place.
+- **`f[c]` of a variable and a constant**, TokenRing's `c[0]` and `c[N-1]`, went through the
+  generic application, a closure for the variable that keeps a function lazy and one for the
+  constant. It now reads the variable and applies it, as `f[i]` of a bound name did already.
+- **Membership of a scalar in a short set of scalars of its kind**, SimpleRegular's `pc[i] \in
+  {"b", "Done"}`, tested the lazy and ANY flags and joined the element's shape with the set's
+  before looking for the id. Such a comparison can't fail, so a set of 16 elements or fewer, all
+  of the element's kind, now holds it where it holds its id.
+- **The fingerprint distance** sorted the fingerprints with a comparison sort, 700 instructions a
+  state at the end of every run that reports it; a radix sort of 16-bit digits now takes four
+  passes over them.
+
+Instructions of a build without LTO, one worker: TokenRing 4.31G → 2.70G, SimpleRegular 10.44G
+→ 8.76G. Depot, `depot-ubuntu-24.04-4`, bench-suite.json, the native binary against `main` at
+96553647, medians of 15 interleaved runs with the ranges:
+
+| Model | 1 worker | 4 workers |
+|---|---|---|
+| TokenRing (0b4bpstfl1) | 0.21 (0.20–0.23) → 0.14 (0.13–0.19) s, 1.44× | 0.11 → 0.08 s |
+| SimpleRegular (kvsvpskkdk) | 0.56 (0.54–0.57) → 0.49 (0.46–0.51) s, 1.14× | 0.29 → 0.27 s |
+
+Again at the branch's head (1jzh63gq1t, 15 runs): TokenRing 0.18 → 0.12 s, SimpleRegular 0.52 →
+0.47 s. The whole suite (vw9kh46c17, 5 runs) is 1.05× `main` on one worker and 1.04× on four, with
+MCBakery 0.75 → 0.68 s and Commit 0.29 → 0.27 s besides, and no model slower beyond its range.
+Over TLC's medians in 46kgrg2dmt, TokenRing goes from 5.6× to 8.9× on one worker, and
+SimpleRegular from 5.5× to 5.9×.
+
+### A tuple of variables compared by its variables (live-atoms-fast)
+
+cf1s_folklore timed by phase on `depot-ubuntu-24.04-16`, `main` at d13f0073, in ms (an
+instrumentation build, 3 runs each):
+
+| cf1s_folklore | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|
+| One thread | 3,560 | 1,910 | 910 | 6,430 |
+| 16 threads | 690 | 190 | 360 | 1,270 |
+
+Of the atoms on one thread, ENABLED of the fairness ran on every state (730 ms: its action is a
+part of Next, which is one of TLC's actions, so no steps answer it) and the action atom took
+1,100 ms on 22.4 M steps, though the steps answered the action itself ("Plan (ii), as built"
+below): what was left was the subscript, `vars`, evaluated on each state into a tuple the store
+interned, and the two tuples of each step compared. ENABLED's own time was two thirds
+`UNCHANGED vars`, a predicate there, building the same two tuples for each successor it tried
+(`compile_unchanged` 8.7% of the run, `intern_block` 4.5%). Of the 16-thread search, the threads
+took 320 ms, the fill 135 and the merge 200; of the check, reading the tables ahead 160 ms and
+the two behaviors' graphs, a thread each, 200.
+
+TLC compares two tuples element by element, up to the first pair that differs or fails
+(`TupleValue.equals`), and a subscript's or an UNCHANGED's tuple of variables has a variable's two
+values at each place. So the variables' own values tell, in that order, and no tuple is built:
+
+- **A liveness atom's subscript** that is a tuple of state variables, or of such tuples, through
+  the definitions and names UNCHANGED reads through (`Compiler::tuple_slots_in_scope`), carries
+  their slots (`SubscriptSlots`). A step leaves it unchanged where each slot's two ids are equal
+  and can't fail to compare with themselves; the first pair that isn't is compared as before
+  (`are_slots_unchanged`). Where the slots are every variable, the search kept one state for each
+  fingerprint and no two values of a variable can fail to compare (the joins of what the walks
+  assigned, which answering an action from the steps already needs), a step changes it just where
+  it reaches another state, and nothing is read at all (`Subscript::State`). Under
+  PROVE_IT_LIVE_CHECK the subscript's values are compared too (`SUBSCRIPT_DIFFERS`).
+- **UNCHANGED as a predicate** compares the two states' slots the same way, and builds the tuples
+  only where a variable isn't assigned or a pair doesn't compare as unequal, for whatever TLC does
+  then.
+- **The shape of an assigned value** is joined only where the state being expanded doesn't hold
+  that value for the variable, as it does for most of a successor's: `shape_of` was 2.9% of the
+  run. The test is inside `note_assigned`, after the one for a search that keeps no shapes: at
+  the call sites MCbtree went 0.71 → 0.74 s on one thread (5 runs, zvtz6j0dxl), and with it
+  inside 0.73 → 0.71 (9 runs, qlqqn916qt).
+- **The checker's read-ahead** no longer copies on one thread what its threads read. The threads
+  that order the successor sets write them where a count of each set's entries, taken with the
+  first pass, puts them (24.5 M positions, 98 MB, which the checker's thread had joined from the
+  threads' vectors), and the action checks' rows are joined a word at a time, not a row
+  (`StepResults::copy_row` was 57 ms of the run).
+
+On `depot-ubuntu-24.04-16`, medians of 5 interleaved runs against `main` at 58371d45, with the
+ranges (run r3ftbpmft7; run zvtz6j0dxl against d13f0073 gave cf1s_folklore 6.40 → 5.59 and
+1.28 → 1.09, StarkMutex 3.23 → 2.67 and 0.75 → 0.71):
+
+| Model | One thread, `main` | One thread, now | Gain | 16 threads, `main` | 16 threads, now | Gain |
+|---|---:|---:|---:|---:|---:|---:|
+| cf1s_folklore | 6.67 (6.40–6.73) | 5.45 (5.02–5.46) | 1.22× | 1.37 (1.30–1.40) | 1.12 (1.11–1.15) | 1.22× |
+| StarkMutex | 3.28 (3.12–3.77) | 2.60 (2.59–2.98) | 1.26× | 0.80 (0.77–0.81) | 0.76 (0.75–0.78) | 1.05× |
+| SpanTreeRandom | 0.39 (0.39–0.40) | 0.36 (0.35–0.37) | 1.08× | 0.14 (0.14–0.14) | 0.13 (0.13–0.13) | 1.08× |
+
+cf1s_folklore's CPU at 16 threads went 11.1 → 8.8 s and its peak memory 1,025 → 690 MB (546 →
+420 MB on one thread): a helper no longer keeps a subscript's value for every state. What is left
+of cf1s_folklore, by phase, in ms, timed before the checker's read-ahead stopped copying:
+
+| cf1s_folklore | Search | Atoms | Liveness check | Whole run |
+|---|---:|---:|---:|---:|
+| One thread | 3,560 | 720 | 1,010 | 5,350 |
+| 16 threads | 700 | 80 | 385 | 1,200 |
+
+On one thread the atoms are now ENABLED run on each state and the four state predicates. On 16
+threads the search's own thread is the largest serial part: 430 ms of samples in that profile,
+150 of them the merge's loop over the level's candidates and steps (`expand_level`'s own) and
+110 copying memory, with the two behaviors' graphs (210 ms on a thread each) next.
+
+### Membership in a function's domain, from its keys (domain-keys)
+
+MCMultiNode's memo tables by lookups, one thread (an instrumentation build that names each
+table's node): its 13 invariants read `history` alone, which takes 14,926 values over the 1.5 M
+states, and their tables hit 89%. The lookups are in RwTxExecuteAction's guard,
+
+```tla
+\A view \in DOMAIN ledgerBranches:
+    \A seqnum \in DOMAIN ledgerBranches[view]:
+        "tx" \in DOMAIN ledgerBranches[view][seqnum]
+        => history[i].tx /= ledgerBranches[view][seqnum].tx
+```
+
+evaluated for each request in `history` of each state expanded:
+
+| Node | Keys | Lookups | Hits | Entries |
+|---|---|---:|---:|---:|
+| `"tx" \in DOMAIN ledgerBranches[view][seqnum]` | ledgerBranches, view, seqnum | 27.5 M | 85% | 4,194,304: full, then off |
+| `DOMAIN ledgerBranches[view]` | ledgerBranches, view | 13.7 M | 88% | 1,654,134 |
+| `DOMAIN ledgerBranches` | ledgerBranches | 8.0 M | 92% | 627,189 |
+
+A membership in a set that isn't constant is a costly node, since a miss compares as TLC's search
+does, so the test of a record's field had a table of its own, the largest of the run; each miss
+built the record's domain, a set of two strings the store interned, to search it, and once the
+table was full and off, every test did (`intern_block` 5.6% of the run, `MemoTable::store` 4.8%).
+With threads each thread's share of the table's room fills sooner.
+
+The function's own keys answer in place where the store's search of the domain would be one of
+ids, or of an integer's bounds (`Store::find_in_domain`, each case read from `is_member` of
+`domain_of`): an integer in a tuple or in a function over a run of integers; in a function of at
+most 16 keys, a key found by its id, or a boolean, integer or string missing from keys of its kind
+alone. Wherever a comparison could fail (a key or a function that is or holds a function TLC
+keeps lazy, or ANY), and for every other function, the membership goes through its table as
+before, which evaluates both sides again, so it stays whole where either side has an effect. On
+`depot-ubuntu-24.04-16`, medians of 5 interleaved runs against `main` at 58371d45 (run
+r3ftbpmft7; run 7njvvxg3xm against d13f0073 gave 4.63 → 4.18 and 0.87 → 0.84):
+
+| Model | One thread, `main` | One thread, now | Gain | 16 threads, `main` | 16 threads, now | Gain | RSS MB, one thread |
+|---|---:|---:|---:|---:|---:|---:|---|
+| MCMultiNode | 4.79 (4.53–4.90) | 4.39 (4.20–4.48) | 1.09× | 0.90 (0.85–0.90) | 0.83 (0.81–0.89) | 1.08× | 531 → 386 |
+
+The two tables left, of a sequence's domain as a quantifier's bound, are 21.7 M lookups: about
+10% of the threads' time at 16 threads, where each thread fills tables of its own. A quantifier
+that walked a sequence's indices without the set 1..n would need neither.
+
+Over the rest of the suite in run r3ftbpmft7, with this and the section above, no model is slower
+by more than its ranges overlap. On one thread MCExactInitialSync's medians are the furthest
+apart, 13.17 (12.97–13.71) → 13.97 (13.46–14.72); 7 more interleaved runs of it on one thread
+gave 14.12 (13.25–14.60) → 14.29 (13.29–14.59) (run 70xgp9xp3x), the same range for both, and it
+has no membership in a domain, no UNCHANGED as a predicate and no temporal property.
+
+### What a shared level did on one thread, and where its threads' time went (merge-serial-part)
+
+MCExactInitialSync at 16 threads, timed by phase on `depot-ubuntu-24.04-16` (`main` at d13f0073,
+six runs of 2.27–2.41 s, Depot run 6vddlr1504): the threads expanding 1.34 s, the fill that tells
+the new fingerprints 0.42 s, the merge 0.42 s, 18 shared levels. So 38% of the run was the two
+phases after the threads, and the threads themselves took 21.1 CPU seconds for what one thread
+does in 13.3. Four changes, each measured on that machine against `main` at d13f0073 with
+`bench-suite.ts`, medians of 7 interleaved runs with the range:
+
+| MCExactInitialSync | 1 thread, s | 16 threads, s | CPU at 16, s | Depot run |
+|---|---|---|---:|---|
+| `main` (three machines) | 13.50–13.62 | 2.03–2.15 (1.99–2.32) | 21.2–23.1 | |
+| A table's pages written first | 12.22 (12.04–12.80) | 1.97 (1.87–2.09) | 21.5 | tw2bb4kwp4 |
+| and the fill without shared lines, the table grown and the new states added on threads | 12.10 (12.03–12.21) | 1.47 (1.46–1.50) | 20.9 | 3wdtv9w822 |
+| and long runs claimed | 11.81 (11.73–12.06) | 1.30 (1.18–1.33) | 17.9 | 0q5k6kp9hq |
+
+The phases at 16 threads, ms, as each change went in (Depot runs 6vddlr1504, tcm83wfg2n, attempt
+xs5r1nsfzr, and br1n0v1l2q):
+
+| | Threads | Fill | Merge | Wall |
+|---|---:|---:|---:|---:|
+| `main` | 1,340 | 420 | 416 | 2,270 |
+| Fill, growth and merge on threads | 1,345 | 207 | 96 | 1,690 |
+| and the pages written first | 1,340 | 85 | 105 | 1,620 |
+| and runs of up to 4,096 states | 1,130 | 74 | 97 | 1,380 |
+
+- **A table's pages written first.** `perf` at 16 threads with the growth on threads (Depot run
+  wz87pxs3bd) showed 8% of the CPU in the kernel, nearly all under `do_wp_page` → `wp_page_copy` → `ptep_clear_flush` →
+  `smp_call_function_many_cond`: the rehash of a grown table probes a slot before it writes it,
+  so the first touch of each page of the new table was a read, which maps the kernel's page of
+  zeros, and the write that followed replaced that page and flushed its mapping on every core.
+  `/proc/vmstat` showed the rest: `thp_fault_alloc` stayed 0 over a one-thread run. Linux before
+  6.13 splits a huge page of zeros at the first write and never backs the region with a huge
+  page again, so the advice of #199 had no effect on a 6.12 kernel, which the Depot runners are;
+  the 4-core container it was measured on runs 6.18. The table now writes a 0 to each 4 KB of
+  itself as it is made (`commit`). A one-thread run then takes 236 huge pages and a 16-thread
+  run 345 (690 MB, the tables' last three sizes), and one thread is 1.11× faster on
+  MCExactInitialSync, whose 268 MB table every successor probes.
+- **The fill without shared cache lines.** Each of the fill's threads read every candidate and
+  wrote its status and its slot into arrays in the candidates' order, so neighbouring entries,
+  decided by different threads, moved their lines between the cores at every write: 15 ns of
+  wall a candidate at 16 threads. Threads now sort each part of the candidates by the range of
+  the table their home is in, the ranges' threads decide them part by part, which is the
+  candidates' order, reading the table 8 fingerprints ahead, and the parts' threads gather the
+  statuses back. The indices are written the same way, and read back only for a graph. The
+  fill's passes take 44 ms of wall over the run (9 sorting, 18 deciding, 8 gathering, 9 for the
+  indices).
+- **The table grown on threads.** Growing was 230 ms of the fill's 420, on one thread. A
+  fingerprint's home keeps its leading bits as the table grows, so each thread moves a range of
+  the old table to the same range of the new one. With the pages written first the growth is
+  24 ms; without, the threads' 100,000 page faults each flushed 15 other cores and it was 126.
+  That is the contention the earlier try at growing on threads met ("Measured, not done" under
+  track 6), which cost 0.6 s at 4 threads.
+- **The new states added on threads.** Where the search records no graph, the fill's statuses
+  give each new state its place, so threads copy the new states of a share of the level's runs
+  each and count each parent's, and the values a thread's overlay made are imported afterwards
+  in the states' order, which is the order adding them one by one imported them in. 416 → 96 ms,
+  of which 51 are one thread growing the states' arrays, the kernel zeroing 576 MB of new pages,
+  and 19 the copy.
+- **Long runs claimed.** A thread claimed 32 states of a level at a time, so each of 16 threads
+  expanded 32 states of every 512. States found one after another hold much the same values, and
+  a thread that skips between runs finds fewer of them in its caches: the threads' CPU for the
+  search was 14.5 s at 2 threads, 16.6 at 4, 18.2 at 8 and 20.9 at 16. With runs of up to 4,096
+  states it was 13.4, 14.0, 16.3 and 17.0 (Depot run br1n0v1l2q; 16,384 took less CPU still but
+  more wall, the threads ending a level apart). A thread now claims one part in four of its
+  share of the states left, so runs are long while a level is and single states at its end.
+  One part in 2, 8 and 16 measured 1.29, 1.29 and 1.30 s on MCExactInitialSync against 1.23 for
+  one in 4, and one in 2, 8, 16 and 64 measured 1.82, 1.96, 2.03 and 2.22 s on PaxosCommit
+  against 1.88 (medians of 8 and of 5 runs on one machine).
+
+The suites, 5 runs, against `main` at d13f0073. `perf-suite.json` on `depot-ubuntu-24.04-16`
+(Depot run tlq9hdlnsn), every model agreeing with TLC, one thread 1.02× in geomean:
+
+| Model | 1 thread, s | 16 threads, s | Gain at 16 | CPU at 16, s |
+|---|---|---|---:|---|
+| MCExactInitialSync | 13.18 → 12.02 | 2.08 → 1.26 | 1.65× | 22.1 → 17.6 |
+| PaxosCommit | 14.49 → 14.34 | 2.39 → 1.97 | 1.21× | 32.4 → 26.7 |
+| MCMultiNode | 4.59 → 4.46 | 0.88 → 0.68 | 1.29× | 9.3 → 7.3 |
+| MCLamportMutex | 1.84 → 1.80 | 0.53 → 0.46 | 1.15× | 5.4 → 4.6 |
+| Detlefs | 1.81 → 1.77 | 0.48 → 0.38 | 1.26× | 3.1 → 2.9 |
+| cf1s_folklore | 6.20 → 6.09 | 1.26 → 1.09 | 1.16× | 10.3 → 9.1 |
+| TLCSailfish1 | 3.42 → 3.41 | 0.44 → 0.41 | 1.07× | 5.4 → 5.1 |
+| BufferedRandomAccessFile | 1.66 → 1.66 | 0.21 → 0.19 | 1.11× | |
+| MCbtree | 0.71 → 0.69 | 0.19 → 0.18 | 1.06× | |
+
+The rest (FastPaxos, MCabs, GameOfLife, StarkMutex, SpanTreeRandom, 2PCwithBTM) is within its
+range on both. `bench-suite.json` on `depot-ubuntu-24.04-4` (Depot run c17glp0m8w), 18 of 18
+agreeing, one thread 1.03×: on 4 threads commit 0.14 → 0.11 s, SimpleRegular 0.30 → 0.24, MCbtree
+0.31 → 0.28, MCBakery 0.54 → 0.51, MCLamportMutex 0.99 → 0.94, and nothing slower.
+
+**The spread at 16 threads.** `main`'s MCExactInitialSync took 2.03, 2.08, 2.12, 2.15 and 2.33 s
+in median on five machines of the type, and 1.99–2.46 s over all their runs: 15% between the
+machines' medians, and up to 16% between the runs of one. The 3.19 s of an earlier baseline is
+what `main` took before the fill gave the indices (3.06 s under merge-fill-indices above), not
+another run of the same build. With these changes the seven runs of one machine lie within
+1.18–1.33 s and the five of another within 1.22–1.31.
+
+**What is left at 16 threads** on MCExactInitialSync, of about 1.3 s: the threads 1.1 s, 17.6 CPU
+seconds for 12 of one thread; the fill 75 ms; the merge 97 ms, half of it one thread faulting in
+the states' arrays, which threads could only write first into capacity the vector doesn't count
+as its length yet, an `unsafe` the crate doesn't have; 60 ms starting and ending the process.
+`perf` by symbol before the long runs (Depot run r52fz3smlh), CPU seconds at 16 threads against
+one: the memo lookups 2.5 against 1.0, the walk's `segment` 2.1 against 1.25, `Candidates::find`
+1.2 against 0.5 for `States::find`, `get_child` 1.4 against 0.8, and `shift_by_table`, which
+reads only its thread's own tables, 1.8 against 1.7: what reads memory past a core's own cache
+costs about twice as much. Each thread's memo tables take 7.7 MB (4.4 MB on one thread) and its
+table of a large level's states about 3 MB, against 4 MB a thread of the 32 MB of L3 that eight
+cores share.
+
+### MCLamportMutex, profiled (mutex-profile)
+
+MCLamportMutex was the suite's weakest lead over TLC (4.7–4.8×). Its first profile of its own:
+`perf record` on `depot-ubuntu-24.04-16` (frame pointers, line tables, run 2x2wtx98sl), and
+callgrind on one thread and on four (23.8 G instructions on one, 36.8 G on four, at d13f0073).
+
+**One thread.** The profile is flat; no function takes more than 9% of the samples. By what the
+spec's actions do, in instructions:
+- **Guards, 19%.** Each state tries each of the six `(p, q)` pairs against ReceiveRequest,
+  ReceiveAck and ReceiveRelease, each of which tests `network[q][p] # << >>` and then
+  `Head(network[q][p]).type = "…"` through its own LET: 17.4 M equality tests, 57.7 M function
+  applications (80 a state), and 25.8 M calls of `Store::equals_asked`, out of line at about 55
+  instructions each for ids that differ or match in place.
+- **EXCEPT, 17%.** `network'`, `req'`, `clock'` and `ack'` are memo tables of three and four keys.
+  The three-key tables (`[network EXCEPT ![q][p] = Tail(@), ![p][q] = Append(@, …)]` by
+  `network`, `p`, `q`) miss on 21% of 4.4 M lookups at about 2,500 instructions a miss; the
+  four-key ones, which read `c == m.clock` and so key on `network` beside their own variable,
+  miss on 79% of 1.6 M lookups, at about 1,400 instructions an evaluation, so they cost about what
+  they save. `except_nested` allocated two vectors for each update path, 1.6% with `free`.
+- **The successor, 19%:** its fingerprint 9.4% (a new value's parts gathered into two vectors
+  each, 1.4%), the constraint and the invariants 9.3% (TypeOK's nested function sets 3.9%,
+  BoundedNetwork 1.5%).
+
+**Every core.** On 16 threads the run took 5.0 CPU seconds, 2.7× one thread's, for 0.52 s of wall.
+Timed per level (an instrumented build, run l784rnmvbg): of about 575 ms of search, the threads
+expanded for 397 ms, the merges took 146 ms (25%), and 20 levels of 5,753 states ran on one
+thread for 22 ms. In the threads' time, `Machine::forget_from` took 7.4% at each level's start,
+rebuilding every memo table: a direct table scanned its whole array, up to the store's count of
+ids, and a hashed one was reallocated and filled. Over the run each thread evaluates again what
+its tables forgot and what other threads hold: the invariants took 6× one thread's CPU, the
+EXCEPT tables 3×.
+
+**Built,** each exact (no output changes):
+- `equals_asked` tells equal ids that hold nothing lazy, and unequal scalars or tuples of
+  different lengths of one kind, apart inline, as `equals` does; the rest stays out of line.
+- `f[k][j] = c` and `e = c` of an evaluated `e` have tests of their own, rather than the generic
+  test's two `Leaf::read` dispatches.
+- A nested EXCEPT keeps its path's keys and functions on the stack up to 8 deep; a fingerprint's
+  new value walks its parts on a stack the fingerprints keep; the merge's `Store::import` takes a
+  block of up to 16 words in on the stack.
+
+Callgrind, one thread: 23.81 G → 21.73 G instructions (−8.7%). On Depot against `main` at
+58371d45, medians of 9 interleaved runs, two rounds on each machine:
+
+| Machine, run | One thread | Every core (CPU s) |
+|---|---|---|
+| `depot-ubuntu-24.04-16`, 0j7rwxnf1d | 1.83 (1.81–1.87) → 1.71 (1.70–1.81) | 0.50 (5.03) → 0.48 (4.77) |
+| `depot-ubuntu-24.04-16`, l81d8kr0tq | 1.83 (1.81–1.91) → 1.74 (1.72–2.22) | 0.52 (5.15) → 0.52 (5.07) |
+| `depot-ubuntu-24.04-4`, 9ml1cwx7jl | 1.84 (1.82–1.90) → 1.73 (1.71–1.82) | 0.88 (3.14) → 0.84 (2.99) |
+| `depot-ubuntu-24.04-4`, wwhj751jp2 | 2.10 (1.79–2.13) → 1.92 (1.72–2.09) | 0.91 (3.23) → 0.88 (3.11) |
+
+The suites, 3 runs: one thread, perf-suite.json on 16 cores 1.01× (1h3ssj9np6) and
+bench-suite.json on 4 cores 1.04× (ts1ph5m04m); perf-suite.json on 16 threads (w4xrsrd50v) with
+every model within its range or faster (MCMultiNode 0.89 → 0.84 s, cf1s_folklore 1.28 → 1.25);
+every model agreeing. MCbtree (0.71 / 0.71 s, 11 runs, h96s4wtl4s) and Detlefs (1.91 / 1.92 s, 9
+runs, xq4c6szpcd) checked again on one thread, within noise.
+
+**What is left.** Every core is bound by the merge (a quarter of the wall at 16 threads: importing
+the new states' nested functions, 23% of it, and page faults) and by each thread's memo tables
+starting cold and private. One thread is bound by evaluation spread over the guards, the EXCEPTs
+and the successor's fingerprint, at 1–5% a function. The largest single lever is the four-key
+EXCEPT tables: keyed on the LET's value `c` rather than on `network` they would hit nearly always,
+but LET definitions are compiled into their uses, and binding one to a slot must keep TLC's
+laziness (`LazyValue`), which decides where an error happens.
+
+### The paths of a value-heavy step (value-paths)
+
+GameOfLife and TLCSailfish1 spend their time in many small steps of a few dozen instructions,
+none hot alone. Per state, GameOfLife builds `sc` once (its table, keyed by `grid`, hits 15 of
+16 lookups) and runs `Sum` eight levels deep for each of 16 cells: 128 bodies, each a test
+`S = {}`, two memo hits (the CHOOSE and `S \ {x}`, keyed by `S`, of which there are 128 in all),
+`f[x]` on 36 tuple keys and an addition, about 1,100 instructions a body with the call's own
+machinery. `Sum`'s table, keyed by `sc` and `S`, hits 10% in its probation and is off, rightly:
+a state's chains share few suffixes. TLCSailfish1's time is the memo tables of `dag` (28 M
+lookups, one value a state), `<<v, c>>` of `Children` (21.8 M) and of `Descendants` (7.6 M), and
+membership of those tuples in `es`. Six changes, each to a path every model takes:
+- A value's known shape is read in place, and equal shapes join in place, with the rest of each
+  out of line (it saved and restored a dozen registers on every read); the joins of distinct
+  shapes are a map hashed by one multiply, where SipHash was 1.4% of TLCSailfish1.
+- `equals` tells two sets of different sizes apart in place, as `equals_sets` did after three
+  calls; a scan for an id compares eight at a time without branching, the last eight
+  overlapping, where `position` compared one at a time.
+- A memo table's miss, its hit on a value whose evaluation recursed, its end of probation and its
+  scattering are out of the line of a plain hit.
+- The constructors an application's function may be (`applying_construction`) are numbered in
+  the program, where each application cloned an `Arc` and dropped it: two atomic operations on
+  each of GameOfLife's 9.4 M applications.
+- A function a bound name or a constant holds is applied as a read: TLC's KeepLazy changes
+  nothing of a value already computed, so what `function_value` did there is only to drop the
+  mark of an outer application where the arguments aren't values, which the read still does.
+- The search of a sorted block by comparison is out of the line of the searches by id.
+
+Callgrind, one worker: GameOfLife 16.32 G → 13.93 G instructions; TLCSailfish1 53.96 G with the
+first change and half the second → 51.64 G with the first four. On `depot-ubuntu-24.04-16`,
+medians with the range (CPU at 16 threads):
+
+| Run | Model | `main`, 1 thread | Now, 1 thread | `main`, 16 | Now, 16 |
+|---|---|---|---|---|---|
+| zm5lpxf7cx, first four, 7 runs | GameOfLife | 1.12 (1.05–1.13) | 1.01 (0.96–1.04) | 0.15 | 0.14 |
+| nr25jjxtrn, first four, 7 runs | TLCSailfish1 | 3.56 (3.54–3.60) | 3.26 (3.23–3.30) | 0.45 (5.47) | 0.42 (5.05) |
+| mwnn6tn0k9, all six, the suite, 5 runs | GameOfLife | 1.07 (1.06–1.08) | 0.94 (0.92–0.95) | 0.14 (1.21) | 0.14 (1.11) |
+| mwnn6tn0k9 | TLCSailfish1 | 3.54 (3.45–3.81) | 3.13 (3.06–3.20) | 0.43 (5.31) | 0.40 (4.76) |
+
+Over the suite one thread is 1.02× `main` and 16 threads about 1.04× in geomean, 15/15 agreeing;
+the other models are within their ranges. cf1s_folklore's median rose there (6.26 → 6.79, ranges
+6.10–6.84 and 5.91–6.84); over 9 interleaved runs alone (twvg40b90b) it is 6.33 → 6.21.
+
+What is left on GameOfLife, `perf` on the 16-core runner: the recursive call (`call_recursive`,
+`evaluate_recursive` and the call's closure, which swap the parameters' slots and save the
+body's, 16%), the memo hits (6%), the closure of the addition above each call (7%, where the
+returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `find_in_block`,
+`apply_other`: 16%) and `S = {}` (5%). On TLCSailfish1 the memo hits of two keys are 18% of the
+cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
+again, and the tuples `<<v, c>>`.
+
+### A module's text read into tokens once (tokens-once)
+
+SANY's report, the lowering, TLC's module order and the linker each read the spec's texts, in
+readers with caches of their own that a run builds several times over, so a 2PCwithBTM run lexed
+each of its six texts up to seven times, forty lexings, 11.5 M of its 113.7 M instructions, and
+allocated the tokens' texts each time. The lexer now keeps the tokens of each text it has read,
+per thread, and gives every reader the same shared slice. Counted with callgrind (`-workers 1`):
+2PCwithBTM 113.7 M → 95.2 M instructions, SyncCons 210.8 M → 190.6 M, VoucherRedeem 338.8 M →
+302.2 M, MCDisruptor_MPMC 2,493.0 M → 2,482.2 M. Against main at 60c8e813 on
+`depot-ubuntu-24.04-4`, `native` on one worker, median wall ms of 15 interleaved runs: 2PCwithBTM
+10.66 → 10.04, SyncCons 18.83 → 17.94, VoucherRedeem 20.42 → 19.53, queue 19.08 → 18.60, TokenRing
+101.06 → 97.15, test19 53.11 → 52.21, commit 264.22 → 265.69, 1.03× over the seven; the suite, 5
+runs, 1.01×, with the models above 0.1 s within their ranges (MCDisruptor_MPMC read 169.4 → 181.7
+ms there, on 10.8 M fewer instructions; 15 runs of it alone gave 179.1 → 179.2 ms: noise of
+five runs). What remains of a small run is no longer in lexing: the parser still parses each text
+several times, and the environment is linked twice.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1082,7 +1573,10 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | An epoch cache of one entry in front of each memo table keyed by state variables alone | TLCSailfish1 | 3.44 → 3.49 s on 16 cores (3 runs); suite 1.00× on 16 cores, 0.99× on 4 | `dag == <<vs, es>>`'s table took 28M lookups for 109,603 entries, one per state, and the cache cut them to 180K, but the lookups hit in cache already; the model's memo time is in tables keyed by bound names too. The branch is `epoch-front`. |
 | Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
 | Resolve and copy a graph's steps to the graph on the threads after a level's merge, rather than on the merge's thread as it numbers the states (`edges-on-threads`) | cf1s_folklore, StarkMutex | 16 threads, medians of 3: 1.37 → 1.36 s, 0.79 → 0.77 s; the suite within noise | Copying 22 million steps is a few milliseconds; the per-candidate timers of the merge's instrumentation had inflated its share to 20 % of the merge. The parallel copy spawns threads a level for nothing. |
+| Read ahead a thread's own table of the level's states with the state table's, at 16 threads (it was within noise at 4) | MCExactInitialSync, PaxosCommit, MCMultiNode | 16 threads, medians of 8, 5 and 5 runs on one machine, with the long runs: 1.23 → 1.32 s (CPU 16.8 → 18.1 s), 1.88 → 1.92 s, 0.69 → 0.67 s | The thread's table is a few megabytes its thread alone reads, mostly in its own cache, and the second read-ahead for every successor costs more than the misses it saves. |
+| Find a tuple of integers in a grid, a set or domain of every tuple of a box of integers in order (`IS_GRID`, marked as the store interns it), by its components | GameOfLife (`sc` over 6 × 6 tuples, `grid` over 4 × 4) | Callgrind, one worker: 14.10 G → 14.99 G instructions; `find_in_block` 1.70 G → 2.40 G with the scan | Reading the first and last keys' and the key's components, a dozen metadata reads, costs more than scanning 36 ids eight at a time, and checking each new block's keys as it is interned cost 0.3 G more. Not measured on Depot. |
 | Lend the search's shift tables to the threads' fingerprint caches with its entries, so a search's entry keeps its table number in a thread and the thread's own tables number after the shared ones (`shared-shift-tables`) | MCExactInitialSync, PaxosCommit | 16 threads, two runs of medians of 3: MCExactInitialSync 2.27 → 2.21 s then 2.14 → 2.31; PaxosCommit 2.64 → 2.78 then 2.37 → 2.39; the suite within noise | The 16 % of MCExactInitialSync's 16-thread CPU in `Fingerprints<Overlaid>` is the fingerprint arithmetic itself and the overlay's two-level reads under memory contention, not the length-table lookup the overlay repeated for each shift, which is a short-vector read. |
+| Lend the search's machine's memo tables to the threads, read where a thread's own table misses, and merge into them at each level's end what the threads stored in the level, a table as long as it answers at least as many lookups as it took entries (`shared-memo`) | the suite, on top of the claims | 16 threads, medians of 5, Depot qxdcqqwh5z against `main`, beside the claims alone in ljdt1stsmj: PaxosCommit 1.89 s, 23.9 CPU s (1.92 s, 24.8); TLCSailfish1 0.45 → 2.62 s, 5.5 → 9.4 CPU s; MCLamportMutex 0.53 → 0.84; MCbtree 0.19 → 0.35; BufferedRandomAccessFile 0.21 → 0.33; MCMultiNode 0.86 → 0.96 | The merge is on the search's thread, a table a thread at best, and a table that earns its sharing is one whose entries are many: TLCSailfish1's merges took 2 s of wall for the lookups they saved. PaxosCommit gained 0.9 CPU s of the 3 its EXCEPT costs on 16 threads; why no more wasn't measured (the shared table takes at most a thread's share of the room, 262,144 entries, where one thread keeps 380,904, and an entry whose value the merge didn't import from its thread is dropped). What might work is a table the threads write as they go, with no merge. |
 
 **Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
 closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's
@@ -1151,6 +1645,8 @@ What the memo track built, measured and dropped, and why the store's memory layo
 | A total memo budget per thread instead of a cap per table | PaxosCommit and MCMultiNode at 4 workers | At 2^22 entries: PaxosCommit 12.90 → 14.27 s (1421 → 855 MB); MCMultiNode 3.47 → 3.57 s (935 → 599 MB) | The tables that fill first take the room PaxosCommit's hot tables need. |
 | A cache from (set, element) to the id of their union | PaxosCommit | Not built. 13.0M single-element unions over 9.09M distinct pairs. | Only 30% recur, and the cache would itself miss memory. |
 | A size cap without eviction, at 2^12–2^20 entries; clustering in bands of 8 or 64 slots | MCMultiNode, PaxosCommit | Slower at every cap and band | The caching pays even at a miss to memory, and a band spreads a state's run. |
+| A thread's memo entries kept from level to level under the store's ids of the values the merge took in (`Worker::imported`, as the fingerprints' `absorb` keeps theirs), rather than forgotten | MCLamportMutex | 16 threads, medians of 7 (c55tkl0d6b): 0.54 s (5.29 CPU s) → 0.55 (5.32). Callgrind at 4 threads: the invariants 5.6 → 5.0 G instructions and the EXCEPTs 7.8 → 6.5 G, but moving the entries 6.3 G against forgetting's 4.3 G, 34.3 → 37.0 G in all | Few moved entries hit again: a value new at a level is mostly met again by other threads, whose tables are their own. |
+| A memo table forgotten in place at a level's start (filled with empty entries, keeping its room) rather than rebuilt in a new allocation, and a direct table scanned only where it has held a value from the bound on | BufferedRandomAccessFile, MCbtree, MCLamportMutex | 16 threads, medians of 9 against `main` at 58371d45: BufferedRandomAccessFile 0.20 (2.02 CPU s) → 0.22 (2.23) (z7z88p6hfn), MCbtree 0.18 → 0.19 (z99nl9lpch), MCLamportMutex within noise; with it reverted both are 1.00× (38wbfncq2w, m798tz82lr) | Not understood: the instructions it saves are the direct tables' scans, and the fill writes what the new allocation wrote. |
 
 **Where the misses are.** These are cachegrind runs, because this container exposes no hardware counters (`perf stat` reports them as not supported). Each is a full one-worker run at #201's head, simulating a 32 KB D1 and a last level of either 2 MB (standing in for L2) or 32 MB (standing in for memory). Misses are data-read misses, attributed by function and grouped:
 

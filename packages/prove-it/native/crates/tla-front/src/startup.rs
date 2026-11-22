@@ -5,6 +5,7 @@
 //! TLC holds without computing it (`processConstants`). Whether an attempt succeeds only the run
 //! knows: one that fails leaves the definition an operator.
 
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -135,12 +136,7 @@ pub(crate) fn get_level_bound(
     expression: &Expr,
     scope: Option<&Rc<crate::spec::Scope>>,
 ) -> u8 {
-    LevelBound {
-        environment,
-        overridden: get_overridden_bodies(environment),
-        facts: get_fact_statements(environment),
-    }
-    .get_level(expression, scope, &mut Vec::new())
+    LevelBound::new(environment).get_level(expression, scope, &mut Expanding::default())
 }
 
 /// `getLevelBound` of a definition's body, and of a function definition's bounds, as
@@ -149,21 +145,12 @@ pub(crate) fn get_definition_level_bound(
     environment: &Environment,
     definition: &Rc<Definition>,
 ) -> u8 {
-    LevelBound {
-        environment,
-        overridden: get_overridden_bodies(environment),
-        facts: get_fact_statements(environment),
-    }
-    .get_definition_level(definition)
+    LevelBound::new(environment).get_definition_level(definition)
 }
 
 /// TLC's startup decision for the model of `environment`.
 pub fn get_startup_model(environment: &Environment) -> StartupModel {
-    let bound = LevelBound {
-        environment,
-        overridden: get_overridden_bodies(environment),
-        facts: get_fact_statements(environment),
-    };
+    let bound = LevelBound::new(environment);
     let mut model = StartupModel {
         attempted: Vec::new(),
         reads: FastMap::default(),
@@ -274,17 +261,102 @@ fn get_module_override_level(module: &str, name: &str) -> Option<u8> {
         .map(|(_, _, level)| level)
 }
 
+/// What `getLevelBound` reads of an environment once: the overridden bodies, the statements of
+/// the named theorems and assumptions, and the level of each definition it walked, by key, where
+/// the walk reached no definition or binding being expanded below the definition's own frame
+/// (whose level TLC's walk gives as 0 only there).
+#[derive(Default)]
+pub struct LevelBoundCache {
+    tables: OnceCell<(FastMap<usize, u8>, FastSet<usize>)>,
+    definition_levels: RefCell<FastMap<usize, u8>>,
+}
+
+/// The definitions and bindings a walk is expanding, by key and depth, with the lowest depth a
+/// reference reached in the frame being computed.
+struct Expanding {
+    depths: FastMap<usize, usize>,
+    lowest_reached: usize,
+}
+
+impl Default for Expanding {
+    fn default() -> Expanding {
+        Expanding {
+            depths: FastMap::default(),
+            lowest_reached: usize::MAX,
+        }
+    }
+}
+
+impl Expanding {
+    /// Whether the key is being expanded, which the reference then reads as level 0.
+    fn reaches(&mut self, key: usize) -> bool {
+        let Some(&depth) = self.depths.get(&key) else {
+            return false;
+        };
+        self.lowest_reached = self.lowest_reached.min(depth);
+        true
+    }
+
+    /// Computes a frame's level, and whether the frame reached nothing below it.
+    fn frame(&mut self, key: usize, compute: impl FnOnce(&mut Expanding) -> u8) -> (u8, bool) {
+        let depth = self.depths.len();
+        self.depths.insert(key, depth);
+        let outer = std::mem::replace(&mut self.lowest_reached, usize::MAX);
+        let level = compute(self);
+        self.depths.remove(&key);
+        let is_closed = self.lowest_reached >= depth;
+        self.lowest_reached = if is_closed {
+            outer
+        } else {
+            outer.min(self.lowest_reached)
+        };
+        (level, is_closed)
+    }
+}
+
 /// `SymbolNodeValueLookupProvider.getLevelBound` over the AST.
 struct LevelBound<'a> {
     environment: &'a Environment,
-    overridden: FastMap<usize, u8>,
-    /// The statements of the named theorems and assumptions, by address.
-    facts: FastSet<usize>,
+    overridden: &'a FastMap<usize, u8>,
+    facts: &'a FastSet<usize>,
+    definition_levels: &'a RefCell<FastMap<usize, u8>>,
 }
 
-impl LevelBound<'_> {
+impl<'a> LevelBound<'a> {
+    fn new(environment: &'a Environment) -> LevelBound<'a> {
+        let cache = &environment.level_bounds;
+        let (overridden, facts) = cache.tables.get_or_init(|| {
+            (
+                get_overridden_bodies(environment),
+                get_fact_statements(environment),
+            )
+        });
+        LevelBound {
+            environment,
+            overridden,
+            facts,
+            definition_levels: &cache.definition_levels,
+        }
+    }
+
     fn get_definition_level(&self, definition: &Rc<Definition>) -> u8 {
-        self.get_definition_level_in(definition, &mut vec![key(definition)])
+        self.expand_definition(definition, &mut Expanding::default())
+    }
+
+    /// The level of a definition's body, from the cache where the walk closed over it.
+    fn expand_definition(&self, definition: &Rc<Definition>, expanding: &mut Expanding) -> u8 {
+        if let Some(&level) = self.definition_levels.borrow().get(&key(definition)) {
+            return level;
+        }
+        let (level, is_closed) = expanding.frame(key(definition), |expanding| {
+            self.get_definition_level_in(definition, expanding)
+        });
+        if is_closed {
+            self.definition_levels
+                .borrow_mut()
+                .insert(key(definition), level);
+        }
+        level
     }
 
     // `getLevelBoundAppl`: an action or a temporal operator bounds its level without its
@@ -294,7 +366,7 @@ impl LevelBound<'_> {
         &self,
         expression: &Expr,
         scope: Option<&Rc<crate::spec::Scope>>,
-        expanding: &mut Vec<usize>,
+        expanding: &mut Expanding,
     ) -> u8 {
         match &expression.kind {
             ExpressionKind::Number { .. }
@@ -341,7 +413,7 @@ impl LevelBound<'_> {
         written: &Name,
         args: &[Expr],
         scope: Option<&Rc<crate::spec::Scope>>,
-        expanding: &mut Vec<usize>,
+        expanding: &mut Expanding,
     ) -> u8 {
         // SANY makes an `OpArgNode` of an argument in the place of a parameter that takes
         // arguments, whatever its spelling, which `getLevelBound` gives level 0.
@@ -396,12 +468,12 @@ impl LevelBound<'_> {
                 _ => return arguments,
             };
             let key = Rc::as_ptr(inner) as usize;
-            if expanding.contains(&key) {
+            if expanding.reaches(key) {
                 return arguments;
             }
-            expanding.push(key);
-            let level = self.get_level(inner, inner_scope.as_ref(), expanding);
-            expanding.pop();
+            let (level, _) = expanding.frame(key, |expanding| {
+                self.get_level(inner, inner_scope.as_ref(), expanding)
+            });
             return arguments.max(level);
         }
         let Some(name) = expression.reference() else {
@@ -422,13 +494,10 @@ impl LevelBound<'_> {
             {
                 return arguments.max(level);
             }
-            if expanding.contains(&key(definition)) {
+            if expanding.reaches(key(definition)) {
                 return arguments;
             }
-            expanding.push(key(definition));
-            let level = self.get_definition_level_in(definition, expanding);
-            expanding.pop();
-            return arguments.max(level);
+            return arguments.max(self.expand_definition(definition, expanding));
         }
         if self.environment.builtins.contains_key(&name) {
             let level = get_builtin_override_level(&name)
@@ -443,7 +512,12 @@ impl LevelBound<'_> {
     fn get_standard_operator_level(&self, name: &str) -> u8 {
         crate::environment::get_standard_module_definition(name)
             .map(|(module, definition)| {
-                self.get_standard_level(&module, &definition.body, &mut vec![key(&definition)])
+                let mut expanding = Expanding::default();
+                expanding
+                    .frame(key(&definition), |expanding| {
+                        self.get_standard_level(&module, &definition.body, expanding)
+                    })
+                    .0
             })
             .unwrap_or(0)
     }
@@ -453,7 +527,7 @@ impl LevelBound<'_> {
         &self,
         module: &Module,
         expression: &Expr,
-        expanding: &mut Vec<usize>,
+        expanding: &mut Expanding,
     ) -> u8 {
         let (written, args): (&Name, &[Expr]) = match &expression.kind {
             ExpressionKind::Identifier { name, .. } => (name, &[]),
@@ -507,19 +581,19 @@ impl LevelBound<'_> {
         if let Some(level) = get_module_override_level(&module.name, written) {
             return arguments.max(level);
         }
-        if expanding.contains(&key(definition)) {
+        if expanding.reaches(key(definition)) {
             return arguments;
         }
-        expanding.push(key(definition));
-        let level = self.get_standard_level(module, &definition.body, expanding);
-        expanding.pop();
+        let (level, _) = expanding.frame(key(definition), |expanding| {
+            self.get_standard_level(module, &definition.body, expanding)
+        });
         arguments.max(level)
     }
 
     fn get_definition_level_in(
         &self,
         definition: &Rc<Definition>,
-        expanding: &mut Vec<usize>,
+        expanding: &mut Expanding,
     ) -> u8 {
         let sets: Vec<Expr> = match &definition.kind {
             DefinitionKind::Function { bounds } => {

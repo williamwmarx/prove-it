@@ -276,13 +276,18 @@ impl MemoTable {
     #[inline(always)]
     fn review(&mut self) {
         if self.probes > PROBE_BUDGET {
-            self.is_clustered = false;
-            self.can_cluster = false;
-            self.rehash(self.capacity());
+            self.scatter();
         }
         if self.lookups.is_multiple_of(WINDOW) {
             self.probes = 0;
         }
+    }
+
+    #[cold]
+    fn scatter(&mut self) {
+        self.is_clustered = false;
+        self.can_cluster = false;
+        self.rehash(self.capacity());
     }
 
     fn free_packed(&self, key: u64) -> usize {
@@ -328,11 +333,17 @@ impl MemoTable {
     #[inline(always)]
     fn open(&mut self) -> bool {
         self.lookups += 1;
-        if self.lookups == PROBATION && (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE
-        {
-            self.turn_off();
+        if self.lookups == PROBATION {
+            self.end_probation();
         }
         self.is_enabled
+    }
+
+    #[cold]
+    fn end_probation(&mut self) {
+        if (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE {
+            self.turn_off();
+        }
     }
 
     fn turn_off(&mut self) {

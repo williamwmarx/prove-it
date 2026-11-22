@@ -75,6 +75,9 @@ pub struct EngineContext {
     pub diameter_atoms: Vec<bool>,
     /// Whether each atom reads TLCGet("level").
     pub level_atoms: Vec<bool>,
+    /// Whether each atom is a state predicate that reads nothing the search keeps, prints nor
+    /// draws, which answers a state the same in every check of the graph.
+    pub repeatable_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
     /// Whether an action property may print, which the search prints among Next's prints.
@@ -842,6 +845,8 @@ pub enum Atom {
         /// What the subscript's value depends on besides the state: the atoms whose subscripts
         /// have the same key share its values on the helpers.
         key: Option<SubscriptKey>,
+        /// The state variables the subscript is a tuple of, where it is one (`SubscriptSlots`).
+        slots: Option<SubscriptSlots>,
         enabled: Option<usize>,
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
@@ -892,9 +897,17 @@ pub struct EnabledSteps {
     /// What the subscript's value depends on besides the state, which the atoms whose subscripts
     /// have the same share their values of.
     pub key: SubscriptKey,
+    /// The state variables the subscript is a tuple of, where it is one.
+    pub slots: Option<SubscriptSlots>,
     /// The positions of TLC's actions A splits into, or `None` for all of them.
     pub actions: Option<Vec<bool>>,
 }
+
+/// The slots of the state variables a subscript is a tuple of, or a tuple of such tuples, in
+/// order. TLC compares two tuples element by element (`TupleValue.equals`), so a step leaves the
+/// subscript unchanged just where it leaves each of those variables so, in that order, and the
+/// states' own values tell without the subscript's.
+pub type SubscriptSlots = Arc<[u32]>;
 
 /// A subscript's expression and the scope it is read in.
 pub type SubscriptKey = (NodeId, Option<Index>);
@@ -1828,6 +1841,7 @@ impl EngineContext {
             .iter()
             .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
             .collect();
+        let repeatable_atoms = compiled.iter().map(|atom| atom.is_repeatable).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = owned_conjuncts
             .into_iter()
@@ -1877,6 +1891,7 @@ impl EngineContext {
             is_live_registered,
             diameter_atoms,
             level_atoms,
+            repeatable_atoms,
             is_invariant_printing,
             is_action_property_printing,
             startup,
@@ -1955,6 +1970,7 @@ struct CompiledAtom {
     is_printing: bool,
     reads_diameter: bool,
     uses_registers: bool,
+    is_repeatable: bool,
 }
 
 // Whether an atom's action is the next-state relation, named as the specification names it in the
@@ -2046,6 +2062,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
             action,
             subscript,
             key,
+            slots,
             enabled,
             is_next,
             split,
@@ -2054,6 +2071,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
             action: guard(action),
             subscript: subscript.map(guard),
             key,
+            slots,
             enabled,
             is_next,
             split,
@@ -2080,11 +2098,13 @@ fn compile_atom(
     let mut is_printing = false;
     let mut reads_diameter = false;
     let mut uses_registers = false;
+    let mut is_repeatable = false;
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
             uses_registers = compiled.uses_registers();
+            is_repeatable = !compiled.reads_search();
             if compiled.reads_level() {
                 Atom::LevelState(compiled.eval)
             } else {
@@ -2092,12 +2112,13 @@ fn compile_atom(
             }
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
-            let (subscript, key) = match unchanged {
-                None => (None, None),
+            let (subscript, key, slots) = match unchanged {
+                None => (None, None, None),
                 Some(node) => match resolve(ir, *node) {
                     NodeKind::Unchanged(inner) => (
                         Some(compile_subscript(compiler, *inner, scope)?),
                         Some(get_subscript_key(ir, *inner, scope)),
+                        compiler.tuple_slots_in_scope(*inner, scope).map(Arc::from),
                     ),
                     _ => return Err("a subscript the engine doesn't read".to_string()),
                 },
@@ -2124,6 +2145,7 @@ fn compile_atom(
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 key,
+                slots,
                 enabled: enabled.map(|position| position as usize),
             })
         })(),
@@ -2160,6 +2182,9 @@ fn compile_atom(
                         .map(|compiled| EnabledSteps {
                             subscript: compiled.eval,
                             key: get_subscript_key(ir, *subscript, scope),
+                            slots: compiler
+                                .tuple_slots_in_scope(*subscript, scope)
+                                .map(Arc::from),
                             actions: match Split::of(actions) {
                                 Some(Split::Some(taken)) => Some(taken),
                                 _ => None,
@@ -2181,5 +2206,6 @@ fn compile_atom(
         is_printing,
         reads_diameter,
         uses_registers,
+        is_repeatable,
     }
 }

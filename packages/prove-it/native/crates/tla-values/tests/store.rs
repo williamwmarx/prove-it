@@ -1039,3 +1039,71 @@ fn an_overlay_laid_on_another_store_copies_it_whole() {
     assert_eq!(overlay.value_count(), Store::new().value_count());
     assert_eq!(overlay.int(20_000).unwrap(), held);
 }
+
+// A key in a function's domain as the function's own keys tell it, against the membership the
+// store answers of the domain it builds: wherever the keys tell, the membership says the same and
+// doesn't fail, and they tell of a record's field and a sequence's index.
+#[test]
+fn tells_a_key_of_a_function_as_membership_in_its_domain_does() {
+    let mut store = Store::new();
+    rank(&mut store, &["a", "b", "c"]);
+    let numbers = ints(&mut store, &[-1, 0, 1, 2, 3, 4, 5, 7, 20, 40]);
+    let texts = [
+        str(&mut store, "a"),
+        str(&mut store, "b"),
+        str(&mut store, "z"),
+    ];
+    let models = [store.model(&utf16("m")), store.model(&utf16("n"))];
+    let any = store.any();
+    let pair = store.tuple_of(&numbers[2..4]);
+    let mut keys: Vec<Id> = vec![TRUE, FALSE, EMPTY_SET, EMPTY_TUPLE, any, pair];
+    keys.extend(&numbers);
+    keys.extend(texts);
+    keys.extend(models);
+    let long: Vec<Id> = (1..=40).map(|key| store.int(key).unwrap()).collect();
+    let sparse = ints(&mut store, &[1, 3, 7, 20]);
+    let many: Vec<Id> = (0..20).map(|key| store.int(3 * key).unwrap()).collect();
+    let values = |count: usize| vec![TRUE; count];
+    let mut functions = vec![
+        EMPTY_TUPLE,
+        store.tuple_of(&numbers[..3]),
+        store.tuple_of(&long),
+        store.tuple_of(&[any]),
+    ];
+    for domain in [
+        &numbers[1..4],
+        &long[..],
+        &sparse[..],
+        &many[..],
+        &texts[..2],
+        &models[..],
+        &[TRUE, FALSE][..],
+        &[pair][..],
+        &[numbers[2], texts[0]][..],
+    ] {
+        if let Ok(function) = store.function_of(domain, &values(domain.len())) {
+            functions.push(function);
+        }
+    }
+    functions.push(store.function_of(&numbers[1..3], &[any, TRUE]).unwrap());
+    let mut told = 0;
+    for &function in &functions {
+        for &key in &keys {
+            let domain = store.domain_of(function);
+            let member = store.is_member(key, domain);
+            if let Some(found) = store.find_in_domain(function, key) {
+                assert_eq!(member.ok(), Some(found), "{function} {key}");
+                told += 1;
+            }
+        }
+    }
+    assert!(told >= 60, "{told}");
+    let record = store.function_of(&texts[..2], &values(2)).unwrap();
+    assert_eq!(store.find_in_domain(record, texts[0]), Some(true));
+    assert_eq!(store.find_in_domain(record, texts[2]), Some(false));
+    assert_eq!(store.find_in_domain(record, numbers[2]), None);
+    let sequence = store.tuple_of(&long);
+    assert_eq!(store.find_in_domain(sequence, numbers[8]), Some(true));
+    assert_eq!(store.find_in_domain(sequence, numbers[1]), Some(false));
+    assert_eq!(store.find_in_domain(sequence, texts[0]), None);
+}

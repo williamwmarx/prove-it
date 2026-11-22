@@ -1048,6 +1048,10 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
+    /// How many times the evaluator applied TLCGet to a key the search or the split makes
+    /// (`is_varying_tlc_get_key`), which an \E's bound in the split of the next-state relation
+    /// reads as TLC starts (`Splitter::evaluate_bound`).
+    pub(crate) varying_tlc_gets: u64,
     /// How many lazy functions and filters the evaluator built, each holding the states to
     /// evaluate later in them: a definition that built one isn't the same value in other states.
     captures: u64,
@@ -1395,6 +1399,22 @@ fn is_simulation_run_key(key: &[u16]) -> bool {
     !matches!(key.as_str(), "level" | "spec")
         && !is_unknown_tlc_get_key(&key)
         && !key.starts_with(JAVA_PROPERTY_PREFIX)
+}
+
+// Whether TLCGet of this key reads what the search or the split makes, so that TLC's split, which
+// reads it once as TLC starts, and an evaluation at each state read different values: the
+// search's statistics and the state's level (`TLCGetSet.TLCGetStringValue`), and the spec, whose
+// actions the split is still building. The other keys TLC fixes for the run, or read registers
+// and properties, which change only where the spec sets them (`Splitter::evaluate_bound`).
+fn is_varying_tlc_get_key(key: &Value) -> bool {
+    let Value::Str(key) = key else {
+        return false;
+    };
+    let key = String::from_utf16_lossy(&key.units);
+    matches!(
+        key.as_str(),
+        "level" | "diameter" | "generated" | "distinct" | "queue" | "duration" | "stats" | "spec"
+    )
 }
 
 fn undefined_register<T>(key: &Value) -> Evaluated<T> {
@@ -2653,6 +2673,7 @@ impl<'ir> Evaluator<'ir> {
             searched_failing: HashSet::new(),
             searched_limited: HashSet::new(),
             searched_unwarned: HashSet::new(),
+            varying_tlc_gets: 0,
             searched_printed: HashMap::new(),
             searched_effects: HashMap::new(),
             searched_unworded: HashSet::new(),
@@ -4224,6 +4245,21 @@ impl<'ir> Evaluator<'ir> {
                 .frames
                 .extend(sources.into_iter().map(StackFrame::Node));
         }
+    }
+
+    // What a Java method that evaluates an operator argument returns (`MethodValue.apply`): a
+    // FingerprintException thrown in the argument, which it catches as any exception, it rethrows
+    // as the method's EvalException, as `EvaluatingValue.eval` does (`catch_fingerprint`).
+    fn java_method_result<T>(&mut self, signature: &str, result: Evaluated<T>) -> Evaluated<T> {
+        if let Err(EvalError {
+            message: Some(message),
+            ..
+        }) = &result
+            && !message.is_eval_exception
+        {
+            self.catch_fingerprint();
+        }
+        as_java_runtime_failure(signature, result)
     }
 
     // `TLCExt.tlcEval2`, an `EvaluatingValue`, of an expression of constant level: the value it
@@ -13501,7 +13537,11 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn tlc_get(&mut self, operand: &Operand, context: &Context) -> Evaluated<Value> {
-        Ok(match self.operand(operand)? {
+        let key = self.operand(operand)?;
+        if is_varying_tlc_get_key(&key) {
+            self.varying_tlc_gets += 1;
+        }
+        Ok(match key {
             // A register, whose value no cache may keep.
             key @ Value::Int(index) if index >= 0 => {
                 self.reads += 1;
@@ -14011,8 +14051,15 @@ impl<'ir> Evaluator<'ir> {
                 {
                     elements(&left)?;
                 }
-                let right = self.settle(&right)?;
-                Value::Bool(equals(&left, &right)? == (name == "="))
+                // `SetEnumValue.equals` converts the other operand (`toSetEnum`) and compares
+                // inside its own method, which throws what fails there on as a
+                // FingerprintException where the set enumeration has a source.
+                let was_frozen = self.is_frozen();
+                let compared = self.settle(&right).and_then(|right| equals(&left, &right));
+                if compared.is_err() && matches!(left, Value::Set(_)) {
+                    self.fingerprint_frozen(&left, was_frozen);
+                }
+                Value::Bool(compared? == (name == "="))
             }
             "~" => {
                 arity(1)?;
@@ -14801,7 +14848,7 @@ impl<'ir> Evaluator<'ir> {
                 let mut kept = Vec::new();
                 for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
                     let tested = self.call_with_values(&test, std::slice::from_ref(element));
-                    match as_java_runtime_failure(SELECT_SEQ, tested)? {
+                    match self.java_method_result(SELECT_SEQ, tested)? {
                         Value::Bool(true) => kept.push(element.clone()),
                         Value::Bool(false) => {}
                         value => {
@@ -14897,7 +14944,7 @@ impl<'ir> Evaluator<'ir> {
                     while position > 0 {
                         let pair = [element.clone(), sorted[position - 1].clone()];
                         let compared = self.call_with_values(&less, &pair);
-                        match as_java_runtime_failure(SORT_SEQ, compared)? {
+                        match self.java_method_result(SORT_SEQ, compared)? {
                             Value::Bool(true) => position -= 1,
                             Value::Bool(false) => break,
                             other => {
