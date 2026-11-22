@@ -1987,10 +1987,13 @@ impl<'a> Compiler<'a> {
             return compiled;
         }
         let program = Program::default();
-        let mut machine = Machine::new(&program, std::mem::take(self.store));
+        let mut machine = Machine::new(
+            &program,
+            std::mem::replace(self.store, Store::placeholder()),
+        );
         let value = (compiled.eval)(&mut machine);
         let is_quiet = machine.output.is_empty();
-        *self.store = std::mem::take(&mut machine.store);
+        *self.store = machine.store;
         match value {
             Ok(id) if is_quiet => Compiled {
                 eval: eval(move |_| Ok(id)),
