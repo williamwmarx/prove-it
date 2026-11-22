@@ -6730,6 +6730,15 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   declines ("selected a field TLCGet("spec")'s record lacks, which TLC prints in its own order");
   main prints the wrong order without -inv and -invlevel, and declines with them.
 
+- A variable the initial predicate walks as a conjunct before assigning it (`Init == x /\ x =
+  FALSE`): `getInitStatesAppl` looks it up as its OpDeclNode, which isn't a boolean, and fails
+  printing the declaration's range ("In computing initial states, TLC expected a boolean
+  expression, but instead found line 2, col 10 to line 2, col 10 of module M."), which the IR
+  doesn't keep, so the replay declines ("an unassigned variable walked as a conjunct of the
+  initial predicate"); the trace evaluator had reported an undefined identifier. Read inside an
+  expression (`~x`), it is `evalAppl`'s undefined identifier, which matches. Found in the specs of
+  upstream tla-ts's unit tests at 0341dbe5; fixtures `init-*-variable-*`.
+
 - DFID (`-dfid N`): `DFID with _POSSIBLE predicates`, `DFID with TLCGet of diameter or distinct`,
   `DFID with random draws, register writes, or JSON files`, `DFID with effects, liveness,
   continuation, or output files`, `DFID initial-state order can affect the search`, `a DFID
