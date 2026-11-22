@@ -668,6 +668,23 @@ impl<'p> Machine<'p> {
         }
         let read = keys.map(|key| self.read_key(key));
         let (known, height) = self.tables[table].find(&read);
+        if known != EMPTY && height == 0 {
+            return Ok(known);
+        }
+        self.lookup_further(table, &read, known, height, inner)
+    }
+
+    // A lookup that missed, or hit a value whose evaluation nested recursive calls, kept out of
+    // line so that a plain hit stays short.
+    #[inline(never)]
+    fn lookup_further(
+        &mut self,
+        table: usize,
+        read: &[Id],
+        known: Id,
+        height: u32,
+        inner: &Eval,
+    ) -> Outcome<Id> {
         if known != EMPTY {
             self.reach_cached(height)?;
             return Ok(known);
@@ -678,7 +695,7 @@ impl<'p> Machine<'p> {
         let height = self.reached_below(outer);
         let value = value?;
         if self.output.len() == output_at && value != self.kept_lazy_function {
-            self.tables[table].set_with_height(&read, value, height);
+            self.tables[table].set_with_height(read, value, height);
         }
         Ok(value)
     }
