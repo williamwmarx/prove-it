@@ -14,11 +14,13 @@ TypeScript engine is deleted. The plan was written for the owner on 2026-11-09 (
 
 A decline prints `prove-it: not native yet: <reason>` on stderr and exits 1. Output is held for
 the first two seconds of a run (`transaction.rs`, `HOLD`), and through the front end's lowering of
-the model however long that takes (`holding_through`): a decline within them prints nothing else,
-on stdout or stderr, so the front end's declines never follow output. After them the output
-streams as TLC prints it, so a slow decline of the startup's evaluation or of the engine follows
-the TLC lines already printed: stdout may hold TLC's transcript up to the point where the engine
-stopped, and stderr then ends with the decline's line. `main` does the same. The library and
+the model however long that takes (`holding_through`); it streams from the first write after
+them, and a decline marked before that write keeps it held (`is_streaming`). So a decline before
+anything streamed, the front end's however slow its lowering, prints nothing else, on stdout or
+stderr. Once the output streams it goes out as TLC prints it, so a later decline of the startup's
+evaluation or of the engine follows the TLC lines already printed: stdout may hold TLC's
+transcript up to the point where the engine stopped, and stderr then ends with the decline's
+line. `main` does the same. The library and
 the CLI of `dist/` print none of it ([cli.md](cli.md), "What a decline leaves printed"). A tool that
 compares runs counts a decline with stdout within the hold, or with more than one stderr line, as
 contaminated, not as a decline.
