@@ -1147,6 +1147,23 @@ MCExactInitialSync, cf1s_folklore and 2PCwithBTM within main's range; the bench 
 `depot-ubuntu-24.04-4` at 4 workers, 1.00× over the suite, philosophers 65.4 → 62.0, queue 16.2
 → 15.4, test19 44.7 → 42.9, ReadersWriters 46.2 → 50.2 (main 45–49), the rest within their
 ranges. Parity clean.
+### A thread's values imported by the hash the overlay kept (import-prefetch)
+
+The merge imports every value a thread made into the store one by one, in the order adding the
+states one by one would, so the store numbers them as one thread's would. On PaxosCommit that is
+about one new value a new state (128,061 for a level of 144,451 states), and the import took 191
+ms of a 1,714 ms run at 16 workers on `depot-ubuntu-24.04-16`: each value was hashed again, its
+flags read again, and its slot of the intern table probed cold. A block whose words are all the
+store's values has the store's ids as its words, so the overlay's hash and flags are the store's:
+the import reuses them (`Store::import`) and reads the table's slot for the values of a state
+eight states on while it imports these (`Store::prefetch_import`). On this box 93–100% of the
+imports are such blocks. Locally at 4 workers the import of PaxosCommit's large levels took
+18/33/44/62/43/48/34/16 ms before and 8/23/15/29/14/18/9/5 after. Against main at 8ee58a30,
+median wall ms of 5 interleaved runs: the perf suite on `depot-ubuntu-24.04-16` at 16 workers,
+1.009× over the suite, PaxosCommit 1473.5 → 1284.3 (1.15×), MCMultiNode 628.6 → 589.9 (1.07×),
+TLCSailfish1 373.6 → 359.8, Detlefs 451.3 → 441.6, the rest within 2.5%; the bench suite on
+`depot-ubuntu-24.04-4` at 4 workers, 1.00× over the suite, every model within 5% and all but
+VoucherRedeem and TokenRing, a millisecond or two slower, within main's range. Parity clean.
 
 ### Short runs: what TokenRing and SimpleRegular spend (short-run-costs)
 

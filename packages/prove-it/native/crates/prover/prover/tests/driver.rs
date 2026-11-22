@@ -225,3 +225,46 @@ fn a_pragma_string_reaches_the_backend_as_tlapm_lexes_it() {
         }
     );
 }
+
+// Schedule.run holds a back end to the method's time limit only from Params.wait (3 s) on, when
+// it first looks at the deadline, so a back end runs that long whatever the limit, and a result
+// before then is the back end's own.
+#[test]
+fn holds_a_back_end_to_the_scheduler_wait_at_least() {
+    let obligations = get_module_obligations(&get_pragma_module(
+        "THEOREM \\A x \\in Nat : x + 0 = x\n  BY SMTT(0)\nTHEOREM \\A x \\in Nat : x * 1 = x\n  BY SMTT(1)\nTHEOREM \\A x \\in Nat : x - 0 = x\n  BY SMTT(5)",
+    ));
+    let (round, requested) = prove(&obligations, |request| Answer::Decided {
+        verdict: Verdict::Sat,
+        time_used_ms: if request.time_limit_ms > 3_000.0 {
+            5_000.0
+        } else {
+            2_000.0
+        },
+    });
+    assert_eq!(
+        requested
+            .iter()
+            .map(|request| request.time_limit_ms)
+            .collect::<Vec<_>>(),
+        [3_000.0, 3_000.0, 5_000.0]
+    );
+    let reasons: Vec<(f64, Option<&str>)> = get_decided(&round)
+        .iter()
+        .map(|report| {
+            let attempt = &report.attempts[0];
+            (
+                attempt.attempt.method.time_limit_ms,
+                attempt.reason.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            (0.0, Some("false")),
+            (1_000.0, Some("false")),
+            (5_000.0, Some("timeout"))
+        ]
+    );
+}

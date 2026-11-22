@@ -453,6 +453,33 @@ impl Store {
         let value = match meta.kind {
             KIND_STRING => self.str(text()),
             KIND_MODEL => self.model(text()),
+            KIND_SET | KIND_FUNCTION | KIND_TUPLE if overlay.is_block_of_base(meta) => {
+                // A block of this store's values has this store's ids as its words, so the
+                // overlay hashed it, and read its flags, as this store would.
+                let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
+                let source = &overlay.heap[meta.payload as usize..][..length];
+                let found = self.find(meta.hash, |id| {
+                    let own = self.meta(id);
+                    own.kind == meta.kind
+                        && own.size == meta.size
+                        && is_same(self.words(own.payload as usize, length), source)
+                });
+                match found {
+                    Ok(id) => id,
+                    Err(slot) => {
+                        let offset = self.heap.len() as i32;
+                        self.heap.extend_from_slice(source);
+                        self.allocate_flagged(
+                            meta.kind,
+                            offset,
+                            meta.size,
+                            meta.flags & !BUILT_AS_FUNCTION,
+                            meta.hash,
+                            slot,
+                        )
+                    }
+                }
+            }
             KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
                 let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
                 let source = &overlay.heap[meta.payload as usize..][..length];
@@ -482,6 +509,27 @@ impl Store {
         }
         imported[index] = value;
         value
+    }
+
+    /// Reads the slot of this store's table an overlay's own value would take into the cache,
+    /// for an `import` of it a few values on, where the value is a block of this store's values.
+    pub fn prefetch_import(&self, overlay: &Store, id: Id) {
+        if id >= overlay.id_base {
+            let meta = overlay.meta[id as usize];
+            if matches!(meta.kind, KIND_SET | KIND_FUNCTION | KIND_TUPLE)
+                && overlay.is_block_of_base(meta)
+            {
+                prefetch(&self.table[meta.hash as usize & self.mask]);
+            }
+        }
+    }
+
+    // Whether every word of an overlay's own block is a value of the store under it.
+    fn is_block_of_base(&self, meta: Meta) -> bool {
+        let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
+        self.heap[meta.payload as usize..][..length]
+            .iter()
+            .all(|&word| word < self.id_base)
     }
 
     /// Empties the store and ranks the given texts, in order, as `setStringOrder` and then
@@ -728,12 +776,26 @@ impl Store {
 
     // Adds a value whose block, if any, is already on the heap at `payload`.
     fn allocate(&mut self, kind: u8, payload: i32, size: u32, hash: u32, slot: usize) -> Id {
-        let id = self.value_count() as Id;
         let flags = if matches!(kind, KIND_SET | KIND_FUNCTION | KIND_TUPLE) {
             self.get_flags(kind, payload as usize, size as usize)
         } else {
             0
         };
+        self.allocate_flagged(kind, payload, size, flags, hash, slot)
+    }
+
+    // Adds a value whose block, if any, is already on the heap at `payload`, with its flags
+    // read already.
+    fn allocate_flagged(
+        &mut self,
+        kind: u8,
+        payload: i32,
+        size: u32,
+        flags: u8,
+        hash: u32,
+        slot: usize,
+    ) -> Id {
+        let id = self.value_count() as Id;
         self.meta.push(Meta {
             kind,
             flags,
@@ -2580,6 +2642,21 @@ enum Merge {
     Union,
     Intersection,
     Difference,
+}
+
+// Reads a value into the cache ahead of its use: the read goes on while the thread does other
+// work.
+#[inline(always)]
+fn prefetch<T>(value: &T) {
+    let address: *const T = value;
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch is a hint to the cache. It reads nothing the program sees and never
+    // faults, and the address is that of a live value.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(address.cast());
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = address;
 }
 
 // The id in a table of a value with this hash that `is_match` accepts, or the empty slot where the
