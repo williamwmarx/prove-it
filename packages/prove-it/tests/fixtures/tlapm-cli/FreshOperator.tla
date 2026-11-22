@@ -1,0 +1,7 @@
+---- MODULE FreshOperator ----
+EXTENDS TLAPS
+THEOREM ASSUME NEW STATE F(_) PROVE F(1) = F(2)
+BY Zenon
+THEOREM ASSUME NEW STATE F(_) PROVE F(1) = F(1)
+BY Zenon
+====

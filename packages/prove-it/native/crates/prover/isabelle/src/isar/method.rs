@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use crate::error::{Res, error_exn};
+use crate::error::{Error, Res, error_exn};
 use crate::provers::clasimp::{BlastDepthTac, ClasimpContext, auto_tac, clarsimp_tac, force_tac};
 use crate::provers::classical::{ClassicalContext, add_unsafe_dest, add_unsafe_intro, with_claset};
 use crate::pure::drule::{asm_rl, is_norm_hhf, norm_hhf_eq, reflexive_thm, term_i};
@@ -21,7 +21,7 @@ use crate::pure::object_logic::atomize_prems_tac;
 use crate::pure::raw_simplifier::{SimpContext, Simpset, add_simps, empty_simpset};
 use crate::pure::rewriter::{RewriteMode, generic_rewrite_goal_tac};
 use crate::pure::seq::{Seq, filter_seq, maps_seq, single_seq};
-use crate::pure::simplifier::norm_hhf;
+use crate::pure::simplifier::{asm_full_simp_tac, norm_hhf};
 use crate::pure::tactic::{assume_tac, eresolve_tac, flexflex_tac, match_tac, resolve_tac};
 use crate::pure::tactical::{
     GoalTactic, Tactic, all_goals, all_tac, append_goal, changed_prop, no_tac, or_else,
@@ -55,6 +55,7 @@ pub enum MethodText {
     Blast { modifiers: Vec<Modifier> },
     Force { modifiers: Vec<Modifier> },
     Clarsimp { modifiers: Vec<Modifier> },
+    Simp,
     Iprover,
     Intro { facts: Vec<String> },
     Then { methods: Vec<MethodText> },
@@ -147,7 +148,11 @@ impl MethodParser<'_> {
             let kind = match kind.as_str() {
                 "intro" => ModifierKind::Intro,
                 "dest" => ModifierKind::Dest,
-                _ => return Err(error_exn(format!("Unsupported method modifier: {kind}"))),
+                _ => {
+                    return Err(Error::Unsupported(format!(
+                        "Isabelle's method modifier {kind}:"
+                    )));
+                }
             };
             result.push(Modifier {
                 kind,
@@ -178,6 +183,16 @@ impl MethodParser<'_> {
             "clarsimp" => MethodText::Clarsimp {
                 modifiers: modifiers(self)?,
             },
+            // Simplifier.simp_method takes modifiers (`add:`, `only:`, …) and options
+            // (`(no_asm)`), which the port doesn't implement.
+            "simp" => {
+                if has_args && (self.is_section_start() || self.is_symbol("(", 0)) {
+                    return Err(Error::Unsupported(
+                        "Isabelle's simp method with arguments".into(),
+                    ));
+                }
+                MethodText::Simp
+            }
             "iprover" => MethodText::Iprover,
             "intro" => MethodText::Intro {
                 facts: if has_args { self.facts()? } else { Vec::new() },
@@ -317,6 +332,18 @@ fn evaluate(context: &Rc<ProofContext>, text: &MethodText) -> Method {
             let insert = insert_tac(facts, 1)?;
             let clasimp = get_clasimp(&context, with_modifiers(&context, &modifiers)?);
             Ok(then_tac(insert, changed_prop(clarsimp_tac(&clasimp)(1))))
+        }),
+        // Simplifier.simp_method with its default options: SIMPLE_METHOD' of CHANGED_PROP over
+        // asm_full_simp_tac.
+        MethodText::Simp => Rc::new(move |facts| {
+            let simp = SimpContext {
+                simpset: context.simpset.clone(),
+                bounds: 0,
+            };
+            simple_method_head(
+                facts,
+                Rc::new(move |index| changed_prop(asm_full_simp_tac(&simp)(index))),
+            )
         }),
         MethodText::Force { modifiers } => Rc::new(move |facts| {
             let tactic = force_tac(

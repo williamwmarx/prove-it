@@ -1,0 +1,43 @@
+TLC2 Version 2026.11.21.201612 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 23528] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/sq-wt/packages/prove-it/native/crates/prove-it-cli/tests/sany-checks/def-prefix-arguments/M.tla
+Semantic processing of module M
+Fatal errors in semantic processing of TLA spec M
+null
+Stack trace for exception:
+
+line 8, col 21 to line 8, col 22 of module M
+
+Internal error: IdPrefixElement has other than 2 or 3 heirs.
+	at tla2sany.semantic.Errors.addMessage(Errors.java:166)
+	at tla2sany.semantic.Generator.genIdToSelector(Generator.java:557)
+	at tla2sany.semantic.Generator.generateUseOrHide(Generator.java:6680)
+	at tla2sany.semantic.Generator.generateLeafProof(Generator.java:6509)
+	at tla2sany.semantic.Generator.generateProof(Generator.java:5787)
+	at tla2sany.semantic.Generator.processTheorem(Generator.java:5719)
+	at tla2sany.semantic.Generator.generateModule(Generator.java:2277)
+	at tla2sany.semantic.Generator.generate(Generator.java:2166)
+	at tla2sany.drivers.SANY.frontEndSemanticAnalysis(SANY.java:452)
+	at tla2sany.drivers.SANY.parse(SANY.java:196)
+	at tlc2.tool.impl.SpecProcessor.processSpec(SpecProcessor.java:431)
+	at tlc2.tool.impl.SpecProcessor.<init>(SpecProcessor.java:201)
+	at tlc2.tool.impl.Spec.<init>(Spec.java:111)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:212)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:202)
+	at tlc2.tool.impl.Tool.<init>(Tool.java:187)
+	at tlc2.tool.impl.FastTool.<init>(FastTool.java:62)
+	at tlc2.TLC.process(TLC.java:1400)
+	at tlc2.TLC.main(TLC.java:364)
+Semantic errors detected before the unexpected exception:
+
+*** Errors: 1
+
+line 8, col 21 to line 8, col 22 of module M
+
+Internal error: IdPrefixElement has other than 2 or 3 heirs.
+
+
+
+Starting... (2026-11-22 01:29:19)
+Error: Parsing or semantic analysis failed.
+Finished in 00s at (2026-11-22 01:29:19)

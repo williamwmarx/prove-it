@@ -151,10 +151,18 @@ impl Converter<'_> {
         }
     }
 
-    /// `toAtom`: TLC bounds the level of a formula whose parts are constant by the formula's own.
+    /// `toAtom`: TLC bounds the level of a formula whose parts are constant by its level bound
+    /// (`astToLive`'s `getLevelBound` where the level is constant), which counts an argument the
+    /// operator ignores, so that `Op(v)` with `Op(a) == TRUE` is a state predicate, evaluated
+    /// with the state as a Java override of Op would need.
     fn atom(&self, expression: &Expr, scope: Option<&Rc<Scope>>, level: Level) -> Result<Rc<Live>> {
         let level = if level == Level::Constant {
-            self.level(expression, scope)
+            match crate::startup::get_level_bound(self.environment, expression, scope) {
+                0 => Level::Constant,
+                1 => Level::Variable,
+                2 => Level::Action,
+                _ => Level::Temporal,
+            }
         } else {
             level
         };

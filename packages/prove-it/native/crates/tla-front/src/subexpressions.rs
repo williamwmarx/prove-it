@@ -9,7 +9,9 @@ use std::rc::Rc;
 use crate::ast::*;
 use crate::errors::{FrontError, SanyError, SyntaxError, format_range};
 use crate::hash::{FastMap, FastSet};
-use crate::instances::{apply, let_expression, map_children, map_definition, param};
+use crate::instances::{
+    apply, get_substituted_lambda_application, let_expression, map_children, map_definition, param,
+};
 use crate::resolve::{
     Result, Tables, get_arity, get_binder, get_name_selectors, get_operand_index, get_operands,
     get_selector_ranges,
@@ -385,6 +387,10 @@ impl Selector<'_> {
         };
         if matches!(selector, crate::ast::Selector::Colon) {
             return Ok(());
+        }
+        if let Some(application) = get_substituted_lambda_application(&current) {
+            self.current = Some(application.clone());
+            return self.select_operand(selector);
         }
         match &current.kind {
             ExpressionKind::Label { body, .. } => {

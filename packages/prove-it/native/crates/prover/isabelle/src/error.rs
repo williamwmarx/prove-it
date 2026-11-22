@@ -54,6 +54,10 @@ pub enum Error {
     /// PROVE, the end of the search. Tokens are numbers unique within a search, standing for the
     /// fresh objects the TypeScript compares by identity.
     Backtrack(Option<u64>),
+    /// A method, modifier or combinator of Isabelle's that the port doesn't implement, naming it.
+    /// No tactic catches it: the decision declines, since a failure Isabelle wouldn't give is
+    /// wrong output.
+    Unsupported(String),
 }
 
 pub type Res<T> = Result<T, Error>;

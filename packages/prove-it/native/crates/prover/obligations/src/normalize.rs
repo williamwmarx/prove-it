@@ -14,6 +14,7 @@ use std::rc::Rc;
 
 use crate::action::lambdify;
 use crate::anonymize::{Anonymizer, AnonymizerHost};
+use crate::enabled_axioms::check_enabled_axioms;
 use crate::equality::is_equal_hyp;
 use crate::errors::{ObligationError, Result, quote_json};
 use crate::expression::{
@@ -1074,12 +1075,16 @@ pub fn normalize(
                 let proof_scope = adjoin_all(&adjoin_all(&current, &unset), &bound.context);
                 let anonymized = anonymizer.proof(&mut expander, &proof_scope, &proof)?;
                 let simplified = if module.is_important {
-                    pipeline.simplify.simplify(
-                        &get_scope_hyps(&proof_scope),
+                    let proof_context = get_scope_hyps(&proof_scope);
+                    let simplified = pipeline.simplify.simplify(
+                        &proof_context,
                         &bound.active,
                         &anonymized,
                         get_scope_time(&bound.context, Time::Always),
-                    )?
+                    )?;
+                    check_enabled_axioms(&proof_context, simplified, &mut |warning| {
+                        warn(&pipeline.on_warning, warning)
+                    })?
                 } else {
                     anonymized
                 };
@@ -1151,7 +1156,7 @@ mod tests {
         HypNode, Modal, ParenForm, Quantifier, Selector, Substitution as Entry, XlabelIndex,
     };
     use crate::module::{Declaration, get_standard_modules};
-    use crate::pragma::{OldMethod, PragmaSetting, PragmaValue};
+    use crate::pragma::{OldMethod, PragmaSetting, PragmaSpan, PragmaValue};
     use crate::proof::{QedStep, Step, StepCore, StepNumber, Usable, UseDef, UseDefCore};
     use crate::simplify::create_simplifier;
 
@@ -1720,6 +1725,7 @@ mod tests {
                 other if atom(other) == "Default" => PragmaValue::Default,
                 other => PragmaValue::Float(number(other)),
             },
+            span: PragmaSpan::default(),
         }
     }
 
@@ -1823,6 +1829,8 @@ mod tests {
             obligations: None,
             method: optional(&fields[3], read_method),
             use_location: read_locus(&fields[4]),
+            is_suppressed: false,
+            is_enabled_axioms_sound: None,
         }
     }
 
