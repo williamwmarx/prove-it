@@ -36,6 +36,39 @@ thread_local! {
     static DECLINES: RefCell<Vec<ScopeState>> = const { RefCell::new(Vec::new()) };
     /// When the outermost scope started to hold its output, until the hold ends.
     static HELD_SINCE: Cell<Option<Instant>> = const { Cell::new(None) };
+    /// How many lowerings of a model are under way, through which output is held however long
+    /// they take.
+    static LOWERING: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether a lowering ends past the hold, as a slow one does, for the tests.
+    static IS_LOWERING_SLOW: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `lower`, the front end's lowering of a model, with the run's output held however long it
+/// takes: the front end declines as it lowers, before the search prints anything of its own, so
+/// a decline there never follows what the run printed. The hold then lasts as it would have, so
+/// output streams at the first write once [`HOLD`] has passed.
+pub(crate) fn holding_through<T>(lower: impl FnOnce() -> T) -> T {
+    struct Lowering;
+    impl Drop for Lowering {
+        fn drop(&mut self) {
+            LOWERING.with(|lowering| lowering.set(lowering.get() - 1));
+        }
+    }
+    LOWERING.with(|lowering| lowering.set(lowering.get() + 1));
+    let _lowering = Lowering;
+    let lowered = lower();
+    #[cfg(test)]
+    if IS_LOWERING_SLOW.with(Cell::get) {
+        let past = Instant::now()
+            .checked_sub(HOLD)
+            .expect("a moment before the hold");
+        HELD_SINCE.with(|since| since.set(Some(past)));
+    }
+    lowered
 }
 
 struct Scope {
@@ -85,15 +118,29 @@ pub(crate) fn get_hold_left() -> Option<Duration> {
     if cfg!(target_arch = "wasm32") {
         return None;
     }
+    if LOWERING.with(Cell::get) > 0 {
+        return HELD_SINCE.with(Cell::get).map(|_| HOLD);
+    }
     HELD_SINCE
         .with(Cell::get)
         .map(|since| HOLD.saturating_sub(since.elapsed()))
         .filter(|left| !left.is_zero())
 }
 
-// Whether output streams now: true once the hold has lasted [`HOLD`], from then on.
+// Whether output streams now: true once the hold has lasted [`HOLD`], from then on, unless the
+// run has declined before it streamed, whose output then goes with the decline, however late.
 fn is_streaming() -> bool {
     if cfg!(target_arch = "wasm32") {
+        return false;
+    }
+    if LOWERING.with(Cell::get) > 0
+        || DECLINES.with(|stack| {
+            stack
+                .borrow()
+                .last()
+                .is_some_and(|scope| scope.decline.is_some())
+        })
+    {
         return false;
     }
     match HELD_SINCE.with(Cell::get) {
@@ -698,6 +745,79 @@ mod tests {
         }
         drop(spool);
         assert_eq!(output, content);
+    }
+
+    // A model whose lowering declines, and takes longer than the hold, prints the decline alone:
+    // the check reports it once the lowering has returned.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_slow_lowering_that_declines_prints_the_decline_alone() {
+        let directory = std::env::temp_dir().join(format!("hold-lowering-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("M.tla"),
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("M.cfg"),
+            "INIT Init\nNEXT Next\nINVARIANT Nat\n",
+        )
+        .unwrap();
+        let host = SystemHost::new(None);
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut output = Output {
+            out: &mut stdout,
+            err: &mut stderr,
+            host: &host,
+            outcome: Outcome::default(),
+        };
+        super::IS_LOWERING_SLOW.with(|slow| slow.set(true));
+        let args = [
+            "-workers".to_owned(),
+            "1".to_owned(),
+            directory.join("M.tla").to_string_lossy().into_owned(),
+        ];
+        let status = crate::check::run(&args, &mut output);
+        super::IS_LOWERING_SLOW.with(|slow| slow.set(false));
+        std::fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(status, 1, "{}", String::from_utf8_lossy(&stderr));
+        assert_eq!(String::from_utf8_lossy(&stdout), "");
+        assert_eq!(
+            String::from_utf8_lossy(&stderr),
+            "prove-it: not native yet: a name the configuration gives that is an operator of a standard module\n"
+        );
+    }
+
+    // A lowering holds the output past the hold's end, so a decline in it prints nothing else.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_decline_as_the_model_lowers_prints_nothing_however_long_it_takes() {
+        let host = SystemHost::new(None);
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut output = Output {
+            out: &mut stdout,
+            err: &mut stderr,
+            host: &host,
+            outcome: Outcome::default(),
+        };
+        let (status, declined, printed) = super::run_scoped(&mut output, |inner| {
+            writeln!(inner.out, "held").unwrap();
+            super::holding_through(|| {
+                let past = tla_engine::clock::Instant::now()
+                    .checked_sub(super::HOLD)
+                    .expect("a moment before the hold");
+                super::HELD_SINCE.with(|since| since.set(Some(past)));
+                assert!(super::get_hold_left().is_some());
+                writeln!(inner.out, "still held").unwrap();
+                mark_declined("unsupported model");
+                writeln!(inner.err, "prove-it: not native yet: unsupported model").unwrap();
+            });
+            1
+        });
+        assert_eq!((status, declined, printed), (1, true, false));
+        assert_eq!(stdout, b"");
+        assert_eq!(stderr, b"prove-it: not native yet: unsupported model\n");
     }
 
     // After the hold, what was held and everything after it goes straight through, and a decline

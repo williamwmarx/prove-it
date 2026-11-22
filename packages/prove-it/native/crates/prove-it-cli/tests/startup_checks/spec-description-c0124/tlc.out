@@ -1,0 +1,36 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+{ [ name |-> "I2",
+    location |->
+        [ beginLine |-> 6,
+          beginColumn |-> 19,
+          endLine |-> 6,
+          endColumn |-> 22,
+          module |-> "M" ] ] }
+Computing initial states...
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 5, col 9 to line 5, col 37 of module M>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 5, col 9 to line 5, col 37 of module M>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 5, col 9 to line 5, col 37 of module M>
+/\ x = 3
+/\ y = 0
+
+8 states generated, 8 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 4.

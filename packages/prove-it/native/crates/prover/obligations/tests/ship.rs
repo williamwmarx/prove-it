@@ -447,3 +447,26 @@ fn an_operator_named_like_an_object_property_encodes() {
         );
     }
 }
+
+// Expr.Anon asserts that a variable takes no arguments (`e_anon.ml`, line 224), which tlapm
+// reports as a bug in itself.
+#[test]
+fn an_applied_variable_is_tlapm_bug() {
+    let result = get_obligations(
+        &[ObligationSource {
+            file: "M.tla".to_owned(),
+            source: "---- MODULE M ----\nVARIABLE x\nTHEOREM x(1) = 1 OBVIOUS\n====\n".to_owned(),
+        }],
+        &mut |_| None,
+        None,
+        &mut |_| {},
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(ObligationError::Proof { exception, .. })
+                if exception == "File \"src/expr/e_anon.ml\", line 224, characters 24-30: Assertion failed"
+        ),
+        "{result:?}"
+    );
+}

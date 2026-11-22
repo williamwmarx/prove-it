@@ -25,9 +25,9 @@ use crate::pure::tactic::{
     order_tagged, subgoals_of_brl,
 };
 use crate::pure::tactical::{
-    GoalTactic, Tactic, all_goals, all_tac, append_goal, cond_tac, first_goal, first_goal_tac,
-    has_fewer_prems, no_tac, or_else, or_else_goal, repeat_determ, repeat_determ1, subgoal,
-    then_goal, then_tac,
+    GoalTactic, Tactic, all_goals, all_tac, append_goal, cond_tac, depth_solve, first_goal,
+    first_goal_tac, has_fewer_prems, no_tac, or_else, or_else_goal, repeat_determ, repeat_determ1,
+    subgoal, then_goal, then_tac,
 };
 use crate::pure::term::{Name, Term, TermNode, aconv, size_of_term};
 use crate::pure::thm::{BiresRule, Thm, assumption, biresolution, nprems, prems_of, rs, rsn};
@@ -515,6 +515,14 @@ fn step_tac(context: &ClassicalContext) -> GoalTactic {
             )(index),
         )
     })
+}
+
+/// fast_tac: depth-first search with step_tac on the first goal, after atomizing the premises.
+pub fn fast_tac(context: &ClassicalContext, atomize_rules: &[Thm]) -> Res<GoalTactic> {
+    Ok(then_goal(
+        atomize_prems_tac(atomize_rules)?,
+        select_goal(depth_solve(step_tac(context)(1))),
+    ))
 }
 
 /// Drule.size_of_thm, the sizef of Isabelle/TLA+'s Classical: the size of the proposition with its

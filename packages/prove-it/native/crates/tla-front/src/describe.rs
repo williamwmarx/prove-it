@@ -5,14 +5,14 @@
 use std::rc::Rc;
 
 use crate::ast::*;
-use crate::config::ModelConfig;
+use crate::config::{ConfigValue, ModelConfig};
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::FrontError;
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
-    Binding, Scope, bind_definitions, bind_operator_arguments, get_definition, get_level,
+    Binding, Scope, ScopeOf, bind_definitions, bind_operator_arguments, get_definition, get_level,
     lookup_scope,
 };
 
@@ -265,6 +265,37 @@ impl Describer<'_> {
         {
             let bound = bind_definitions(definitions, scope)?;
             return self.describe_specification(body, bound.as_ref());
+        }
+        // `processConfigSpec` looks a name without arguments up: a value it takes as no initial
+        // predicate (TRUE; FALSE fails as trivial), and a LET's definition, an OpDefNode, named
+        // as the LET names it, as any definition is.
+        if matches!(expression.kind, ExpressionKind::Identifier { .. }) {
+            let name = expression.reference().unwrap_or_default();
+            if expression.is_locally_resolved() {
+                if let Some((
+                    node,
+                    Binding::Thunk {
+                        expression: body,
+                        scope: ScopeOf::Own,
+                    },
+                )) = lookup_scope(scope, &name)
+                {
+                    let body_scope = ScopeOf::Own.resolve(node);
+                    if self.level(body, body_scope.as_ref()) == Level::Variable {
+                        self.description.inits.push(part(&name, body));
+                        return Ok(());
+                    }
+                    return self.describe_specification(body, body_scope.as_ref());
+                }
+            } else if get_definition(&name, self.environment).is_none()
+                && (matches!(&*name, "TRUE" | "FALSE")
+                    || matches!(
+                        self.environment.constants.get(&name),
+                        Some(ConfigValue::Boolean(_))
+                    ))
+            {
+                return Ok(());
+            }
         }
         if let Some((thunk, thunk_scope)) = self.get_thunk(expression, scope) {
             return self.describe_specification(&thunk, thunk_scope.as_ref());

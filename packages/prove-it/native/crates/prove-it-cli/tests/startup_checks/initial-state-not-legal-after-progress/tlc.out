@@ -1,0 +1,11 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Error: current state is not a legal state
+While working on the initial state:
+x = null
+
