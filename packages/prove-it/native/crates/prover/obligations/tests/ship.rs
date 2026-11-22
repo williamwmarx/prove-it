@@ -245,7 +245,10 @@ fn ptl_fails_a_step_whose_enabled_needs_a_hidden_definition() {
     assert!(matches!(input, Err(ObligationError::Prover(_))));
 }
 
-// The LS4 input of each theorem ptl.test.ts decides, as the TypeScript writes it.
+// The LS4 input of each theorem ptl.test.ts decides, as the TypeScript writes it, apart from the
+// facts' times, which are tlapm's: a cited fact that is no fact or step of a proof takes the
+// scope's time, so PTL under a fact that holds only now is TRUE that Prep.flatten drops rather than
+// []TRUE, and a CASE's fact takes its own time, [] where it is constant.
 #[test]
 fn ptl_writes_the_inputs_the_typescript_decides() {
     let cases: [(&[&str], &str); 12] = [
@@ -301,11 +304,11 @@ fn ptl_writes_the_inputs_the_typescript_decides() {
         ),
         (
             &["THEOREM ASSUME x = 1 PROVE x = 1", "  BY PTL"],
-            "not ((h7fe4a & (always (cc | ~ cc)) -> h7fe4a))",
+            "not ((h7fe4a -> h7fe4a))",
         ),
         (
             &["THEOREM ASSUME x = 1 PROVE 1 = x", "  BY PTL"],
-            "not ((h7fe4a & (always (cc | ~ cc)) -> h344d6))",
+            "not ((h7fe4a -> h344d6))",
         ),
         (
             &[
@@ -316,7 +319,7 @@ fn ptl_writes_the_inputs_the_typescript_decides() {
         ),
         (
             &["THEOREM ASSUME x = 1 PROVE [](x = 1)", "  BY PTL"],
-            "not ((h7fe4a & (always (cc | ~ cc)) -> (always h7fe4a)))",
+            "not ((h7fe4a -> (always h7fe4a)))",
         ),
         (
             &[
@@ -330,7 +333,7 @@ fn ptl_writes_the_inputs_the_typescript_decides() {
                 "  <2>. QED  BY <2>1, <2>2, PTL",
                 "<1>. QED  OBVIOUS",
             ],
-            "not (((hbe322 -> haf23d) & ((~ hbe322) -> haf23d) & (always (cc | ~ cc)) -> haf23d))",
+            "not ((((always hbe322) -> haf23d) & ((always (~ hbe322)) -> haf23d) -> haf23d))",
         ),
         (
             &[
