@@ -2056,6 +2056,22 @@ impl<'a> Compiler<'a> {
             && (1..=MAXIMUM_MEMO_WIDTH).contains(&width)
     }
 
+    /// How many memo tables `cached` gives an expression that `takes_table`, numbered from the
+    /// program's next: the one keyed by what it reads, then one keyed by the values of the names
+    /// bound once it reads through.
+    pub(crate) fn tables_taken(&self, compiled: &Compiled) -> usize {
+        let key_footprint = compiled.footprint.without_slots(&[WARNING_SLOT]);
+        1 + usize::from(Self::through_keys(&key_footprint).is_some())
+    }
+
+    fn through_keys(key_footprint: &Footprint) -> Option<Arc<crate::footprint::Through>> {
+        let width = key_footprint.width();
+        key_footprint
+            .through
+            .clone()
+            .filter(|through| through.width() <= width.min(MAXIMUM_MEMO_WIDTH))
+    }
+
     /// An operator whose operands are values the compiler holds, evaluated as it compiles, so
     /// that a fused node above it reads the value in place (`Shape::Constant`). The operator
     /// reads nothing else and has no effect, so its value is the same wherever it is evaluated;
@@ -2115,10 +2131,7 @@ impl<'a> Compiler<'a> {
         // What reads names bound once is keyed by their values where that takes no more keys:
         // their expressions read at least what the keys left out name, and often take fewer
         // values than what they read does.
-        let through = key_footprint
-            .through
-            .clone()
-            .filter(|through| through.width() <= width.min(MAXIMUM_MEMO_WIDTH));
+        let through = Self::through_keys(&key_footprint);
         let plain = if width > MAXIMUM_MEMO_WIDTH {
             self.cached_in_epoch(compiled.clone())
         } else {

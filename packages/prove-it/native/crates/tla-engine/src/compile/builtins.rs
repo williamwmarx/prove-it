@@ -4144,13 +4144,17 @@ impl Compiler<'_> {
                         && is_read_in_place(&set)
                         && self.takes_table(&compiled) =>
                     {
-                        let table = self.program.memo_tables.len();
+                        let first = self.program.memo_tables.len();
+                        let tables = first..first + self.tables_taken(&compiled);
+                        let shortened = tables.clone();
                         let (element, set) = (element.eval.clone(), set.eval.clone());
                         let scanned = compiled.with_eval(eval(move |machine| {
                             let value = element(machine)?;
                             let set = set(machine)?;
                             if let Some(found) = machine.store.find_in_set(set, value) {
-                                machine.tables[table].shorten(SHORT_TABLE);
+                                for table in shortened.clone() {
+                                    machine.tables[table].shorten(SHORT_TABLE);
+                                }
                                 return Ok(bool_id(found == is_in));
                             }
                             if !is_tested_set_kind(machine.store.kind_of(set)) {
@@ -4159,7 +4163,7 @@ impl Compiler<'_> {
                             Ok(bool_id(machine.store.is_member(value, set)? == is_in))
                         }));
                         let cached = self.cached(scanned);
-                        debug_assert_eq!(self.program.memo_tables.len(), table + 1);
+                        debug_assert_eq!(self.program.memo_tables.len(), tables.end);
                         cached
                     }
                     _ => compiled,
