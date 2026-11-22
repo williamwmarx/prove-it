@@ -4868,11 +4868,14 @@ matches TLC or declines exactly.
   expression an argument could decide, as through an IF on the state alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE
   Reach(n + 1)`). An argument above constant level that becomes a constant can make a guard
   decidable, so `F(n) == IF n = 0 THEN <>P ELSE F(0)` with `Prop == F(x)` completes, as in TLC
-  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A recursion it follows to 600
-  nested calls; one that ends past that declines, and one that reaches 2,000 nested calls, which
-  overflow TLC's stack whatever each level takes, gets the overflow, as one that never ends does
-  (`F(n) == IF n > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, fixtures
-  `liveness-recursion-endless-{descending,growing}`). An IF
+  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A recursion it follows as
+  far as a measure of TLC's stack holds surely (`get_stack_cost`: each recursive call and each
+  conversion of the walk within it, fitted to where TLC overflows with 0 to 100 `[]`s around the
+  call); one that ends past that declines, and one that reaches twice as much as TLC was measured
+  to complete, or 2,000 nested calls, gets the overflow, as one that never ends does (`F(n) == IF n
+  > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, fixtures
+  `liveness-recursion-endless-{descending,growing}`, and with twenty `[]`s around the call,
+  `liveness-recursion-wrapped-{endless,deep,shallow}`). An IF
   decides only where its guard may name a parameter: `F(n) == TRUE /\ <>(x = 0) /\ F(n + 1)`
   overflows from the first repeated call (`liveness-recursion-constant-conjunct`), as do the
   shapes of `liveness-recursion-{mutual-cycle,state-argument,state-guard-conjunct,let-state-guard}`,
@@ -6742,13 +6745,14 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
 `evaluating the failure again:`, ...).
 
 - A recursive temporal formula nested more deeply than TLC's stack may hold ("a recursive temporal
-  formula nested more deeply than TLC's stack may hold"): a property whose translation nests more
-  than 600 calls of recursive operators and ends before 2,000. Where TLC's translation overflows
-  depends on its stack and on what each level takes: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE
-  F(n - 1)` completes at 1,000 and overflows at 1,200, and `F(n - 1) /\ <>P` in its place completes at 800
-  and overflows at 900. A recursion whose levels take more of TLC's stack than these may overflow
-  below 600 calls, where the binary completes it: a known wrong output, as for the evaluator's
-  recursion. And a temporal formula nested more deeply than the translation follows ("a temporal
+  formula nested more deeply than TLC's stack may hold"): a property whose translation within a
+  recursion takes more of TLC's stack than it surely holds and ends before twice what TLC was
+  measured to complete. Where TLC's translation overflows depends on its stack, on what each level
+  takes and on the run: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` completes at 1,000
+  and overflows at 1,100, with one `[]` around the call at 700 and 800, with five at 250 and 400
+  but at 300 and not at 350, with twenty at 160 and 180, with a hundred at 30 and 35. A recursion
+  whose levels take more of TLC's stack than the measure counts may overflow where the binary
+  completes it: a known wrong output, as for the evaluator's recursion. And a temporal formula nested more deeply than the translation follows ("a temporal
   formula nested more deeply than the translation follows"), past 2,000 nested expansions other
   than of recursive calls, which SANY's parser doesn't reach first.
 - A temporal formula through definitions nested more deeply than TLC's stack may hold ("a temporal

@@ -24,16 +24,28 @@ use crate::tlc_messages::is_eval_exception;
 /// which a formula's own nesting doesn't reach before SANY's parser gives out.
 const MAXIMUM_EXPANSION_DEPTH: usize = 2000;
 
-/// How many nested calls of recursive operators TLC's translation surely holds. It
-/// (`Liveness.astToLive`) recurses on the JVM's stack, whose size decides where it overflows: at
-/// the corpus's `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1) /\ <>P` completes at 800 and
-/// overflows at 900, and `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` completes at 1000 and
-/// overflows at 1200. A translation that goes deeper but ends declines rather than guess.
-const MAXIMUM_RECURSION: usize = 600;
-
 /// How many nested calls of recursive operators overflow TLC's stack whatever their shape, past
 /// which the translation overflows as TLC's does, as on a recursion that never ends.
 const OVERFLOWING_RECURSION: usize = 2000;
+
+/// How much of TLC's stack the translation's walk within a recursion takes, in hundredths of what
+/// a level of `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` takes, with the walk `nesting`
+/// conversions deep through `calls` recursive calls, each level two conversions: a further
+/// conversion takes about 31. At `-Xss2m` TLC's translation overflows from about 1,050 levels of
+/// that IF, 750 with one `[]` around the call, 170 with twenty and 33 with a hundred, from run to
+/// run: about 760 to 1,150 of these units.
+fn get_stack_cost(calls: usize, nesting: usize) -> usize {
+    100 * calls + 31 * nesting.saturating_sub(2 * calls)
+}
+
+/// How much of TLC's stack its translation surely holds, below any it was measured to overflow at;
+/// a translation that takes more and ends declines rather than guess.
+const MAXIMUM_STACK_COST: usize = 75_000;
+
+/// How much of TLC's stack overflows it whatever the shape of the recursion, twice as much as any
+/// it was measured to complete; past it the translation overflows as TLC's does, before its own
+/// stack gives out.
+const OVERFLOWING_STACK_COST: usize = 240_000;
 
 /// An argument of a recursive call, as the translation compares calls to find one it is already in.
 #[derive(PartialEq)]
@@ -199,6 +211,8 @@ struct Converter<'a> {
     evaluations: std::cell::Cell<usize>,
     /// The levels of the recursive calls' arguments, kept from one call to the next.
     thunk_levels: ThunkLevels,
+    /// How many conversions the walk is nested in.
+    nesting: usize,
     /// Whether the translation followed more nested recursive calls than TLC's stack surely
     /// holds, so that TLC may have overflowed where it didn't.
     is_past_tlc_stack: bool,
@@ -433,9 +447,6 @@ impl Converter<'_> {
         if self.recursion.len() >= OVERFLOWING_RECURSION {
             return Err(FrontError::StackOverflow);
         }
-        if self.recursion.len() >= MAXIMUM_RECURSION {
-            self.is_past_tlc_stack = true;
-        }
         self.recursion.push(call);
         let expanded = self.expand(&body, bound.as_ref(), expression, scope);
         self.recursion.pop();
@@ -542,13 +553,27 @@ impl Converter<'_> {
     }
 
     fn convert(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
-        if !self.is_substituted && self.environment.tables.is_substitution(expression) {
-            self.is_substituted = true;
-            let converted = self.convert_part(expression, scope);
-            self.is_substituted = false;
-            return converted;
+        if !self.recursion.is_empty() {
+            let cost = get_stack_cost(self.recursion.len(), self.nesting);
+            if cost >= OVERFLOWING_STACK_COST {
+                return Err(FrontError::StackOverflow);
+            }
+            if cost >= MAXIMUM_STACK_COST {
+                self.is_past_tlc_stack = true;
+            }
         }
-        self.convert_part(expression, scope)
+        self.nesting += 1;
+        let converted =
+            if !self.is_substituted && self.environment.tables.is_substitution(expression) {
+                self.is_substituted = true;
+                let converted = self.convert_part(expression, scope);
+                self.is_substituted = false;
+                converted
+            } else {
+                self.convert_part(expression, scope)
+            };
+        self.nesting -= 1;
+        converted
     }
 
     fn convert_part(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
@@ -813,6 +838,7 @@ pub fn get_liveness(
         recursion: Vec::new(),
         evaluations: std::cell::Cell::new(0),
         thunk_levels: ThunkLevels::default(),
+        nesting: 0,
         is_past_tlc_stack: false,
         call_levels: HashMap::new(),
         is_substituted: false,
