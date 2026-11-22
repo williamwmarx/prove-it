@@ -94,7 +94,7 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 7] = [
+    let cases: [(&[&str], &str); 8] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
@@ -123,6 +123,19 @@ fn prints_the_obligations_tlapm_prints() {
                 "SuppressedComments.tla",
             ],
             "SuppressedComments.toolbox",
+        ),
+        // A method pragma a definition or a proof owns (defn's read_new_method, Proof.Parser's
+        // read_method) is no suppression of the HIDE or USE after it.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "OwnedPragma.tla",
+            ],
+            "OwnedPragma.toolbox",
         ),
         (&["-N", "--toolbox", "0", "0", "Omit.tla"], "Omit.toolbox"),
         (
@@ -195,7 +208,7 @@ fn prints_the_notes_and_the_summary_tlapm_prints() {
     );
     assert_eq!(stderr(&output), "");
     // The summary counts the suppressed obligations, which Proof.Gen.obligate made.
-    for module in ["Suppressed", "SuppressedComments"] {
+    for module in ["Suppressed", "SuppressedComments", "OwnedPragma"] {
         let output = run("obligations", &["--summary", &format!("{module}.tla")]);
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(
