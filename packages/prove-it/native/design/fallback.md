@@ -8508,6 +8508,7 @@ proved `F(1) = F(2)`, which tlapm fails.
 | with the method pragma warnings | 735 / 574 / 42 | 313 / 1,042 / 43 |
 | with the frontends' notes and refusals | 748 / 574 / 29 | 313 / 1,042 / 43 |
 | with suppressed proofs | 753 / 574 / 24 | 313 / 1,042 / 43 |
+| with a declared operator's arguments (on d13f0073, without the fact times) | 754 / 574 / 23 | 313 / 1,042 / 43 |
 
 ### Declines
 
