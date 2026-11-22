@@ -349,3 +349,57 @@ fn leaves_a_parameter_named_like_a_let_recursive_operator_not_native() {
         "---- MODULE Main ----\nA == LET RECURSIVE F, K\n         F(F) == 0\n     IN 0\n===="
     ));
 }
+
+// A chain of definitions, each naming the next, is analyzed one definition at a time: an analyzer
+// that starts from the first doesn't hold the stack through the analysis of each one named, so
+// the chain's length is no limit of it.
+#[test]
+fn analyzes_a_chain_of_definitions_one_at_a_time() {
+    use tla_front::levels::{ACTION_LEVEL, Scope};
+    const LENGTH: usize = 3_000;
+    let mut source = "---- MODULE Chain ----\nVARIABLE x\n".to_owned();
+    for index in (1..=LENGTH).rev() {
+        if index == LENGTH {
+            source.push_str(&format!("D{index} == x' = x\n"));
+        } else {
+            source.push_str(&format!("D{index} == D{} /\\ x = 0\n", index + 1));
+        }
+    }
+    source.push_str("====");
+    let levels = std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024)
+        .spawn(move || {
+            let config = parse_config("", TlcVersion::Master).expect("a configuration");
+            let environment = create_environment(&EnvironmentOptions {
+                linked_extendees: &[],
+                origin: None,
+                source: &source,
+                load_module: &|_| None,
+                config: &config,
+                is_unconfigured: true,
+                version: TlcVersion::Master,
+                is_level_checked: false,
+                load_class: None,
+            })
+            .expect("an environment");
+            let first = environment.definitions.get("D1").expect("the first");
+            let sany = environment
+                .create_unsubstituted_level_analyzer()
+                .analyze_definition(first, &Scope::default())
+                .expect("the levels")
+                .data
+                .level;
+            // `Specs.getLevel` of a formula naming the first, which walks the chain as SANY's
+            // analysis does.
+            let facts = tla_front::dependencies::create_definition_facts(&environment);
+            let walked = tla_front::spec::get_level(&first.body, None, &environment, &facts, &[]);
+            (sany, walked)
+        })
+        .expect("a thread")
+        .join()
+        .expect("the analysis");
+    assert_eq!(
+        levels,
+        (ACTION_LEVEL, tla_front::dependencies::Level::Action)
+    );
+}

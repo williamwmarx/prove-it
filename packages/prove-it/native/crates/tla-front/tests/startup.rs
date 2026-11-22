@@ -347,3 +347,41 @@ fn leaves_a_substitute_the_configuration_gives_a_value() {
     assert_eq!(decide_in(&environment, "D"), (Read::Operator, false, None));
     assert_eq!(decide_in(&environment, "E"), (Read::Operator, false, None));
 }
+
+// `getLevelBound` reads a definition being expanded as level 0 where it is named within its own
+// expansion, so the level it gives a definition in a cycle depends on where the walk entered the
+// cycle: D2 within D1's walk is 0, and from the top 2. The front end keeps a definition's level
+// only where its walk reached nothing being expanded below it.
+#[test]
+fn counts_a_recursive_definition_from_where_the_walk_enters_it() {
+    let environment = create(
+        "RECURSIVE D2\nD1 == x' = x /\\ D2\nD2 == D1\nRECURSIVE A(_), B(_)\nA(n) == B(n)\nB(n) == A(n) /\\ x' = x\nK == A(1)\nL == B(1)",
+        "",
+    );
+    for name in ["D1", "D2", "K", "L"] {
+        assert_eq!(
+            decide_in(&environment, name),
+            (Read::Operator, false, None),
+            "{name}"
+        );
+    }
+}
+
+// A chain of definitions, each naming the next, has each level bound read once.
+#[test]
+fn attempts_a_chain_of_constant_definitions() {
+    const LENGTH: usize = 3_000;
+    let mut definitions = String::new();
+    for index in (1..=LENGTH).rev() {
+        if index == LENGTH {
+            definitions.push_str(&format!("D{index} == 1\n"));
+        } else {
+            definitions.push_str(&format!("D{index} == D{} + 1\n", index + 1));
+        }
+    }
+    let environment = create(&definitions, "");
+    assert_eq!(
+        decide_in(&environment, "D1"),
+        (Read::Attempted, true, Some(Rule::Constant))
+    );
+}

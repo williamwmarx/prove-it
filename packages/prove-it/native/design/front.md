@@ -227,7 +227,12 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
   `levels.rs`'s port of SANY's level check gives, with the level parameters looked up in the
   scope), the scopes an instance or an operator's arguments give a
   formula (thunks, closures, a LET's own scope, and literal or configured values),
-  `getSpecification` and `expandTemporal`, and `getProperties`. The `spec` mode compares the split
+  `getSpecification` and `expandTemporal`, and `getProperties`. The walk keeps the level of a
+  global operator without parameters once a walk without a cycle gave it, and walks the operators
+  a body names before the body, each after those its own body names, so a chain of definitions
+  each naming the next is walked one definition at a time instead of each within the walk of the
+  one naming it; `levels.rs`'s analyzer analyzes a definition's named definitions the same way
+  before the definition. The `spec` mode compares the split
   of SPECIFICATION (1,093 of 1,111 models) and the `properties` mode the sorted properties (1,032
   of 1,111), none differing. What TLC evaluates there (a constant conjunct or definition, a `\A`
   a property unrolls over a constant set) is `NotYet`.
