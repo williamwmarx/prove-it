@@ -8726,6 +8726,17 @@ proof over a failure, so a later failure of a tactic whose text sorts higher (`f
 port reused the proof (`IsaReuse.tla`, recorded with b91fb6c); reuse itself takes the same
 tactic only (`Fpfile.query`).
 
+Instantiation doesn't distribute over ENABLED, so not over WF and SF either (Specifying Systems,
+17.8), and `Expr.Action.lambdify` expands each `WF_v(A)` and `SF_v(A)` to its definition in terms
+of ENABLED (`E_tla_norm.expand_fairness`) before it expands definitions and lambdifies, so an
+instanced `WF_vars(Next)` in a hypothesis becomes `<>[]?EnabledWrapper(LAMBDA ...) =>
+[]<><<I!Next>>_I!vars` with the ENABLED lambdified as any other, where the port lambdified the
+ENABLED alone and left `WF_(I!vars)(I!Next)` as the instance substituted it, which LS4 fails
+and tlapm proves (`tests/fixtures/obligations/InstanceFairness.tla`, recorded with b91fb6c). tlapm's lexer reads `WF_vars` as the tokens `WF_` and `vars` of one match
+(`alexer.mll`'s `("WF_" | "SF_" as f) (name as rest)`), both at the whole word, so the
+auto-expansion note of such a subscript's operator starts at the `WF_` (`line 19, characters
+10-16`), where the front end lexed the name alone and the note started three columns in.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8743,6 +8754,7 @@ tactic only (`Fpfile.query`).
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
+| with an instanced fairness expanded before lambdifying | 770 / 577 / 4 | 321 / 1,042 / 35 |
 
 ### Declines
 
