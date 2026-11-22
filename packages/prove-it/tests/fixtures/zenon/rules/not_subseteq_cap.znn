@@ -1,0 +1,6 @@
+;; obligation #1
+$goal (=> (/\ (TLA.subseteq a_CONSTANTunde_Uunde_a a_CONSTANTunde_Sunde_a)
+(TLA.subseteq a_CONSTANTunde_Uunde_a a_CONSTANTunde_Tunde_a))
+(TLA.subseteq a_CONSTANTunde_Uunde_a (TLA.cap a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)))
+
