@@ -1346,6 +1346,71 @@ costs about twice as much. Each thread's memo tables take 7.7 MB (4.4 MB on one 
 table of a large level's states about 3 MB, against 4 MB a thread of the 32 MB of L3 that eight
 cores share.
 
+### MCLamportMutex, profiled (mutex-profile)
+
+MCLamportMutex was the suite's weakest lead over TLC (4.7–4.8×). Its first profile of its own:
+`perf record` on `depot-ubuntu-24.04-16` (frame pointers, line tables, run 2x2wtx98sl), and
+callgrind on one thread and on four (23.8 G instructions on one, 36.8 G on four, at d13f0073).
+
+**One thread.** The profile is flat; no function takes more than 9% of the samples. By what the
+spec's actions do, in instructions:
+- **Guards, 19%.** Each state tries each of the six `(p, q)` pairs against ReceiveRequest,
+  ReceiveAck and ReceiveRelease, each of which tests `network[q][p] # << >>` and then
+  `Head(network[q][p]).type = "…"` through its own LET: 17.4 M equality tests, 57.7 M function
+  applications (80 a state), and 25.8 M calls of `Store::equals_asked`, out of line at about 55
+  instructions each for ids that differ or match in place.
+- **EXCEPT, 17%.** `network'`, `req'`, `clock'` and `ack'` are memo tables of three and four keys.
+  The three-key tables (`[network EXCEPT ![q][p] = Tail(@), ![p][q] = Append(@, …)]` by
+  `network`, `p`, `q`) miss on 21% of 4.4 M lookups at about 2,500 instructions a miss; the
+  four-key ones, which read `c == m.clock` and so key on `network` beside their own variable,
+  miss on 79% of 1.6 M lookups, at about 1,400 instructions an evaluation, so they cost about what
+  they save. `except_nested` allocated two vectors for each update path, 1.6% with `free`.
+- **The successor, 19%:** its fingerprint 9.4% (a new value's parts gathered into two vectors
+  each, 1.4%), the constraint and the invariants 9.3% (TypeOK's nested function sets 3.9%,
+  BoundedNetwork 1.5%).
+
+**Every core.** On 16 threads the run took 5.0 CPU seconds, 2.7× one thread's, for 0.52 s of wall.
+Timed per level (an instrumented build, run l784rnmvbg): of about 575 ms of search, the threads
+expanded for 397 ms, the merges took 146 ms (25%), and 20 levels of 5,753 states ran on one
+thread for 22 ms. In the threads' time, `Machine::forget_from` took 7.4% at each level's start,
+rebuilding every memo table: a direct table scanned its whole array, up to the store's count of
+ids, and a hashed one was reallocated and filled. Over the run each thread evaluates again what
+its tables forgot and what other threads hold: the invariants took 6× one thread's CPU, the
+EXCEPT tables 3×.
+
+**Built,** each exact (no output changes):
+- `equals_asked` tells equal ids that hold nothing lazy, and unequal scalars or tuples of
+  different lengths of one kind, apart inline, as `equals` does; the rest stays out of line.
+- `f[k][j] = c` and `e = c` of an evaluated `e` have tests of their own, rather than the generic
+  test's two `Leaf::read` dispatches.
+- A nested EXCEPT keeps its path's keys and functions on the stack up to 8 deep; a fingerprint's
+  new value walks its parts on a stack the fingerprints keep; the merge's `Store::import` takes a
+  block of up to 16 words in on the stack.
+
+Callgrind, one thread: 23.81 G → 21.73 G instructions (−8.7%). On Depot against `main` at
+58371d45, medians of 9 interleaved runs, two rounds on each machine:
+
+| Machine, run | One thread | Every core (CPU s) |
+|---|---|---|
+| `depot-ubuntu-24.04-16`, 0j7rwxnf1d | 1.83 (1.81–1.87) → 1.71 (1.70–1.81) | 0.50 (5.03) → 0.48 (4.77) |
+| `depot-ubuntu-24.04-16`, l81d8kr0tq | 1.83 (1.81–1.91) → 1.74 (1.72–2.22) | 0.52 (5.15) → 0.52 (5.07) |
+| `depot-ubuntu-24.04-4`, 9ml1cwx7jl | 1.84 (1.82–1.90) → 1.73 (1.71–1.82) | 0.88 (3.14) → 0.84 (2.99) |
+| `depot-ubuntu-24.04-4`, wwhj751jp2 | 2.10 (1.79–2.13) → 1.92 (1.72–2.09) | 0.91 (3.23) → 0.88 (3.11) |
+
+The suites, 3 runs: one thread, perf-suite.json on 16 cores 1.01× (1h3ssj9np6) and
+bench-suite.json on 4 cores 1.04× (ts1ph5m04m); perf-suite.json on 16 threads (w4xrsrd50v) with
+every model within its range or faster (MCMultiNode 0.89 → 0.84 s, cf1s_folklore 1.28 → 1.25);
+every model agreeing. MCbtree (0.71 / 0.71 s, 11 runs, h96s4wtl4s) and Detlefs (1.91 / 1.92 s, 9
+runs, xq4c6szpcd) checked again on one thread, within noise.
+
+**What is left.** Every core is bound by the merge (a quarter of the wall at 16 threads: importing
+the new states' nested functions, 23% of it, and page faults) and by each thread's memo tables
+starting cold and private. One thread is bound by evaluation spread over the guards, the EXCEPTs
+and the successor's fingerprint, at 1–5% a function. The largest single lever is the four-key
+EXCEPT tables: keyed on the LET's value `c` rather than on `network` they would hit nearly always,
+but LET definitions are compiled into their uses, and binding one to a slot must keep TLC's
+laziness (`LazyValue`), which decides where an error happens.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -1440,6 +1505,8 @@ What the memo track built, measured and dropped, and why the store's memory layo
 | A total memo budget per thread instead of a cap per table | PaxosCommit and MCMultiNode at 4 workers | At 2^22 entries: PaxosCommit 12.90 → 14.27 s (1421 → 855 MB); MCMultiNode 3.47 → 3.57 s (935 → 599 MB) | The tables that fill first take the room PaxosCommit's hot tables need. |
 | A cache from (set, element) to the id of their union | PaxosCommit | Not built. 13.0M single-element unions over 9.09M distinct pairs. | Only 30% recur, and the cache would itself miss memory. |
 | A size cap without eviction, at 2^12–2^20 entries; clustering in bands of 8 or 64 slots | MCMultiNode, PaxosCommit | Slower at every cap and band | The caching pays even at a miss to memory, and a band spreads a state's run. |
+| A thread's memo entries kept from level to level under the store's ids of the values the merge took in (`Worker::imported`, as the fingerprints' `absorb` keeps theirs), rather than forgotten | MCLamportMutex | 16 threads, medians of 7 (c55tkl0d6b): 0.54 s (5.29 CPU s) → 0.55 (5.32). Callgrind at 4 threads: the invariants 5.6 → 5.0 G instructions and the EXCEPTs 7.8 → 6.5 G, but moving the entries 6.3 G against forgetting's 4.3 G, 34.3 → 37.0 G in all | Few moved entries hit again: a value new at a level is mostly met again by other threads, whose tables are their own. |
+| A memo table forgotten in place at a level's start (filled with empty entries, keeping its room) rather than rebuilt in a new allocation, and a direct table scanned only where it has held a value from the bound on | BufferedRandomAccessFile, MCbtree, MCLamportMutex | 16 threads, medians of 9 against `main` at 58371d45: BufferedRandomAccessFile 0.20 (2.02 CPU s) → 0.22 (2.23) (z7z88p6hfn), MCbtree 0.18 → 0.19 (z99nl9lpch), MCLamportMutex within noise; with it reverted both are 1.00× (38wbfncq2w, m798tz82lr) | Not understood: the instructions it saves are the direct tables' scans, and the fill writes what the new allocation wrote. |
 
 **Where the misses are.** These are cachegrind runs, because this container exposes no hardware counters (`perf stat` reports them as not supported). Each is a full one-worker run at #201's head, simulating a 32 KB D1 and a last level of either 2 MB (standing in for L2) or 32 MB (standing in for memory). Misses are data-read misses, attributed by function and grouped:
 

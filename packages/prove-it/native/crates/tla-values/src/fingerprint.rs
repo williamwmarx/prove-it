@@ -459,7 +459,7 @@ pub struct Fingerprints<E = Dense> {
     // state's tails are found by once per state, and in a map past it.
     short_numbers: Vec<i32>,
     length_numbers: HashMap<u64, i32>,
-    // The stack `compute_new` walks a value's parts with, kept between calls.
+    // The stack `compute_new` walks a new value's parts on, kept between values.
     pending: Vec<(Id, bool)>,
 }
 
@@ -700,19 +700,19 @@ impl<E: Entries> Fingerprints<E> {
         let mut pending = std::mem::take(&mut self.pending);
         pending.clear();
         pending.push((id, false));
-        let mut outcome = Ok(());
+        let computed = self.compute_pending(store, &mut pending);
+        self.pending = pending;
+        computed
+    }
+
+    fn compute_pending(&mut self, store: &Store, pending: &mut Vec<(Id, bool)>) -> Outcome<()> {
         while let Some((top, is_expanded)) = pending.pop() {
             if self.values.is_computed(top) {
                 continue;
             }
             if is_expanded {
-                match self.compute_one(store, top) {
-                    Ok(computed) => self.values.set(top, computed),
-                    Err(error) => {
-                        outcome = Err(error);
-                        break;
-                    }
-                }
+                let computed = self.compute_one(store, top)?;
+                self.values.set(top, computed);
                 continue;
             }
             pending.push((top, true));
@@ -722,8 +722,7 @@ impl<E: Entries> Fingerprints<E> {
                 }
             });
         }
-        self.pending = pending;
-        outcome
+        Ok(())
     }
 
     fn compute_one(&mut self, store: &Store, id: Id) -> Outcome<ValueFingerprint> {

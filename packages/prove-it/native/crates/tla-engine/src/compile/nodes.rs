@@ -2380,6 +2380,9 @@ pub(super) fn except_warning(machine: &mut Machine<'_>, warning: Option<NodeId>)
 
 // Each update walks its path down, keeping each key and the function it indexes, then writes the
 // new values back up.
+// The depth of an EXCEPT path whose keys and functions an update keeps on the stack.
+const INLINE_PATH: usize = 8;
+
 fn except_nested(
     base: Eval,
     updates: Vec<(Vec<Eval>, u32, Eval)>,
@@ -2388,14 +2391,22 @@ fn except_nested(
     eval(move |machine| {
         let mut result = base(machine)?;
         'updates: for (steps, at_slot, value) in &updates {
-            let mut keys = Vec::with_capacity(steps.len());
-            for step in steps {
-                keys.push(step(machine)?);
+            let depth = steps.len();
+            let mut inline = [0; 2 * INLINE_PATH];
+            let mut spilled = Vec::new();
+            let path = if depth <= INLINE_PATH {
+                &mut inline[..2 * depth]
+            } else {
+                spilled.resize(2 * depth, 0);
+                &mut spilled[..]
+            };
+            let (keys, functions) = path.split_at_mut(depth);
+            for (key, step) in keys.iter_mut().zip(steps) {
+                *key = step(machine)?;
             }
-            let mut functions = Vec::with_capacity(steps.len());
             let mut current = result;
-            for &key in &keys {
-                functions.push(current);
+            for (function, &key) in functions.iter_mut().zip(keys.iter()) {
+                *function = current;
                 let Some(selected) = select_except(machine, current, key)? else {
                     except_warning(machine, warning)?;
                     continue 'updates;
@@ -2404,7 +2415,7 @@ fn except_nested(
             }
             machine.locals[*at_slot as usize] = current;
             let mut value = value(machine)?;
-            for (function, key) in functions.iter().zip(&keys).rev() {
+            for (function, key) in functions.iter().zip(keys.iter()).rev() {
                 value = lazy_function::except(machine, *function, *key, value)?;
             }
             result = value;

@@ -87,6 +87,8 @@ const INITIAL_CAPACITY: usize = 1 << 12;
 // Each store's number, which an overlay keeps of the store it copied.
 static STORES: AtomicU64 = AtomicU64::new(0);
 pub(crate) const EMPTY_SLOT: Id = Id::MAX;
+// The most words of a block `Store::import` takes in on the stack rather than the heap.
+const SHORT_IMPORT: usize = 16;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.
 const INSERTION_LENGTH: usize = 16;
 // Blocks this small are searched in order. A larger one is in TLC's order and searched by halving.
@@ -384,11 +386,19 @@ impl Store {
             KIND_MODEL => self.model(text()),
             KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
                 let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
-                let words: Vec<Id> = overlay.heap[meta.payload as usize..][..length]
-                    .iter()
-                    .map(|&word| self.import(overlay, word, imported))
-                    .collect();
-                self.intern_block(meta.kind, &words, meta.size)
+                let source = &overlay.heap[meta.payload as usize..][..length];
+                let mut short = [0; SHORT_IMPORT];
+                let mut long = Vec::new();
+                let words = if length <= SHORT_IMPORT {
+                    &mut short[..length]
+                } else {
+                    long.resize(length, 0);
+                    &mut long[..]
+                };
+                for (word, &from) in words.iter_mut().zip(source) {
+                    *word = self.import(overlay, from, imported);
+                }
+                self.intern_block(meta.kind, words, meta.size)
             }
             KIND_BOOL | KIND_INT | KIND_LAZY_FUNCTION | KIND_INFINITE_SET | KIND_ANY => {
                 self.intern_scalar(meta.kind, meta.payload)
@@ -1121,7 +1131,29 @@ impl Store {
     /// isn't a string is no record, so it compares with any function by its keys and values
     /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
     /// stops in case the record is the one asked.
+    /// Equal ids, and two scalars or tuples of different lengths of one kind, are told apart in
+    /// place, as `equals` tells them.
+    #[inline(always)]
     pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
+        let (left_meta, right_meta) = (self.meta(left), self.meta(right));
+        if left == right {
+            if left_meta.flags & (HOLDS_LAZY | HOLDS_ANY) == 0
+                && left_meta.kind != KIND_LAZY_FUNCTION
+                && left_meta.kind != KIND_ANY
+            {
+                return Ok(true);
+            }
+        } else if left_meta.kind == right_meta.kind
+            && (left_meta.kind <= KIND_STRING
+                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+        {
+            return Ok(false);
+        }
+        self.equals_asked_other(left, right)
+    }
+
+    #[inline(never)]
+    fn equals_asked_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
         let is_record_asked_by_function = is_function_kind(left_meta.kind)
             && is_function_kind(right_meta.kind)
