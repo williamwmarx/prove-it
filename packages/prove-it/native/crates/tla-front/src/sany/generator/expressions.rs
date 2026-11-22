@@ -15,7 +15,7 @@ use crate::sany::source::{
     get_parenthesized_span, get_span_location, get_token_index, get_token_location,
     get_token_source, is_token,
 };
-use crate::sany::{Result, not_yet, not_yet_unlinkable};
+use crate::sany::{Result, generator_exception, not_yet, not_yet_unlinkable};
 
 use super::{
     BoundSymbols, LabelGoal, LocalContext, ModuleGenerator, OpApplBinding, get_bound_groups,
@@ -206,21 +206,48 @@ impl ModuleGenerator<'_> {
                     end: value_span.end,
                 },
             );
+            // The ExceptSpec's heirs: `!`, each component (`.h`, or `[` to `]`), `=` and the
+            // right-hand side.
             let mut path_cursor = bang + 1;
-            let mut components = Vec::new();
+            let mut component_spans = Vec::new();
             for step in &update.path {
-                let component = match step {
+                let component_span = match step {
                     ExceptPathStep::Field(name) => {
-                        let name_index = self.find_name_or_keyword(path_cursor, name);
-                        path_cursor = name_index + 1;
-                        self.create_string(name, get_token_location(&file, name_index))
+                        let Some(dot) = find_token(&file, path_cursor, span.end, ".") else {
+                            return not_yet("Expected . in an EXCEPT");
+                        };
+                        let name_index = self.find_name_or_keyword(dot + 1, name);
+                        TokenSpan {
+                            start: dot,
+                            end: name_index,
+                        }
                     }
-                    ExceptPathStep::Index(args) => {
+                    ExceptPathStep::Index(_) => {
                         let Some(open) = find_token(&file, path_cursor, span.end, "[") else {
                             return not_yet("Expected [ in an EXCEPT");
                         };
-                        let close = get_matching_index(&file, open);
-                        path_cursor = close + 1;
+                        TokenSpan {
+                            start: open,
+                            end: get_matching_index(&file, open),
+                        }
+                    }
+                };
+                path_cursor = component_span.end + 1;
+                component_spans.push(component_span);
+            }
+            let Some(equals) = find_token(&file, path_cursor, span.end, "=") else {
+                return not_yet("Expected = in an EXCEPT");
+            };
+            let heirs = component_spans.len() + 3;
+            let mut components = Vec::new();
+            for (index, (step, component_span)) in
+                update.path.iter().zip(&component_spans).enumerate()
+            {
+                let component = match step {
+                    ExceptPathStep::Field(name) => {
+                        self.create_string(name, get_token_location(&file, component_span.end))
+                    }
+                    ExceptPathStep::Index(args) => {
                         if let [argument] = args.as_slice() {
                             self.generate_expression(argument)?
                         } else {
@@ -228,16 +255,30 @@ impl ModuleGenerator<'_> {
                                 .iter()
                                 .map(|argument| self.generate_expression(argument))
                                 .collect::<Result<Vec<_>>>()?;
+                            // `processExcept` places the $Tuple of component k at the
+                            // ExceptSpec's heir 2k + 1: the component itself for the first, and
+                            // past it a later component, the `=`, the right-hand side, or,
+                            // past the last heir, the ArrayIndexOutOfBoundsException SANY ends
+                            // with.
+                            let heir = 2 * index + 1;
+                            let tuple_span = if heir < component_spans.len() + 1 {
+                                component_spans[heir - 1]
+                            } else if heir == component_spans.len() + 1 {
+                                TokenSpan {
+                                    start: equals,
+                                    end: equals,
+                                }
+                            } else if heir == component_spans.len() + 2 {
+                                value_span
+                            } else {
+                                return generator_exception(format!(
+                                    "java.lang.ArrayIndexOutOfBoundsException: Index {heir} out of bounds for length {heirs}"
+                                ));
+                            };
                             self.apply_builtin(
                                 "$Tuple",
                                 nodes,
-                                get_span_location(
-                                    &file,
-                                    TokenSpan {
-                                        start: open,
-                                        end: close,
-                                    },
-                                ),
+                                get_span_location(&file, tuple_span),
                                 OpApplBinding::default(),
                             )
                         }

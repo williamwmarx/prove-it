@@ -1,0 +1,1 @@
+prove-it: not native yet: SANY's report of a DEF clause entry with arguments after an identifier prefix, which SANY ends on with an internal error
