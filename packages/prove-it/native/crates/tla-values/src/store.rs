@@ -93,6 +93,7 @@ const INSERTION_LENGTH: usize = 16;
 const LINEAR_SIZE: usize = 16;
 // A set this small whose elements compare without failing is scanned for an id.
 const SCANNED_SIZE: usize = 256;
+const SHORT_SCALAR_SET: usize = 16;
 
 // A function whose keys are all strings, which TLC compares only with another record.
 const IS_RECORD: u8 = 1;
@@ -1396,6 +1397,15 @@ impl Store {
             KIND_INFINITE_SET => return self.is_member_of_infinite(element, set),
             KIND_SET => {}
             _ => return Err(Bail("membership in a non-set")),
+        }
+        // A boolean, integer or string compares with one of its own kind without failing, so a
+        // short set of that kind alone holds it if it holds its id.
+        let kind = self.kind_of(element);
+        if kind <= KIND_STRING && self.size_of(set) as usize <= SHORT_SCALAR_SET {
+            let elements = self.set_elements(set);
+            if elements.iter().all(|&value| self.kind_of(value) == kind) {
+                return Ok(elements.contains(&element));
+            }
         }
         // TLC compares the element with the set's, which builds a function it kept lazy.
         if self.size_of(set) > 0 {
