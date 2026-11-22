@@ -3907,6 +3907,7 @@ impl Search<'_, States> {
         };
         // Each worker writes files for the check this thread runs ([`tla_values::written`]).
         let journal = tla_values::written::current();
+        let debug_threads_at = Instant::now();
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
@@ -3977,6 +3978,9 @@ impl Search<'_, States> {
             machine.store.take_marks(&worker.machine.store);
         }
         self.fingerprints.take_back(fingerprints);
+        if std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some() {
+            eprintln!("  threads took {:?}", debug_threads_at.elapsed());
+        }
         let mut stop = level.stop.load(Ordering::Relaxed);
         // A thread that stopped had claimed states in that expansion, whose checks may be what
         // stopped it. One thread meets each at the first state of the level that steps to it,
@@ -5686,6 +5690,13 @@ pub(crate) fn start(
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
+    let debug_at = Instant::now();
+    let debug = std::env::var_os("PROVE_IT_DEBUG_PHASES").is_some();
+    let debug_phase = |name: &str| {
+        if debug {
+            eprintln!("PHASE {name} at {:?}", debug_at.elapsed());
+        }
+    };
     let model = &ir.model;
     let ranked: Vec<Vec<u16>> = (0..ir.ranked_count)
         .map(|text| ir.get_text_units(text))
@@ -6135,6 +6146,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
         machine.is_before_initial_state = true;
+        debug_phase("startup done");
         if settings.dfid.is_some() {
             let mut initial = Vec::new();
             (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
@@ -6157,6 +6169,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             machine.is_before_initial_state = false;
         }
         search.flush(&mut machine);
+        debug_phase("initial states done");
         initial_states = (search.initial_generated, search.states.count() as u64);
         // Where TLCSet("exit", TRUE) ran as TLC computed the initial states, it computes them all,
         // then its workers find the queue finished before they expand one (`ModelChecker.stop`).
@@ -6613,6 +6626,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 };
                 // A thread claims whole states, so no more threads than states.
                 let threads = thread_count.min(by_count.max(by_work)).min(states);
+                if debug {
+                    eprintln!("LEVEL {} states={states} threads={threads} previous_took={:?} at {:?}", search.level, previous_at.elapsed(), debug_at.elapsed());
+                }
                 level_start = (
                     expanding,
                     Instant::now(),
@@ -7180,6 +7196,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     // where the engine doesn't follow.
                     let mut is_late_printed = false;
                     let (tables, liveness) = loop {
+                        debug_phase("search done");
                         let tables = match graph_tables(
                             &mut machine,
                             &search,
@@ -7191,6 +7208,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
                         };
+                        debug_phase("tables done");
                         let (mut liveness, _) = check_liveness(
                             model,
                             &search,
@@ -7200,6 +7218,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             &context,
                             thread_count,
                         );
+                        debug_phase("liveness done");
                         if liveness.verdict != Verdict::Unexpanded {
                             break (tables, liveness);
                         }
