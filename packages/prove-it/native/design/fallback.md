@@ -3064,16 +3064,21 @@ of variables TLC orders otherwise than their names", as `VARIABLES y, x`); prime
 in a primed context"), which TLC evaluates in the successor the walk assigns and fails at with an
 exception it reports as unexpected, as `x' = (Trace')[1].x` or, with `F <- Trace`, `x' =
 (F(0)')[1].x`; and where TLC's rebuild evaluates again an initial predicate, or a next-state
-relation, that may print, draw or set a register ("TLCExt's Trace, whose rebuild evaluates again
-what may have an effect"): TLC prints again what they print as it rebuilds the states before the one
-it gives the trace of. The trace of an invariant's violation, which TLC rebuilds through a
-next-state relation that reads Trace, still declines ("rebuilding a trace: the builtin Trace"). On
-the `tlc` suite of aidenybai/tla-ts at 0341dbe5 (72,878 runs, with `JAVA_TOOL_OPTIONS`,
-`_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by the pinned jar) main answers 72,567
-runs as the jar does, declines 311 and answers none otherwise; with Trace it answers 72,578 and
-declines 300. The 11 runs are TLCExtTraceTest and the `tlc_ext/trace_*` tests but the two of a
-simulation (`trace_simulate`, TLCExtTraceSimTest), which decline. No other run changes.
-`tests/trace` holds TLC's output beside its specs (`reads_the_behavior_as_tlc_through_trace`).
+relation, that may have an effect or a value that depends on more than its arguments, through the
+definitions it names ("TLCExt's Trace, whose rebuild evaluates again what may have an effect or
+change", `Compiler::may_change_again`): TLC prints again what they print as it rebuilds the states
+before the one it gives the trace of, from the initial predicate and the next-state relation
+(`getTraceInfo`, `Tool.getState`), and a draw, TLCGet's counts of the search or a Java class of the
+user's may give it other states, as `x' = TLCGet("distinct")`, where it fails to find the state
+again ("Failed to recover the initial state from its fingerprint"). The trace of an invariant's
+violation, which TLC rebuilds through a next-state relation that reads Trace, still declines
+("rebuilding a trace: the builtin Trace"). On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+(72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
+the pinned jar) main answers 72,567 runs as the jar does, declines 311 and answers none otherwise;
+with Trace it answers 72,578 and declines 300. The 11 runs are TLCExtTraceTest and the
+`tlc_ext/trace_*` tests but the two of a simulation (`trace_simulate`, TLCExtTraceSimTest), which
+decline. No other run changes. `tests/trace` holds TLC's output beside its specs
+(`reads_the_behavior_as_tlc_through_trace`).
 
 #### -maxSetSize
 

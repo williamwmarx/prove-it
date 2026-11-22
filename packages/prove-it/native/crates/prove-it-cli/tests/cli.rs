@@ -3347,7 +3347,8 @@ fn reaches_as_deep_as_tlc_through_a_set_whose_parts_ran_once() {
 // variable is assigned, which fails naming those that aren't; and in assumptions, of a spec
 // without variables and with them. The engine declines where TLC's record of a state has its
 // variables in another order than their names, and where TLC's rebuild of the trace evaluates
-// again a next-state relation that prints, primed, directly and as the configuration's substitute
+// again a next-state relation that prints or reads TLCGet("distinct"), which TLC rebuilds no
+// trace through, primed, directly and as the configuration's substitute
 // for an operator, where TLC fails in the successor the walk assigns with an exception, and with
 // two workers.
 #[test]
@@ -3397,7 +3398,12 @@ fn reads_the_behavior_as_tlc_through_trace() {
         (
             "TraceRebuilt",
             "1",
-            "TLCExt's Trace, whose rebuild evaluates again what may have an effect",
+            "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change",
+        ),
+        (
+            "TraceRebuiltCount",
+            "1",
+            "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change",
         ),
         (
             "TraceSearch",

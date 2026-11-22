@@ -60,9 +60,11 @@ pub(crate) const TRACE_UNKEPT: &str = "TLCExt's Trace, the behavior the engine d
 /// fails at (`TLCExt.getTrace`).
 pub(crate) const TRACE_OF_INCOMPLETE_STATE: &str = "Trace of a state not completely specified";
 /// TLCExt's Trace where TLC's rebuild of the trace evaluates again an initial predicate or a
-/// next-state relation that may print, draw or set a register, which the engine doesn't.
+/// next-state relation that may print, draw or set a register, which the engine doesn't, or read
+/// what changes as the search goes, as TLCGet's counts, where TLC may rebuild other states or
+/// fail to find them.
 const TRACE_REBUILT_WITH_EFFECTS: &str =
-    "TLCExt's Trace, whose rebuild evaluates again what may have an effect";
+    "TLCExt's Trace, whose rebuild evaluates again what may have an effect or change";
 /// What a search stops with once its machines evaluated as many bodies of recursive definitions
 /// as PROVE_IT_TEST_EVALUATIONS allows.
 pub const EVALUATIONS_SPENT: &str = "stopped where PROVE_IT_TEST_EVALUATIONS asked";
@@ -187,7 +189,8 @@ pub(crate) struct Recursive {
 
 /// How the engine makes TLCExt's Trace: the shape of a state's record and the variable of each
 /// of its fields, and whether TLC's rebuild of the trace, which evaluates the initial predicate
-/// and the next-state relation again (`getTraceInfo`), may have an effect in each.
+/// and the next-state relation again (`getTraceInfo`), may find other states or have an effect in
+/// each (`Compiler::may_change_again`).
 pub(crate) struct TraceRecord {
     pub(crate) shape: tla_values::store::RecordShape,
     pub(crate) order: Vec<usize>,

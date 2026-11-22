@@ -2884,6 +2884,41 @@ impl<'a> Compiler<'a> {
         answer
     }
 
+    /// Whether TLC, evaluating the expression again, may find another value or have an effect:
+    /// it applies a builtin whose value depends on more than its arguments, such as TLCGet's
+    /// counts of the search, a draw or the time, or one that has an effect, through the
+    /// definitions it names. TLCExt's Trace of the same state is the same behavior.
+    pub(crate) fn may_change_again(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return false;
+        }
+        let named = match self.node(node).1 {
+            NodeKind::Apply { name, .. } if name.is_local => true,
+            NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
+                match name.resolution {
+                    Resolution::Builtin(index) => {
+                        let builtin = &self.ir.builtins[index as usize];
+                        let name = self.builtin_name(index);
+                        builtin.flags & Builtin::EXTERNAL_CLASS != 0
+                            || EFFECT_BUILTINS.contains(&name)
+                            || name != "Trace" && !pruned::is_steady_builtin(name)
+                    }
+                    Resolution::Definition(index) => self.may_change_again(
+                        self.definition(self.ir.definitions[index as usize]).body,
+                        seen,
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        named
+            || self
+                .evaluated_children(node)
+                .into_iter()
+                .any(|child| self.may_change_again(child, seen))
+    }
+
     pub(crate) fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;

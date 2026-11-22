@@ -339,10 +339,10 @@ impl Compiler<'_> {
         self.is_trace_read = true;
         let shape = self.store.create_record_shape(&keys);
         let model = &self.ir.model;
-        let is_init_effectful = self.may_have_effect(model.init, &mut HashSet::new());
+        let is_init_effectful = self.may_change_again(model.init, &mut HashSet::new());
         let is_next_effectful = model
             .next
-            .is_some_and(|next| self.may_have_effect(next, &mut HashSet::new()));
+            .is_some_and(|next| self.may_change_again(next, &mut HashSet::new()));
         self.program.trace_record = Some(crate::machine::TraceRecord {
             shape,
             order,
