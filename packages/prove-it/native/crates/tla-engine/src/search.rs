@@ -1390,6 +1390,113 @@ impl FingerprintSet {
     }
 }
 
+// The fewest edges a thread of `record_steps` takes, so that a small level's are copied on the
+// merge's thread rather than spawn threads for a few.
+const EDGES_PER_THREAD: usize = 1 << 16;
+
+/// Appends to the graph the steps of the states merged, `recorded` in order, each resolved to
+/// the index of the state it reached: a state found before the level by its own, and one the
+/// thread found by the index the merge gave it (`resolved`). The steps' labels and pieces come
+/// with them. Threads each take a run of the states' steps, writing their range of the edges.
+fn record_steps(
+    graph: &mut Graph,
+    expanded: &[Expanded],
+    resolved: &[Vec<u32>],
+    recorded: &[(usize, usize, usize)],
+    before_count: usize,
+    edge_total: usize,
+    threads: usize,
+) {
+    let first = graph.edges.len();
+    let width = graph.piece_width;
+    graph.edges.resize(edge_total, 0);
+    if let Some(labels) = &mut graph.labels {
+        labels.resize(edge_total, 0);
+    }
+    if let Some(pieces) = &mut graph.pieces {
+        pieces.resize(edge_total * width, 0);
+    }
+    let added = edge_total - first;
+    let threads = (added / EDGES_PER_THREAD).clamp(1, threads.max(1));
+    let share = added.div_ceil(threads).max(1);
+    let edges_of = |run: std::ops::Range<usize>| {
+        recorded
+            .get(run.end)
+            .map_or(edge_total, |&(_, _, dest)| dest)
+            - recorded[run.start].2
+    };
+    let write = |run: std::ops::Range<usize>,
+                 edges: &mut [u32],
+                 mut labels: Option<&mut [u32]>,
+                 mut pieces: Option<&mut [u8]>| {
+        let base = recorded[run.start].2;
+        for &(thread, at, dest) in &recorded[run] {
+            let steps_of = expanded[thread].graph.as_ref().expect("a thread's steps");
+            let steps = steps_of.edge_offsets[at] as usize..steps_of.edge_offsets[at + 1] as usize;
+            let resolved = &resolved[thread];
+            let out = dest - base..dest - base + steps.len();
+            for (slot, &target) in edges[out.clone()]
+                .iter_mut()
+                .zip(&steps_of.edges[steps.clone()])
+            {
+                let target = target as usize;
+                *slot = if target < before_count {
+                    target as u32
+                } else {
+                    let index = resolved[target - before_count];
+                    debug_assert_ne!(index, u32::MAX, "a step to a state not yet taken");
+                    index
+                };
+            }
+            if let (Some(labels), Some(labels_of)) = (labels.as_deref_mut(), &steps_of.labels) {
+                labels[out.clone()].copy_from_slice(&labels_of[steps.clone()]);
+            }
+            if let (Some(pieces), Some(pieces_of)) = (pieces.as_deref_mut(), &steps_of.pieces) {
+                pieces[out.start * width..out.end * width]
+                    .copy_from_slice(&pieces_of[steps.start * width..steps.end * width]);
+            }
+        }
+    };
+    let mut edges = &mut graph.edges[first..];
+    let mut labels = graph
+        .labels
+        .as_deref_mut()
+        .map(|labels| &mut labels[first..]);
+    let mut pieces = graph
+        .pieces
+        .as_deref_mut()
+        .map(|pieces| &mut pieces[first * width..]);
+    fn split_off<'a, T>(rest: &mut Option<&'a mut [T]>, count: usize) -> Option<&'a mut [T]> {
+        let (own, left) = rest.take()?.split_at_mut(count);
+        *rest = Some(left);
+        Some(own)
+    }
+    std::thread::scope(|scope| {
+        let mut start = 0;
+        while start < recorded.len() {
+            let from = recorded[start].2;
+            let end = (start
+                + recorded[start..].partition_point(|&(_, _, dest)| dest < from + share))
+            .max(start + 1);
+            let run = start..end;
+            let count = edges_of(run.clone());
+            let (own, left) = std::mem::take(&mut edges).split_at_mut(count);
+            edges = left;
+            let (own_labels, own_pieces) = (
+                split_off(&mut labels, count),
+                split_off(&mut pieces, count * width),
+            );
+            if threads == 1 {
+                write(run, own, own_labels, own_pieces);
+            } else {
+                let write = &write;
+                scope.spawn(move || write(run, own, own_labels, own_pieces));
+            }
+            start = end;
+        }
+    });
+}
+
 // What `FingerprintSet::fill` did with a fingerprint.
 const FILL_SEEN: u8 = 0;
 const FILL_NEW: u8 = 1;
@@ -3429,6 +3536,11 @@ impl Search<'_, States> {
         });
         let mut position = 0;
         let mut new_counts = vec![0u32; level.end - level.start];
+        // Where the search records its graph, the steps of each state merged, by the thread that
+        // expanded it, its position among the thread's, and the edge they start at: the threads
+        // resolve and copy them once the merge has numbered the states (`record_steps`).
+        let mut recorded: Vec<(usize, usize, usize)> = Vec::new();
+        let mut edge_total = self.graph.as_ref().map_or(0, |graph| graph.edges.len());
         let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
         // Where the search records its graph, the index each thread's states took, by the order
         // it found them in: their own where they joined the states, or that of the state with
@@ -3480,11 +3592,11 @@ impl Search<'_, States> {
                 }
                 // The bounds the one-thread search checks before it expands a state of a graph it
                 // records stop it there, on the one-thread path.
-                if self.graph.as_ref().is_some_and(|graph| {
-                    level.is_graph_bounded && self.states.count() > MAXIMUM_GRAPH_STATES
+                if self.graph.is_some()
+                    && (level.is_graph_bounded && self.states.count() > MAXIMUM_GRAPH_STATES
                         || self.states.count() >= i32::MAX as usize
-                        || graph.edges.len() >= i32::MAX as usize
-                }) {
+                        || edge_total >= i32::MAX as usize)
+                {
                     stop = parent;
                     break 'states;
                 }
@@ -3563,31 +3675,6 @@ impl Search<'_, States> {
                     let at = claimed.successors + offset;
                     let steps =
                         steps_of.edge_offsets[at] as usize..steps_of.edge_offsets[at + 1] as usize;
-                    let resolved = &resolved[thread];
-                    graph
-                        .edges
-                        .extend(steps_of.edges[steps.clone()].iter().map(|&target| {
-                            let target = target as usize;
-                            if target < before_count {
-                                target as u32
-                            } else {
-                                let index = resolved[target - before_count];
-                                debug_assert_ne!(
-                                    index,
-                                    u32::MAX,
-                                    "a step to a state not yet taken"
-                                );
-                                index
-                            }
-                        }));
-                    if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
-                        labels.extend_from_slice(&labels_of[steps.clone()]);
-                    }
-                    if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
-                        let width = graph.piece_width;
-                        pieces
-                            .extend_from_slice(&pieces_of[steps.start * width..steps.end * width]);
-                    }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
                             &reals_of[steps.start * width..steps.end * width],
@@ -3595,12 +3682,25 @@ impl Search<'_, States> {
                         );
                         reals.extend_from_slice(&state);
                     }
+                    recorded.push((thread, at, edge_total));
+                    edge_total += steps.len();
                     graph.successor_counts.push(found.successors[at]);
                     graph.new_counts.push(new_counts[parent - level.start]);
-                    graph.edge_offsets.push(graph.edges.len() as u32);
+                    graph.edge_offsets.push(edge_total as u32);
                     graph.diameters.push(self.depth.max(1) as u32);
                 }
             }
+        }
+        if let Some(graph) = &mut self.graph {
+            record_steps(
+                graph,
+                &expanded,
+                &resolved,
+                &recorded,
+                before_count,
+                edge_total,
+                workers.len(),
+            );
         }
         new_counts.truncate(stop - level.start);
         for &count in &new_counts {
