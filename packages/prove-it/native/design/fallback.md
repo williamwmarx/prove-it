@@ -3017,6 +3017,22 @@ A Json operator writes its file through the run's journal (`tla_values::written`
 declines puts it back, `JsonSerialize` and `ndJsonSerialize` as IOUtils's `Serialize` (`main` left
 the file `JsonSerialize` wrote).
 
+#### -maxSetSize
+
+`-maxSetSize` of a valid bound declines ("the TLC option -maxSetSize", 14 runs of the `tlc`
+suite of aidenybai/tla-ts at 0341dbe5), and stays declined: TLC's limit isn't the bound alone.
+`ValueVec.ensureCapacity` throws ("Attempted to construct a set with too many elements") only
+when a vector whose array already holds `setBound` elements must grow, and caps its growth at
+`setBound`, so a vector's real limit is the larger of its initial capacity and the bound: `new
+ValueVec()` holds 10, and a vector TLC sizes as it builds it never grows. `StateVec.grow` does the
+same for the successors of a state (`TLC_TOO_MNY_POSSIBLE_STATES`). TLC builds its vectors at 61
+sites, with capacities of their own (the default 10, the exact size of what it enumerates,
+`kOutOfN`, a bit count), so with a small bound one set of 10 elements builds and another fails.
+The engine models only the default bound, 1,000,000 (`TLCGlobals.setBound`). Answering a smaller
+one takes each of those sites' capacities, matched to the engine's set builders; a single
+configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
+`presized_function_set_ignores_bound`) otherwise than TLC.
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
