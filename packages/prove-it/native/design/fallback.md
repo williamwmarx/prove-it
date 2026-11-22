@@ -6660,6 +6660,20 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   incomplete successor has no missing variable`. `unsupported DFID violation` is a violation of a kind the DFID report doesn't word
   (one other than an invariant's violation or failure, a deadlock or an action property's
 violation).
+- A temporal property TLC finds violated as it adds the state it stopped at, after an invariant or
+  an action property a step from that state violates. `Worker#doNextCheckLiveness` still adds the
+  state to the behavior graphs, with the successors `isSeenState` put in its `SetOfStates` before
+  the checks, the violating one among them; a successor TLC had expanded has its late node there,
+  where a tableau node that accepts every behavior makes `LiveCheck#printErrorTrace` report "Temporal
+  property Prop was violated" and its counterexample after the first report, which keeps its exit
+  code (`setErrState` returns false once done). `Spec == x \in {0, 1} /\ [][x' = IF x = 0 THEN 1
+  ELSE 0]_x` with `PROPERTY [][x' = 1]_x` and `PROPERTY [](x = 1 => [](x = 1))` prints both; the
+  binary printed the action property alone. The engine adds the stopped state as TLC does and, where
+  that reaches such a node, declines ("a temporal property TLC finds violated as it adds the state it
+  stopped at"). An invariant's violating successor is new, has no late node, and TLC reports nothing
+  more, as the binary does. Found in the specs of upstream tla-ts's unit tests at 0341dbe5;
+  fixtures `stop-liveness-*`.
+
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
