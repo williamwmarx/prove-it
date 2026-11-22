@@ -3858,6 +3858,19 @@ impl<'a> Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
+    /// The state variables an expression read in a scope is a tuple of, or of such tuples, by
+    /// slot and in order, as UNCHANGED of it reads them: its value on a state is then the
+    /// nested tuple of those slots' values.
+    pub fn tuple_slots_in_scope(&mut self, node: NodeId, scope: Option<Index>) -> Option<Vec<u32>> {
+        let context = self.context_from_scope(scope).ok()??;
+        let found = self.get_unchanged_indices(node, &context, 0).ok()??;
+        let slots: Vec<u32> = found.into_iter().map(|(slot, _)| slot).collect();
+        slots
+            .iter()
+            .all(|&slot| (slot as usize) < self.ir.variables.len())
+            .then_some(slots)
+    }
+
     /// Compiles ENABLED of an action in the scope of an instance, as the liveness checker's
     /// ENABLED atoms are compiled, or `None` when the engine can't translate the scope.
     pub fn compile_enabled_in_scope(

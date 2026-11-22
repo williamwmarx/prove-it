@@ -842,6 +842,8 @@ pub enum Atom {
         /// What the subscript's value depends on besides the state: the atoms whose subscripts
         /// have the same key share its values on the helpers.
         key: Option<SubscriptKey>,
+        /// The state variables the subscript is a tuple of, where it is one (`SubscriptSlots`).
+        slots: Option<SubscriptSlots>,
         enabled: Option<usize>,
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
@@ -892,9 +894,17 @@ pub struct EnabledSteps {
     /// What the subscript's value depends on besides the state, which the atoms whose subscripts
     /// have the same share their values of.
     pub key: SubscriptKey,
+    /// The state variables the subscript is a tuple of, where it is one.
+    pub slots: Option<SubscriptSlots>,
     /// The positions of TLC's actions A splits into, or `None` for all of them.
     pub actions: Option<Vec<bool>>,
 }
+
+/// The slots of the state variables a subscript is a tuple of, or a tuple of such tuples, in
+/// order. TLC compares two tuples element by element (`TupleValue.equals`), so a step leaves the
+/// subscript unchanged just where it leaves each of those variables so, in that order, and the
+/// states' own values tell without the subscript's.
+pub type SubscriptSlots = Arc<[u32]>;
 
 /// A subscript's expression and the scope it is read in.
 pub type SubscriptKey = (NodeId, Option<Index>);
@@ -2046,6 +2056,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
             action,
             subscript,
             key,
+            slots,
             enabled,
             is_next,
             split,
@@ -2054,6 +2065,7 @@ fn guard_atom_warnings(atom: Atom) -> Atom {
             action: guard(action),
             subscript: subscript.map(guard),
             key,
+            slots,
             enabled,
             is_next,
             split,
@@ -2092,12 +2104,13 @@ fn compile_atom(
             }
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
-            let (subscript, key) = match unchanged {
-                None => (None, None),
+            let (subscript, key, slots) = match unchanged {
+                None => (None, None, None),
                 Some(node) => match resolve(ir, *node) {
                     NodeKind::Unchanged(inner) => (
                         Some(compile_subscript(compiler, *inner, scope)?),
                         Some(get_subscript_key(ir, *inner, scope)),
+                        compiler.tuple_slots_in_scope(*inner, scope).map(Arc::from),
                     ),
                     _ => return Err("a subscript the engine doesn't read".to_string()),
                 },
@@ -2124,6 +2137,7 @@ fn compile_atom(
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 key,
+                slots,
                 enabled: enabled.map(|position| position as usize),
             })
         })(),
@@ -2160,6 +2174,9 @@ fn compile_atom(
                         .map(|compiled| EnabledSteps {
                             subscript: compiled.eval,
                             key: get_subscript_key(ir, *subscript, scope),
+                            slots: compiler
+                                .tuple_slots_in_scope(*subscript, scope)
+                                .map(Arc::from),
                             actions: match Split::of(actions) {
                                 Some(Split::Some(taken)) => Some(taken),
                                 _ => None,

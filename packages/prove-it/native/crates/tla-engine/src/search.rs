@@ -5162,14 +5162,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // a string out of its class), TLC's predicate evaluation of the next-state relation holds
         // of every step the walks took. A state whose next states failed TLC checks each step of
         // anew.
-        let is_next_taken = is_enabled_exact
-            && graph.partial.is_none()
-            && !machine.is_membership_unsafe
-            && !machine.store.has_unordered_strings()
+        let is_comparable = !machine.store.has_unordered_strings()
             && machine
                 .assigned_shapes
                 .as_ref()
                 .is_some_and(|joins| joins.iter().all(ShapeJoin::is_comparable));
+        let is_next_taken = is_enabled_exact
+            && graph.partial.is_none()
+            && !machine.is_membership_unsafe
+            && is_comparable;
         let levels: Option<Vec<u32>> = context.level_atoms.contains(&true).then(|| {
             let mut levels: Vec<u32> = Vec::with_capacity(count);
             for &parent in &search.states.parents[..count] {
@@ -5192,6 +5193,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 partial: None,
                 pieces: None,
                 levels: None,
+                is_distinct: false,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -5209,6 +5211,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .as_ref()
                     .map(|pieces| (&pieces[..edge_count * graph.piece_width], graph.piece_width)),
                 levels: levels.as_deref(),
+                // The breadth-first search keeps one state for each fingerprint, and every value
+                // of a state is one a walk assigned.
+                is_distinct: is_comparable && settings.dfid.is_none(),
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
