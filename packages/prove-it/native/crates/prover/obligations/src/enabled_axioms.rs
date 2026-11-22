@@ -171,7 +171,8 @@ impl Checker<'_, '_> {
         };
         let name = get_step_name(number);
         let mut step_levels = state.step_levels;
-        if step_levels.remove(&name).is_some() && !name.ends_with('>') {
+        // check_enabled_axioms_map asserts that only an unlabeled step's name is stored already.
+        if step_levels.remove(&name).is_some() && self.is_checking && !name.ends_with('>') {
             return Err(ObligationError::assert_failure());
         }
         let definition = get_step_definition(step, at_nowhere(), Time::Always)?;
