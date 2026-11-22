@@ -3,9 +3,10 @@
 //! don't each start and join their threads: starting a thread costs tens of microseconds, and a
 //! level makes six or seven rounds of them.
 //!
-//! A round gives each thread one job and waits for every job to finish, as `std::thread::scope`
-//! would, so a job may borrow what the round's caller holds. Between rounds a thread spins briefly,
-//! since the rounds of one level follow each other closely, and then parks until the next.
+//! A round gives each thread one job, or a few, and waits for every job to finish, as
+//! `std::thread::scope` would, so a job may borrow what the round's caller holds. Between rounds a
+//! thread spins briefly, since the rounds of one level follow each other closely, and then parks
+//! until the next.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -23,7 +24,7 @@ type Slot<R> = Arc<Mutex<Option<std::thread::Result<R>>>>;
 
 #[derive(Default)]
 struct Posted {
-    /// The jobs of the round, each taken by the thread of its index; `None` once taken.
+    /// The jobs of the round, job `i` taken by thread `i % threads`; `None` once taken.
     jobs: Vec<Option<Job>>,
     is_stopping: bool,
 }
@@ -60,7 +61,7 @@ impl Pool {
                 let shared = shared.clone();
                 std::thread::Builder::new()
                     .stack_size(stack_bytes)
-                    .spawn(move || serve(&shared, index))
+                    .spawn(move || serve(&shared, index, threads))
                     .expect("a thread for the search")
             })
             .collect();
@@ -71,28 +72,31 @@ impl Pool {
         self.threads.len()
     }
 
-    /// Runs job `i` on thread `i` and returns what each gave, in order, once every job is done. A
-    /// job that panics makes this panic, after the round's other jobs are done. The jobs may
-    /// borrow from the caller: none outlives this call.
-    pub fn run<'a, R: Send + 'a>(&self, jobs: Vec<Box<dyn FnOnce() -> R + Send + 'a>>) -> Vec<R> {
+    /// Runs the jobs, job `i` on thread `i % threads`, and returns what each gave, in order, once
+    /// every job is done. A job that panics makes this panic, after the round's other jobs are
+    /// done. The jobs may borrow from the caller: none outlives this call.
+    pub fn run<'a, R, F>(&self, jobs: impl IntoIterator<Item = F>) -> Vec<R>
+    where
+        R: Send + 'a,
+        F: FnOnce() -> R + Send + 'a,
+    {
         self.post(jobs).join()
     }
 
-    /// Starts a round of jobs, job `i` on thread `i`, and returns it to wait for: the caller may
-    /// do its own work while the jobs run. The jobs may borrow from the caller: none outlives
-    /// the round, which waits for every job as it is joined or dropped.
-    pub fn post<'a, R: Send + 'a>(
-        &self,
-        jobs: Vec<Box<dyn FnOnce() -> R + Send + 'a>>,
-    ) -> Round<'_, R> {
-        assert!(jobs.len() <= self.threads.len(), "more jobs than threads");
-        let count = jobs.len();
-        let results: Vec<Slot<R>> = (0..count).map(|_| Arc::default()).collect();
+    /// Starts a round of jobs, job `i` on thread `i % threads`, and returns it to join: the
+    /// caller may do its own work while the jobs run. The jobs may borrow from the caller: none
+    /// outlives the round, which waits for every job as it is joined or dropped.
+    pub fn post<'a, R, F>(&self, jobs: impl IntoIterator<Item = F>) -> Round<'_, R>
+    where
+        R: Send + 'a,
+        F: FnOnce() -> R + Send + 'a,
+    {
+        let mut results: Vec<Slot<R>> = Vec::new();
         let posted: Vec<Option<Job>> = jobs
             .into_iter()
-            .zip(&results)
-            .map(|(job, slot)| {
-                let slot = slot.clone();
+            .map(|job| {
+                let slot: Slot<R> = Arc::default();
+                results.push(slot.clone());
                 let job: Box<dyn FnOnce() + Send + 'a> = Box::new(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
                     *slot
@@ -105,6 +109,7 @@ impl Pool {
                 Some(unsafe { erase(job) })
             })
             .collect();
+        let count = posted.len();
         self.shared.done.store(0, Ordering::Release);
         {
             let mut queue = self
@@ -132,36 +137,27 @@ pub struct Round<'p, R> {
 }
 
 impl<R> Round<'_, R> {
-    /// Whether every job of the round is done.
-    pub fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.pool.shared.done.load(Ordering::Acquire) >= self.count
-    }
-
-    /// Waits for the round's jobs, at most `limit` before returning whether they are all done,
-    /// for a caller with its own work to do meanwhile.
-    pub fn wait_for(&self, limit: Duration) -> bool {
-        let shared = &self.pool.shared;
-        if self.is_done() {
-            return true;
-        }
-        let guard = shared
-            .finished_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !self.is_done() {
-            drop(
-                shared
-                    .finished
-                    .wait_timeout(guard, limit)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            );
-        }
-        self.is_done()
     }
 
     fn wait(&self) {
         // The caller parks rather than spins: a round's jobs run for milliseconds on every core.
-        while !self.wait_for(Duration::from_millis(1)) {}
+        let shared = &self.pool.shared;
+        while !self.is_done() {
+            let guard = shared
+                .finished_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !self.is_done() {
+                drop(
+                    shared
+                        .finished
+                        .wait_timeout(guard, Duration::from_millis(1))
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+            }
+        }
     }
 
     /// What each job gave, in order, once every job is done. A job that panicked makes this
@@ -191,7 +187,7 @@ impl<R> Drop for Round<'_, R> {
     }
 }
 
-/// Forgets a job's lifetime, for a round that outlives it; see `Pool::run`.
+/// Forgets a job's lifetime, for a round that outlives it; see `Pool::post`.
 unsafe fn erase<'b>(job: Box<dyn FnOnce() + Send + 'b>) -> Job {
     unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + 'b>, Job>(job) }
 }
@@ -214,45 +210,50 @@ impl Drop for Pool {
     }
 }
 
-fn serve(shared: &Shared, index: usize) {
+fn serve(shared: &Shared, index: usize, threads: usize) {
     let mut seen = 0u64;
     loop {
-        let job = {
-            let at = Instant::now();
-            while shared.number.load(Ordering::Acquire) == seen {
-                if at.elapsed() < SPIN {
-                    std::hint::spin_loop();
-                    continue;
-                }
-                let queue = shared
-                    .posted
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                drop(
-                    shared
-                        .is_posted
-                        .wait_while(queue, |_| shared.number.load(Ordering::Acquire) == seen)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner),
-                );
+        let at = Instant::now();
+        while shared.number.load(Ordering::Acquire) == seen {
+            if at.elapsed() < SPIN {
+                std::hint::spin_loop();
+                continue;
             }
-            let mut queue = shared
+            let queue = shared
                 .posted
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if queue.is_stopping {
-                return;
+            drop(
+                shared
+                    .is_posted
+                    .wait_while(queue, |_| shared.number.load(Ordering::Acquire) == seen)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+        }
+        seen = shared.number.load(Ordering::Acquire);
+        for next in (index..).step_by(threads) {
+            let job = {
+                let mut queue = shared
+                    .posted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if queue.is_stopping {
+                    return;
+                }
+                match queue.jobs.get_mut(next) {
+                    Some(job) => job.take(),
+                    None => break,
+                }
+            };
+            if let Some(job) = job {
+                job();
+                shared.done.fetch_add(1, Ordering::AcqRel);
+                let _guard = shared
+                    .finished_lock
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                shared.finished.notify_all();
             }
-            seen = shared.number.load(Ordering::Acquire);
-            queue.jobs.get_mut(index).and_then(Option::take)
-        };
-        if let Some(job) = job {
-            job();
-            shared.done.fetch_add(1, Ordering::AcqRel);
-            let _guard = shared
-                .finished_lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            shared.finished.notify_all();
         }
     }
 }
@@ -265,20 +266,36 @@ mod tests {
     fn runs_each_job_on_its_thread_and_returns_in_order() {
         let pool = Pool::new(4, 1 << 20);
         let data = vec![10u64, 20, 30];
-        let jobs: Vec<Box<dyn FnOnce() -> u64 + Send + '_>> = (0..3)
-            .map(|index| {
+        assert_eq!(
+            pool.run((0..3).map(|index| {
                 let data = &data;
-                Box::new(move || data[index] * 2) as Box<dyn FnOnce() -> u64 + Send + '_>
-            })
-            .collect();
-        assert_eq!(pool.run(jobs), vec![20, 40, 60]);
+                move || data[index] * 2
+            })),
+            vec![20, 40, 60]
+        );
         // Rounds of fewer jobs than threads, and many rounds, each borrowing anew.
         for round in 0..200u64 {
             let value = round;
-            let jobs: Vec<Box<dyn FnOnce() -> u64 + Send + '_>> =
-                vec![Box::new(|| value + 1), Box::new(|| value + 2)];
-            assert_eq!(pool.run(jobs), vec![round + 1, round + 2]);
+            assert_eq!(
+                pool.run([1, 2].map(|add| move || value + add)),
+                vec![round + 1, round + 2]
+            );
         }
+    }
+
+    #[test]
+    fn runs_more_jobs_than_threads_in_order() {
+        let pool = Pool::new(3, 1 << 20);
+        let threads: Vec<std::thread::ThreadId> =
+            pool.run((0..8).map(|_| || std::thread::current().id()));
+        assert_eq!(threads.len(), 8);
+        assert_eq!(threads[0], threads[3]);
+        assert_eq!(threads[1], threads[7]);
+        assert_ne!(threads[0], threads[1]);
+        assert_eq!(
+            pool.run((0..10u32).map(|i| move || i * i)),
+            (0..10).map(|i| i * i).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -287,13 +304,9 @@ mod tests {
         let mut counts = vec![0usize; 2];
         {
             let (left, right) = counts.split_at_mut(1);
-            let jobs: Vec<Box<dyn FnOnce() + Send + '_>> = vec![
-                Box::new(move || left[0] += 5),
-                Box::new(move || right[0] += 7),
-            ];
-            pool.run(jobs);
+            pool.run([left, right].map(|count| move || count[0] += 5));
         }
-        assert_eq!(counts, vec![5, 7]);
+        assert_eq!(counts, vec![5, 5]);
     }
 
     /// `cargo test -p tla-engine pool::tests::times -- --ignored --nocapture`: a round of the
@@ -306,9 +319,7 @@ mod tests {
             let rounds = 1000u32;
             let at = Instant::now();
             for _ in 0..rounds {
-                let jobs: Vec<Box<dyn FnOnce() -> usize + Send + '_>> =
-                    (0..threads).map(|i| Box::new(move || i) as _).collect();
-                pool.run(jobs);
+                pool.run((0..threads).map(|i| move || i));
             }
             let pool_round = at.elapsed() / rounds;
             let at = Instant::now();
@@ -333,27 +344,20 @@ mod tests {
     }
 
     #[test]
-    fn a_posted_round_runs_while_the_caller_works() {
+    fn a_posted_round_is_joined_after_the_caller_works() {
         let pool = Pool::new(2, 1 << 20);
         let counter = AtomicUsize::new(0);
         let round = {
             let counter = &counter;
-            let jobs: Vec<Box<dyn FnOnce() -> usize + Send + '_>> = vec![
-                Box::new(move || counter.fetch_add(1, Ordering::AcqRel) + 1),
-                Box::new(move || counter.fetch_add(10, Ordering::AcqRel) + 10),
-            ];
-            pool.post(jobs)
+            pool.post([1usize, 10].map(|add| move || counter.fetch_add(add, Ordering::AcqRel)))
         };
-        let mut own = 0;
-        while !round.wait_for(Duration::from_micros(100)) {
-            own += 1;
-        }
+        let own: u64 = (0..1000).sum();
         let mut given = round.join();
         given.sort_unstable();
         assert_eq!(counter.load(Ordering::Acquire), 11);
         assert!(
-            given == vec![1, 11] || given == vec![10, 11],
-            "{given:?} after {own} waits"
+            given == vec![0, 1] || given == vec![0, 10],
+            "{given:?} after summing to {own}"
         );
     }
 
@@ -361,13 +365,10 @@ mod tests {
     fn a_panic_in_a_job_reaches_the_caller_after_the_round() {
         let pool = Pool::new(2, 1 << 20);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let jobs: Vec<Box<dyn FnOnce() -> u32 + Send + '_>> =
-                vec![Box::new(|| 1), Box::new(|| panic!("a job's panic"))];
-            pool.run(jobs)
+            pool.run((0..2u32).map(|i| move || if i == 1 { panic!("a job's panic") } else { i }))
         }));
         assert!(result.is_err());
         // The pool still serves the next round.
-        let jobs: Vec<Box<dyn FnOnce() -> u32 + Send + '_>> = vec![Box::new(|| 3)];
-        assert_eq!(pool.run(jobs), vec![3]);
+        assert_eq!(pool.run([3u32].map(|i| move || i)), vec![3]);
     }
 }
