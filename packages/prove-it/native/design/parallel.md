@@ -20,15 +20,19 @@ how.
     one copy of the store's arrays per thread.
   - No `unsafe`, no locks; the crate's one `unsafe` block is still M7's prefetch.
 - **Candidates per thread, merged in key order.** A thread claims runs of the level with an atomic
-  cursor (up to 32 states, fewer when the level is short, so that every thread gets several) and
-  expands each state with the one-thread code: `Search` is generic over where it finds and adds
-  states (`Reached`).
+  cursor, each one part in four of its share of the states left (`Level::claim`), and expands
+  each state with the one-thread code: `Search` is generic over where it finds and adds states
+  (`Reached`). A run is long while much of the level is left, so that a thread expands states
+  found one after another, whose values its caches hold from one to the next, and down to one
+  state at the level's end, so that the threads finish together; runs of 32 states, as they once
+  were, cost the threads a fifth more CPU at 16 threads (perf.md).
   - A state found before the level is a duplicate.
   - Otherwise the thread keeps the first occurrence it reaches itself, with the concrete state, its
     key and its fingerprint. Under a VIEW or symmetry each occurrence carries its own state, so a
     winning key never takes another occurrence's state (4.1's case that breaks a key-only update).
-  - At the barrier the coordinator walks the claimed runs in order, and within each run its
-    thread's candidates in the order found. That is (parent, step) order without a sort.
+  - At the barrier the coordinator walks the claimed runs in the order of their first states, and
+    within each run its thread's candidates in the order found. That is (parent, step) order
+    without a sort of the candidates.
   - It adds each candidate whose fingerprint isn't in the set yet, importing its values from the
     thread's overlay into the store (`Store::import`, parts first). That gives the numbering,
     parents, out-degrees and depth of TLC's one worker.
@@ -40,6 +44,18 @@ how.
     records its graph, the fill also gives the new states the indices they take in that order and
     reads each seen candidate's, so that the merge records the edges without a probe; a level
     that may reach a bound the merge stops at merges as before.
+  - No two of the fill's threads write one cache line. Threads that each take a part of the
+    candidates sort its fingerprints by the range their home is in; the ranges' threads decide
+    them part by part, which is the candidates' order; and the parts' threads gather the statuses
+    into that order. The table grows first, on the same threads: a fingerprint's home keeps its
+    leading bits as the table doubles, so each thread moves a range of the old table to the same
+    range of the new one, whose pages it writes before it reads them (`commit`), or each page
+    would be the kernel's page of zeros first and be replaced under every thread's eyes.
+  - Where the fill ran and the search records no graph, the threads add the new states too
+    (`Search::add_filled`): the candidates' order gives each new state its place, so each thread
+    copies the new states of a share of the runs and counts each parent's. The values a thread's
+    overlay made are imported afterwards, state by state in that order, which is the order adding
+    them one by one imports them in, so the store numbers its values the same.
   - Where the search records a graph for liveness, each thread records its states' steps too,
     each to a state by the index `Candidates::index` gives it: a state found before the level by
     its own, and one the thread found by the index it would have if the thread's states all
@@ -53,6 +69,30 @@ how.
     at that state, which the one-thread path then expands and stops at.
   - A thread's caches forget only what they hold of its overlay's own values (`forget_from`), so
     memo tables, fingerprints and symmetry images stay warm from level to level.
+- **A state's invariants are checked once.** A state several of a level's states step to is new
+  to every thread that expands one of them, so each checked its invariants: on PaxosCommit the
+  threads found 2.8 million candidates for 1.3 million states at 4 threads. TLC's worker checks
+  the invariants of a successor only where its put into the set of fingerprints finds it unseen
+  (`Worker.addElement`, `isSeenState`), once a state whichever worker gets there. So the
+  threads of a level share a table of the fingerprints claimed (`Claims`, a compare-and-swap a
+  state), and a thread checks a state new to it only where it is the first to claim it; it keeps
+  the state as its candidate either way, for the merge's order.
+  - An invariant holds of a state or doesn't whichever thread asks: nothing a shared level
+    evaluates reads how the state was reached. Which invariants a check skips, those reading
+    only variables the step left unchanged, differs by parent, but the parent is a state of the
+    model, of which they hold.
+  - What a check finds belongs to the first state of the level that steps to the state, which
+    may be another thread's that left the check to the claimer. So a thread that stops, at a
+    violation, an error or a warning TLC may print, hands over the fingerprints it claimed in
+    that expansion, and the merge stops the level at the first state with a candidate of one of
+    them, if that is before the thread's own stop: one thread expands that state again and
+    finds what TLC's one worker finds there (`prove-it-cli/tests/claims.rs`).
+  - The table is sized to the level and never grows: a fingerprint its probe can't place is
+    every asking thread's to check, as before.
+  - Off where two states can share a fingerprint and differ in their invariants: under a VIEW
+    or symmetry, where each occurrence carries its own state, and under `PROVE_IT_FP_VERIFY`.
+    Without them a collision of two states' fingerprints, which TLC's own verdict already
+    rests on not happening, has the claimer check its state for both.
 - **Stops (4.2).** A thread that stops at state `p` lowers an atomic `stop` to `p` and quits. The
   others finish every state before `stop` and skip the rest.
   - The merge keeps the candidates and generated counts of the states before `stop`. The rest of
@@ -110,8 +150,9 @@ how.
   speed on Commit: the record-field position hint, now written only when it changes, and a
   thread's registers next to another's, now on cache lines of their own.
 - **Not done.** Threads are spawned for each shared level; keeping them alive between levels would
-  save the spawn, unmeasured. The merge is the serial part: 10–25% of a level's time on Commit at
-  four threads on the 4-core cloud machine. A collision that only
+  save the spawn, unmeasured. The merge was the serial part, 10–25% of a level's time on Commit at
+  four threads on the 4-core cloud machine; what is left of it on one thread is the graph's
+  steps, where one is recorded, and the states' arrays growing. A collision that only
   `PROVE_IT_FP_VERIFY` would count can be counted differently on more than one thread, since a
   thread compares a duplicate with its own first occurrence.
 

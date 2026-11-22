@@ -296,6 +296,19 @@ fn try_lower_spec(name: &str, spec: &str, config: &str) -> Result<LoweredModel, 
     lowered
 }
 
+// A property through a chain of `count` definitions, each conjoining one more.
+fn lower_definition_chain(count: usize) -> Result<LoweredModel, FrontError> {
+    let mut spec = String::from(
+        "---- MODULE Chain ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n",
+    );
+    spec.push_str(&format!("D{count} == [](x # 5)\n"));
+    for index in (1..count).rev() {
+        spec.push_str(&format!("D{index} == [](x # 5) /\\ D{}\n", index + 1));
+    }
+    spec.push_str("Prop == D1\n====\n");
+    try_lower_spec("Chain", &spec, "SPECIFICATION Spec\nPROPERTY Prop\n")
+}
+
 #[test]
 fn follows_a_recursion_whose_argument_becomes_a_constant() {
     // The outer IF reads the state, but F(0)'s guard is constant and chooses the base case, so
@@ -323,4 +336,28 @@ fn overflows_on_a_recursion_whose_guard_reads_only_the_state() {
         error => error,
     };
     assert!(matches!(error, FrontError::StackOverflow), "{error:?}");
+}
+
+#[test]
+fn declines_a_property_through_definitions_nested_past_tlc_stack() {
+    // At the corpus's -Xss2m TLC's expansion of the property completes through 2,250 definitions
+    // and overflows from 2,300 to 2,450 from run to run. The front end's analysis of such a chain
+    // recurses deeper than a test thread's stack holds.
+    let lowered = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| {
+            (
+                lower_definition_chain(2250).map(|lowered| lowered.ir.len()),
+                lower_definition_chain(2251).map(|lowered| lowered.ir.len()),
+            )
+        })
+        .expect("a thread")
+        .join()
+        .expect("the lowering");
+    assert!(lowered.0.is_ok(), "{:?}", lowered.0);
+    assert!(
+        matches!(&lowered.1, Err(FrontError::NotYet(reason)) if reason == "a temporal formula through definitions nested more deeply than TLC's stack may hold"),
+        "{:?}",
+        lowered.1
+    );
 }

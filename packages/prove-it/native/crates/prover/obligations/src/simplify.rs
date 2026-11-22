@@ -9,9 +9,9 @@ use crate::equality::is_equal_expr;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
     Bound, BoundDomain, Builtin, DefnCore, Expr, ExprCore, ExprNode, ExprProps, Hyp, HypCore,
-    HypNode, Level, Quantifier, Sequent, Time, Visibility, WhereDefined, adjoin_all, apply_builtin,
-    at, at_expr, at_props, expr, get_fact, get_hyp_name, hyp, is_builtin_apply, map_accumulate,
-    map_bound_domains, map_children, strip_props, to_index,
+    HypNode, Level, Locus, Quantifier, Sequent, Time, Visibility, WhereDefined, adjoin_all,
+    apply_builtin, at, at_expr, at_props, get_fact, get_hyp_name, hyp, is_builtin_apply,
+    map_accumulate, map_bound_domains, map_children, strip_props, to_index,
 };
 use crate::format::{FormatArg, format, render_doc};
 use crate::generate::{at_nowhere, get_true, prove_assertion, use_assertion};
@@ -737,8 +737,8 @@ impl Simplifier {
                 );
                 self.simplify_step(context, goal, &suffices, time)
             }
-            StepCore::Take { bounds } => {
-                let suffices = self.get_take_suffices(context, goal, step, bounds)?;
+            StepCore::Take { bounds, name_loci } => {
+                let suffices = self.get_take_suffices(context, goal, step, bounds, name_loci)?;
                 self.simplify_step(context, goal, &self.renumber_step(level, &suffices), time)
             }
             StepCore::Witness { expressions } => {
@@ -858,6 +858,7 @@ impl Simplifier {
         side_facts: Vec<Expr>,
         current: &Expr,
         rest: &[Bound],
+        name_loci: &[Option<Locus>],
     ) -> Result<Stripped> {
         let Some(bound) = rest.first() else {
             return Ok(Stripped::Goal {
@@ -909,19 +910,30 @@ impl Simplifier {
             (BoundDomain::Domain(expression), BoundDomain::Domain(goal_expression))
                 if !is_equal_expr(expression, goal_expression) =>
             {
-                std::iter::once(expr(ExprCore::Apply {
-                    operator: expr(ExprCore::Internal {
-                        builtin: Builtin::Subseteq,
-                    }),
-                    args: vec![goal_expression.clone(), expression.clone()],
-                }))
+                let props = ExprProps {
+                    location: name_loci.first().cloned().flatten(),
+                    is_atomic: false,
+                };
+                std::iter::once(at_props(
+                    ExprCore::Apply {
+                        operator: at_props(
+                            ExprCore::Internal {
+                                builtin: Builtin::Subseteq,
+                            },
+                            &props,
+                        ),
+                        args: vec![goal_expression.clone(), expression.clone()],
+                    },
+                    &props,
+                ))
                 .chain(side_facts)
                 .collect()
             }
             _ => side_facts,
         };
+        let rest_loci = name_loci.get(1..).unwrap_or_default();
         if goal_bounds.is_empty() {
-            return self.strip_bounds(context, 1, next_side_facts, body, &rest[1..]);
+            return self.strip_bounds(context, 1, next_side_facts, body, &rest[1..], rest_loci);
         }
         let shifted_bounds = if rest.len() == 1 {
             goal_bounds
@@ -948,6 +960,7 @@ impl Simplifier {
                 &exposed,
             ),
             &rest[1..],
+            rest_loci,
         )
     }
 
@@ -968,10 +981,11 @@ impl Simplifier {
         goal: &Expr,
         step: &Step,
         take_bounds: &[Bound],
+        name_loci: &[Option<Locus>],
     ) -> Result<Step> {
         let bounds = expand_dittoes(take_bounds);
         let (side_facts, stripped_goal) =
-            match self.strip_bounds(context, 1, Vec::new(), goal, &bounds)? {
+            match self.strip_bounds(context, 1, Vec::new(), goal, &bounds, name_loci)? {
                 Stripped::Error(message) => {
                     return Ok(Step {
                         core: StepCore::Suffices {
@@ -1525,6 +1539,7 @@ mod tests {
             }),
             use_location: read_locus(&fields[4]),
             is_suppressed: false,
+            is_enabled_axioms_sound: None,
         }
     }
 
@@ -1614,6 +1629,7 @@ mod tests {
             },
             "Take" => StepCore::Take {
                 bounds: list(&fields[1], read_bound),
+                name_loci: Vec::new(),
             },
             "Witness" => StepCore::Witness {
                 expressions: list(&fields[1], read_expr),

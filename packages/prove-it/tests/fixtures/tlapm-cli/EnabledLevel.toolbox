@@ -1,0 +1,273 @@
+File "./EnabledLevel.tla", line 5, characters 3-4:
+Error: ENABLEDaxioms depends on assumption of expression level > 1
+File "./EnabledLevel.tla", line 14, characters 3-4:
+Error: ENABLEDaxioms depends on assumption of expression level > 1
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:5:3:5:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:5:6:5:19
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:7:3:7:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:7:6:7:19
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:11:9:11:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:11:12:11:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:19
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:15:9:15:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:15:12:15:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:19
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:12
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:5:3:5:5
+@!!status:failed
+@!!prover:enabledaxioms
+@!!meth:time-limit: inf
+@!!reason:ENABLEDaxioms depends on assumptions of level > 1 
+
+
+@!!already:false
+@!!obl:ENABLEDaxioms depends on assumptions of level > 1 
+
+
+Obligation:
+
+ASSUME NEW VARIABLE x,
+       NEW ACTION B,
+       NEW ACTION C,
+       B <=> C ,
+       TRUE 
+PROVE  ENABLED B <=> ENABLED C
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:5:6:5:19
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:7:3:7:5
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:7:6:7:19
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:11:9:11:11
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:11:12:11:16
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:failed
+@!!prover:enabledaxioms
+@!!meth:time-limit: inf
+@!!reason:ENABLEDaxioms proof directive did not succeed.
+
+@!!already:false
+@!!obl:ENABLEDaxioms proof directive did not succeed.
+
+Obligation:
+
+ASSUME NEW VARIABLE x,
+       NEW STATE P,
+       NEW STATE Q,
+       TRUE 
+PROVE  ENABLED P => ENABLED Q
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:19
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:15:9:15:11
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:15:12:15:16
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:failed
+@!!prover:enabledaxioms
+@!!meth:time-limit: inf
+@!!reason:ENABLEDaxioms depends on assumptions of level > 1 
+
+
+@!!already:false
+@!!obl:ENABLEDaxioms depends on assumptions of level > 1 
+
+
+Obligation:
+
+ASSUME NEW VARIABLE x,
+       NEW ACTION A,
+       NEW ACTION B,
+       TRUE 
+PROVE  ENABLED A => ENABLED B
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:19
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./EnabledLevel.tla", line 14, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW ACTION A,
+                  NEW ACTION B,
+                  ENABLEDaxioms 
+           PROVE  ENABLED A => ENABLED B
+File "./EnabledLevel.tla", line 10, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW STATE P,
+                  NEW STATE Q,
+                  ENABLEDaxioms 
+           PROVE  ENABLED P => ENABLED Q
+File "./EnabledLevel.tla", line 5, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW ACTION B,
+                  NEW ACTION C,
+                  B <=> C ,
+                  ENABLEDaxioms 
+           PROVE  ENABLED B <=> ENABLED C
+File "./EnabledLevel.tla", line 1, character 1 to line 16, character 4:
+[ERROR]: 3/12 obligations failed.
+There were backend errors processing module `"EnabledLevel"`.

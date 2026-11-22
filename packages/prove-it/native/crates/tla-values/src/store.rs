@@ -87,12 +87,44 @@ const INITIAL_CAPACITY: usize = 1 << 12;
 // Each store's number, which an overlay keeps of the store it copied.
 static STORES: AtomicU64 = AtomicU64::new(0);
 pub(crate) const EMPTY_SLOT: Id = Id::MAX;
+// The most words of a block `Store::import` takes in on the stack rather than the heap.
+const SHORT_IMPORT: usize = 16;
 // A short sort runs by insertion, in place; longer ones are merged from such runs.
 const INSERTION_LENGTH: usize = 16;
 // Blocks this small are searched in order. A larger one is in TLC's order and searched by halving.
 const LINEAR_SIZE: usize = 16;
 // A set this small whose elements compare without failing is scanned for an id.
 const SCANNED_SIZE: usize = 256;
+const SHORT_SCALAR_SET: usize = 16;
+// The ids a scan compares with the key at once, without a branch between them.
+const SCAN_LANES: usize = 8;
+
+/// The position of the first word equal to the key.
+#[inline(always)]
+fn position_of(words: &[Id], key: Id) -> Option<usize> {
+    #[inline(always)]
+    fn matches(lanes: &[Id], key: Id) -> u32 {
+        let lanes: &[Id; SCAN_LANES] = lanes.try_into().expect("a scan's lanes");
+        lanes.iter().enumerate().fold(0, |mask, (lane, &word)| {
+            mask | u32::from(word == key) << lane
+        })
+    }
+    if words.len() < SCAN_LANES {
+        return words.iter().position(|&word| word == key);
+    }
+    let mut start = 0;
+    while start + SCAN_LANES <= words.len() {
+        let mask = matches(&words[start..start + SCAN_LANES], key);
+        if mask != 0 {
+            return Some(start + mask.trailing_zeros() as usize);
+        }
+        start += SCAN_LANES;
+    }
+    // The last lanes overlap those scanned, which held no match.
+    let last = words.len() - SCAN_LANES;
+    let mask = matches(&words[last..], key);
+    (mask != 0).then(|| last + mask.trailing_zeros() as usize)
+}
 
 // A function whose keys are all strings, which TLC compares only with another record.
 const IS_RECORD: u8 = 1;
@@ -383,11 +415,19 @@ impl Store {
             KIND_MODEL => self.model(text()),
             KIND_SET | KIND_FUNCTION | KIND_TUPLE => {
                 let length = meta.size as usize * if meta.kind == KIND_FUNCTION { 2 } else { 1 };
-                let words: Vec<Id> = overlay.heap[meta.payload as usize..][..length]
-                    .iter()
-                    .map(|&word| self.import(overlay, word, imported))
-                    .collect();
-                self.intern_block(meta.kind, &words, meta.size)
+                let source = &overlay.heap[meta.payload as usize..][..length];
+                let mut short = [0; SHORT_IMPORT];
+                let mut long = Vec::new();
+                let words = if length <= SHORT_IMPORT {
+                    &mut short[..length]
+                } else {
+                    long.resize(length, 0);
+                    &mut long[..]
+                };
+                for (word, &from) in words.iter_mut().zip(source) {
+                    *word = self.import(overlay, from, imported);
+                }
+                self.intern_block(meta.kind, words, meta.size)
             }
             KIND_BOOL | KIND_INT | KIND_LAZY_FUNCTION | KIND_INFINITE_SET | KIND_ANY => {
                 self.intern_scalar(meta.kind, meta.payload)
@@ -1091,8 +1131,8 @@ impl Store {
     /// TLC's equality. Equal values have equal ids, so two distinct ids are unequal, but TLC
     /// compares composite values element by element up to the first difference, which fails where
     /// those elements are values TLC can't compare. The store bails wherever TLC would fail.
-    /// Equal ids, two booleans, integers or strings, and two tuples of different lengths are told
-    /// apart in place; the rest goes through `equals_other`.
+    /// Equal ids, two booleans, integers or strings, and two tuples or sets of different sizes are
+    /// told apart in place; the rest goes through `equals_other`.
     #[inline(always)]
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
@@ -1109,7 +1149,8 @@ impl Store {
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
         if left_meta.kind == right_meta.kind
             && (left_meta.kind <= KIND_STRING
-                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+                || matches!(left_meta.kind, KIND_TUPLE | KIND_SET)
+                    && left_meta.size != right_meta.size)
         {
             return Ok(false);
         }
@@ -1120,7 +1161,29 @@ impl Store {
     /// isn't a string is no record, so it compares with any function by its keys and values
     /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
     /// stops in case the record is the one asked.
+    /// Equal ids, and two scalars or tuples of different lengths of one kind, are told apart in
+    /// place, as `equals` tells them.
+    #[inline(always)]
     pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
+        let (left_meta, right_meta) = (self.meta(left), self.meta(right));
+        if left == right {
+            if left_meta.flags & (HOLDS_LAZY | HOLDS_ANY) == 0
+                && left_meta.kind != KIND_LAZY_FUNCTION
+                && left_meta.kind != KIND_ANY
+            {
+                return Ok(true);
+            }
+        } else if left_meta.kind == right_meta.kind
+            && (left_meta.kind <= KIND_STRING
+                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+        {
+            return Ok(false);
+        }
+        self.equals_asked_other(left, right)
+    }
+
+    #[inline(never)]
+    fn equals_asked_other(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_meta, right_meta) = (*self.meta(left), *self.meta(right));
         let is_record_asked_by_function = is_function_kind(left_meta.kind)
             && is_function_kind(right_meta.kind)
@@ -1397,6 +1460,15 @@ impl Store {
             KIND_SET => {}
             _ => return Err(Bail("membership in a non-set")),
         }
+        // A boolean, integer or string compares with one of its own kind without failing, so a
+        // short set of that kind alone holds it if it holds its id.
+        let kind = self.kind_of(element);
+        if kind <= KIND_STRING && self.size_of(set) as usize <= SHORT_SCALAR_SET {
+            let elements = self.set_elements(set);
+            if elements.iter().all(|&value| self.kind_of(value) == kind) {
+                return Ok(elements.contains(&element));
+            }
+        }
         // TLC compares the element with the set's, which builds a function it kept lazy.
         if self.size_of(set) > 0 {
             if self.is_kept_lazy(element) || self.is_kept_lazy(set) {
@@ -1500,7 +1572,7 @@ impl Store {
     // is scanned, and a run of integers or a long set searched.
     fn holds_id(&mut self, set: Id, element: Id) -> Outcome<bool> {
         if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0 {
-            return Ok(self.set_elements(set).contains(&element));
+            return Ok(position_of(self.set_elements(set), element).is_some());
         }
         Ok(self.find_in_block(set, element)? != -1)
     }
@@ -1986,12 +2058,14 @@ impl Store {
         // A short block, or one of keys no comparison with which can fail, holds the key where it
         // holds its id: TLC's search, by compareTo or equals, would find it there.
         if size <= LINEAR_SIZE || size <= SCANNED_SIZE && self.is_key_comparable(block, key) {
-            let words = self.words(offset, size);
-            return Ok(words
-                .iter()
-                .position(|&word| word == key)
-                .map_or(-1, |index| index as i32));
+            return Ok(position_of(self.words(offset, size), key).map_or(-1, |index| index as i32));
         }
+        self.search_comparing(offset, size, key)
+    }
+
+    // TLC's search of a sorted block by compareTo, out of the line of the searches by id.
+    #[inline(never)]
+    fn search_comparing(&mut self, offset: usize, size: usize, key: Id) -> Outcome<i32> {
         let (mut low, mut high) = (0i64, size as i64 - 1);
         while low <= high {
             let middle = (low + high) >> 1;
@@ -2212,6 +2286,46 @@ impl Store {
                 .position(|&stored| stored == key)? as u32;
         }
         Some(self.word(offset + (size + *hint) as usize))
+    }
+
+    /// Whether a key is in a function's domain, where the function's own keys tell what
+    /// [`Self::is_member`] answers of [`Self::domain_of`], which builds the domain: an integer
+    /// in a tuple or a function over a run of integers, by its bounds; or, in a function of few
+    /// keys, a key found by its id, or a boolean, integer or string missing from keys of its
+    /// kind alone, which `is_member` scans for the id and then tells by those kinds. Elsewhere,
+    /// and wherever a comparison could fail, `None`.
+    pub fn find_in_domain(&self, function: Id, key: Id) -> Option<bool> {
+        let meta = *self.meta(function);
+        let size = meta.size as usize;
+        let key_meta = *self.meta(key);
+        if size == 0 {
+            return None;
+        }
+        if meta.kind == KIND_TUPLE {
+            return (key_meta.kind == KIND_INT)
+                .then_some(key_meta.payload >= 1 && key_meta.payload as usize <= size);
+        }
+        if meta.kind != KIND_FUNCTION
+            || self.comparison_can_fail(function)
+            || self.comparison_can_fail(key)
+        {
+            return None;
+        }
+        let keys = self.words(meta.payload as usize, size);
+        if meta.flags & IS_INT_RUN != 0 && key_meta.kind == KIND_INT {
+            let position = i64::from(key_meta.payload) - i64::from(self.meta(keys[0]).payload);
+            return Some(position >= 0 && position < size as i64);
+        }
+        if size > LINEAR_SIZE {
+            return None;
+        }
+        if keys.contains(&key) {
+            return Some(true);
+        }
+        let is_of_kind = key_meta.kind <= KIND_STRING
+            && self.meta(keys[0]).kind == key_meta.kind
+            && self.meta(keys[size - 1]).kind == key_meta.kind;
+        is_of_kind.then_some(false)
     }
 
     pub fn domain_of(&mut self, function: Id) -> Id {
@@ -2458,6 +2572,19 @@ pub fn is_function_kind(kind: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_finds_the_position_of_every_id_and_none_of_others() {
+        for length in 0..40 {
+            let words: Vec<Id> = (0..length).map(|index| 3 * index + 1).collect();
+            for (index, &word) in words.iter().enumerate() {
+                assert_eq!(position_of(&words, word), Some(index));
+            }
+            for missing in [0, 2, 3 * length + 1, Id::MAX] {
+                assert_eq!(position_of(&words, missing), None);
+            }
+        }
+    }
 
     #[test]
     fn any_membership_does_not_imply_reflexive_equality() {
