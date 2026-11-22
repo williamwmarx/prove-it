@@ -352,9 +352,14 @@ fn finds_no_fingerprint_collision() {
 }
 
 // What a search found and wrote to its state log, with its counts and where it stopped.
-fn search_on_threads(path: &str, threads: usize, stop_at: Option<usize>) -> (String, String) {
+fn search_on_threads(
+    path: &str,
+    threads: usize,
+    stop_at: Option<usize>,
+    is_fingerprint_verified: bool,
+) -> (String, String) {
     let log = std::env::temp_dir().join(format!(
-        "prove-it-{}-{threads}-{stop_at:?}-{}.ndjson",
+        "prove-it-{}-{threads}-{stop_at:?}-{is_fingerprint_verified}-{}.ndjson",
         std::process::id(),
         path.replace('/', "-")
     ));
@@ -362,7 +367,7 @@ fn search_on_threads(path: &str, threads: usize, stop_at: Option<usize>) -> (Str
         threads,
         minimum_shared_level: 1,
         stop_at,
-        is_fingerprint_verified: true,
+        is_fingerprint_verified,
         state_log: Some(log.to_string_lossy().into_owned()),
         ..Settings::default()
     };
@@ -431,13 +436,13 @@ fn finds_on_any_number_of_threads_what_one_thread_finds() {
     ];
     let mut logged = Vec::new();
     for path in models {
-        let one = search_on_threads(path, 1, None);
+        let one = search_on_threads(path, 1, None, true);
         if !one.1.is_empty() {
             logged.push(path);
         }
         for threads in [2, 4, 16] {
             assert_eq!(
-                search_on_threads(path, threads, None),
+                search_on_threads(path, threads, None, true),
                 one,
                 "{path} on {threads} threads"
             );
@@ -448,7 +453,8 @@ fn finds_on_any_number_of_threads_what_one_thread_finds() {
 
 // A search stopped where PROVE_IT_STOP_AT asks, inside a level the threads share or at its end,
 // hands over the states one thread found before that state, and the graph of their steps where it
-// records one.
+// records one. Without its fingerprints verified, the threads tell the new states and add them,
+// with the graph's steps, rather than the search's thread.
 #[test]
 fn stops_on_any_number_of_threads_where_one_thread_stops() {
     let stops = [
@@ -463,13 +469,15 @@ fn stops_on_any_number_of_threads_where_one_thread_stops() {
     ];
     for (path, stops) in stops {
         for &stop_at in stops {
-            let one = search_on_threads(path, 1, Some(stop_at));
-            for threads in [2, 4] {
-                assert_eq!(
-                    search_on_threads(path, threads, Some(stop_at)),
-                    one,
-                    "{path} stopped at {stop_at} on {threads} threads"
-                );
+            for is_verified in [true, false] {
+                let one = search_on_threads(path, 1, Some(stop_at), is_verified);
+                for threads in [2, 4, 16] {
+                    assert_eq!(
+                        search_on_threads(path, threads, Some(stop_at), is_verified),
+                        one,
+                        "{path} stopped at {stop_at} on {threads} threads, verified: {is_verified}"
+                    );
+                }
             }
         }
     }

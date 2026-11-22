@@ -1121,8 +1121,13 @@ impl<'p> Machine<'p> {
     /// Evaluates with the slots from `start` to `end` kept as they were, since a recursive
     /// definition's body binds its names at slots fixed when it compiled.
     pub(crate) fn keeping_slots(&mut self, eval: &Eval, start: u32, end: u32) -> Outcome<Id> {
-        if end <= start {
-            return eval(self);
+        match end.saturating_sub(start) {
+            0 => return eval(self),
+            1 => return self.keeping::<1>(eval, start as usize),
+            2 => return self.keeping::<2>(eval, start as usize),
+            3 => return self.keeping::<3>(eval, start as usize),
+            4 => return self.keeping::<4>(eval, start as usize),
+            _ => {}
         }
         let at = self.stack.len();
         self.stack
@@ -1130,6 +1135,16 @@ impl<'p> Machine<'p> {
         let result = eval(self);
         self.locals[start as usize..end as usize].copy_from_slice(&self.stack[at..]);
         self.stack.truncate(at);
+        result
+    }
+
+    #[inline(always)]
+    fn keeping<const N: usize>(&mut self, eval: &Eval, start: usize) -> Outcome<Id> {
+        let kept: [Id; N] = std::array::from_fn(|index| self.locals[start + index]);
+        let result = eval(self);
+        for (index, value) in kept.into_iter().enumerate() {
+            self.locals[start + index] = value;
+        }
         result
     }
 
@@ -1145,36 +1160,40 @@ impl<'p> Machine<'p> {
         self.depth += 1;
         self.reach = self.reach.max(self.depth);
         let result = match recursive.table {
-            Some(table) if self.tables[table].is_enabled() => {
-                let mut read = [0; 6];
-                for (index, &key) in recursive.keys.iter().enumerate() {
-                    read[index] = self.read_key(key);
-                }
-                let keys = &read[..recursive.keys.len()];
-                let (known, height) = self.tables[table].find(keys);
-                if known != EMPTY {
-                    // TLC calls the operator again, as deep as it went where it was kept.
-                    self.reach_cached(height).map(|()| known)
-                } else {
-                    let output_at = self.output.len();
-                    let outer = self.reach_from_here();
-                    let value = self.evaluate_recursive(recursive);
-                    let height = self.reached_below(outer);
-                    if let Ok(value) = value
-                        && self.output.len() == output_at
-                        && value != self.kept_lazy_function
-                    {
-                        self.tables[table].set_with_height(keys, value, height);
-                    }
-                    value
-                }
-            }
+            Some(table) if self.tables[table].is_enabled() => self.call_kept(recursive, table),
             _ => self.evaluate_recursive(recursive),
         };
         self.depth -= 1;
         result
     }
 
+    // A call of an operator whose table keeps what its calls returned.
+    #[inline(never)]
+    fn call_kept(&mut self, recursive: &Recursive, table: usize) -> Outcome<Id> {
+        let mut read = [0; 6];
+        for (index, &key) in recursive.keys.iter().enumerate() {
+            read[index] = self.read_key(key);
+        }
+        let keys = &read[..recursive.keys.len()];
+        let (known, height) = self.tables[table].find(keys);
+        if known != EMPTY {
+            // TLC calls the operator again, as deep as it went where it was kept.
+            return self.reach_cached(height).map(|()| known);
+        }
+        let output_at = self.output.len();
+        let outer = self.reach_from_here();
+        let value = self.evaluate_recursive(recursive);
+        let height = self.reached_below(outer);
+        if let Ok(value) = value
+            && self.output.len() == output_at
+            && value != self.kept_lazy_function
+        {
+            self.tables[table].set_with_height(keys, value, height);
+        }
+        value
+    }
+
+    #[inline(always)]
     fn evaluate_recursive(&mut self, recursive: &Recursive) -> Outcome<Id> {
         if let Some(budget) = self.program.evaluation_budget
             && self.program.evaluations.fetch_add(1, Ordering::Relaxed) >= budget

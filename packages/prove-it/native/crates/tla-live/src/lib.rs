@@ -345,6 +345,16 @@ impl Online {
     }
 }
 
+/// The atoms TLC may evaluate as it adds an initial state to the behavior graphs, by position:
+/// those of the state predicates of each tableau's initial nodes (`LiveChecker.addInitState`).
+/// None where the formula isn't one the checker reads.
+pub fn initially_read(formula: &[Term]) -> Option<Vec<u32>> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula).ok()?;
+    let checker = checker::Checker::new(terms, root).ok()?;
+    Some(checker.initially_read())
+}
+
 /// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
 /// expanded to the behavior graphs, where it may fail, unless TLC stops first at a node that
 /// accepts every behavior.

@@ -303,6 +303,39 @@ impl Store {
         }
     }
 
+    /// A store that holds nothing, not even the values a reset interns, to stand in for one lent
+    /// elsewhere until it is given back. Making it allocates nothing.
+    pub fn placeholder() -> Store {
+        Store {
+            base: None,
+            id_base: 0,
+            heap_base: 0,
+            text_base: 0,
+            serial: u64::MAX,
+            copied: None,
+            meta: Vec::new(),
+            heap: Vec::new(),
+            table: Vec::new(),
+            mask: 0,
+            texts: Vec::new(),
+            string_ids: HashMap::new(),
+            model_ids: HashMap::new(),
+            order: StringOrder::default(),
+            unordered_rank: i32::MAX,
+            small_ints: Vec::new(),
+            generation: 0,
+            scratch: Vec::new(),
+            sort_scratch: Vec::new(),
+            pair_scratch: Vec::new(),
+            patch_indexes: Vec::new(),
+            patch_values: Vec::new(),
+            shapes: shapes::Shapes::default(),
+            marked: Vec::new(),
+            marks_copied: 0,
+            is_empty_tuple_ambiguous: false,
+        }
+    }
+
     /// An overlay on a store, which interns what the store doesn't hold while the store doesn't
     /// change: each thread of a parallel search evaluates in one of its own.
     pub fn overlay(base: Arc<Store>) -> Store {
@@ -1161,8 +1194,8 @@ impl Store {
     /// isn't a string is no record, so it compares with any function by its keys and values
     /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
     /// stops in case the record is the one asked.
-    /// Equal ids, and two scalars or tuples of different lengths of one kind, are told apart in
-    /// place, as `equals` tells them.
+    /// Equal ids, and two scalars, tuples of different lengths or sets of different sizes of one
+    /// kind, are told apart in place, as `equals` tells them.
     #[inline(always)]
     pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
@@ -1175,7 +1208,8 @@ impl Store {
             }
         } else if left_meta.kind == right_meta.kind
             && (left_meta.kind <= KIND_STRING
-                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+                || matches!(left_meta.kind, KIND_TUPLE | KIND_SET)
+                    && left_meta.size != right_meta.size)
         {
             return Ok(false);
         }
