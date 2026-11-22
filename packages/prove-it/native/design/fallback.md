@@ -3023,7 +3023,8 @@ search; where TLC's record of a state, which holds its variables in TLC's order 
 prints them so (`RecordValue(TLCState)`), differs from the engine's, in the order of their
 names ("TLCExt's Trace of variables TLC orders otherwise than their names", as `VARIABLES y, x`);
 primed ("TLCExt's Trace in a primed context"), which TLC evaluates in the successor the walk
-assigns and fails at with an exception it reports as unexpected, as `x' = (Trace')[1].x`;
+assigns and fails at with an exception it reports as unexpected, as `x' = (Trace')[1].x` or,
+with `F <- Trace`, `x' = (F(0)')[1].x`;
 and where TLC's rebuild evaluates again an initial predicate, or a next-state relation, that may
 print, draw or set a register ("TLCExt's Trace, whose rebuild evaluates again what may have an
 effect"): TLC prints again what they print as it rebuilds the states before the one it gives the

@@ -352,7 +352,11 @@ impl Compiler<'_> {
         leaf(eval(|machine| machine.trace()), footprint)
     }
 
-    pub(crate) fn compile_nullary_builtin(&mut self, index: Index) -> Compiling<Compiled> {
+    pub(crate) fn compile_nullary_builtin(
+        &mut self,
+        index: Index,
+        context: &Context,
+    ) -> Compiling<Compiled> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
         if builtin.flags & Builtin::UNINITIALIZED_LITERAL != 0 {
@@ -363,6 +367,15 @@ impl Compiler<'_> {
         }
         if builtin.flags & Builtin::INDEX_REPLACED != 0 {
             return Ok(Self::index_replaced());
+        }
+        // TLC evaluates a primed Trace in the successor, which the walk assigns part by part, and
+        // fails there as it isn't assigned (`TLCExt.getTrace`), with an exception it reports
+        // otherwise than the failures the engine words.
+        if name == "Trace" && context.is_primed {
+            return Ok(leaf(
+                eval(|_| Err(Bail("TLCExt's Trace in a primed context"))),
+                Footprint::default(),
+            ));
         }
         if name == "Trace" {
             return Ok(self.compile_trace());
