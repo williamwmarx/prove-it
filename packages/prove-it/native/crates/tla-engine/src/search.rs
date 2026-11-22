@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
@@ -3510,10 +3511,10 @@ struct Share {
 
 // Where a share's new states go among the states, and its parents' counts of new states.
 struct Places<'s> {
-    ids: &'s mut [Id],
-    keys: &'s mut [Id],
-    parents: &'s mut [i32],
-    fingerprints: &'s mut [u64],
+    ids: &'s mut [MaybeUninit<Id>],
+    keys: &'s mut [MaybeUninit<Id>],
+    parents: &'s mut [MaybeUninit<i32>],
+    fingerprints: &'s mut [MaybeUninit<u64>],
     counts: &'s mut [u32],
 }
 
@@ -3543,16 +3544,16 @@ fn copy_new(
                 continue;
             }
             let state = &found.ids[index * width..][..width];
-            places.ids[place * width..][..width].copy_from_slice(state);
+            places.ids[place * width..][..width].write_copy_of_slice(state);
             let mut is_own = state.iter().any(|&id| id >= bound);
             if let Some(key_width) = key_width {
                 let key = &found.keys[index * key_width..][..key_width];
-                places.keys[place * key_width..][..key_width].copy_from_slice(key);
+                places.keys[place * key_width..][..key_width].write_copy_of_slice(key);
                 is_own |= key.iter().any(|&id| id >= bound);
             }
             let parent = found.parents[index];
-            places.parents[place] = parent as i32;
-            places.fingerprints[place] = found.fingerprints[index];
+            places.parents[place].write(parent as i32);
+            places.fingerprints[place].write(found.fingerprints[index]);
             places.counts[parent as usize - first_parent] += 1;
             if is_own {
                 own.push((place, run.thread, index));
@@ -3560,7 +3561,15 @@ fn copy_new(
             place += 1;
         }
     }
+    assert_eq!(place, places.parents.len(), "a share's places all written");
     own
+}
+
+// The next `count` elements past a vector's end, for threads to write before the vector takes
+// them: a `resize` would zero them first, on this thread, and fault in their pages here too.
+fn spare<T>(vec: &mut Vec<T>, count: usize) -> &mut [MaybeUninit<T>] {
+    vec.reserve(count);
+    &mut vec.spare_capacity_mut()[..count]
 }
 
 // A level the threads share: the states `[start, end)`, the next run to claim, and the first
@@ -4436,19 +4445,14 @@ impl Search<'_, States> {
             depths,
         };
         let states = &mut self.states;
-        states.ids.resize(count * width, 0);
-        states.parents.resize(count, 0);
-        states.fingerprints.resize(count, 0);
-        let mut ids = &mut states.ids[before * width..];
+        let added = count - before;
+        let mut ids = spare(&mut states.ids, added * width);
         let mut keys = match key_width {
-            Some(key_width) => {
-                states.keys.resize(count * key_width, 0);
-                &mut states.keys[before * key_width..]
-            }
+            Some(key_width) => spare(&mut states.keys, added * key_width),
             None => &mut [][..],
         };
-        let mut parents = &mut states.parents[before..];
-        let mut fingerprints = &mut states.fingerprints[before..];
+        let mut parents = spare(&mut states.parents, added);
+        let mut fingerprints = spare(&mut states.fingerprints, added);
         let mut counts = new_counts;
         let mut graph = self.graph.as_mut().map(|graph| {
             graph.extend_for(
@@ -4514,6 +4518,16 @@ impl Search<'_, States> {
             copied.extend(threads.into_iter().map(join));
             copied
         });
+        // SAFETY: the places are the spare capacity reserved above, split among the shares, and
+        // each share's thread wrote every one of its places, which `copy_new` checks.
+        unsafe {
+            states.ids.set_len(count * width);
+            if let Some(key_width) = key_width {
+                states.keys.set_len(count * key_width);
+            }
+            states.parents.set_len(count);
+            states.fingerprints.set_len(count);
+        }
         let mut place = before;
         for (share, own) in shares.iter().zip(own) {
             for (offset, thread, index) in own {
