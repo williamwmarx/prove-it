@@ -1240,6 +1240,10 @@ impl FingerprintSet {
             .indices
             .as_mut()
             .map(|indices| std::mem::replace(indices, vec![0; capacity]));
+        commit(&mut self.fingerprints);
+        if let Some(indices) = &mut self.indices {
+            commit(indices);
+        }
         self.shift -= 1;
         self.mask = capacity - 1;
         for (old, stored) in fingerprints.into_iter().enumerate() {
@@ -1387,6 +1391,19 @@ impl FingerprintSet {
                 .expect("the index of the state whose fingerprint is 0");
         }
         (statuses, found)
+    }
+}
+
+// Writes a 0 in each page of a table the allocator gave as zeros, which the kernel backs with no
+// memory until it is touched. A page first read is the kernel's one page of zeros, and the write
+// that follows must replace it under every thread's eyes: a second fault, and a flush of the
+// page's mapping on every core the process runs on. Linux before 6.13 also never backs with a
+// huge page a region it was advised to once a read has touched it. A page first written is the
+// table's own from the start, and a huge one where advised.
+fn commit<T: From<u8>>(table: &mut [T]) {
+    const PAGE_BYTES: usize = 4096;
+    for slot in table.iter_mut().step_by(PAGE_BYTES / size_of::<T>()) {
+        *slot = std::hint::black_box(T::from(0));
     }
 }
 
