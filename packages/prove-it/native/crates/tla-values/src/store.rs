@@ -2224,6 +2224,46 @@ impl Store {
         Some(self.word(offset + (size + *hint) as usize))
     }
 
+    /// Whether a key is in a function's domain, where the function's own keys tell what
+    /// [`Self::is_member`] answers of [`Self::domain_of`], which builds the domain: an integer
+    /// in a tuple or a function over a run of integers, by its bounds; or, in a function of few
+    /// keys, a key found by its id, or a boolean, integer or string missing from keys of its
+    /// kind alone, which `is_member` scans for the id and then tells by those kinds. Elsewhere,
+    /// and wherever a comparison could fail, `None`.
+    pub fn find_in_domain(&self, function: Id, key: Id) -> Option<bool> {
+        let meta = *self.meta(function);
+        let size = meta.size as usize;
+        let key_meta = *self.meta(key);
+        if size == 0 {
+            return None;
+        }
+        if meta.kind == KIND_TUPLE {
+            return (key_meta.kind == KIND_INT)
+                .then_some(key_meta.payload >= 1 && key_meta.payload as usize <= size);
+        }
+        if meta.kind != KIND_FUNCTION
+            || self.comparison_can_fail(function)
+            || self.comparison_can_fail(key)
+        {
+            return None;
+        }
+        let keys = self.words(meta.payload as usize, size);
+        if meta.flags & IS_INT_RUN != 0 && key_meta.kind == KIND_INT {
+            let position = i64::from(key_meta.payload) - i64::from(self.meta(keys[0]).payload);
+            return Some(position >= 0 && position < size as i64);
+        }
+        if size > LINEAR_SIZE {
+            return None;
+        }
+        if keys.contains(&key) {
+            return Some(true);
+        }
+        let is_of_kind = key_meta.kind <= KIND_STRING
+            && self.meta(keys[0]).kind == key_meta.kind
+            && self.meta(keys[size - 1]).kind == key_meta.kind;
+        is_of_kind.then_some(false)
+    }
+
     pub fn domain_of(&mut self, function: Id) -> Id {
         let size = self.size_of(function);
         let mut keys = self.take_scratch(size as usize);

@@ -529,13 +529,15 @@ impl<'p> Machine<'p> {
 
     /// Notes a value a walk assigned to a variable, where the machine keeps their shapes. A walk
     /// through an instance's action, as ENABLED takes, can assign slots past the spec's variables,
-    /// which no step the search keeps holds.
+    /// which no step the search keeps holds. A value the state being expanded holds, as most of a
+    /// successor's are, was noted when a walk assigned it to that state.
     #[inline(always)]
-    pub(crate) fn note_assigned(&mut self, variable: usize, value: Id) {
+    pub(crate) fn note_assigned(&mut self, variable: usize, value: Id, is_initial: bool) {
         if let Some(join) = self
             .assigned_shapes
             .as_mut()
             .and_then(|joins| joins.get_mut(variable))
+            && (is_initial || self.cur[variable] != value)
         {
             self.store.join_shape(join, value);
         }
