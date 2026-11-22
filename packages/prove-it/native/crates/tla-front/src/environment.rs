@@ -656,7 +656,46 @@ fn is_sany_standard_module(name: &str, version: TlcVersion) -> bool {
     modules.iter().any(|module| module.0 == name)
 }
 
+thread_local! {
+    static PARSED_STANDARD_MODULES: std::cell::OnceCell<Rc<Vec<Rc<Module>>>> =
+        const { std::cell::OnceCell::new() };
+}
+
+/// The standard modules of the pinned TLC as the parser reads them, parsed once.
+pub(crate) fn get_parsed_standard_modules() -> Rc<Vec<Rc<Module>>> {
+    PARSED_STANDARD_MODULES.with(|modules| {
+        modules
+            .get_or_init(|| {
+                Rc::new(
+                    standard_modules::MASTER
+                        .iter()
+                        .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
+                        .map(Rc::new)
+                        .collect(),
+                )
+            })
+            .clone()
+    })
+}
+
 impl Environment {
+    /// The definition of a standard module's operator the front end implements as a builtin, as
+    /// SANY parses the module: SANY levels an application of the operator by it.
+    pub fn get_standard_definition(&self, name: &str) -> Option<Rc<Definition>> {
+        if !self.builtins.contains_key(name) {
+            return None;
+        }
+        get_parsed_standard_modules()
+            .iter()
+            .find_map(|module| {
+                module
+                    .definitions
+                    .iter()
+                    .find(|definition| &*definition.name == name)
+            })
+            .cloned()
+    }
+
     pub fn is_substituted(&self, definition: &Rc<Definition>) -> bool {
         self.substituted_definitions
             .contains_key(&(Rc::as_ptr(definition) as usize))

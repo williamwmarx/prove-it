@@ -15,7 +15,7 @@ use crate::sany::source::{
     TokenSpan, find_token, get_expression_span, get_matching_index, get_pre_comments,
     get_span_location, get_token_location, get_token_source, is_token,
 };
-use crate::sany::{GENERATOR_EXCEPTION, Result, not_yet};
+use crate::sany::{GENERATOR_EXCEPTION, Result, generator_exception, not_yet};
 
 use super::{
     ContextSlot, LocalContext, ModuleGenerator, OpApplBinding, RecursiveFunction, get_kind_name,
@@ -186,7 +186,7 @@ impl ModuleGenerator<'_> {
             // Generator.endOpDefNode throws a WrongInvocationException, which the TypeScript
             // generator doesn't.
             if self.state.unresolved_sum < 0 {
-                return not_yet(GENERATOR_EXCEPTION);
+                return generator_exception(GENERATOR_EXCEPTION);
             }
         }
         Ok(())
@@ -1211,6 +1211,16 @@ impl ModuleGenerator<'_> {
                     let inner_module = self.spec.graph.module(inner).expect("a module");
                     let inner_name = inner_module.name.clone();
                     let inner_location = inner_module.location.clone();
+                    // The inner module's recursive sections join this module's, so
+                    // ModuleNode.levelCheck checks them again after this module's, where an
+                    // application's cached constraints are those of the second pass.
+                    let inner_sections = inner_module.op_defs_in_recursive_section.clone();
+                    self.spec
+                        .graph
+                        .module_mut(self.module)
+                        .expect("a module")
+                        .op_defs_in_recursive_section
+                        .extend(inner_sections);
                     match self.resolve_module(&inner_name) {
                         None => self.add_to_top_context(inner),
                         Some(binding) if binding != inner => {

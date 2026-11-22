@@ -94,10 +94,48 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 8] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
+        ),
+        // The suppression pragma before BY, OBVIOUS, USE and WITNESS (Proof.Parser's suppress):
+        // the obligations are made but not emitted, a WITNESS's side conditions aren't made, and
+        // a module-level USE emits its obligation from the pragma on.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "Suppressed.tla",
+            ],
+            "Suppressed.toolbox",
+        ),
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "SuppressedComments.tla",
+            ],
+            "SuppressedComments.toolbox",
+        ),
+        // A method pragma a definition or a proof owns (defn's read_new_method, Proof.Parser's
+        // read_method) is no suppression of the HIDE or USE after it.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "OwnedPragma.tla",
+            ],
+            "OwnedPragma.toolbox",
         ),
         (&["-N", "--toolbox", "0", "0", "Omit.tla"], "Omit.toolbox"),
         (
@@ -169,6 +207,16 @@ fn prints_the_notes_and_the_summary_tlapm_prints() {
         read_recording("obligations", "Incomplete.summary")
     );
     assert_eq!(stderr(&output), "");
+    // The summary counts the suppressed obligations, which Proof.Gen.obligate made.
+    for module in ["Suppressed", "SuppressedComments", "OwnedPragma"] {
+        let output = run("obligations", &["--summary", &format!("{module}.tla")]);
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(
+            stdout(&output),
+            read_recording("obligations", &format!("{module}.summary"))
+        );
+        assert_eq!(stderr(&output), "");
+    }
     let output = run("obligations", &["-N", "Proofs.tla"]);
     assert_eq!(
         (stdout(&output), stderr(&output)),
@@ -210,7 +258,7 @@ fn declines_an_error_tlapm_ends_with() {
 
 #[test]
 fn declines_what_it_cant_do_as_tlapm_does() {
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 6] = [
         (&["-C", "Proofs.tla"], "the tlapm option -C"),
         (
             &["--printallobs", "Proofs.tla"],
@@ -222,6 +270,21 @@ fn declines_what_it_cant_do_as_tlapm_does() {
         ),
         (&["Proof*.tla"], "globs"),
         (&[], "tlapm's report of a command line without a module"),
+        // tlapm's parser reads a pragma before OBVIOUS as tokens, so `sup(* c *)press` isn't
+        // `suppress`: tlapm b91fb6c fails to parse the module (`Unexpected identifier press` at
+        // the pragma, `Could not parse "./SplitPragma.tla" successfully.`, its backtrace, exit
+        // 3), which the port doesn't word.
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "SplitPragma.tla",
+            ],
+            "TlaUnsupportedError: a pragma before a proof or a USE that isn't a suppression",
+        ),
     ];
     for (args, reason) in cases {
         let output = run("obligations", args);
