@@ -1,0 +1,27 @@
+TLC2 Version 2026.11.21.201612 (rev: ${git.shortRevision})
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 23396] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/sq-wt/packages/prove-it/native/crates/prove-it-cli/tests/sany-checks/recursive-inner-module/M.tla
+Semantic processing of module M
+Semantic errors:
+
+*** Errors: 3
+
+line 7, col 1 to line 7, col 22 of module M
+
+Argument 1 of recursive operator S is primed
+
+
+line 6, col 1 to line 6, col 12 of module M
+
+Argument 1 of recursive operator R is primed
+
+
+line 9, col 6 to line 9, col 10 of module M
+
+Level error in applying operator $SetEnumerate:
+The level of argument 1 exceeds the maximum level allowed by the operator.
+
+
+Starting... (2026-11-22 01:29:18)
+Error: Parsing or semantic analysis failed.
+Finished in 00s at (2026-11-22 01:29:18)

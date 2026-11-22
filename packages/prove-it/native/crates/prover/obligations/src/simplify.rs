@@ -30,6 +30,7 @@ fn get_props(from: &ProofProps) -> ProofProps {
         location: from.location.clone(),
         step: from.step.clone(),
         method: from.method.clone(),
+        is_suppressed: from.is_suppressed,
         ..ProofProps::default()
     }
 }
@@ -116,8 +117,10 @@ fn get_remaining_bounds(first: &Bound, rest: &[Bound]) -> Result<Vec<Bound>> {
 }
 
 /// A WITNESS proves each membership and subset it relies on, then the goal from them.
+// A suppressed WITNESS proves its side conditions by nothing (P_simplify's `Obvious @@ st` under
+// Props.supp), so they are never made.
 fn get_witness_proof(step: &Step, side_facts: &[Expr]) -> Result<Proof> {
-    if side_facts.is_empty() {
+    if side_facts.is_empty() || step.props.is_suppressed {
         return Ok(Proof {
             core: ProofCore::Obvious,
             props: get_props(&step.props),
@@ -459,6 +462,7 @@ impl Simplifier {
                         },
                         ProofProps {
                             location: proof.props.location.clone(),
+                            is_suppressed: proof.props.is_suppressed,
                             ..ProofProps::default()
                         },
                     ));
@@ -475,6 +479,7 @@ impl Simplifier {
                         ProofProps {
                             location: fact.location.clone(),
                             use_location: proof.props.location.clone(),
+                            is_suppressed: proof.props.is_suppressed,
                             ..ProofProps::default()
                         },
                     ));
@@ -486,6 +491,7 @@ impl Simplifier {
                         },
                         ProofProps {
                             location: proof.props.location.clone(),
+                            is_suppressed: proof.props.is_suppressed,
                             ..ProofProps::default()
                         },
                     ));
@@ -508,6 +514,7 @@ impl Simplifier {
                         location: proof.props.location.clone(),
                         step: Some(qed_step.clone()),
                         method: proof.props.method.clone(),
+                        is_suppressed: proof.props.is_suppressed,
                         ..ProofProps::default()
                     },
                 };
@@ -526,6 +533,7 @@ impl Simplifier {
                     props: ProofProps {
                         location: proof.props.location.clone(),
                         step: proof.props.step.clone(),
+                        is_suppressed: proof.props.is_suppressed,
                         ..ProofProps::default()
                     },
                 })
@@ -596,6 +604,7 @@ impl Simplifier {
                         location: step.props.location.clone(),
                         step: step.props.step.clone(),
                         method: step.props.method.clone(),
+                        is_suppressed: step.props.is_suppressed,
                         ..ProofProps::default()
                     },
                 };
@@ -1510,6 +1519,7 @@ mod tests {
                 }
             }),
             use_location: read_locus(&fields[4]),
+            is_suppressed: false,
         }
     }
 

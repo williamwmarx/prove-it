@@ -941,7 +941,7 @@ pub(crate) mod tests {
         Level, Locus, Modal, Param, ParenForm, Quantifier, Selector, Sequent, Substitution, Time,
         Visibility, WhereDefined, XlabelIndex,
     };
-    use crate::pragma::{OldMethod, PragmaSetting, PragmaValue};
+    use crate::pragma::{OldMethod, PragmaSetting, PragmaSpan, PragmaValue};
 
     /// The JSON the TypeScript serializes its inputs and results to.
     #[derive(Clone, Debug)]
@@ -1317,6 +1317,7 @@ pub(crate) mod tests {
                 "String" => PragmaValue::String(value.text("value")),
                 _ => PragmaValue::Float(value.float("value")),
             },
+            span: PragmaSpan::default(),
         }
     }
 
