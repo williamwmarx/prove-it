@@ -1161,8 +1161,8 @@ impl Store {
     /// isn't a string is no record, so it compares with any function by its keys and values
     /// (`FcnRcdValue.equals`), where `equals`, which doesn't know which of the two TLC asks,
     /// stops in case the record is the one asked.
-    /// Equal ids, and two scalars or tuples of different lengths of one kind, are told apart in
-    /// place, as `equals` tells them.
+    /// Equal ids, and two scalars, tuples of different lengths or sets of different sizes of one
+    /// kind, are told apart in place, as `equals` tells them.
     #[inline(always)]
     pub fn equals_asked(&mut self, left: Id, right: Id) -> Outcome<bool> {
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
@@ -1175,7 +1175,8 @@ impl Store {
             }
         } else if left_meta.kind == right_meta.kind
             && (left_meta.kind <= KIND_STRING
-                || left_meta.kind == KIND_TUPLE && left_meta.size != right_meta.size)
+                || matches!(left_meta.kind, KIND_TUPLE | KIND_SET)
+                    && left_meta.size != right_meta.size)
         {
             return Ok(false);
         }
