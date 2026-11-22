@@ -70,8 +70,9 @@ impl RecursiveCall {
         self.body == other.body && self.scope == other.scope
     }
 
-    /// Whether each argument is of the same kind in both calls, a constant's value or above
-    /// constant level, so that what the translation can decide of one it can decide of the other.
+    /// Whether each argument is of the same kind in both calls, a constant's value, above constant
+    /// level or one that fails to evaluate, so that what the translation can decide of one it can
+    /// decide of the other: a guard that read one that fails would have failed with it.
     fn has_arguments_of_kinds(&self, other: &RecursiveCall) -> bool {
         self.arguments.len() == other.arguments.len()
             && self.arguments.iter().zip(&other.arguments).all(|pair| {
@@ -79,6 +80,7 @@ impl RecursiveCall {
                     pair,
                     (Argument::Value(_), Argument::Value(_))
                         | (Argument::Variable, Argument::Variable)
+                        | (Argument::Unevaluated(..), Argument::Unevaluated(..))
                 )
             })
     }
