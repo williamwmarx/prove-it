@@ -1,0 +1,499 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:9:10:9:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:9:13:9:17
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:8:12:8:14
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:8:15:8:19
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:21:8:24
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:7:20:7:22
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:7:23:7:27
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:7:29:7:32
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:14:10:14:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:14:13:14:17
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:19:14:22
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:12:1:12:15
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:12:1:12:15
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:13:18:13:20
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:15
+@!!loc:13:21:13:24
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:16
+@!!loc:18:10:18:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:17
+@!!loc:18:13:18:16
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:18
+@!!loc:17:9:17:10
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:19
+@!!loc:23:10:23:12
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:20
+@!!loc:23:13:23:17
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:21
+@!!loc:21:21:21:28
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:23
+@!!loc:22:18:22:20
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:24
+@!!loc:22:21:22:24
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:25
+@!!loc:26:1:26:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:26
+@!!loc:26:4:26:7
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:25
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:9:10:9:12
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:9:13:9:17
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:8:12:8:14
+@!!status:proved
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:8:15:8:19
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:21:8:24
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:7:20:7:22
+@!!status:failed
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW VARIABLE x,
+       NEW VARIABLE b,
+       x = 0 (* non-[] *),
+       TRUE (* non-[] *)
+PROVE  [](x = 0)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:7:23:7:27
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:7:29:7:32
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:14:10:14:12
+@!!status:proved
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:14:13:14:17
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:19:14:22
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:12:1:12:15
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:12:1:12:15
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:13:18:13:20
+@!!status:failed
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW VARIABLE x,
+       NEW VARIABLE b,
+       x = 0 (* non-[] *),
+       TRUE (* non-[] *)
+PROVE  [](x = 0)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:15
+@!!loc:13:21:13:24
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:16
+@!!loc:18:10:18:12
+@!!status:failed
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW VARIABLE x,
+       NEW VARIABLE b,
+       b (* non-[] *),
+       b (* non-[] *),
+       TRUE (* non-[] *)
+PROVE  []b
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:17
+@!!loc:18:13:18:16
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:18
+@!!loc:17:9:17:10
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:19
+@!!loc:23:10:23:12
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:20
+@!!loc:23:13:23:17
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:21
+@!!loc:21:21:21:28
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:23
+@!!loc:22:18:22:20
+@!!status:failed
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW VARIABLE x,
+       NEW VARIABLE b,
+       NEW CONSTANT c,
+       c = x (* non-[] *),
+       TRUE (* non-[] *)
+PROVE  [](c = x)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:24
+@!!loc:22:21:22:24
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:25
+@!!loc:26:1:26:3
+@!!status:failed
+@!!prover:ls4
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW VARIABLE x,
+       NEW VARIABLE b,
+       NEW CONSTANT c \in {x},
+       TRUE 
+PROVE  [](c \in {x})
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:26
+@!!loc:26:4:26:7
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./FactTimes.tla", line 26, characters 1-2:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW VARIABLE b,
+                  NEW CONSTANT c \in 
+                  {x},
+                  PTL 
+           PROVE  [](c \in {x})
+File "./FactTimes.tla", line 22, characters 18-19:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW VARIABLE b,
+                  NEW CONSTANT c,
+                  c = x ,
+                  PTL 
+           PROVE  [](c = x)
+File "./FactTimes.tla", line 18, characters 10-11:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW VARIABLE b,
+                  b ,
+                  b ,
+                  PTL 
+           PROVE  []b
+File "./FactTimes.tla", line 13, characters 18-19:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW VARIABLE b,
+                  x = 0 ,
+                  PTL 
+           PROVE  [](x = 0)
+File "./FactTimes.tla", line 7, characters 20-21:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE x,
+                  NEW VARIABLE b,
+                  <1>1 ,
+                  PTL 
+           PROVE  [](x = 0)
+File "./FactTimes.tla", line 1, character 1 to line 27, character 4:
+[ERROR]: 5/25 obligations failed.
+There were backend errors processing module `"FactTimes"`.

@@ -6,6 +6,7 @@
 //! knows: one that fails leaves the definition an operator.
 
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::ast::*;
 use crate::environment::Environment;
@@ -15,15 +16,24 @@ use crate::spec::get_definition;
 /// TLC's Java overrides of TLA+ operators, by module: each operator with its level (`minLevel`).
 const TLC_OVERRIDES: &str = include_str!("tlc_overrides.tsv");
 
+/// The overrides as (module, operator, level), read from the table once.
+static OVERRIDES: OnceLock<Vec<(&'static str, &'static str, u8)>> = OnceLock::new();
+
 // TLC's overrides as (module, operator, level).
 pub(crate) fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
-    TLC_OVERRIDES
-        .lines()
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            Some((fields.next()?, fields.next()?, fields.next()?.parse().ok()?))
+    OVERRIDES
+        .get_or_init(|| {
+            TLC_OVERRIDES
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .filter_map(|line| {
+                    let mut fields = line.split('\t');
+                    Some((fields.next()?, fields.next()?, fields.next()?.parse().ok()?))
+                })
+                .collect()
         })
+        .iter()
+        .copied()
 }
 
 /// The level of the Java method TLC reads each overridden definition through instead of its
@@ -129,7 +139,6 @@ pub(crate) fn get_level_bound(
         environment,
         overridden: get_overridden_bodies(environment),
         facts: get_fact_statements(environment),
-        standard: std::cell::OnceCell::new(),
     }
     .get_level(expression, scope, &mut Vec::new())
 }
@@ -144,7 +153,6 @@ pub(crate) fn get_definition_level_bound(
         environment,
         overridden: get_overridden_bodies(environment),
         facts: get_fact_statements(environment),
-        standard: std::cell::OnceCell::new(),
     }
     .get_definition_level(definition)
 }
@@ -155,7 +163,6 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
         environment,
         overridden: get_overridden_bodies(environment),
         facts: get_fact_statements(environment),
-        standard: std::cell::OnceCell::new(),
     };
     let mut model = StartupModel {
         attempted: Vec::new(),
@@ -273,8 +280,6 @@ struct LevelBound<'a> {
     overridden: FastMap<usize, u8>,
     /// The statements of the named theorems and assumptions, by address.
     facts: FastSet<usize>,
-    /// The standard modules, parsed once one is needed.
-    standard: std::cell::OnceCell<Vec<Module>>,
 }
 
 impl LevelBound<'_> {
@@ -436,20 +441,9 @@ impl LevelBound<'_> {
     // The level of a standard module's operator TLC implements with no Java method, which it
     // finds by walking the operator's TLA+ definition in its module.
     fn get_standard_operator_level(&self, name: &str) -> u8 {
-        let modules = self.standard.get_or_init(|| {
-            crate::standard_modules::MASTER
-                .iter()
-                .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
-                .collect()
-        });
-        modules
-            .iter()
-            .find_map(|module| {
-                let definition = module
-                    .definitions
-                    .iter()
-                    .find(|definition| &*definition.name == name)?;
-                Some(self.get_standard_level(module, &definition.body, &mut vec![key(definition)]))
+        crate::environment::get_standard_module_definition(name)
+            .map(|(module, definition)| {
+                self.get_standard_level(&module, &definition.body, &mut vec![key(&definition)])
             })
             .unwrap_or(0)
     }
