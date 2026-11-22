@@ -108,6 +108,7 @@ impl Pool {
         let scope = Scope {
             pool: self,
             posted: Cell::new(0),
+            is_posting: Cell::new(false),
             _scoped: scoped,
             scope: PhantomData,
         };
@@ -122,6 +123,8 @@ pub struct Scope<'scope, 'env: 'scope> {
     pool: &'scope Pool,
     /// How many jobs the round that was posted last has, which `done` counts to.
     posted: Cell<usize>,
+    /// Whether a round is being installed, between the wait for the one before and the count.
+    is_posting: Cell<bool>,
     _scoped: MutexGuard<'scope, ()>,
     scope: PhantomData<&'scope mut &'env ()>,
 }
@@ -150,13 +153,13 @@ impl<'scope, 'env> Scope<'scope, 'env> {
     /// Starts a round of jobs, job `i` on thread `i % threads`, and returns it to join: the
     /// caller may do its own work while the jobs run. A round posted while the one before it
     /// still runs waits for it first, so a pool runs one round at a time, and the scope joins
-    /// the round whether or not it is joined here.
+    /// the round whether or not it is joined here. The jobs are all taken from the iterator
+    /// before the wait, so an iterator that posts rounds of its own posts them before this one.
     pub fn post<R, F>(&'scope self, jobs: impl IntoIterator<Item = F>) -> Round<'scope, 'env, R>
     where
         R: Send + 'env,
         F: FnOnce() -> R + Send + 'env,
     {
-        self.wait();
         let mut results: Vec<Slot<R>> = Vec::new();
         let posted: Vec<Option<Job>> = jobs
             .into_iter()
@@ -177,6 +180,13 @@ impl<'scope, 'env> Scope<'scope, 'env> {
             })
             .collect();
         let count = posted.len();
+        // From here to the round's installation no code of the caller's runs: the round before
+        // is joined, and then the queue and the count are this round's.
+        assert!(
+            !self.is_posting.replace(true),
+            "a round posted while another is installed"
+        );
+        self.wait();
         let shared = &self.pool.shared;
         shared.done.store(0, Ordering::Release);
         {
@@ -189,6 +199,7 @@ impl<'scope, 'env> Scope<'scope, 'env> {
         }
         shared.is_posted.notify_all();
         self.posted.set(count);
+        self.is_posting.set(false);
         Round {
             scope: self,
             results,
@@ -466,6 +477,33 @@ mod tests {
             totals.push(total);
         }
         assert_eq!(totals, vec![39, 739, 1439]);
+    }
+
+    #[test]
+    fn an_iterator_that_posts_a_round_has_it_joined_before_its_own() {
+        let pool = Pool::new(2, 1 << 20);
+        let (inner_ran, outer_ran) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        pool.scope(|scope| {
+            let (inner_ran, outer_ran) = (&inner_ran, &outer_ran);
+            // The iterator of the outer round's jobs posts a round of its own, whose job is still
+            // running when the iterator yields: the outer round waits for it.
+            let jobs = std::iter::once(()).map(|()| {
+                let inner = scope.post([()].map(|()| {
+                    move || {
+                        std::thread::sleep(Duration::from_millis(30));
+                        inner_ran.fetch_add(1, Ordering::AcqRel);
+                    }
+                }));
+                std::mem::forget(inner);
+                move || {
+                    outer_ran.fetch_add(1, Ordering::AcqRel);
+                }
+            });
+            scope.run(jobs);
+            assert_eq!(inner_ran.load(Ordering::Acquire), 1);
+            assert_eq!(outer_ran.load(Ordering::Acquire), 1);
+        });
+        assert_eq!(inner_ran.load(Ordering::Acquire), 1);
     }
 
     #[test]
