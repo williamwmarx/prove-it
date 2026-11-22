@@ -123,6 +123,8 @@ pub fn encode_for_backend(
         &obligation.sequent,
         obligation.method.as_ref(),
         Some(&methods),
+        None,
+        &mut |_| {},
     )?;
     encode_normalized(prover, obligation.id, &sequent, &method, session)
 }
@@ -160,6 +162,8 @@ pub fn encode_proof_theory(
                     &obligation.sequent,
                     obligation.method.as_ref(),
                     None,
+                    None,
+                    &mut |_| {},
                 )?)?,
                 tactic: attempt.method.tactic.clone().unwrap_or("auto".to_owned()),
             }));

@@ -1322,6 +1322,8 @@ pub(crate) mod tests {
                     "ea",
                     describe(crate::prep::enabled_axioms::implication_to_enabled(
                         &sequent,
+                        None,
+                        &mut |_| {},
                     )),
                 ),
             ];

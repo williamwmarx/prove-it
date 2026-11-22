@@ -1,0 +1,32 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:1:4:12
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       A == TRUE
+PROVE  A
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:18:3:18:10
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       A == TRUE,
+       A 
+PROVE  P(1)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:2
+@!!END
+

@@ -33,7 +33,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   echo "tlapm $args $name.tla" > "$run/command"
   set +e
   # shellcheck disable=SC2086
-  (cd "$work" && "$tlapm" $args "$name.tla" > "$run/stdout" 2> "$run/stderr")
+  (cd "$work" && "$tlapm" $args "$name.tla" < /dev/null > "$run/stdout" 2> "$run/stderr")
   echo $? > "$run/exit"
   set -e
   if [ -f "$work/.tlacache/$name.tlaps/fingerprints" ]; then

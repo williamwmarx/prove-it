@@ -84,14 +84,24 @@ how.
     in `search.ts`), or too few for two threads of half that each;
   - the search records a graph for liveness and `PROVE_IT_TEST_LIVE_CHECK_AT` asks for a check
     of it at a state, which could be inside a level;
-  - something prints or reads `TLCGet("distinct")`;
+  - something prints, draws, or reads or sets a register or a file once TLC has started, or reads
+    `TLCGet("distinct")`. What does so only as TLC starts doesn't count: an assumption, which TLC
+    checks once, or a constant definition, which TLC computes once and reads by its value from
+    then on (`SpecProcessor.processConstantDefns`), as SpanTreeRandom's `Edges` draws its graph.
+    The compiler tells the two apart as it compiles (`Compiler::note_effect`): an effect counts
+    as the startup's only where it is written in such a body and compiled as part of it. One
+    reached through an operator the body applies or a definition its LET makes is compiled with
+    that definition, which the compiler may use again where the search evaluates it, so it
+    counts as the search's. The search then checks that the startup kept a value of each such
+    definition: one whose evaluation failed TLC evaluates again at every use;
   - ToString makes strings, which it ranks as it evaluates them;
   - `PROVE_IT_LIVE_CHECK` is on.
 
   Each level then still runs on the fast one-thread path. VIEW, symmetry, constraints and
   `PROVE_IT_FP_VERIFY` all share levels.
 - **The liveness checker's atoms** are answered on helper threads, each on an overlay of the store
-  (`on_helpers`), unless something prints, draws, reads or sets TLC's registers, ranks strings
+  (`on_helpers`), unless something prints, draws, reads or sets TLC's registers once TLC has
+  started (as above), ranks strings
   with ToString, caches with TLCCache or builds a function TLC keeps lazy: a helper has none of
   the search machine's registers, generator, cache or functions. A helper starts with the search
   machine's values of the definitions TLC computed once at startup, so it never computes one again:

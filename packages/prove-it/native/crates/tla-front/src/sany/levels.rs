@@ -2032,7 +2032,14 @@ fn check_level(graph: &mut Graph, node: NodeId, iteration: u32, check: &mut Leve
                 .chain(proof)
                 .collect();
             let is_correct = check_subnodes(graph, node, &subnodes, iteration, check);
-            let body_level = graph.levels(body).level;
+            // TheoremNode.levelCheck reads the statement's `level` field, which
+            // LabelNode.levelCheck never sets (its getLevel is the body's), so a labeled goal
+            // skips the checks of a temporal theorem's PICK bounds and proof steps.
+            let body_level = if matches!(graph.kind(body), NodeKind::Label(_)) {
+                CONSTANT_LEVEL
+            } else {
+                graph.levels(body).level
+            };
             if let NodeKind::OpAppl(appl) = graph.kind(body)
                 && get_name(graph, appl.operator) == "$Pick"
                 && body_level == TEMPORAL_LEVEL
