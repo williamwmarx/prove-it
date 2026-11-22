@@ -1,6 +1,8 @@
-//! Pco.resolve: tlapm's parser lets an operator take in every later infix operator that is not
-//! entirely below it, so SUBSET S \ T is SUBSET (S \ T) to tlapm though SANY reads (SUBSET S) \ T.
-//! This regroups an infix application the way tlapm does. A port of `src/obligations/regroup.ts`.
+//! Pco.resolve: tlapm's parser lets an operator take in every later infix or postfix operator
+//! that is not entirely below it, so SUBSET S \ T is SUBSET (S \ T) to tlapm though SANY reads
+//! (SUBSET S) \ T, and ENABLED x' is ENABLED (x'). This regroups an infix or a postfix
+//! application the way tlapm does. A port of `src/obligations/regroup.ts`, which took in the infix
+//! operators.
 
 use std::rc::Rc;
 
@@ -103,20 +105,29 @@ fn is_below(left: &Operator, right: &Operator) -> bool {
     left.high < right.low
 }
 
-/// The infix application being regrouped.
+/// The infix or postfix application being regrouped.
 struct Regrouping<'a> {
     expression: &'a Expr,
     operator: Operator,
-    right: Expr,
+    /// An infix application's right operand.
+    right: Option<Expr>,
     end: Option<Position>,
 }
 
 impl Regrouping<'_> {
-    fn get_infix(&self, operand: Expr) -> Expr {
+    /// The application over the operand it takes in, which starts where the operand does.
+    fn get_applied(&self, operand: Expr) -> Expr {
         let mut changed = (**self.expression).clone();
         let start = get_start(&operand);
-        if let ExpressionKind::Apply { args, .. } = &mut changed.kind {
-            *args = vec![operand, self.right.clone()];
+        match &mut changed.kind {
+            ExpressionKind::Apply { args, .. } => {
+                *args = match &self.right {
+                    Some(right) => vec![operand, right.clone()],
+                    None => vec![operand],
+                };
+            }
+            ExpressionKind::Prime(inner) => *inner = operand,
+            _ => {}
         }
         if let (Some(range), Some(start)) = (&self.expression.location.range, start) {
             changed.location.range = Some(tla_front::ast::SourceRange {
@@ -159,30 +170,41 @@ impl Regrouping<'_> {
             };
         }
         Grouping::Attached(with_end(
-            replace_operand(node, self.get_infix(open.operand.clone())),
+            replace_operand(node, self.get_applied(open.operand.clone())),
             self.end,
         ))
     }
 }
 
-/// Regroups an infix application of two operands; anything else, or an application tlapm groups
-/// as SANY does, comes back as itself.
+/// Regroups an infix application of two operands or a postfix one; anything else, or an
+/// application tlapm groups as SANY does, comes back as itself.
 pub fn regroup(expression: &Expr) -> Expr {
-    let ExpressionKind::Apply { operator, args, .. } = &expression.kind else {
-        return expression.clone();
-    };
-    let [left, right] = args.as_slice() else {
-        return expression.clone();
+    // The operand before the operator is regrouped first, as tlapm's parser took its operators
+    // in before it reached this one: a prefix operator that took in a postfix one is still open.
+    let (operator, left, right) = match &expression.kind {
+        ExpressionKind::Apply { operator, args, .. } => match args.as_slice() {
+            [left, right] => (
+                lookup_operator(operator),
+                regroup(left),
+                Some(right.clone()),
+            ),
+            [operand] if lookup_operator(operator).fixity == Fixity::Postfix => {
+                (lookup_operator(operator), regroup(operand), None)
+            }
+            _ => return expression.clone(),
+        },
+        ExpressionKind::Prime(inner) => (lookup_operator("'"), regroup(inner), None),
+        _ => return expression.clone(),
     };
     let regrouping = Regrouping {
         expression,
-        operator: lookup_operator(operator),
-        right: right.clone(),
+        operator,
+        right,
         end: get_end(expression),
     };
     match regrouping.attach(
-        left,
-        is_same_position(get_start(left), get_start(expression)),
+        &left,
+        is_same_position(get_start(&left), get_start(expression)),
     ) {
         Grouping::Attached(regrouped) => regrouped,
         Grouping::Reduced { .. } => expression.clone(),
@@ -283,6 +305,29 @@ mod tests {
             ),
             (r"x' \cup y", r"(\cup (Prime x)@2:6-2:7 y)@2:6-2:14", "same"),
             ("a = b", "(= a b)@2:6-2:10", "same"),
+            (
+                "ENABLED x'",
+                "(Prime (Enabled x)@2:6-2:14)@2:6-2:15",
+                "(Enabled (Prime x)@2:14-2:15)@2:6-2:15",
+            ),
+            (
+                "ENABLED x''",
+                "(Prime (Prime (Enabled x)@2:6-2:14)@2:6-2:15)@2:6-2:16",
+                "(Enabled (Prime (Prime x)@2:14-2:15)@2:14-2:16)@2:6-2:16",
+            ),
+            ("SUBSET x'", "(SUBSET (Prime x)@2:13-2:14)@2:6-2:14", "-"),
+            ("-x'", "(-. (Prime x)@2:7-2:8)@2:6-2:8", "-"),
+            (
+                "(ENABLED x)'",
+                "(Prime (Enabled x)@2:7-2:15)@2:6-2:17",
+                "same",
+            ),
+            (
+                r"ENABLED x' \cdot y",
+                r"(\cdot (Prime (Enabled x)@2:6-2:14)@2:6-2:15 y)@2:6-2:23",
+                r"(Enabled (\cdot (Prime x)@2:14-2:15 y)@2:14-2:23)@2:6-2:23",
+            ),
+            ("x''", "(Prime (Prime x)@2:6-2:7)@2:6-2:8", "same"),
         ];
         for (text, parsed, regrouped) in cases {
             let source = format!("---- MODULE M ----\nX == {text}\n====");
@@ -292,10 +337,10 @@ mod tests {
             };
             let body = &definition.body;
             assert_eq!(show(body), parsed, "{text}");
-            let is_binary =
-                matches!(&body.kind, ExpressionKind::Apply { args, .. } if args.len() == 2);
+            let is_regrouped = matches!(&body.kind, ExpressionKind::Prime(_))
+                || matches!(&body.kind, ExpressionKind::Apply { args, .. } if args.len() == 2);
             let result = regroup(body);
-            let shown = if !is_binary {
+            let shown = if !is_regrouped {
                 assert!(Rc::ptr_eq(&result, body), "{text}");
                 "-".to_owned()
             } else if Rc::ptr_eq(&result, body) {

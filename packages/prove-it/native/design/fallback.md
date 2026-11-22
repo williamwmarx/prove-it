@@ -8725,6 +8725,7 @@ tactic only (`Fpfile.query`).
 | declining what tlapm's parser and Expr.Anon reject | 766 / 577 / 8 | 319 / 1,042 / 37 |
 | with a back end's refusal as the attempt's reason | 768 / 577 / 6 | 319 / 1,042 / 37 |
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
+| with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
 
 ### Declines
 
