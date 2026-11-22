@@ -209,19 +209,13 @@ fn prepare_hyps(scope: &ScopeRef, expression: &Expr) -> Result<Expr> {
     };
     for original in &sequent.context {
         let hyp = substitute_hyp(&state.substitution, original)?;
-        let (
-            HypCore::Fresh {
-                name,
-                shape,
-                level,
-                domain: Some(domain),
-                domain_visibility,
-            },
-            HypCore::Fresh {
-                domain: Some(original_domain),
-                ..
-            },
-        ) = (&hyp.core, &original.core)
+        let HypCore::Fresh {
+            name,
+            shape,
+            level,
+            domain: Some(domain),
+            domain_visibility,
+        } = &hyp.core
         else {
             let pushed = match &hyp.core {
                 HypCore::Fact {
@@ -249,20 +243,18 @@ fn prepare_hyps(scope: &ScopeRef, expression: &Expr) -> Result<Expr> {
             domain: None,
             domain_visibility: *domain_visibility,
         }));
-        // tlapm judges the time of the domain as written, one hypothesis too deep.
-        let membership = apply_builtin(
-            Builtin::Mem,
-            vec![
-                at(ExprCore::Ix { index: 1 }, &domain),
-                shift_expr(1, &domain)?,
-            ],
-            &domain.props(),
-        );
+        // The domain's time is judged under the declaration, where the domain is shifted past it.
+        let shifted_domain = shift_expr(1, &domain)?;
         let time = if *level == crate::expression::Level::Constant {
-            get_time(&state.scope, original_domain)?
+            get_time(&state.scope, &shifted_domain)?
         } else {
             Time::Now
         };
+        let membership = apply_builtin(
+            Builtin::Mem,
+            vec![at(ExprCore::Ix { index: 1 }, &domain), shifted_domain],
+            &domain.props(),
+        );
         state.push(Rc::new(HypNode {
             core: HypCore::Fact {
                 expression: membership,
@@ -436,7 +428,9 @@ mod tests {
     use crate::prep::action::tests::{FIXTURES, is_expected_text, read_fixture};
 
     // The expected texts come from running `encode.ts` under Bun on the sequents of the action
-    // frontend's fixtures. The first case's text is the one `tests/unit/ptl.test.ts` expects.
+    // frontend's fixtures, apart from the two whose declaration's domain `encode.ts` judged one
+    // hypothesis too deep, which hold always as tlapm's Pltl.expand_domains judges them. The
+    // first case's text is the one `tests/unit/ptl.test.ts` expects.
 
     #[test]
     fn encodes_as_the_typescript_does() {

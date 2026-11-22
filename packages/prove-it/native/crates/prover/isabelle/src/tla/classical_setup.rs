@@ -16,6 +16,7 @@ use crate::pure::tactical::then_goal;
 use crate::pure::term::Term;
 use crate::pure::thm::Thm;
 
+use super::context::ATOMIZE_RULES;
 use super::logic::{LogicNetPair, TlaLogic};
 
 pub fn get_fact(logic: &TlaLogic, name: &str) -> Res<Thm> {
@@ -68,6 +69,10 @@ pub fn get_classical_data(logic: &TlaLogic) -> Res<ClassicalData> {
         classical: get_fact(logic, "PredicateLogic.classical")?,
         judgment: "PredicateLogic.Trueprop".into(),
         hyp_subst_tacs: vec![hyp_subst_tac(&hypsubst)],
+        atomize: ATOMIZE_RULES
+            .iter()
+            .map(|name| get_fact(logic, name))
+            .collect::<Res<Vec<_>>>()?,
     })
 }
 
