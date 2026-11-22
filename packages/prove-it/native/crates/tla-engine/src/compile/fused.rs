@@ -91,38 +91,66 @@ fn quantify_levels(
     body: &Test,
     is_forall: bool,
 ) -> Outcome<bool> {
-    let mut bounds: Vec<Option<(i32, i32)>> = Vec::with_capacity(levels.len());
-    for (_, (low, high), is_shared) in levels {
-        let level = match bounds.last() {
-            Some(&last) if *is_shared => last,
+    let mut inline = [Counter::default(); INLINE_LEVELS];
+    let mut spilled = Vec::new();
+    let counters = if levels.len() <= INLINE_LEVELS {
+        &mut inline[..levels.len()]
+    } else {
+        spilled.resize(levels.len(), Counter::default());
+        &mut spilled[..]
+    };
+    let mut is_empty = false;
+    let mut last = None;
+    for ((_, (low, high), is_shared), counter) in levels.iter().zip(counters.iter_mut()) {
+        let level = match last {
+            Some(level) if *is_shared => level,
             _ => interval_bounds(machine, low, high)?,
         };
-        bounds.push(level);
+        last = Some(level);
+        match level {
+            Some((low, high)) => {
+                *counter = Counter {
+                    low,
+                    high,
+                    value: low,
+                }
+            }
+            None => is_empty = true,
+        }
     }
-    let Some(bounds) = bounds.into_iter().collect::<Option<Vec<(i32, i32)>>>() else {
+    if is_empty {
         return Ok(is_forall);
-    };
-    let mut current: Vec<i32> = bounds.iter().map(|&(low, _)| low).collect();
+    }
     loop {
-        for ((slot, ..), &value) in levels.iter().zip(&current) {
-            machine.locals[*slot as usize] = machine.store.int(i64::from(value))?;
+        for ((slot, ..), counter) in levels.iter().zip(counters.iter()) {
+            machine.locals[*slot as usize] = machine.store.int(i64::from(counter.value))?;
         }
         if body(machine)? != is_forall {
             return Ok(!is_forall);
         }
         let mut level = 0;
         loop {
-            let Some(&(low, high)) = bounds.get(level) else {
+            let Some(counter) = counters.get_mut(level) else {
                 return Ok(is_forall);
             };
-            if current[level] < high {
-                current[level] += 1;
+            if counter.value < counter.high {
+                counter.value += 1;
                 break;
             }
-            current[level] = low;
+            counter.value = counter.low;
             level += 1;
         }
     }
+}
+
+const INLINE_LEVELS: usize = 4;
+
+/// A level of a quantifier over intervals: its bounds and the value it is at.
+#[derive(Clone, Copy, Default)]
+struct Counter {
+    low: i32,
+    high: i32,
+    value: i32,
 }
 
 /// `f[e]`, and ApplyVar: `f[i]` with `f` a variable and `i` a bound name, read straight from the
