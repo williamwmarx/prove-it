@@ -1866,11 +1866,6 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     }
 
     fn visit_initial(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
-        if machine.current().contains(&UNASSIGNED) {
-            return Err(Bail("an initial state that isn't complete"));
-        }
-        let one = machine.store.int(1)?;
-        machine.set_slot(LEVEL_SLOT, one);
         let count = self.initial_generated;
         if count > 1 && count.is_power_of_two() {
             // A count after what the initial predicate printed waits with it.
@@ -1880,6 +1875,11 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 machine.output.push(Printed::InitialStates(count));
             }
         }
+        if machine.current().contains(&UNASSIGNED) {
+            return Err(Bail("an initial state that isn't complete"));
+        }
+        let one = machine.store.int(1)?;
+        machine.set_slot(LEVEL_SLOT, one);
         self.generated += 1;
         self.initial_generated += 1;
         let count = self.states.count();
