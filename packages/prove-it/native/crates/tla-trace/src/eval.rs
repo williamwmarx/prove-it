@@ -1048,8 +1048,9 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
-    /// How many times the evaluator applied TLCGet, whose value at TLC's start an \E's bound in the
-    /// split of the next-state relation keeps (`Splitter::evaluate_bound`).
+    /// How many times the evaluator applied TLCGet to a key whose value changes in a run, the
+    /// search's or the split's, which an \E's bound in the split of the next-state relation keeps
+    /// as TLC starts (`Splitter::evaluate_bound`).
     pub(crate) tlc_gets: u64,
     /// How many lazy functions and filters the evaluator built, each holding the states to
     /// evaluate later in them: a definition that built one isn't the same value in other states.
@@ -1398,6 +1399,16 @@ fn is_simulation_run_key(key: &[u16]) -> bool {
     !matches!(key.as_str(), "level" | "spec")
         && !is_unknown_tlc_get_key(&key)
         && !key.starts_with(JAVA_PROPERTY_PREFIX)
+}
+
+// Whether TLCGet of this key reads what TLC fixes for the run as it starts, the configuration, its
+// revision and a Java property, rather than the search or the split (`TLCGetStringValue`).
+fn is_fixed_tlc_get_key(key: &Value) -> bool {
+    let Value::Str(key) = key else {
+        return false;
+    };
+    let key = String::from_utf16_lossy(&key.units);
+    matches!(key.as_str(), "config" | "revision") || key.starts_with(JAVA_PROPERTY_PREFIX)
 }
 
 fn undefined_register<T>(key: &Value) -> Evaluated<T> {
@@ -13505,8 +13516,11 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn tlc_get(&mut self, operand: &Operand, context: &Context) -> Evaluated<Value> {
-        self.tlc_gets += 1;
-        Ok(match self.operand(operand)? {
+        let key = self.operand(operand)?;
+        if !is_fixed_tlc_get_key(&key) {
+            self.tlc_gets += 1;
+        }
+        Ok(match key {
             // A register, whose value no cache may keep.
             key @ Value::Int(index) if index >= 0 => {
                 self.reads += 1;
