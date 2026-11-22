@@ -1048,6 +1048,9 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
+    /// How many times the evaluator applied TLCGet, whose value at TLC's start an \E's bound in the
+    /// split of the next-state relation keeps (`Splitter::evaluate_bound`).
+    pub(crate) tlc_gets: u64,
     /// How many lazy functions and filters the evaluator built, each holding the states to
     /// evaluate later in them: a definition that built one isn't the same value in other states.
     captures: u64,
@@ -1803,7 +1806,7 @@ const LAZY_BODY_EFFECTS: &str = "effects in the body of a function TLC keeps laz
 
 /// The prints, TLCGet reads, TLCSet writes and random draws so far, which tell whether anything
 /// had effects between two points.
-type Effects = (usize, usize, usize, Option<u64>);
+pub(crate) type Effects = (usize, usize, usize, Option<u64>);
 
 /// A function TLC keeps lazy whose body printed as the evaluator built it: where its first body
 /// that printed began and where the function was built.
@@ -2653,6 +2656,7 @@ impl<'ir> Evaluator<'ir> {
             searched_failing: HashSet::new(),
             searched_limited: HashSet::new(),
             searched_unwarned: HashSet::new(),
+            tlc_gets: 0,
             searched_printed: HashMap::new(),
             searched_effects: HashMap::new(),
             searched_unworded: HashSet::new(),
@@ -10079,7 +10083,7 @@ impl<'ir> Evaluator<'ir> {
         self.lazy_prints.partition_point(|lazy| lazy.id < first)
     }
 
-    fn lazy_effects(&self) -> Effects {
+    pub(crate) fn lazy_effects(&self) -> Effects {
         (
             self.printed.len(),
             self.register_reads,
@@ -13501,6 +13505,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn tlc_get(&mut self, operand: &Operand, context: &Context) -> Evaluated<Value> {
+        self.tlc_gets += 1;
         Ok(match self.operand(operand)? {
             // A register, whose value no cache may keep.
             key @ Value::Int(index) if index >= 0 => {

@@ -860,16 +860,28 @@ impl Splitter<'_, '_> {
                 .is_ok())
     }
 
-    // An \E's bound the split evaluates, as TLC does when it starts.
+    // An \E's bound the split evaluates, as TLC does when it starts: one whose evaluation printed,
+    // drew, applied TLCGet or set a register, which the engine would do again at each state.
     fn evaluate_bound(
         &mut self,
         node: NodeId,
         context: &Context,
     ) -> Result<Evaluated<Value>, Unsupported> {
-        if may_have_effect(self.evaluator, node, &mut HashSet::new()) {
+        // A generator, whose state tells whether the bound drew: the startup's is gone, and which
+        // draws the bound would make doesn't matter where any declines.
+        let seed = self.evaluator.ir.model.random_seed;
+        let random = self
+            .evaluator
+            .random
+            .replace(tla_values::random::JavaRandom::seeded(seed));
+        let before = (self.evaluator.lazy_effects(), self.evaluator.tlc_gets);
+        let value = self.evaluator.evaluate(node, context);
+        let after = (self.evaluator.lazy_effects(), self.evaluator.tlc_gets);
+        self.evaluator.random = random;
+        if after != before {
             return Err(Unsupported(SPLIT_BOUND_EFFECTS.into()));
         }
-        Ok(self.evaluator.evaluate(node, context))
+        Ok(value)
     }
 
     // An expression the split evaluates, as TLC does when it starts. One that may print, draw or

@@ -6717,8 +6717,11 @@ violation).
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
-- A split of the next-state relation whose \E's bound prints, draws or sets or reads a register
-  ("TLC's actions whose split prints, draws or sets a register in an \E's bound"). `Tool.getActions`
+- A split of the next-state relation whose evaluation of an \E's bound printed, drew or set or
+  read a register ("TLC's actions whose split prints, draws or sets a register in an \E's bound"):
+  the effect has to run, so a bound whose effect is in an IF's branch the evaluation doesn't take,
+  `\E v \in (IF FALSE THEN (IF PrintT("bound") THEN {0, 1} ELSE {}) ELSE {0, 1}) : y' = v`, is
+  split as TLC splits it (`split-effects-bound-effect-untaken`; `-taken` declines). `Tool.getActions`
   evaluates an \E's bound once, as TLC starts, and binds its elements into the actions it makes,
   so `Next == \E v \in (IF PrintT("domain") THEN 0..1 ELSE {}) : y' = v` prints `"domain"` once
   and `\E v \in RandomSubset(1, 10..19) : ...` draws once, where the engine, which took such a
