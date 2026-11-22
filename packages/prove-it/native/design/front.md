@@ -223,7 +223,9 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
 - The environment lists the definitions TLC computes at startup, in `environment.ts`'s order, and
   the assumptions of the root module and those it extends; `describe_range` names an assumption as
   TLC prints it. `front-differential model` compares both.
-- `spec` ports `getLevel` (`liveness.ts`), the scopes an instance or an operator's arguments give a
+- `spec` ports `getLevel` (`liveness.ts`, TLC's `Specs.getLevel`: SANY's level, whose weights
+  `levels.rs`'s port of SANY's level check gives, with the level parameters looked up in the
+  scope), the scopes an instance or an operator's arguments give a
   formula (thunks, closures, a LET's own scope, and literal or configured values),
   `getSpecification` and `expandTemporal`, and `getProperties`. The `spec` mode compares the split
   of SPECIFICATION (1,093 of 1,111 models) and the `properties` mode the sorted properties (1,032

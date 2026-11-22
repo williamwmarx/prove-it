@@ -19,6 +19,17 @@ pub enum PragmaValue {
 pub struct PragmaSetting {
     pub hint: String,
     pub value: PragmaValue,
+    /// Where the hint is, which tlapm's errors about the setting point at (compute_meth's defpt).
+    pub span: PragmaSpan,
+}
+
+/// A token's place in the source: its line and its UTF-16 columns, each counted from 0, from its
+/// first unit to past its last.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PragmaSpan {
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// A place in the source: `line` counts from 0 and `column` counts UTF-16 code units from 0.
@@ -489,7 +500,7 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
     lexical: &Lexical,
     lines: &[Line],
     start: Position,
-) -> Result<Option<Vec<Token>>> {
+) -> Result<Option<Vec<(Token, PragmaSpan)>>> {
     let Some(pragma) = find_pragma(lexical, lines, start) else {
         return Ok(None);
     };
@@ -511,15 +522,21 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
         let length = match_ident(rest)
             .or_else(|| match_number(rest))
             .or_else(|| match_string(rest));
+        let span = |length: usize| PragmaSpan {
+            line: position.line,
+            start: position.column,
+            end: position.column + length,
+        };
         if let Some(length) = length {
             let text = &rest[..length];
-            tokens.push(if is_unit(text.first(), b'"') {
+            let token = if is_unit(text.first(), b'"') {
                 Token::String(read_string(text)?)
             } else if text.first().is_some_and(|&unit| is_digit(unit)) {
                 Token::Number(String::from_utf16_lossy(text))
             } else {
                 Token::Ident(String::from_utf16_lossy(text))
-            });
+            };
+            tokens.push((token, span(length)));
             position.column += length;
             skip_blanks_and_comments(lexical, lines, &mut position);
             continue;
@@ -531,7 +548,7 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
         else {
             return Ok(None);
         };
-        tokens.push(Token::Punct(punctuation));
+        tokens.push((Token::Punct(punctuation), span(1)));
         position.column += 1;
         skip_blanks_and_comments(lexical, lines, &mut position);
     }
@@ -666,6 +683,7 @@ pub fn read_old_method<Line: AsRef<[u16]>>(
     let Some(tokens) = tokenize_pragma(lexical, lines, start)? else {
         return Ok(None);
     };
+    let tokens = tokens.into_iter().map(|(token, _)| token).collect();
     let mut reader = OldMethodReader { tokens, index: 0 };
     if !matches!(reader.tokens.first(), Some(Token::Ident(keyword)) if keyword == "by") {
         return Ok(None);
@@ -689,14 +707,15 @@ pub fn read_new_method<Line: AsRef<[u16]>>(
     let Some(tokens) = tokenize_pragma(lexical, lines, start)? else {
         return Ok(None);
     };
+    let token = |index: usize| tokens.get(index).map(|(token, _)| token);
     let mut index = 0;
     let mut groups = Vec::new();
-    while let Some(keyword) = tokens.get(index) {
+    while let Some(keyword) = token(index) {
         index += 1;
         if !matches!(keyword, Token::Ident(text) if text == "by" || text == "set") {
             return Ok(None);
         }
-        if !is_punct(tokens.get(index), b'(') {
+        if !is_punct(token(index), b'(') {
             return Ok(None);
         }
         index += 1;
@@ -704,14 +723,14 @@ pub fn read_new_method<Line: AsRef<[u16]>>(
         loop {
             let hint = tokens.get(index);
             index += 1;
-            let Some(Token::Ident(hint)) = hint else {
+            let Some((Token::Ident(hint), span)) = hint else {
                 return Ok(None);
             };
-            if !is_punct(tokens.get(index), b':') {
+            if !is_punct(token(index), b':') {
                 return Ok(None);
             }
             index += 1;
-            let value = get_value(tokens.get(index));
+            let value = get_value(token(index));
             index += 1;
             let Some(value) = value else {
                 return Ok(None);
@@ -719,11 +738,12 @@ pub fn read_new_method<Line: AsRef<[u16]>>(
             settings.push(PragmaSetting {
                 hint: hint.clone(),
                 value,
+                span: *span,
             });
-            if is_punct(tokens.get(index), b')') {
+            if is_punct(token(index), b')') {
                 break;
             }
-            if !is_punct(tokens.get(index), b';') {
+            if !is_punct(token(index), b';') {
                 return Ok(None);
             }
             index += 1;
@@ -752,7 +772,23 @@ mod tests {
         PragmaSetting {
             hint: hint.to_owned(),
             value,
+            span: PragmaSpan::default(),
         }
+    }
+
+    // The settings without where their hints are, which the TypeScript didn't keep.
+    fn unplaced(groups: Option<Vec<Vec<PragmaSetting>>>) -> Option<Vec<Vec<PragmaSetting>>> {
+        groups.map(|groups| {
+            groups
+                .into_iter()
+                .map(|group| {
+                    group
+                        .into_iter()
+                        .map(|setting| set(&setting.hint, setting.value))
+                        .collect()
+                })
+                .collect()
+        })
     }
 
     fn get_lines(text: &str) -> Vec<Vec<u16>> {
@@ -1357,7 +1393,9 @@ mod tests {
                 "case {index}"
             );
             assert_eq!(
-                read_new_method(&read_lexical(&lines), &lines, start).map_err(|_| ()),
+                read_new_method(&read_lexical(&lines), &lines, start)
+                    .map(unplaced)
+                    .map_err(|_| ()),
                 new_method,
                 "case {index}"
             );
@@ -1403,6 +1441,58 @@ mod tests {
         }
     }
 
+    /// Each setting keeps where its hint is: the line and the UTF-16 columns of the keyword, from
+    /// which tlapm's errors about the setting name their place.
+    #[test]
+    fn places_each_settings_hint() {
+        let lines =
+            get_lines("Op == TRUE (*{ by (prover: \"smt\"; timeout: @)\n   set (ax: 1) }*)");
+        let groups = read_new_method(
+            &read_lexical(&lines),
+            &lines,
+            Position {
+                line: 0,
+                column: 10,
+            },
+        )
+        .expect("a pragma")
+        .expect("new-style settings");
+        let spans: Vec<(&str, PragmaSpan)> = groups
+            .iter()
+            .flatten()
+            .map(|setting| (setting.hint.as_str(), setting.span))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                (
+                    "prover",
+                    PragmaSpan {
+                        line: 0,
+                        start: 19,
+                        end: 25
+                    }
+                ),
+                (
+                    "timeout",
+                    PragmaSpan {
+                        line: 0,
+                        start: 34,
+                        end: 41
+                    }
+                ),
+                (
+                    "ax",
+                    PragmaSpan {
+                        line: 1,
+                        start: 8,
+                        end: 10
+                    }
+                ),
+            ]
+        );
+    }
+
     /// A string's contents as tlapm's lexer keeps them (alexer.mll:173-197): each escape as it is
     /// written, whether tlapm knows it (`\"` and `\n` at lines 184-187, `\ddd` at 188-191) or
     /// not (`\q`, `\uD800`, `\/`, each character added as it is at 195-197).
@@ -1426,7 +1516,8 @@ mod tests {
                     &read_lexical(&get_lines(&new_method)),
                     &get_lines(&new_method),
                     start
-                ),
+                )
+                .map(unplaced),
                 Ok(Some(vec![vec![set(
                     "prover",
                     PragmaValue::String(contents.to_owned())

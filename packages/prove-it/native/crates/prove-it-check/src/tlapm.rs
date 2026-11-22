@@ -21,8 +21,8 @@ use prove_it_prover::driver::{
 use prove_it_prover::tlapm_cache::{FingerprintTable, KnownResults, LocalTime, load_fingerprints};
 use prove_it_prover::{Cancel, DecideError, Limits, Statistic, Verdict};
 use prove_obligations::bytes;
-use prove_obligations::errors::ObligationError;
-use prove_obligations::expression::{Channel, get_at_prefix, get_locus_text};
+use prove_obligations::errors::{ObligationError, quote_ocaml};
+use prove_obligations::expression::{Channel, get_at_prefix, get_locus_prefix, get_locus_text};
 use prove_obligations::format::{format, render_doc};
 use prove_obligations::generate::LineRange;
 use prove_obligations::index::{
@@ -451,25 +451,6 @@ fn quote_shell_argument(arg: &str) -> String {
     } else {
         format!("'{}'", arg.replace('\'', "'\\''"))
     }
-}
-
-/// OCaml's `%S`: a string in quotes, as String.escaped writes it.
-fn quote_ocaml(text: &str) -> String {
-    let mut quoted = String::from("\"");
-    for byte in text.bytes() {
-        match byte {
-            b'"' => quoted.push_str("\\\""),
-            b'\\' => quoted.push_str("\\\\"),
-            b'\n' => quoted.push_str("\\n"),
-            b'\t' => quoted.push_str("\\t"),
-            b'\r' => quoted.push_str("\\r"),
-            8 => quoted.push_str("\\b"),
-            b' '..=b'~' => quoted.push(char::from(byte)),
-            other => quoted.push_str(&format!("\\{other:03}")),
-        }
-    }
-    quoted.push('"');
-    quoted
 }
 
 /// C's `%g`: six significant digits, without trailing zeros, in exponent form outside 1e-4 to 1e6.
@@ -1723,7 +1704,8 @@ fn prove_module(
         .collect();
     let mut text = String::new();
     if is_toolbox {
-        for (report, obligation) in &unproved {
+        // collect_untreated_obligations prepends each, so they print last first.
+        for (report, obligation) in unproved.iter().rev() {
             if report.attempts.is_empty() && !matches!(obligation.kind, ObligationKind::Error(_)) {
                 text.push_str(&format_failed_obligation(obligation, "unexpected error"));
             }
@@ -1792,6 +1774,18 @@ fn prove_scheduled(
     let obligations = &module.obligations;
     let mut cache = Cache::default();
     let mut prover = Prover::new(obligations, &mut cache, settings);
+    // Prep.make_task: tlapm finds each obligation's methods before it schedules any task, and warns
+    // of a pragma it can't read as it goes (Errors.err), leaving that obligation untreated.
+    for position in 0..obligations.len() {
+        if let Err(ObligationError::Method { message, at }) = prover.get_methods(position) {
+            let text = format!("{}{message}", get_locus_prefix(at.as_ref()));
+            io.err(if is_toolbox {
+                format_toolbox_message(&["type:warning".to_owned(), format!("msg:{text}")])
+            } else {
+                format!("{text}\n")
+            });
+        }
+    }
     let mut reports: Vec<Option<Report>> = vec![None; obligations.len()];
     let mut printed = vec![0; obligations.len()];
     let mut waiting: VecDeque<Task> = (0..obligations.len()).map(Task::new).collect();
@@ -2031,9 +2025,11 @@ impl Race {
             let is_numbering = match self.numbering.get(position) {
                 Some(is_numbering) => *is_numbering,
                 None => {
-                    let is_numbering = prover
-                        .is_numbering(*position)
-                        .map_err(|error| get_obligation_error(&error))?;
+                    // An obligation whose pragma tlapm can't read sends nothing.
+                    let is_numbering = match prover.is_numbering(*position) {
+                        Err(ObligationError::Method { .. }) => false,
+                        numbering => numbering.map_err(|error| get_obligation_error(&error))?,
+                    };
                     self.numbering.insert(*position, is_numbering);
                     is_numbering
                 }
