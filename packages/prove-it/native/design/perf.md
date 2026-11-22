@@ -1532,6 +1532,137 @@ returns of a recursion nine calls deep land), `f[x]` (fused apply, the scan, `fi
 cycles: `dag`, which `Children(dag, v)` names inside its filter, so each element looks it up
 again, and the tuples `<<v, c>>`.
 
+### Constants folded, recursive calls and the initial atoms (const-shapes)
+
+**Constants a fused node sees.** Every expression that reads nothing was a `Machine::once`
+closure, `Shape::Other` to the node above it: `N - 1`, `{1}`, `{"b", "Done"}`, `<<0, 0>>`. In
+SimpleRegular, 7.6M lookups of 34 instructions each, and the bounds of `\A i \in 0..(N-1)`
+evaluated through two of them at each of its 1.1M quantifications. Now arithmetic, comparisons,
+negation, set enumerations and tuples whose operands are all `Shape::Constant` are evaluated as
+they compile (`Compiler::folded`), on a machine of an empty program that borrows the compiler's
+store, and are `Shape::Constant` themselves; `cached` keeps a constant as it is, so a definition
+whose body folds is one too. This is not TLC's `processConstantDefns`, which computes whole
+constant definitions at startup: a fold is of an operator TLC evaluates at each use, whose value
+is the same wherever it is evaluated, since its operands are values and it prints, draws, warns
+and reads nothing. One that fails (`1 \div 0`, a set of values TLC can't compare, an overflow)
+stays as compiled and fails where and as it did. `a..b` of constant integer bounds keeps them
+(`Interval::known`), which the quantifier over intervals and the membership test read in place,
+and a membership in a constant set reads the set in place. Lookups through `Machine::once` in
+SimpleRegular went from 7.6M to 0.56M. The first build made a `Store` for each fold to stand in
+for the one lent, 1.4M instructions each, which took VoucherRedeem from 0.02 to 0.03 s
+(mh7z94pjng); `Store::placeholder` allocates nothing.
+
+**Recursive calls.** GameOfLife's `Sum(f, S)` is 8.4M calls of about 230 instructions of
+machinery each: the arguments' closures, pushed on the machine's stack and swapped into the
+parameters' slots, then `keeping_slots` copying the body's slots to the stack and back through
+two `memcpy` calls. A call of one to three parameters now reads its arguments as a fused node
+reads operands (`predicate::Leaf`, a bound name in place) into an array, and a body of up to four
+slots of its own keeps them in an array (`Machine::keeping`); the path of an operator whose table
+is on is out of line (`call_kept`). Heights and TOO_DEEP are counted where they were, and an
+argument that fails stops the call as before. `S = {}`, a bound name and a constant, was the
+generic comparison; it now reads the slot, and `equals_asked` tells sets of different sizes
+apart in place, as `equals` did.
+
+**The atoms of the initial states.** Where the initial states are checked for an atom that fails
+as TLC adds them, the engine answered every atom on them; TLC's `addInitState` evaluates only the
+state predicates of the tableaux' initial nodes (`tla_live::initially_read`). TokenRing, whose
+46,656 states are all initial, ran ENABLED of its fairness on each there (8% of its
+instructions), which the steps answer in the final check. The others are now left unanswered on
+that pass, which reads none of them.
+
+Callgrind, one worker, a build without LTO: SimpleRegular 7.08G → 6.68G, GameOfLife 13.43G →
+11.46G, TokenRing 1.82G → 1.65G. On Depot, against the integration branch at ba748411, medians
+with the ranges:
+
+| Run | Model | Before, 1 thread | After, 1 thread | Before, every core (CPU) | After |
+|---|---|---|---|---|---|
+| z8xcmv8svc, 4 cores, 15 runs, folding alone | SimpleRegular | 0.48 (0.44–0.50) | 0.46 (0.43–0.52) | | |
+| 03gtp2zfw5, 4 cores, 15 runs | TokenRing | 0.10 (0.10–0.11) | 0.09 (0.09–0.09) | | |
+| 1mpn0h00m9, 16 cores, the suite, 5 runs | GameOfLife | 0.94 (0.92–0.94) | 0.84 (0.82–0.85) | 0.12 (1.12) | 0.11 (1.01) |
+
+| hvrhfcjntf, 4 cores, the suite, 9 runs | SimpleRegular | 0.45 (0.44–0.48) | 0.44 (0.43–0.47) | 0.18 (0.57) | 0.17 (0.56) |
+| hvrhfcjntf | TokenRing | 0.11 (0.10–0.12) | 0.09 (0.09–0.10) | 0.06 (0.14) | 0.06 (0.12) |
+
+The 16-core suite (1mpn0h00m9) is 1.00× on one thread and on 16, and the 4-core one
+(hvrhfcjntf) 1.01× on one worker and 1.02× in CPU on four, every other model within its range.
+SimpleRegular gains less than its instructions (5.7%): what is left of it is the search's own
+fixed costs and the store's memory.
+
+What is left of TokenRing's 1.65G instructions: `UniqueToken` on each state (about 9k
+instructions a state, its quantifiers over `0..N`, `0..i-1` and `i..N-1`), the search and the
+checker's `add_state` (15%). `add_state` is spread over
+reading each step's action check from the atoms' tables (`read`, 285 instructions a step, 250K
+steps), ordering each successor set (`slot_order`) and the tableau's state checks, with nothing
+evaluated twice.
+
+### A graph-recording level merged on threads, and DOMAIN walked in place (graph-merge-threads)
+
+**Where cf1s_folklore's 16 threads went.** `perf` by line on `depot-ubuntu-24.04-16` (frame
+pointers, line tables, Depot run ph385lvjkf, the search's thread alone) put 15% of that thread's
+samples in `expand_level`'s own merge loop, 10% in `States::push` growing the arrays a candidate
+at a time, and 37% in the fill, mostly waiting on its threads. `perf` inflates a spawn (it copies
+its events to each new thread), so the phases were timed instead, in an instrumentation build,
+three runs each (Depot run 7blgxkmh1n), ms summed over the shared levels:
+
+| At 16 threads | Threads | Fill | Merge | Atoms | Check | Wall |
+|---|---:|---:|---:|---:|---:|---:|
+| cf1s_folklore, the merge on one thread | 341–359 | 54–57 | 167–171 | 80–92 | 317–334 | 1,001–1,041 |
+| cf1s_folklore, on threads | 341–343 | 56–60 | 47–49 | 86–94 | 323–338 | 896–910 |
+| StarkMutex, the merge on one thread | 138–146 | 45–47 | 29 | 188–189 | 248–258 | 752–757 |
+| StarkMutex, on threads | 141–147 | 45–46 | 18–19 | 188–193 | 251–269 | 744–768 |
+
+- **The graph's steps beside the new states.** Where the fill decided a level and the graph keeps
+  no state its steps reached (no VIEW or symmetry), the threads that copy a share of the new
+  states (`Search::add_filled`) copy the same runs' steps too (`copy_steps`): the threads' counts
+  of steps give each parent's its place, a step to a state before the level keeps its index and
+  one to a thread's candidate takes the index the fill gave the candidate's place (each thread's
+  runs by their first candidate, so a step to an earlier run's candidate is found by a binary
+  search, and one to its own run's directly), and each parent's successor and new-state counts,
+  edge offset and diameter (the depth before the level until the first parent with a new state,
+  then the level's) follow. The shares are cut by candidates and steps together, one scope a
+  level. A first version that resolved the indices in a scope of their own and copied the steps
+  in a third measured 0.91 → 0.82 s (Depot run 5f166db87l); one scope, 0.95 → 0.84 (49zg4lnwxx).
+  The graph's arrays, compared after every level with the merge on one thread (an
+  instrumentation build, every level shared, 3 threads): equal on cf1s_folklore, StarkMutex,
+  SpanTreeRandom, ReadersWriters, DiningPhilosophersPCal, MCDisruptor_MPMC_liveliness and
+  Huang. `stops_on_any_number_of_threads_where_one_thread_stops` now runs without verified
+  fingerprints too, which takes this path, at 2, 4 and 16 threads.
+- **DOMAIN f as a quantifier's bound.** TLC enumerates `\A x \in DOMAIN f` in normalized order
+  (`Tool.contexts` with `Ordering.NORMALIZED`): `TupleValue.getDomain` is `1..n`, and
+  `RecordValue`'s and `FcnRcdValue`'s are set enumerations of the keys, sorted; DOMAIN of a
+  non-function fails (`OPCODE_domain`). The store keeps a function's keys in that order, so a
+  quantifier of one bound over DOMAIN of a function TLC builds, of at most the set bound's keys,
+  binds the keys in place (`bound_elements`), without the domain interned or looked up in a memo
+  table. A non-function fails as DOMAIN does; a lazy function or a larger domain goes through
+  the domain as before. MCMultiNode's two remaining hot tables, `DOMAIN ledgerBranches[view]`
+  and `DOMAIN ledgerBranches` (21.7 M lookups), are gone. Run nszpb9hz3l, 7 runs: one thread
+  4.24 (3.90–4.50) → 3.72 (3.54–4.05) s, 391 → 298 MB; 16 threads 0.68 (0.65–0.69) → 0.64
+  (0.60–0.65), CPU 6.80 → 6.09 s.
+
+The suites, 5 runs, against the integration branch at ba748411. `perf-suite.json` on
+`depot-ubuntu-24.04-16` (Depot run 5ll3x6x28l), 15 of 15 agreeing, one thread 1.01× and every
+core 1.01× in geomean:
+
+| Model | 1 thread, s | 16 threads, s | CPU at 16, s |
+|---|---|---|---|
+| cf1s_folklore | 4.75 → 4.67 | 0.93 (0.92–0.95) → 0.84 (0.83–0.86) | 7.50 → 7.61 |
+| MCMultiNode | 3.84 (3.83–3.90) → 3.47 (3.45–3.66) | 0.63 (0.62–0.64) → 0.59 (0.57–0.60) | 6.31 → 5.63 |
+| StarkMutex | 2.27 → 2.23 | 0.67 → 0.66 | 3.27 → 3.29 |
+| SpanTreeRandom | 0.35 → 0.35 | 0.12 → 0.12 | 0.69 → 0.69 |
+
+The rest is within its range on both. `bench-suite.json` on `depot-ubuntu-24.04-4` (Depot run
+gcr5slcs24), 18 of 18 agreeing, every model within its range, one worker 1.01×.
+
+**What is left.** On cf1s_folklore at 16 threads the check is now the largest part after the
+threads: 320 ms, of which each of the two behavior graphs takes about 210 ms on a thread of its
+own (`add_states`, in TLC's order, which a node found late depends on), with 14 threads idle. On
+StarkMutex the atoms (190 ms, `answer_atoms` on the search's thread) and the check (255 ms)
+outweigh the shared levels' 205. The merge left is one thread growing the states' arrays (zeroing new
+pages a write at a time) and importing the threads' own values in order: 48 ms on cf1s_folklore,
+about 100 ms on MCMultiNode. Spawning threads costs 200 µs a scope of 16 on that machine (a
+microbenchmark, run q9dn267615), about nine scopes a shared level: a pool kept between levels
+would save about 40 ms on cf1s_folklore and 100 on StarkMutex, but lending borrowed work to
+threads that outlive a scope needs the `unsafe` the crate doesn't have.
 ### Names bound once, and a thread's tables forgotten by what they stored (bind-once)
 
 **How LET and parameters compiled.** A LET definition without parameters and an operator's

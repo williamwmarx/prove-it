@@ -1043,8 +1043,13 @@ impl Compiler<'_> {
         right_operand: &Operand,
         right: &Compiled,
     ) -> Option<[Eval; 4]> {
-        let ((low, high), (other_low, other_high)) =
-            (left.interval.clone()?, right.interval.clone()?);
+        let (left_interval, right_interval) = (left.interval.clone()?, right.interval.clone()?);
+        let (low, high, other_low, other_high) = (
+            left_interval.low,
+            left_interval.high,
+            right_interval.low,
+            right_interval.high,
+        );
         for operand in [left_operand, right_operand] {
             if operand.is_param
                 || self.may_have_effect_in(operand.node, &operand.context, &mut HashSet::new())
@@ -1205,7 +1210,11 @@ impl Compiler<'_> {
             // `IntervalValue.member` of an integer compares it with the bounds, so TLC tests a set
             // of integers against `a..b` without building it, however large. Where S holds
             // anything else, the test goes as compiled.
-            let right_bounds = right.interval.clone().filter(|_| !right.is_printing());
+            let right_bounds = right
+                .interval
+                .clone()
+                .filter(|_| !right.is_printing())
+                .map(|interval| (interval.low, interval.high));
             eval(move |machine| {
                 let left = evaluate_set(machine, &left_eval, "expected a set")?;
                 if let Some((low, high)) = &right_bounds {
@@ -1467,7 +1476,10 @@ impl Compiler<'_> {
             .version
             .is_some_and(|version| self.text(version) == "1.7.4");
         let set = compiled.last().expect("an operand");
-        let interval = set.interval.clone();
+        let interval = set
+            .interval
+            .clone()
+            .map(|interval| (interval.low, interval.high));
         let reference = set.reference.clone();
         let evaluate_members = set.eval.clone();
         let is_enumerated = set.is_enumerated;
@@ -4197,7 +4209,7 @@ impl Compiler<'_> {
                     && left.infinite.is_none()
                     && !left.has_infinite_part;
                 let compiled = match (compiled, right.interval.clone()) {
-                    (Some(compiled), Some((low, high))) if is_filtered => {
+                    (Some(compiled), Some(super::Interval { low, high, .. })) if is_filtered => {
                         Some(Self::interval_filtered(
                             compiled,
                             left.eval.clone(),
@@ -4419,67 +4431,68 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                arithmetic(
-                    &left,
-                    &right,
-                    match name {
-                        "+" => |left, right| Ok(left + right),
-                        "-" => |left, right| Ok(left - right),
-                        "*" => |left, right| Ok(left * right),
-                        "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
-                            |left: i64, right: i64| {
-                                naturals_divide(left, right).ok_or(Bail("division by zero"))
+                let computed =
+                    arithmetic(
+                        &left,
+                        &right,
+                        match name {
+                            "+" => |left, right| Ok(left + right),
+                            "-" => |left, right| Ok(left - right),
+                            "*" => |left, right| Ok(left * right),
+                            "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
+                                |left: i64, right: i64| {
+                                    naturals_divide(left, right).ok_or(Bail("division by zero"))
+                                }
                             }
-                        }
-                        "\\div" => {
-                            |left: i64, right: i64| {
+                            "\\div" => |left: i64, right: i64| {
                                 if right == 0 {
                                     return Err(Bail("division by zero"));
                                 }
                                 let quotient = left / right;
                                 Ok(quotient
                                     - i64::from(left % right != 0 && (left < 0) != (right < 0)))
-                            }
-                        }
-                        "%" => |left: i64, right: i64| {
-                            if right <= 0 {
-                                return Err(Bail("modulus by a non-positive number"));
-                            }
-                            Ok(left.rem_euclid(right))
+                            },
+                            "%" => |left: i64, right: i64| {
+                                if right <= 0 {
+                                    return Err(Bail("modulus by a non-positive number"));
+                                }
+                                Ok(left.rem_euclid(right))
+                            },
+                            _ => |base: i64, exponent: i64| {
+                                if exponent < 0 {
+                                    return Err(Bail("negative exponent"));
+                                }
+                                if base == 0 && exponent == 0 {
+                                    return Err(Bail("zero to the power of zero"));
+                                }
+                                // Past 32 bits the store fails as TLC's arithmetic overflows.
+                                Ok(u32::try_from(exponent)
+                                    .ok()
+                                    .and_then(|exponent| base.checked_pow(exponent))
+                                    .unwrap_or(i64::MAX))
+                            },
                         },
-                        _ => |base: i64, exponent: i64| {
-                            if exponent < 0 {
-                                return Err(Bail("negative exponent"));
-                            }
-                            if base == 0 && exponent == 0 {
-                                return Err(Bail("zero to the power of zero"));
-                            }
-                            // Past 32 bits the store fails as TLC's arithmetic overflows.
-                            Ok(u32::try_from(exponent)
-                                .ok()
-                                .and_then(|exponent| base.checked_pow(exponent))
-                                .unwrap_or(i64::MAX))
-                        },
-                    },
-                )
+                    );
+                self.folded(computed, &[&left, &right])
             }
             "-." => {
                 arity(1)?;
                 let operand = self.operand(&operands[0])?;
-                unary(
+                let negated = unary(
                     &operand,
                     |machine, value| {
                         let value = expect_int(machine, value)?;
                         machine.store.int(-value)
                     },
                     false,
-                )
+                );
+                self.folded(negated, &[&operand])
             }
             "<" | ">" | "<=" | ">=" => {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                comparison(
+                let compared = comparison(
                     &left,
                     &right,
                     match name {
@@ -4488,14 +4501,28 @@ impl Compiler<'_> {
                         "<=" => |left, right| left <= right,
                         _ => |left, right| left >= right,
                     },
-                )
+                );
+                self.folded(compared, &[&left, &right])
             }
             ".." => {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
                 let (low, high) = (left.eval.clone(), right.eval.clone());
-                let bounds = (low.clone(), high.clone());
+                let known = match (left.shape, right.shape) {
+                    (Shape::Constant(low), Shape::Constant(high))
+                        if self.store.kind_of(low) == KIND_INT
+                            && self.store.kind_of(high) == KIND_INT =>
+                    {
+                        Some((self.store.int_of(low), self.store.int_of(high)))
+                    }
+                    _ => None,
+                };
+                let bounds = super::Interval {
+                    low: low.clone(),
+                    high: high.clone(),
+                    known,
+                };
                 Compiled {
                     is_costly: true,
                     is_in_order: true,
@@ -4918,7 +4945,8 @@ impl Compiler<'_> {
                     // `IntervalValue.size`, which counts the interval without building it and
                     // fails where it has more than 2^31 - 1 elements.
                     None if set.interval.is_some() => {
-                        let (low, high) = set.interval.clone().expect("an interval");
+                        let super::Interval { low, high, .. } =
+                            set.interval.clone().expect("an interval");
                         Compiled {
                             is_costly: true,
                             ..leaf(
@@ -6460,7 +6488,10 @@ impl SubsetSetDraw {
             count: compiled[0].eval.clone(),
             probability: compiled[1].eval.clone(),
             set: compiled[2].eval.clone(),
-            interval: compiled[2].interval.clone(),
+            interval: compiled[2]
+                .interval
+                .clone()
+                .map(|interval| (interval.low, interval.high)),
             reference: compiled[2].reference.clone(),
             average_mode,
         }
