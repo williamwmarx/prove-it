@@ -8594,6 +8594,15 @@ note at its location as the module is elaborated and the property `enabledaxioms
 the port applied the rule whatever the levels and proved `ENABLED B <=> ENABLED C` from
 `B <=> C` for actions `B` and `C`, which tlapm fails.
 
+The Isabelle port runs `fast` (`Classical.fast_tac`: the premises atomized, then a depth-first
+search with `step_tac` on the first goal, under `cla_method'` with its `intro:` and `dest:`
+sections), `rule` with rules (`Method.rule_tac`: each rule's first premises resolved against the
+facts by `Drule.multi_resolves`, then against the goal, the new goals normalized), and the
+`add:` section of `simp` and the `simp:` and `simp add:` sections of `auto`, `force` and
+`clarsimp` (`Simplifier.simp_add` over the simpset), which `IsaM("fast")` and `IsaM("(rule
+chooseI)")` in the upstream suite's backend inputs name and the port failed as undefined
+methods (`tests/fixtures/tlapm-cli/IsaRules.tla`, recorded with b91fb6c).
+
 The Isabelle port runs the `simp` method (`Simplifier.simp_method`: the facts inserted, then
 `asm_full_simp_tac` under CHANGED_PROP), which `IsaM("simp")` names and the port had no method
 for, and flattens the meta-level premises of a rule `intro:` or `dest:` declares as
@@ -8648,8 +8657,12 @@ tactic only (`Fpfile.query`).
     limit, and an input a back end can't read.
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
-  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
-  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
+  or combinator the Isabelle port doesn't implement, where tlapm would try it: a method
+  Isabelle/Pure or the provers of Isabelle/TLA+'s session define that the port has no tactic for
+  (`Isabelle's clarify method`; a name none defines fails as Isabelle's `Undefined method`), `rule`
+  without rules (`some_rule_tac` over the context's rules), a `simp` option such as `(no_asm)`, a
+  section Isabelle takes beyond `intro:`, `dest:`, `simp:`, `simp add:` and simp's `add:`
+  (`Isabelle's method modifier elim:`), and an attribute after a fact's name (`[OF …]`). tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
