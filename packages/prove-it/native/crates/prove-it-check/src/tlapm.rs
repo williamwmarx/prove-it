@@ -2188,8 +2188,13 @@ enum Normalized {
     Refused,
 }
 
-// A failed obligation as tlapm prints it.
-fn format_normalized(obligation: &PrintedObligation, normalized: Normalized) -> Run<String> {
+// A failed obligation as tlapm prints it: with each fact that holds only now marked where a
+// temporal method (Method.is_temporal: LS4) failed it.
+fn format_normalized(
+    obligation: &PrintedObligation,
+    normalized: Normalized,
+    is_temporal: bool,
+) -> Run<String> {
     let normalize = || match normalized {
         Normalized::Expanded => normalize_expand(
             &obligation.sequent,
@@ -2202,7 +2207,8 @@ fn format_normalized(obligation: &PrintedObligation, normalized: Normalized) -> 
         Normalized::Refused => normalize_sequent(&expand_defs(&obligation.sequent, true)?),
     };
     let sequent = normalize().map_err(|error| get_obligation_error(&error))?;
-    let text = format_obligation(&sequent).map_err(|error| get_obligation_error(&error))?;
+    let text =
+        format_obligation(&sequent, is_temporal).map_err(|error| get_obligation_error(&error))?;
     Ok(format!("{text}\n"))
 }
 
@@ -2265,7 +2271,7 @@ fn format_attempt(obligation: &PrintedObligation, attempt: &Attempt) -> Run<Stri
         };
         fields.push(format!(
             "obl:{lead}{}",
-            format_normalized(obligation, normalized)?
+            format_normalized(obligation, normalized, method.prover == "ls4")?
         ));
     }
     Ok(format_obligation_message(

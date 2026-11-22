@@ -539,7 +539,7 @@ pub fn get_obligations(
             }
             let text = match &obligation.kind {
                 ObligationKind::Error(message) => message.clone(),
-                _ => format!("{}\n", format_obligation(&obligation.sequent)?),
+                _ => format!("{}\n", format_obligation(&obligation.sequent, false)?),
             };
             obligations.push(PrintedObligation {
                 id: index + 1,

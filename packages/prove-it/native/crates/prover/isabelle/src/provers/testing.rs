@@ -1,6 +1,7 @@
 //! Helpers for the provers' tests, whose expectations in `testdata/provers` are recorded from the
 //! TypeScript (classical.ts, intuitionistic.ts and blast) by a script that runs the same tactics on
-//! the same goals under the same step limit.
+//! the same goals under the same step limit, apart from the intro and dest problems of a rule with
+//! meta-level premises, which the TypeScript refused and which hold what flat_rule gives.
 //!
 //! The rules are the logic's (`tla::logic`), set up as `tla::classical_setup` and `tla::context`
 //! set them up.

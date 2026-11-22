@@ -138,7 +138,10 @@ pub(crate) const ATOM_WARNING: &str =
 pub const GENERATED_SLOT: u32 = 7;
 pub const QUEUE_SLOT: u32 = 8;
 pub const INITIAL_SLOT: u32 = 9;
-const SEARCH_SLOTS: [u32; 9] = [
+/// TLCExt's Trace: the tuple of the records of the states from an initial state to the one the
+/// search expands (`Machine::trace`).
+pub const TRACE_SLOT: u32 = 10;
+const SEARCH_SLOTS: [u32; 10] = [
     LEVEL_SLOT,
     NEXT_LEVEL_SLOT,
     DISTINCT_SLOT,
@@ -148,6 +151,7 @@ const SEARCH_SLOTS: [u32; 9] = [
     GENERATED_SLOT,
     QUEUE_SLOT,
     INITIAL_SLOT,
+    TRACE_SLOT,
 ];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
@@ -1155,6 +1159,8 @@ pub struct Compiler<'a> {
     /// (`Search::set_counts`): the states generated, the initial ones, those left on the queue,
     /// and the diameter where the search checks no temporal property.
     pub is_count_read: bool,
+    /// Whether the spec reads TLCExt's Trace, which the search then keeps (`Machine::trace`).
+    pub is_trace_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     /// Whether anything compiled may print, draw or write once TLC has started: any such effect
@@ -1369,6 +1375,7 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_simulated_diameter_read: false,
             is_count_read: false,
+            is_trace_read: false,
             is_printing: false,
             is_printing_past_startup: false,
             startup_effect_onces: Vec::new(),
@@ -2875,6 +2882,41 @@ impl<'a> Compiler<'a> {
         let answer = reaching.contains(&definition);
         *self.reaching_startup.borrow_mut() = Some(reaching);
         answer
+    }
+
+    /// Whether TLC, evaluating the expression again, may find another value or have an effect:
+    /// it applies a builtin whose value depends on more than its arguments, such as TLCGet's
+    /// counts of the search, a draw or the time, or one that has an effect, through the
+    /// definitions it names. TLCExt's Trace of the same state is the same behavior.
+    pub(crate) fn may_change_again(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(node) {
+            return false;
+        }
+        let named = match self.node(node).1 {
+            NodeKind::Apply { name, .. } if name.is_local => true,
+            NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
+                match name.resolution {
+                    Resolution::Builtin(index) => {
+                        let builtin = &self.ir.builtins[index as usize];
+                        let name = self.builtin_name(index);
+                        builtin.flags & Builtin::EXTERNAL_CLASS != 0
+                            || EFFECT_BUILTINS.contains(&name)
+                            || name != "Trace" && !pruned::is_steady_builtin(name)
+                    }
+                    Resolution::Definition(index) => self.may_change_again(
+                        self.definition(self.ir.definitions[index as usize]).body,
+                        seen,
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        named
+            || self
+                .evaluated_children(node)
+                .into_iter()
+                .any(|child| self.may_change_again(child, seen))
     }
 
     pub(crate) fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
@@ -5863,7 +5905,7 @@ impl<'a> Compiler<'a> {
                     .compile_definition_reference(self.ir.definitions[index as usize], context);
             }
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
-                return self.compile_nullary_builtin(index);
+                return self.compile_nullary_builtin(index, context);
             }
             _ => {}
         }
@@ -6609,7 +6651,7 @@ impl<'a> Compiler<'a> {
             // parameters, and TLC then takes the value, without evaluating the arguments
             // (Tool.evalAppl).
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
-                return self.compile_nullary_builtin(index);
+                return self.compile_nullary_builtin(index, context);
             }
             Resolution::Builtin(index) => {
                 let operands: Vec<Operand> = args
