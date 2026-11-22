@@ -6,6 +6,7 @@
 //! knows: one that fails leaves the definition an operator.
 
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::ast::*;
 use crate::environment::Environment;
@@ -15,15 +16,24 @@ use crate::spec::get_definition;
 /// TLC's Java overrides of TLA+ operators, by module: each operator with its level (`minLevel`).
 const TLC_OVERRIDES: &str = include_str!("tlc_overrides.tsv");
 
+/// The overrides as (module, operator, level), read from the table once.
+static OVERRIDES: OnceLock<Vec<(&'static str, &'static str, u8)>> = OnceLock::new();
+
 // TLC's overrides as (module, operator, level).
 pub(crate) fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
-    TLC_OVERRIDES
-        .lines()
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            Some((fields.next()?, fields.next()?, fields.next()?.parse().ok()?))
+    OVERRIDES
+        .get_or_init(|| {
+            TLC_OVERRIDES
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .filter_map(|line| {
+                    let mut fields = line.split('\t');
+                    Some((fields.next()?, fields.next()?, fields.next()?.parse().ok()?))
+                })
+                .collect()
         })
+        .iter()
+        .copied()
 }
 
 /// The level of the Java method TLC reads each overridden definition through instead of its
