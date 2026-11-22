@@ -1,0 +1,24 @@
+TLC2 Version 2026.11.22.162130
+Running breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 2367] (Linux 6.18.44-fc-v726 amd64, Ubuntu 21.0.13.0.3 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/crates/prove-it-cli/tests/bound-once/let-read-by-an-argument/M.tla
+Parsing file /tmp/tlc-6652493511339649130/Naturals.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6652493511339649130/Sequences.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-6652493511339649130/TLC.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-6652493511339649130/FiniteSets.tla (jar:file:/home/user/prove-it/.claude/worktrees/agent-abebc98f20bf6c26f/packages/prove-it/native/target/tlc/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-22 16:21:31)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-22 16:21:31.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 0.0
+7 states generated, 7 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-22 16:21:31)
