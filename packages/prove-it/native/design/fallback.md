@@ -8627,8 +8627,10 @@ tactic only (`Fpfile.query`).
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
     limit, and an input a back end can't read.
-- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, and a method
-  whose encoder can't take the obligation (`smt can't encode …`), where tlapm would try it. tlapm
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
+  whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
+  or combinator the Isabelle port doesn't implement (`Isabelle's simp method with arguments`,
+  `Isabelle's method modifier simp:`), where tlapm would try it. tlapm
   has no back end for Cooper either: it fails the method and warns `Cooper's method is not
   available any more.` on stderr (`Prep.prove_with`), which Prove It doesn't print yet. Where
   tlapm can't run cvc3, the error it prints holds the machine's PATH.
