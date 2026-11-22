@@ -1920,6 +1920,7 @@ mod tests {
             },
             "Take" => StepCore::Take {
                 bounds: list(&fields[1], read_bound),
+                name_loci: Vec::new(),
             },
             "Witness" => StepCore::Witness {
                 expressions: list(&fields[1], read_expr),
@@ -2484,7 +2485,7 @@ mod tests {
                 ("Use", vec![emit_usable(usable), is_only.to_string()])
             }
             StepCore::Have { expression } => ("Have", vec![emit_expr(expression)]),
-            StepCore::Take { bounds } => ("Take", vec![emit_list(bounds, emit_bound)]),
+            StepCore::Take { bounds, .. } => ("Take", vec![emit_list(bounds, emit_bound)]),
             StepCore::Witness { expressions } => {
                 ("Witness", vec![emit_list(expressions, emit_expr)])
             }

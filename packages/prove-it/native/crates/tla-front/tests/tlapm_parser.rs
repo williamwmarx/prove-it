@@ -127,3 +127,24 @@ fn runs_sanys_parser_on_a_module_named_by_an_underscore() {
         "***Parse Error***\nWas expecting \"LOCAL, INSTANCE, PROOF, ASSUMPTION, THEOREM, RECURSIVE, declaration, or definition\"\nEncountered \"INSTANCE _\" at line 2, column 1 and token \"----\" \n\nResidual stack trace follows:\nModule body starting at line 2, column 1.\nModule definition starting at line 1, column 1.\n"
     );
 }
+
+// tlapm's usebody takes facts, or DEF with its names where there are none; and its expressions
+// name a step by its level, so `<*>` is unexpected where SANY reads a step reference.
+#[test]
+fn rejects_a_bare_by_and_a_star_step_reference() {
+    assert_eq!(
+        tlapm("---- MODULE M ----\nTHEOREM TRUE\nBY\n====\n"),
+        r#"{"error":"Expected a fact or DEF after BY at line 4, column 1","failure":{"column":3,"isEnd":false,"line":3,"reason":"Unexpected ===="}}"#
+    );
+    assert_eq!(
+        tlapm("---- MODULE M ----\nTHEOREM TRUE\nPROOF\n  <1>a TRUE\n  <1>b QED BY <*>a\n====\n"),
+        r#"{"error":"<*> step number used in an expression at line 5, column 15","failure":{"column":14,"isEnd":false,"line":5,"reason":"Unexpected <*>"}}"#
+    );
+    assert!(parse_module("---- MODULE M ----\nTHEOREM TRUE\nBY\n====\n").is_ok());
+    assert!(
+        parse_module(
+            "---- MODULE M ----\nTHEOREM TRUE\nPROOF\n  <1>a TRUE\n  <1>b QED BY <*>a\n====\n"
+        )
+        .is_ok()
+    );
+}

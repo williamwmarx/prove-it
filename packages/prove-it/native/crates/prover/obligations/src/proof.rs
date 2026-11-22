@@ -142,6 +142,9 @@ pub enum StepCore {
     },
     Take {
         bounds: Vec<Bound>,
+        /// The locus of each bound's name, which tlapm's bound carries as its hint's: a fact the
+        /// step adds for a bound's domain takes it (`P_simplify`'s `@@ v`).
+        name_loci: Vec<Option<Locus>>,
     },
     Witness {
         expressions: Vec<Expr>,
