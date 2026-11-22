@@ -8757,6 +8757,7 @@ the port is held to.
 | with Isabelle's fast, rule and simp sections | 768 / 577 / 6 | 321 / 1,042 / 35 |
 | with a postfix operator taken in as tlapm's parser does | 769 / 577 / 5 | 321 / 1,042 / 35 |
 | with the two runs Zenon's memory limit decides set aside | 769 / 577 / 3 | 321 / 1,042 / 35 |
+| with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 
 ### Declines
 
@@ -8882,6 +8883,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   limit than the method's (`Prep.already_processed`'s `success_warning`), which Prove It doesn't.
 - tlapm prints `status:being proved` in toolbox mode for a decision that has run for `--wait`
   (3 s) (`Prep.mk_timec`), and stops launching others until then, which Prove It doesn't do.
+  Only then does `Schedule.run` hold the back end to the method's time limit (its deadline moves
+  from the wait to the limit, counted from the start), so a back end runs 3 s whatever the limit,
+  and `SMTT(0)` proves what it can in that time; the port's decisions run that long too, and a
+  result before then is the back end's own (`false`), not a `timeout`.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
