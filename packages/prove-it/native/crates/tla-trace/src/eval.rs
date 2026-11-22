@@ -14011,8 +14011,15 @@ impl<'ir> Evaluator<'ir> {
                 {
                     elements(&left)?;
                 }
-                let right = self.settle(&right)?;
-                Value::Bool(equals(&left, &right)? == (name == "="))
+                // `SetEnumValue.equals` converts the other operand (`toSetEnum`) and compares
+                // inside its own method, which throws what fails there on as a
+                // FingerprintException where the set enumeration has a source.
+                let was_frozen = self.is_frozen();
+                let compared = self.settle(&right).and_then(|right| equals(&left, &right));
+                if compared.is_err() && matches!(left, Value::Set(_)) {
+                    self.fingerprint_frozen(&left, was_frozen);
+                }
+                Value::Bool(compared? == (name == "="))
             }
             "~" => {
                 arity(1)?;
