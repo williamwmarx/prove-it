@@ -6742,6 +6742,32 @@ violation).
 - The generator (`-generate`): `a generated walk without the worker's generator`, where a walk
   that draws a disjunct or a stride as TLC's generator does (`rng.nextDouble`, `rng.nextPrime`)
   finds no generator of the worker to draw from.
+- A split of the next-state relation whose evaluation of an \E's bound printed, drew or set or
+  read a register ("TLC's actions whose split prints, draws or sets a register in an \E's bound"):
+  the effect has to run, so a bound whose effect is in an IF's branch the evaluation doesn't take,
+  `\E v \in (IF FALSE THEN (IF PrintT("bound") THEN {0, 1} ELSE {}) ELSE {0, 1}) : y' = v`, is
+  split as TLC splits it (`split-effects-bound-effect-untaken`; `-taken` declines). Only what would
+  differ between TLC's one evaluation and the engine's at each state counts: a print, a draw, and
+  TLCGet of the search's keys (`"level"`, `"diameter"`, `"generated"`, `"distinct"`, `"queue"`,
+  `"duration"`, `"stats"`) or of `"spec"`, whose actions the split is still building. TLCGet of
+  `"config"`, `"revision"` or `"action"` (`Action.UNKNOWN` outside simulation), and TLCGet or
+  TLCGetOrDefault of a register or a property, leave the relation to the engine as before
+  (`split-effects-bound-reads-{config,revision,action,getordefault,register,register-set-by-next}`; a register the next-state relation sets the bound reads at each state, as TLC does); TLCSet, which fails
+  as TLC starts, has TLC take the relation whole, as the engine does where the split refuses. The
+  table is in `Splitter::evaluate_bound`. `Tool.getActions`
+  evaluates an \E's bound once, as TLC starts, and binds its elements into the actions it makes,
+  so `Next == \E v \in (IF PrintT("domain") THEN 0..1 ELSE {}) : y' = v` prints `"domain"` once
+  and `\E v \in RandomSubset(1, 10..19) : ...` draws once, where the engine, which took such a
+  relation whole when the trace evaluator's split refused it, printed or drew at each state. The
+  binary now declines there; the split's draws include Randomization's. An operator's argument of
+  constant level with an effect, which `getActionsAppl` evaluates as it splits too, the engine
+  takes whole as before, where it matches TLC as it starts
+  (`action-split-constant-argument-drawn-*`). A constant definition the split meets is one
+  `processConstantDefns` computed before it, effects and all, which the split takes whole without
+  evaluating it again (`Never == \E i \in (IF PrintT("split") THEN {} ELSE {1}) : TRUE` prints
+  once, as it did). Found in the specs of upstream tla-ts's unit tests at 0341dbe5; fixtures
+  `split-effects-*`.
+
 - The evaluator of failures: `a constant definition with parameters`, where the replay is asked
   to compute as TLC starts (`processConstantDefns`) a definition that takes parameters, which TLC
   never computes there; `evaluating the failure again: a VIEW the model doesn't

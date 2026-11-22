@@ -2310,9 +2310,15 @@ fn check_spec(
     // trace evaluator finds as check.ts does. A model it can't split keeps none, and its traces
     // name no actions natively. The evaluator recurses, so it runs with the search's stack.
     if ir.model.actions.is_empty() {
-        let split = on_search_stack(|| tla_trace::add_actions(&ir).ok());
-        if let Some(split) = split {
-            ir = split;
+        match on_search_stack(|| tla_trace::add_actions(&ir)) {
+            Ok(split) => ir = split,
+            // TLC evaluates an \E's bound in its split of the next-state relation once, as it
+            // starts (`Tool.getActions`), with its prints, draws and registers, which the engine,
+            // taking the relation whole, would have at each state instead.
+            Err(tla_trace::Unsupported(reason)) if reason == tla_trace::SPLIT_BOUND_EFFECTS => {
+                return report_not_native(printer, &reason);
+            }
+            Err(_) => {}
         }
     }
     // Shared with the engine's computation of a constant definition it fails on
