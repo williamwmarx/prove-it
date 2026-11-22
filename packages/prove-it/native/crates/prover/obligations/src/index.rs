@@ -44,6 +44,7 @@ pub struct PrintedObligation {
     pub kind: ObligationKind,
     pub sequent: Sequent,
     pub method: Option<OldMethod>,
+    pub is_enabled_axioms_sound: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -549,6 +550,7 @@ pub fn get_obligations(
                 kind: obligation.kind,
                 sequent: obligation.sequent,
                 method: obligation.method,
+                is_enabled_axioms_sound: obligation.is_enabled_axioms_sound,
             });
         }
         results.push(ModuleObligations {

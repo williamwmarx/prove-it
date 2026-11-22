@@ -1525,6 +1525,7 @@ mod tests {
             }),
             use_location: read_locus(&fields[4]),
             is_suppressed: false,
+            is_enabled_axioms_sound: None,
         }
     }
 
