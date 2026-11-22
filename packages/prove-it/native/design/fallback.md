@@ -6664,6 +6664,21 @@ Each of these declines exactly the shape it names; the reason is printed after `
 native yet:` and, where the engine or a replay meets it, after its prefix (`the engine stopped:`,
 `evaluating the failure again:`, ...).
 
+- A temporal formula through definitions nested more deeply than TLC's stack may hold ("a temporal
+  formula through definitions nested more deeply than TLC's stack may hold"): a property or a
+  specification whose expansion nests more than 2,250 definitions, global or of LETs. TLC's
+  expansion recurses on the JVM's stack: at the corpus's `-Xss2m`, a chain of `D1 == [](x # 5) /\
+  D2` ... completes at 2,250 definitions and overflows from 2,300 to 2,450 from run to run, where
+  the binary completed (it now declines from 2,251; the `tla-front` test
+  `declines_a_property_through_definitions_nested_past_tlc_stack`). A chain whose definitions take
+  more of TLC's stack than these may overflow below 2,250 where the binary completes: a known wrong
+  output, as for the evaluator's recursion. The front end's level analysis of such a chain recurses
+  too, on the run's thread, whose stack is 256 MiB: at 64 MiB it aborted from about 7,500
+  definitions in a release build (2,250 in a debug one). It takes time quadratic in the chain, 1 s
+  at 2,300 definitions and 41 s at 10,000 in a release build, so past the output's hold the
+  decline follows what the run printed. WebAssembly, on its 64 MiB stack, declines such a chain
+  from between 500 and 1,000 definitions ("WebAssembly ran out of stack").
+
 - The replay that evaluates a failure again to print TLC's call stack (`evaluating the failure
   again:`) doesn't follow two kinds of frame, outside an assumption, where TLC prints none, and
   declines there. SubBag of a value that isn't a function fails, as TLC evaluates Bags.tla's

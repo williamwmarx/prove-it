@@ -609,6 +609,12 @@ pub struct Expansion<'a> {
     expanding_bindings: std::cell::RefCell<Vec<(*const Scope, *const Expr)>>,
 }
 
+/// How many definitions, global or of LETs, the expansion of a temporal formula nests before it
+/// declines. TLC's expansion recurses on the JVM's stack, so where it overflows depends on the
+/// stack and on what each definition takes: at the corpus's `-Xss2m`, a chain of `D1 == [](x # 5)
+/// /\ D2` ... completes at 2,250 definitions and overflows from 2,300 to 2,450 from run to run.
+const MAXIMUM_DEFINITION_NESTING: usize = 2250;
+
 impl Expansion<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
         get_level(expression, scope, self.environment, self.facts, &[])
@@ -1201,6 +1207,13 @@ impl Expansion<'_> {
                     if expanding.contains(&Rc::as_ptr(definition)) {
                         // TLC recurses until its stack overflows.
                         return Err(FrontError::StackOverflow);
+                    }
+                    if expanding.len() + self.expanding_bindings.borrow().len()
+                        >= MAXIMUM_DEFINITION_NESTING
+                    {
+                        return Err(not_yet(
+                            "a temporal formula through definitions nested more deeply than TLC's stack may hold",
+                        ));
                     }
                     let expanding = [expanding, &[Rc::as_ptr(definition)]].concat();
                     let expanded = self.expand(
