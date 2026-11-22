@@ -131,26 +131,57 @@ pub fn fingerprint_distance(
     }
     let ranges = threads.next_power_of_two();
     let shift = u64::BITS - ranges.trailing_zeros();
+    // A fingerprint's key orders as the signed fingerprint does.
     let sorted = map_on_threads(0..ranges, |range| {
-        let mut sorted: Vec<i64> = fingerprints
+        let mut keys: Vec<u64> = fingerprints
             .iter()
-            .filter(|&&fingerprint| {
-                (fingerprint ^ 1 << 63).checked_shr(shift).unwrap_or(0) as usize == range
-            })
-            .map(|&fingerprint| fingerprint as i64)
+            .map(|&fingerprint| fingerprint ^ 1 << 63)
+            .filter(|&key| key.checked_shr(shift).unwrap_or(0) as usize == range)
             .collect();
-        sorted.sort_unstable();
-        sorted
+        sort_keys(&mut keys);
+        keys
     });
-    let sorted = sorted.iter().flatten();
+    let sorted = sorted.iter().flatten().map(|&key| (key ^ 1 << 63) as i64);
     Some(
         sorted
             .clone()
             .zip(sorted.skip(1))
-            .filter(|(low, high)| (**low < 0) == (**high < 0))
+            .filter(|(low, high)| (*low < 0) == (*high < 0))
             .map(|(low, high)| (high - low) as u64)
             .fold(i64::MAX as u64, u64::min),
     )
+}
+
+const RADIX_BITS: u32 = 16;
+const RADIX_MINIMUM: usize = 1 << 12;
+
+/// Sorts the keys a digit of `RADIX_BITS` at a time from the lowest, in passes over them that
+/// cost what a comparison sort's few levels do.
+fn sort_keys(keys: &mut Vec<u64>) {
+    if keys.len() < RADIX_MINIMUM {
+        keys.sort_unstable();
+        return;
+    }
+    let mut other = vec![0; keys.len()];
+    let mut starts = vec![0usize; 1 << RADIX_BITS];
+    let mask = (1u64 << RADIX_BITS) - 1;
+    for pass in 0..u64::BITS / RADIX_BITS {
+        let shift = pass * RADIX_BITS;
+        starts.fill(0);
+        for &key in keys.iter() {
+            starts[(key >> shift & mask) as usize] += 1;
+        }
+        let mut start = 0;
+        for slot in &mut starts {
+            (*slot, start) = (start, start + *slot);
+        }
+        for &key in keys.iter() {
+            let slot = &mut starts[(key >> shift & mask) as usize];
+            other[*slot] = key;
+            *slot += 1;
+        }
+        std::mem::swap(keys, &mut other);
+    }
 }
 
 /// TLC counts how many new states each expanded state yields in buckets, the last of which holds
@@ -278,6 +309,24 @@ mod tests {
                 Some(1)
             );
         }
+    }
+
+    #[test]
+    fn sorts_many_keys_as_a_comparison_sort() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut keys: Vec<u64> = (0..3 * RADIX_MINIMUM)
+            .map(|index| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                if index % 7 == 0 { index as u64 } else { state }
+            })
+            .collect();
+        keys.extend([0, u64::MAX, 1 << 63, (1 << 63) - 1, 0]);
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        sort_keys(&mut keys);
+        assert_eq!(keys, expected);
     }
 
     #[test]
