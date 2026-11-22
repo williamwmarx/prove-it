@@ -8635,6 +8635,7 @@ mod tests {
             order: vec![0],
             is_verified: true,
             collisions: 0,
+            atom_answers: Mutex::new(Vec::new()),
         }
     }
 
