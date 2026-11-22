@@ -4847,6 +4847,12 @@ matches TLC or declines exactly.
   constant invariant does. The front end's builtin table marked both state-level, so the binary
   checked such an invariant in each state ("Invariant Inv is violated by the initial state").
   Fixtures `tlcext-constant-*`.
+- An initial predicate that leaves a variable undefined after a power of two of complete initial
+  states, found in the specs of upstream tla-ts's unit tests at 0341dbe5. `DoInitFunctor.addElement`
+  reports its progress before it checks the state is legal, so `Init == \E i \in 1..3 : i < 3 => x
+  = i` prints "Computed 2 initial states..." before "current state is not a legal state"; the binary
+  found the state incomplete before it counted the progress, and left the line out. Fixture
+  `initial-state-not-legal-after-progress`.
 
 - The call stack of a failure in an argument of a function application of several, found in the
   specs of upstream tla-ts's unit tests at 0341dbe5. SANY parses `f[a, b]` as `f[<<a, b>>]`, a
@@ -6475,8 +6481,6 @@ these, each as main b7f832b9 prints it:
   those the run makes later, which the binary's ranking doesn't follow: `Next == \E s \in {"zz" \o
   "q"} : ...` with `ASSUME PrintT({"zz" \o "q", "ac" \o "tion"})` prints `{"zzq", "action"}` in
   TLC and `{"action", "zzq"}` natively.
-- An initial predicate that leaves a variable undefined after two complete initial states prints
-  TLC's "Computed 2 initial states..." twice in TLC, once natively.
 - Random draws after a trace, not yet traced: `Init == x = RandomElement(1..1000) /\ PrintT(x)` with
   `Next == RandomElement(1..2) = 3 /\ x' = x` and `-seed 4` prints `731` before the deadlock's trace
   in both, and after it `882` in TLC and `731` natively, as though the binary's generator hadn't
