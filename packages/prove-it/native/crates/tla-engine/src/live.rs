@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tla_live::{Answers, Declined, Slot};
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -55,6 +55,10 @@ pub struct LiveGraph<'g> {
     /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
     /// state, else one past its parent's.
     pub levels: Option<&'g [u32]>,
+    /// By atom, the answers on the first states from an earlier check of the same states, of each
+    /// state predicate that answers a state the same in every check, which a check takes and
+    /// extends.
+    pub known: Option<&'g Mutex<Vec<Option<Vec<u8>>>>>,
 }
 
 /// What the steps the search took answer of an action atom on each step whose subscript changed:
@@ -662,9 +666,7 @@ pub struct Diameters<'d> {
 
 /// The answers to every atom, or the reason PROVE_IT_LIVE_CHECK found the steps' answer to ENABLED
 /// wrong. With helpers, the atoms that neither print nor read TLC's diameter are answered on them
-/// too. `known` holds, by position, the answers on the first states from an earlier call on the
-/// same states of each state predicate that answers a state the same in every call, which this
-/// call takes and extends.
+/// too.
 pub fn answer_atoms(
     machine: &mut Machine<'_>,
     graph: &LiveGraph<'_>,
@@ -673,8 +675,14 @@ pub fn answer_atoms(
     is_printing: bool,
     diameters: &Diameters<'_>,
     helpers: &mut [Machine<'_>],
-    known: &mut [Option<Vec<u8>>],
 ) -> Result<Vec<Table>, &'static str> {
+    let mut known = graph
+        .known
+        .map(|known| known.lock().unwrap_or_else(PoisonError::into_inner));
+    let known: &mut [Option<Vec<u8>>] = match &mut known {
+        Some(known) => known,
+        None => &mut [],
+    };
     let (diameter_atoms, last_diameter) = (diameters.atoms, diameters.last);
     let mut evaluator = Evaluator {
         machine,

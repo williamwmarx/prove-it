@@ -5190,6 +5190,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             levels
         });
+        {
+            let mut known = search
+                .states
+                .atom_answers
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if known.is_empty() {
+                *known = context
+                    .repeatable_atoms
+                    .iter()
+                    .map(|&is_repeatable| is_repeatable.then(Vec::new))
+                    .collect();
+            }
+        }
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -5204,6 +5218,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 partial: None,
                 pieces: None,
                 levels: None,
+                known: None,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -5221,6 +5236,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .as_ref()
                     .map(|pieces| (&pieces[..edge_count * graph.piece_width], graph.piece_width)),
                 levels: levels.as_deref(),
+                known: Some(&search.states.atom_answers),
             },
         };
         // TLC's workers evaluate the atoms of each state they expand once they enqueued its new
@@ -5230,23 +5246,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         let outer = (machine.is_print_raced, machine.is_worker_evaluating);
         machine.is_print_raced = settings.workers > 1 && count > 1;
         machine.is_worker_evaluating = settings.workers > 1;
-        let mut known = search
-            .states
-            .atom_answers
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let known: &mut [Option<Vec<u8>>] = if reals.is_none() {
-            if known.is_empty() {
-                *known = context
-                    .repeatable_atoms
-                    .iter()
-                    .map(|&is_repeatable| is_repeatable.then(Vec::new))
-                    .collect();
-            }
-            &mut known
-        } else {
-            &mut []
-        };
         let answered = answer_atoms(
             machine,
             &live,
@@ -5261,7 +5260,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .filter(|_| atom_threads > 1)
                 .map(|_| Machine::new(&program, Store::new()))
                 .collect::<Vec<_>>(),
-            known,
         );
         (machine.is_print_raced, machine.is_worker_evaluating) = outer;
         answered
