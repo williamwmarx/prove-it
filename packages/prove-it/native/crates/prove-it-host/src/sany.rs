@@ -60,6 +60,7 @@ pub fn sany_text(arguments: &[HostValue]) -> HookResult {
 }
 
 fn write_sany_text(arguments: &[HostValue]) -> HookResult {
+    let _tokens = tla_front::lexer::SharedTokens::start();
     let [root, source, file_name, version, root_extendees, known] = arguments else {
         return Err(
             "sanyText takes a module's name, its text, a file name, TLC's version, the root \

@@ -500,6 +500,14 @@ pub struct LevelAnalyzer<'a> {
     context: LevelContext<'a>,
     tables: &'a Tables,
     definition_levels: RefCell<FastMap<usize, DefinitionLevels>>,
+    /// The definitions whose analysis is under way, whose levels so far are those assumed.
+    analyzing: RefCell<FastSet<usize>>,
+    /// The definitions whose analysis can read the levels assumed of another definition, which
+    /// are analyzed only where they are named, since the order of the analyses decides them.
+    entangled: RefCell<FastSet<usize>>,
+    /// The definitions analyzed, in the order their analyses started, so that a failed analysis
+    /// ahead of its caller takes back the levels of each definition it analyzed.
+    started: RefCell<Vec<usize>>,
 }
 
 fn get_name(expression: &Expression) -> Name {
@@ -512,6 +520,9 @@ impl<'a> LevelAnalyzer<'a> {
             context,
             tables,
             definition_levels: RefCell::default(),
+            analyzing: RefCell::default(),
+            entangled: RefCell::default(),
+            started: RefCell::default(),
         }
     }
 
@@ -1531,10 +1542,113 @@ impl<'a> LevelAnalyzer<'a> {
         definition: &Rc<Definition>,
         scope: &Scope,
     ) -> Result<Rc<OperatorLevels>> {
-        let address = Rc::as_ptr(definition) as usize;
-        if let Some(cached) = self.definition_levels.borrow().get(&address) {
-            return Ok(cached.1.clone());
+        if let Some(levels) = self.get_cached_levels(definition) {
+            return Ok(levels);
         }
+        self.analyze_named_definitions(definition, scope);
+        self.analyze_definition_alone(definition, scope)
+    }
+
+    fn get_cached_levels(&self, definition: &Rc<Definition>) -> Option<Rc<OperatorLevels>> {
+        let address = Rc::as_ptr(definition) as usize;
+        self.definition_levels
+            .borrow()
+            .get(&address)
+            .map(|cached| cached.1.clone())
+    }
+
+    /// The module's definitions the body names, which the body's analysis would analyze as it
+    /// reaches them.
+    fn get_named_definitions(&self, definition: &Definition, scope: &Scope) -> Vec<Rc<Definition>> {
+        let mut names = FastSet::default();
+        collect_names(&definition.body, &mut names);
+        if let DefinitionKind::Function { bounds } = &definition.kind {
+            for bound in bounds {
+                collect_names(&bound.set, &mut names);
+            }
+        }
+        names
+            .iter()
+            .filter(|name| {
+                scope.lookup(name).is_none()
+                    && !self.context.constants.contains(*name)
+                    && !self.context.variables.contains(*name)
+            })
+            .filter_map(|name| (self.context.get_definition)(name))
+            .collect()
+    }
+
+    /// Analyzes the module's definitions a body names before the definition, each after those
+    /// its own body names, so that a chain of definitions is analyzed one at a time rather than
+    /// each within the analysis of the one naming it. Only a definition whose analysis gives the
+    /// same levels whenever it runs is analyzed ahead: one that reaches no definition being
+    /// analyzed and no cycle but a definition naming itself, since a definition of a cycle, as of
+    /// a RECURSIVE section, reads the levels assumed of the one its analysis entered the cycle
+    /// at. The analysis of the definition then finds them analyzed, and analyzes the rest where
+    /// it reaches them, as do the definitions after one whose analysis fails, which is analyzed
+    /// again where it is named so that the error is the body's, as is each definition its
+    /// analysis analyzed, whose levels its failure leaves those assumed.
+    fn analyze_named_definitions(&self, definition: &Rc<Definition>, scope: &Scope) {
+        let mut entered: FastSet<usize> = [Rc::as_ptr(definition) as usize].into_iter().collect();
+        // Each definition entered, with the definitions its body names and whether it is
+        // entangled.
+        let mut pending = vec![(
+            definition.clone(),
+            self.get_named_definitions(definition, scope),
+            false,
+        )];
+        while let Some((current, named, is_entangled)) = pending.last_mut() {
+            if let Some(next) = named.pop() {
+                let address = Rc::as_ptr(&next) as usize;
+                if Rc::ptr_eq(&next, current) {
+                    continue;
+                }
+                if self.get_cached_levels(&next).is_some() {
+                    *is_entangled |= self.analyzing.borrow().contains(&address);
+                    continue;
+                }
+                // Not analyzed: entangled before, or entered and still pending, so in a cycle.
+                if self.entangled.borrow().contains(&address) || !entered.insert(address) {
+                    *is_entangled = true;
+                    continue;
+                }
+                let named = self.get_named_definitions(&next, &Scope::default());
+                pending.push((next, named, false));
+                continue;
+            }
+            let (next, _, is_entangled) = pending.pop().expect("the entry");
+            let Some(parent) = pending.last_mut() else {
+                return;
+            };
+            if is_entangled {
+                parent.2 = true;
+                self.entangled
+                    .borrow_mut()
+                    .insert(Rc::as_ptr(&next) as usize);
+                continue;
+            }
+            let started = self.started.borrow().len();
+            if self
+                .analyze_definition_alone(&next, &Scope::default())
+                .is_err()
+            {
+                // The definition and those its analysis analyzed, as of its LETs, are analyzed
+                // again where they are named.
+                let mut levels = self.definition_levels.borrow_mut();
+                for address in self.started.borrow_mut().drain(started..) {
+                    levels.remove(&address);
+                }
+                return;
+            }
+        }
+    }
+
+    fn analyze_definition_alone(
+        &self,
+        definition: &Rc<Definition>,
+        scope: &Scope,
+    ) -> Result<Rc<OperatorLevels>> {
+        let address = Rc::as_ptr(definition) as usize;
         let formals: Vec<Formal> = match &definition.kind {
             DefinitionKind::Operator { params, .. } => params
                 .iter()
@@ -1546,6 +1660,7 @@ impl<'a> LevelAnalyzer<'a> {
             DefinitionKind::Function { .. } => Vec::new(),
         };
         // A recursive reference reads the levels of a definition being analyzed as these.
+        self.started.borrow_mut().push(address);
         self.definition_levels.borrow_mut().insert(
             address,
             (
@@ -1572,7 +1687,10 @@ impl<'a> LevelAnalyzer<'a> {
             )),
             DefinitionKind::Operator { .. } => definition.body.clone(),
         };
-        let levels = Rc::new(self.analyze_operator(&definition.name, formals, &body, scope)?);
+        self.analyzing.borrow_mut().insert(address);
+        let analyzed = self.analyze_operator(&definition.name, formals, &body, scope);
+        self.analyzing.borrow_mut().remove(&address);
+        let levels = Rc::new(analyzed?);
         self.definition_levels
             .borrow_mut()
             .insert(address, (definition.clone(), levels.clone()));

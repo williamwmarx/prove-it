@@ -348,6 +348,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     let mut printed = false;
     for (path, given) in &paths {
         let (code, _, is_printed) = crate::transaction::run_scoped(output, |staged| {
+            let _tokens = tla_front::lexer::SharedTokens::start();
             let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), staged);
             printer.suppressed = parsed.get_codes("-suppressMessages");
             printer.as_errors = parsed.get_codes("-messagesAsErrors");

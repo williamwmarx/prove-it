@@ -51,7 +51,11 @@ Whether a definition is attempted is static. Whether the attempt succeeds is kno
 - **Front end lowering**, after the cfg is bound, because only there are modules, copies, overrides
   and cfg seen together. It decides for each definition whether TLC attempts it, in what order, and
   under which rule. It also decides Defns, and decides Decline for Java overrides. It ports
-  `getLevelBound` over the AST, including the varLoc rule.
+  `getLevelBound` over the AST, including the varLoc rule. TLC walks a definition's body afresh
+  at each of its names, which is quadratic over a chain of definitions each naming the next; the
+  port keeps the level of each definition on the environment once a walk closed over it, that
+  is, reached nothing being expanded below the definition's own frame, since a definition named
+  within a cycle counts as 0 there and not from the top (`LevelBoundCache`).
 - **Engine startup** evaluates every attempted definition once, in that order, with no state, and
   keeps the results in one table that the workers and tla-trace share:
   - a variable read fails as TLC's does;
