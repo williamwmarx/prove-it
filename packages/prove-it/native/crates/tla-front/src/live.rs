@@ -19,7 +19,52 @@ use crate::spec::{
 };
 use crate::tlc_messages::is_eval_exception;
 
-const MAXIMUM_EXPANSION_DEPTH: usize = 100;
+/// How deep the translation nests expansions of any kind before it declines, which a formula's own
+/// nesting doesn't reach before SANY's parser gives out.
+const MAXIMUM_EXPANSION_DEPTH: usize = 2000;
+
+/// How many nested calls of recursive operators the translation follows. TLC's translation
+/// (`Liveness.astToLive`) recurses on the JVM's stack, whose size decides where it overflows: at
+/// the corpus's `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1) /\ <>P` completes at 800 and
+/// overflows at 900. Past this bound the translation declines rather than guess.
+const MAXIMUM_RECURSION: usize = 600;
+
+/// An argument of a recursive call, as the translation compares calls to find one it is already in.
+enum Argument {
+    /// A constant argument's value.
+    Value(ConfigValue),
+    /// An argument above constant level, which the translation can't decide on, so that TLC
+    /// expands every branch of the call again whatever its value.
+    Variable,
+    /// A constant argument that fails to evaluate, which no other call matches.
+    Unknown,
+}
+
+impl PartialEq for Argument {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Argument::Value(left), Argument::Value(right)) => left == right,
+            (Argument::Variable, Argument::Variable) => true,
+            _ => false,
+        }
+    }
+}
+
+/// A call of a recursive operator the translation is in: the operator's body, the scope it closes
+/// over and its arguments, and how many constant expressions the translation had evaluated when
+/// it made the call.
+struct RecursiveCall {
+    body: *const Expression,
+    scope: *const Scope,
+    arguments: Vec<Argument>,
+    evaluations: usize,
+}
+
+impl RecursiveCall {
+    fn is_of(&self, other: &RecursiveCall) -> bool {
+        self.body == other.body && self.scope == other.scope
+    }
+}
 
 /// A part of the formula (`LiveExpression`). An atom is itself: two atoms are the same just when
 /// they are the same `Rc`, as two objects are in `liveness.ts`.
@@ -119,6 +164,11 @@ struct Converter<'a> {
     facts: &'a DefinitionFacts,
     evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
+    /// The calls of recursive operators the translation is in.
+    recursion: Vec<RecursiveCall>,
+    /// How many constant expressions the translation has evaluated, as a guard or an operand, which
+    /// is what an argument's value can decide.
+    evaluations: std::cell::Cell<usize>,
     /// Levels of pure, context-free global calls whose translation is non-temporal.
     call_levels: HashMap<*const Definition, Level>,
     /// Whether the formula being translated is part of an expression an INSTANCE put in for a
@@ -133,6 +183,7 @@ impl Converter<'_> {
 
     /// The evaluator, whose failures TLC words in ways the front end doesn't follow yet.
     fn get_evaluator(&self, reason: &str) -> Result<&Evaluator<'_>> {
+        self.evaluations.set(self.evaluations.get() + 1);
         self.evaluator.ok_or_else(|| not_yet(reason))
     }
 
@@ -227,10 +278,10 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
-        // TLC's translation of the formula recurses until it overflows its stack, as on its
-        // Github1389Loops and Github1389StateGuard (`createStackOverflowError`).
         if self.depth >= MAXIMUM_EXPANSION_DEPTH {
-            return Err(FrontError::StackOverflow);
+            return Err(not_yet(
+                "a temporal formula nested more deeply than the translation follows",
+            ));
         }
         self.depth += 1;
         let result = self.convert(body, body_scope);
@@ -290,9 +341,88 @@ impl Converter<'_> {
             _ => &[],
         };
         let is_recursive = self.is_recursive_call(expression, scope);
-        let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
+        let call = is_recursive.then(|| RecursiveCall {
+            body: Rc::as_ptr(&body),
+            scope: closure_scope.as_ref().map_or(std::ptr::null(), Rc::as_ptr),
+            arguments: args
+                .iter()
+                .map(|argument| self.argument(argument, scope))
+                .collect(),
+            evaluations: self.evaluations.get(),
+        });
+        let bound = match &call {
+            // The value of a constant argument, which the translation has computed for the call,
+            // is what its LazyValue gives each time TLC reads it, and reading it as a value keeps
+            // each level from reading the arguments of every call above it.
+            Some(call) => {
+                let mut bound = closure_scope;
+                for ((param, argument), value) in params.iter().zip(args).zip(&call.arguments) {
+                    bound = match value {
+                        Argument::Value(value)
+                            if param.arity == 0
+                                && !matches!(
+                                    argument.kind,
+                                    ExpressionKind::String { .. } | ExpressionKind::Number { .. }
+                                ) =>
+                        {
+                            Some(Rc::new(Scope {
+                                name: param.name.clone(),
+                                binding: Binding::Value(value.clone()),
+                                parent: bound,
+                            }))
+                        }
+                        _ => bind_operator_arguments(
+                            std::slice::from_ref(param),
+                            std::slice::from_ref(argument),
+                            bound,
+                            scope,
+                            self.environment,
+                        )?,
+                    };
+                }
+                bound
+            }
+            None => bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?,
+        };
+        let Some(call) = call else {
+            let expanded = self.expand(&body, bound.as_ref(), expression, scope);
+            return Self::expanded_call(expression, expanded, false);
+        };
+        // TLC's translation recurses until its stack overflows (`createStackOverflowError`) on a
+        // call it is already in with the same constant arguments, as on its Github1389Loops and,
+        // where the argument is a state's, Github1389StateGuard; and on a call of an operator it
+        // is in that it reached evaluating nothing an argument could decide, as through an IF on
+        // the state alone (`IF x = 0 THEN <>P ELSE Reach(n + 1)`), which it expands again and
+        // again whatever the arguments.
+        if self.recursion.iter().any(|entered| {
+            entered.is_of(&call)
+                && (entered.arguments == call.arguments || entered.evaluations == call.evaluations)
+        }) {
+            return Err(FrontError::StackOverflow);
+        }
+        if self.recursion.len() >= MAXIMUM_RECURSION {
+            return Err(not_yet(
+                "a recursive temporal formula nested more deeply than TLC's stack may hold",
+            ));
+        }
+        self.recursion.push(call);
         let expanded = self.expand(&body, bound.as_ref(), expression, scope);
-        Self::expanded_call(expression, expanded, is_recursive)
+        self.recursion.pop();
+        Self::expanded_call(expression, expanded, true)
+    }
+
+    /// An argument of a recursive call, for comparing the call with those the translation is in.
+    fn argument(&self, argument: &Expr, scope: Option<&Rc<Scope>>) -> Argument {
+        if self.level(argument, scope) != Level::Constant {
+            return Argument::Variable;
+        }
+        match self
+            .evaluator
+            .map(|evaluator| evaluator.evaluate(argument, scope))
+        {
+            Some(Ok(value)) => Argument::Value(value),
+            _ => Argument::Unknown,
+        }
     }
 
     /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
@@ -568,6 +698,8 @@ pub fn get_liveness(
         facts,
         evaluator,
         depth: 0,
+        recursion: Vec::new(),
+        evaluations: std::cell::Cell::new(0),
         call_levels: HashMap::new(),
         is_substituted: false,
     };

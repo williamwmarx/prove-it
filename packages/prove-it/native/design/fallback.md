@@ -4838,6 +4838,18 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A temporal property through a recursive operator nested 100 calls deep or more. TLC's
+  translation of the formula (`Liveness.astToLive`) expands such a call level by level, and
+  completes `F(n) == IF n = 0 THEN <>(x = 1) ELSE F(n - 1)` with `Prop == F(n)` up to n = 1,000 at
+  the corpus's `-Xss2m`. The binary's translation stopped at 100 nested expansions and reported
+  TLC's StackOverflowError (1005, exit 255) where TLC checks the model. It now reports the overflow
+  only where TLC's recursion doesn't end: a call it is already in, with the same constant
+  arguments (Github1389Loops' `bad(FALSE)`) or an argument above constant level, on which no IF
+  decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in that it reached
+  evaluating no constant expression an argument could decide, as through an IF on the state
+  alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE Reach(n + 1)`). A finite recursion it follows
+  to 600 nested calls and declines past that. Fixtures `liveness-recursion-depth-{100,200,500,900}`
+  and `liveness-recursion-state-guard`.
 - A constant-level definition through TLCCache or AssertError that the configuration names, found
   in the specs of upstream tla-ts's unit tests at 0341dbe5. At d8fb231 neither Java method sets
   `minLevel` (`@Evaluation`'s default is 0), so `getLevelBound` counts `TLCCache(e, c)` and
@@ -6652,6 +6664,17 @@ and 221. Such a run declines (`a failure before the last trace, whose counts rac
 Each of these declines exactly the shape it names; the reason is printed after `prove-it: not
 native yet:` and, where the engine or a replay meets it, after its prefix (`the engine stopped:`,
 `evaluating the failure again:`, ...).
+
+- A recursive temporal formula nested more deeply than TLC's stack may hold ("a recursive temporal
+  formula nested more deeply than TLC's stack may hold"): a property whose translation nests more
+  than 600 calls of recursive operators that may end. Where TLC's translation overflows depends on
+  its stack and on what each level takes: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)`
+  completes at 1,000 and overflows at 1,500, and `F(n - 1) /\ <>P` in its place completes at 800
+  and overflows at 900. A recursion whose levels take more of TLC's stack than these may overflow
+  below 600 calls, where the binary completes it: a known wrong output, as for the evaluator's
+  recursion. And a temporal formula nested more deeply than the translation follows ("a temporal
+  formula nested more deeply than the translation follows"), past 2,000 nested expansions of any
+  kind, which SANY's parser doesn't reach first.
 
 - The replay that evaluates a failure again to print TLC's call stack (`evaluating the failure
   again:`) doesn't follow two kinds of frame, outside an assumption, where TLC prints none, and

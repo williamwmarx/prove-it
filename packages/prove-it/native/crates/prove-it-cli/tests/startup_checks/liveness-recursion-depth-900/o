@@ -1,0 +1,2 @@
+TLC2 Version 0.3.0 (rev: tla-ts)
+Running breadth-first search Model-Checking with fp 0 and seed 0 with 1 worker on 4 cores with 16087MB heap and 0MB offheap memory [pid: 27903] (Linux 6.18.44-fc-v726 x64, prove-it native 64bit, MemFPSet, MemStateQueue).
