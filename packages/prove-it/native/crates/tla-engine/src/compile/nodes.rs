@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use tla_ir::{Bound, NodeId, NodeKind, PathStep, Pattern, TextId, Update};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE,
+    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_LAZY_FUNCTION, KIND_SET, KIND_STRING, KIND_TUPLE,
     Outcome, TRUE, is_function_kind,
 };
 use tla_values::{Bail, Id, check_set_insertion};
@@ -21,7 +21,7 @@ use super::{
     lookup, member, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine, Printed, RuntimeWarning};
+use crate::machine::{Eval, Machine, Printed, RuntimeWarning, UNASSIGNED};
 
 /// A bound's names, at fresh slots: one name, or a tuple pattern's.
 pub(crate) struct Binder {
@@ -654,12 +654,51 @@ impl Compiler<'_> {
         let next = self.compile(expression, &context.primed(true))?;
         let footprint = now.footprint.merge(&next.footprint);
         let (now, next) = (now.eval, next.eval);
+        // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+        let evaluate = move |machine: &mut Machine<'_>| {
+            let now = now(machine)?;
+            let next = next(machine)?;
+            Ok(bool_id(machine.store.equals(now, next)?))
+        };
+        // Where the expression is a tuple of state variables, or of such tuples, its two values
+        // are equal just where each variable's two values are, which TLC compares in order
+        // (`TupleValue.equals`): the tuples are built only where a variable isn't assigned or a
+        // pair doesn't compare as unequal, for whatever TLC does then.
+        let variables = self
+            .get_unchanged_indices(expression, &context.primed(false), 0)
+            .ok()
+            .flatten()
+            .filter(|found| {
+                found
+                    .iter()
+                    .all(|&(variable, _)| (variable as usize) < self.ir.variables.len())
+            });
+        let Some(variables) = variables else {
+            return Ok(leaf(eval(evaluate), footprint));
+        };
+        let variables: Box<[usize]> = variables
+            .into_iter()
+            .map(|(variable, _)| variable as usize)
+            .collect();
         Ok(leaf(
-            // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
             eval(move |machine| {
-                let now = now(machine)?;
-                let next = next(machine)?;
-                Ok(bool_id(machine.store.equals(now, next)?))
+                let is_assigned = variables.iter().all(|&variable| {
+                    machine.cur[variable] != UNASSIGNED && machine.next[variable] != UNASSIGNED
+                });
+                if !is_assigned {
+                    return evaluate(machine);
+                }
+                for &variable in &variables {
+                    let (now, next) = (machine.cur[variable], machine.next[variable]);
+                    if now == next && !machine.store.comparison_can_fail(now) {
+                        continue;
+                    }
+                    return match machine.store.equals(now, next) {
+                        Ok(false) => Ok(FALSE),
+                        _ => evaluate(machine),
+                    };
+                }
+                Ok(TRUE)
             }),
             footprint,
         ))
@@ -1396,18 +1435,22 @@ impl Compiler<'_> {
     // one of these constructors before the one applied: a test or an argument that may is no
     // way through. An EXCEPT of one, with values for its keys and values, is one too.
     pub(super) fn get_applied_constructions(
-        &self,
+        &mut self,
         function: NodeId,
         context: &Context,
-    ) -> Option<Arc<[NodeId]>> {
+    ) -> Option<u32> {
         let mut constructions = Vec::new();
         let within = Within {
             context: Some(context),
             bound: Vec::new(),
         };
         self.collect_applied_constructions(function, &within, &mut constructions, 0);
-        (!constructions.is_empty())
-            .then(|| constructions.into_iter().map(|(body, _)| body).collect())
+        if constructions.is_empty() {
+            return None;
+        }
+        let bodies = constructions.into_iter().map(|(body, _)| body).collect();
+        self.program.constructions.push(bodies);
+        Some(self.program.constructions.len() as u32 - 1)
     }
 
     fn collect_applied_constructions(
@@ -1779,18 +1822,38 @@ impl Compiler<'_> {
         let notes_records = matches!(self.node(function_node).1,
             NodeKind::Identifier(name) if name.is_local)
             && self.names_argument_with_written_records(function_node, context, 0);
-        function.eval = eval(move |machine| {
-            let value = machine.function_value(
-                &evaluate_function,
-                construction.as_ref(),
-                is_applied_to_values,
-            )?;
-            if notes_records && machine.last_kept_lazy_record != value {
-                machine.last_kept_lazy_record = value;
-                machine.kept_lazy_records.insert(value);
+        // A bound name or a constant is read, not evaluated, so KeepLazy changes nothing there:
+        // what is left of `function_value` is dropping the mark of an outer application where
+        // the arguments aren't values. A read that keeps its shape is applied as a read.
+        let is_read = matches!(
+            function.shape,
+            Shape::Slot(_) | Shape::IntSlot(_) | Shape::Constant(_)
+        );
+        if is_read && !notes_records {
+            if !is_applied_to_values {
+                function.shape = Shape::Other;
+                function.eval = eval(move |machine| {
+                    machine.applying_construction = None;
+                    evaluate_function(machine)
+                });
             }
-            Ok(value)
-        });
+        } else {
+            if is_read {
+                function.shape = Shape::Other;
+            }
+            function.eval = eval(move |machine| {
+                let value = machine.function_value(
+                    &evaluate_function,
+                    construction,
+                    is_applied_to_values,
+                )?;
+                if notes_records && machine.last_kept_lazy_record != value {
+                    machine.last_kept_lazy_record = value;
+                    machine.kept_lazy_records.insert(value);
+                }
+                Ok(value)
+            });
+        }
         let args = args
             .iter()
             .map(|&argument| self.compile(argument, context))
@@ -2341,6 +2404,9 @@ pub(super) fn except_warning(machine: &mut Machine<'_>, warning: Option<NodeId>)
 
 // Each update walks its path down, keeping each key and the function it indexes, then writes the
 // new values back up.
+// The depth of an EXCEPT path whose keys and functions an update keeps on the stack.
+const INLINE_PATH: usize = 8;
+
 fn except_nested(
     base: Eval,
     updates: Vec<(Vec<Eval>, u32, Eval)>,
@@ -2349,14 +2415,22 @@ fn except_nested(
     eval(move |machine| {
         let mut result = base(machine)?;
         'updates: for (steps, at_slot, value) in &updates {
-            let mut keys = Vec::with_capacity(steps.len());
-            for step in steps {
-                keys.push(step(machine)?);
+            let depth = steps.len();
+            let mut inline = [0; 2 * INLINE_PATH];
+            let mut spilled = Vec::new();
+            let path = if depth <= INLINE_PATH {
+                &mut inline[..2 * depth]
+            } else {
+                spilled.resize(2 * depth, 0);
+                &mut spilled[..]
+            };
+            let (keys, functions) = path.split_at_mut(depth);
+            for (key, step) in keys.iter_mut().zip(steps) {
+                *key = step(machine)?;
             }
-            let mut functions = Vec::with_capacity(steps.len());
             let mut current = result;
-            for &key in &keys {
-                functions.push(current);
+            for (function, &key) in functions.iter_mut().zip(keys.iter()) {
+                *function = current;
                 let Some(selected) = select_except(machine, current, key)? else {
                     except_warning(machine, warning)?;
                     continue 'updates;
@@ -2365,7 +2439,7 @@ fn except_nested(
             }
             machine.locals[*at_slot as usize] = current;
             let mut value = value(machine)?;
-            for (function, key) in functions.iter().zip(&keys).rev() {
+            for (function, key) in functions.iter().zip(keys.iter()).rev() {
                 value = lazy_function::except(machine, *function, *key, value)?;
             }
             result = value;

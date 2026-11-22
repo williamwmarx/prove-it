@@ -6,11 +6,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tla_live::{Answers, Declined, Slot};
 use tla_values::store::{FALSE, Outcome, TRUE};
-use tla_values::{Id, NESTING_STACK_BYTES};
+use tla_values::{Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{DIAMETER_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT};
 use crate::context::{Atom, EnabledSteps, Split, SubscriptKey};
@@ -29,6 +29,10 @@ pub const ENABLED_DIFFERS: &str = "ENABLED from the steps the search took differ
 /// What PROVE_IT_LIVE_CHECK finds when an action the steps the search took answer, evaluated on a
 /// step, differs.
 pub const STEPS_DIFFER: &str = "an action the steps the search took answer differs from its run";
+
+/// What PROVE_IT_LIVE_CHECK finds when a subscript's variables tell a step from the subscript's
+/// values otherwise.
+pub const SUBSCRIPT_DIFFERS: &str = "a subscript's variables on a step differ from its values";
 
 /// The states of a search and its steps: those from state i between `edge_offsets[i]` and
 /// `edge_offsets[i + 1]`, for the first `expanded` states, each labelled with the position of the
@@ -55,6 +59,58 @@ pub struct LiveGraph<'g> {
     /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
     /// state, else one past its parent's.
     pub levels: Option<&'g [u32]>,
+    /// By atom, the answers on the first states from an earlier check of the same states, of each
+    /// state predicate that answers a state the same in every check, which a check takes and
+    /// extends.
+    pub known: Option<&'g Mutex<Vec<Option<Vec<u8>>>>>,
+    /// Whether no two of the states are equal and no comparison of two values of a variable can
+    /// fail: a step then changes a tuple of every variable just where it reaches another state.
+    pub is_distinct: bool,
+}
+
+/// How a step is told to leave a subscript unchanged: by the subscript's value on each of its
+/// states, by the values of the state variables it is a tuple of, or, where it is a tuple of every
+/// variable and equal states are one state, by whether the step reaches another state.
+#[derive(Clone, Copy)]
+enum Subscript<'a> {
+    Value(&'a Eval),
+    Slots(&'a [u32]),
+    State,
+}
+
+impl<'a> Subscript<'a> {
+    fn of(graph: &LiveGraph<'_>, eval: &'a Eval, slots: Option<&'a [u32]>) -> Subscript<'a> {
+        match slots {
+            Some(slots)
+                if graph.is_distinct
+                    && (0..graph.width as u32).all(|slot| slots.contains(&slot)) =>
+            {
+                Subscript::State
+            }
+            Some(slots) => Subscript::Slots(slots),
+            None => Subscript::Value(eval),
+        }
+    }
+}
+
+// Whether a step leaves the variables of the slots unchanged, as TLC's `equals` of the two tuples
+// finds: v' with v, element by element, up to the first pair that differs or fails to compare.
+fn are_slots_unchanged(
+    store: &mut Store,
+    graph: &LiveGraph<'_>,
+    slots: &[u32],
+    index: usize,
+    next: usize,
+) -> Outcome<bool> {
+    let before = &graph.states[index * graph.width..(index + 1) * graph.width];
+    let after = &graph.states[next * graph.width..(next + 1) * graph.width];
+    for &slot in slots {
+        let (after, before) = (after[slot as usize], before[slot as usize]);
+        if after != before || store.comparison_can_fail(after) {
+            return store.equals(after, before);
+        }
+    }
+    Ok(true)
 }
 
 /// What the steps the search took answer of an action atom on each step whose subscript changed:
@@ -216,7 +272,7 @@ impl Taken {
 /// where the checker asks about no step from a state where that is false.
 struct Member<'a> {
     action: &'a Eval,
-    subscript: Option<&'a Eval>,
+    subscript: Option<Subscript<'a>>,
     marks: Marks<'a>,
     disabled: Option<&'a [u8]>,
 }
@@ -269,6 +325,10 @@ struct Evaluator<'m, 'p, 'g> {
     // whole of the answers, so what its steps evaluate of it is cached across them.
     epochs: Vec<u64>,
     current: Option<usize>,
+    // Under PROVE_IT_LIVE_CHECK, whether a subscript's variables told a step otherwise than its
+    // values, which are then compared too.
+    is_checked: bool,
+    differs: bool,
 }
 
 impl Evaluator<'_, '_, '_> {
@@ -347,13 +407,37 @@ impl Evaluator<'_, '_, '_> {
     fn is_unchanged(
         &mut self,
         values: &mut [Id],
-        subscript: &Eval,
+        subscript: Subscript<'_>,
         index: usize,
         next: usize,
     ) -> Outcome<bool> {
-        let after = self.subscript_value(values, subscript, next)?;
-        let before = self.subscript_value(values, subscript, index)?;
-        self.machine.store.equals(after, before)
+        match subscript {
+            Subscript::State => Ok(index == next),
+            Subscript::Slots(slots) => {
+                are_slots_unchanged(&mut self.machine.store, self.graph, slots, index, next)
+            }
+            Subscript::Value(subscript) => {
+                let after = self.subscript_value(values, subscript, next)?;
+                let before = self.subscript_value(values, subscript, index)?;
+                self.machine.store.equals(after, before)
+            }
+        }
+    }
+
+    // `is_unchanged`, compared under PROVE_IT_LIVE_CHECK with what the subscript's values give.
+    fn is_step_unchanged(
+        &mut self,
+        values: &mut [Id],
+        (subscript, eval): (Subscript<'_>, &Eval),
+        index: usize,
+        next: usize,
+    ) -> Outcome<bool> {
+        let unchanged = self.is_unchanged(values, subscript, index, next);
+        if self.is_checked && !matches!(subscript, Subscript::Value(_)) {
+            let valued = self.is_unchanged(values, Subscript::Value(eval), index, next);
+            self.differs |= valued.ok() != unchanged.as_ref().ok().copied();
+        }
+        unchanged
     }
 
     // An action on a step, false where the subscript's value is unchanged, and else what the steps
@@ -362,13 +446,13 @@ impl Evaluator<'_, '_, '_> {
         &mut self,
         values: &mut [Id],
         action: &Eval,
-        subscript: Option<&Eval>,
+        subscript: Option<(Subscript<'_>, &Eval)>,
         index: usize,
         next: usize,
         taken: Option<bool>,
     ) -> u8 {
         if let Some(subscript) = subscript {
-            match self.is_unchanged(values, subscript, index, next) {
+            match self.is_step_unchanged(values, subscript, index, next) {
                 Ok(true) => return 0,
                 Ok(false) => {}
                 Err(_) => return UNKNOWN,
@@ -390,7 +474,7 @@ impl Evaluator<'_, '_, '_> {
     fn changed_actions(
         &mut self,
         values: &mut [Id],
-        subscript: &Eval,
+        subscript: (Subscript<'_>, &Eval),
         words: usize,
     ) -> (Vec<u64>, Vec<bool>) {
         let graph = self.graph;
@@ -405,7 +489,7 @@ impl Evaluator<'_, '_, '_> {
                 if changed[word] & bit != 0 {
                     continue;
                 }
-                match self.is_unchanged(values, subscript, index, graph.edges[edge] as usize) {
+                match self.is_step_unchanged(values, subscript, index, graph.edges[edge] as usize) {
                     Ok(false) => changed[word] |= bit,
                     Ok(true) => {}
                     Err(_) => *is_failed = true,
@@ -419,6 +503,7 @@ impl Evaluator<'_, '_, '_> {
     // the steps in the order generated.
     fn enabled_from_steps(&mut self, values: &mut [Id], steps: &EnabledSteps, index: usize) -> u8 {
         let graph = self.graph;
+        let subscript = Subscript::of(graph, &steps.subscript, steps.slots.as_deref());
         let start = graph.edge_offsets[index] as usize;
         let end = graph.edge_offsets[index + 1] as usize;
         for edge in start..end {
@@ -427,7 +512,7 @@ impl Evaluator<'_, '_, '_> {
             {
                 continue;
             }
-            match self.is_unchanged(values, &steps.subscript, index, graph.edges[edge] as usize) {
+            match self.is_unchanged(values, subscript, index, graph.edges[edge] as usize) {
                 Ok(false) => return 1,
                 Ok(true) => {}
                 Err(_) => return UNKNOWN,
@@ -445,7 +530,8 @@ struct Run<'m, 'p, 'g> {
     start: usize,
     epochs: Vec<u64>,
     unassigned: Vec<Id>,
-    // A subscript's value on each state the helper evaluated it on, in the helper's store.
+    // A subscript's value on each state the helper evaluated it on, in the helper's store, once
+    // it evaluates one.
     subscripts: Vec<Id>,
     // The successors a state's marked steps reach, for the action atom being answered.
     marked: Vec<u32>,
@@ -471,6 +557,9 @@ impl Run<'_, '_, '_> {
     }
 
     fn subscript_value(&mut self, subscript: &Eval, index: usize) -> Outcome<Id> {
+        if self.subscripts.is_empty() {
+            self.subscripts.resize(self.graph.count, UNASSIGNED);
+        }
         if self.subscripts[index] != UNASSIGNED {
             return Ok(self.subscripts[index]);
         }
@@ -479,6 +568,26 @@ impl Run<'_, '_, '_> {
         let value = subscript(self.machine)?;
         self.subscripts[index] = value;
         Ok(value)
+    }
+
+    // UNCHANGED v of a step: `Evaluator::is_unchanged` on a helper.
+    fn is_unchanged(
+        &mut self,
+        subscript: Subscript<'_>,
+        index: usize,
+        next: usize,
+    ) -> Outcome<bool> {
+        match subscript {
+            Subscript::State => Ok(index == next),
+            Subscript::Slots(slots) => {
+                are_slots_unchanged(&mut self.machine.store, self.graph, slots, index, next)
+            }
+            Subscript::Value(subscript) => {
+                let after = self.subscript_value(subscript, next)?;
+                let before = self.subscript_value(subscript, index)?;
+                self.machine.store.equals(after, before)
+            }
+        }
     }
 
     fn state(&mut self, index: usize, eval: &Eval) -> u8 {
@@ -494,17 +603,13 @@ impl Run<'_, '_, '_> {
     fn action(
         &mut self,
         action: &Eval,
-        subscript: Option<&Eval>,
+        subscript: Option<Subscript<'_>>,
         index: usize,
         next: usize,
         taken: Option<bool>,
     ) -> u8 {
         if let Some(subscript) = subscript {
-            let unchanged = self.subscript_value(subscript, next).and_then(|after| {
-                let before = self.subscript_value(subscript, index)?;
-                self.machine.store.equals(after, before)
-            });
-            match unchanged {
+            match self.is_unchanged(subscript, index, next) {
                 Ok(true) => return 0,
                 Ok(false) => {}
                 Err(_) => return UNKNOWN,
@@ -525,7 +630,7 @@ impl Run<'_, '_, '_> {
     // `failed`: `Evaluator::changed_actions` for one state, on a helper.
     fn changed_actions(
         &mut self,
-        subscript: &Eval,
+        subscript: Subscript<'_>,
         index: usize,
         words: usize,
         (changed, failed): &mut (Vec<u64>, Vec<bool>),
@@ -542,12 +647,7 @@ impl Run<'_, '_, '_> {
             if changed[word] & bit != 0 {
                 continue;
             }
-            let next = graph.edges[edge] as usize;
-            let unchanged = self.subscript_value(subscript, next).and_then(|after| {
-                let before = self.subscript_value(subscript, index)?;
-                self.machine.store.equals(after, before)
-            });
-            match unchanged {
+            match self.is_unchanged(subscript, index, graph.edges[edge] as usize) {
                 Ok(false) => changed[word] |= bit,
                 Ok(true) => {}
                 Err(_) => is_failed = true,
@@ -619,7 +719,7 @@ fn on_helpers<T: Default + Send>(
                             start,
                             epochs: vec![0; end - start],
                             unassigned: vec![UNASSIGNED; graph.width],
-                            subscripts: vec![UNASSIGNED; graph.count],
+                            subscripts: Vec::new(),
                             marked: Vec::new(),
                         };
                         let mut answers = T::default();
@@ -672,6 +772,13 @@ pub fn answer_atoms(
     diameters: &Diameters<'_>,
     helpers: &mut [Machine<'_>],
 ) -> Result<Vec<Table>, &'static str> {
+    let mut known = graph
+        .known
+        .map(|known| known.lock().unwrap_or_else(PoisonError::into_inner));
+    let known: &mut [Option<Vec<u8>>] = match &mut known {
+        Some(known) => known,
+        None => &mut [],
+    };
     let (diameter_atoms, last_diameter) = (diameters.atoms, diameters.last);
     let mut evaluator = Evaluator {
         machine,
@@ -679,6 +786,8 @@ pub fn answer_atoms(
         unassigned: vec![UNASSIGNED; graph.width],
         epochs: vec![0; graph.count],
         current: None,
+        is_checked: is_live_checked,
+        differs: false,
     };
     let mut tables = Vec::with_capacity(atoms.len());
     // For each subscript the steps answer ENABLED with, its values on the states and the actions
@@ -798,6 +907,7 @@ pub fn answer_atoms(
                         let level = levels[index];
                         let next_level = if index == next { level } else { level + 1 };
                         let is_unchanged = subscript.as_ref().map(|subscript| {
+                            let subscript = Subscript::Value(subscript);
                             evaluator.is_unchanged(&mut values, subscript, index, next)
                         });
                         answers.push(match is_unchanged {
@@ -819,32 +929,46 @@ pub fn answer_atoms(
                     unknown: Some(reason.clone()),
                     prints,
                 },
-                Atom::State(eval) if is_shared => Table {
-                    answers: on_helpers(
-                        evaluator.machine,
-                        helpers,
-                        graph,
-                        graph.count,
-                        |_| 1,
-                        |run, index, answers: &mut Vec<u8>| answers.push(run.state(index, eval)),
-                    )
-                    .concat(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
-                Atom::State(eval) => Table {
-                    answers: (0..graph.count)
-                        .map(|index| {
+                Atom::State(eval) => {
+                    let known = known.get_mut(position).and_then(Option::as_mut);
+                    let from = known
+                        .as_ref()
+                        .map_or(0, |known| known.len().min(graph.count));
+                    let mut answers = Vec::with_capacity(graph.count);
+                    if let Some(known) = &known {
+                        answers.extend_from_slice(&known[..from]);
+                    }
+                    if is_shared && from < graph.count {
+                        let parts = on_helpers(
+                            evaluator.machine,
+                            helpers,
+                            graph,
+                            graph.count,
+                            |index| usize::from(index >= from),
+                            |run, index, answers: &mut Vec<u8>| {
+                                if index >= from {
+                                    answers.push(run.state(index, eval));
+                                }
+                            },
+                        );
+                        answers.extend(parts.concat());
+                    } else if !is_shared {
+                        answers.extend((from..graph.count).map(|index| {
                             let answer = evaluator.evaluate_state(index, eval);
                             keep_printed(evaluator.machine, &mut prints, index);
                             answer
-                        })
-                        .collect(),
-                    is_from_steps: false,
-                    unknown: None,
-                    prints,
-                },
+                        }));
+                    }
+                    if let Some(known) = known {
+                        known.clone_from(&answers);
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
                 Atom::Action { key, .. } if is_shared => {
                     // This atom and the action atoms after it whose subscripts share its values,
                     // each with the ENABLED of its fairness answered already, in one pass of the
@@ -871,6 +995,7 @@ pub fn answer_atoms(
                             let Atom::Action {
                                 action,
                                 subscript,
+                                slots,
                                 enabled,
                                 is_next,
                                 split,
@@ -886,7 +1011,9 @@ pub fn answer_atoms(
                                 .map(|table| &table.answers[..]);
                             Member {
                                 action,
-                                subscript: subscript.as_ref(),
+                                subscript: subscript
+                                    .as_ref()
+                                    .map(|eval| Subscript::of(graph, eval, slots.as_deref())),
                                 marks: Marks::of(graph, *is_next, split.as_ref(), *piece),
                                 disabled,
                             }
@@ -972,12 +1099,16 @@ pub fn answer_atoms(
                 Atom::Action {
                     action,
                     subscript,
+                    slots,
                     enabled,
                     is_next,
                     split,
                     piece,
                     ..
                 } => {
+                    let subscript = subscript
+                        .as_ref()
+                        .map(|eval| (Subscript::of(graph, eval, slots.as_deref()), eval));
                     let taken = Taken::of(graph, *is_next, split.as_ref(), *piece, helpers.len());
                     // The checker asks about no step from a state where the ENABLED of the action's
                     // fairness is false, and the interpreter answers any it does; where the atom
@@ -999,7 +1130,6 @@ pub fn answer_atoms(
                         }
                         for edge in start..end {
                             let next = graph.edges[edge] as usize;
-                            let subscript = subscript.as_ref();
                             let is_taken = taken.as_ref().map(|taken| taken.at(edge));
                             let answer = evaluator.action(
                                 &mut values,
@@ -1028,14 +1158,7 @@ pub fn answer_atoms(
                     }
                     for index in 0..graph.count {
                         answers.push(if is_asked(index) {
-                            evaluator.action(
-                                &mut values,
-                                action,
-                                subscript.as_ref(),
-                                index,
-                                index,
-                                None,
-                            )
+                            evaluator.action(&mut values, action, subscript, index, index, None)
                         } else {
                             UNKNOWN
                         });
@@ -1058,6 +1181,8 @@ pub fn answer_atoms(
                             && (steps.actions.is_none() || graph.labels.is_some())
                     });
                     let mut changed = steps.map(|steps| {
+                        let subscript =
+                            Subscript::of(graph, &steps.subscript, steps.slots.as_deref());
                         changes.remove(&steps.key).unwrap_or_else(|| {
                             if is_shared {
                                 // The helpers evaluate the subscript in overlays of their own, so
@@ -1075,12 +1200,7 @@ pub fn answer_atoms(
                                             + 1
                                     },
                                     |run, index, changed: &mut (Vec<u64>, Vec<bool>)| {
-                                        run.changed_actions(
-                                            &steps.subscript,
-                                            index,
-                                            words,
-                                            changed,
-                                        );
+                                        run.changed_actions(subscript, index, words, changed);
                                     },
                                 );
                                 let mut actions = Vec::with_capacity(graph.expanded * words);
@@ -1095,8 +1215,11 @@ pub fn answer_atoms(
                                     failed,
                                 };
                             }
-                            let (actions, failed) =
-                                evaluator.changed_actions(&mut values, &steps.subscript, words);
+                            let (actions, failed) = evaluator.changed_actions(
+                                &mut values,
+                                (subscript, &steps.subscript),
+                                words,
+                            );
                             Changes {
                                 values: std::mem::take(&mut values),
                                 actions,
@@ -1208,6 +1331,9 @@ pub fn answer_atoms(
             });
         }
         tables.push(whole.expect("an answer for each diameter"));
+        if evaluator.differs {
+            return Err(SUBSCRIPT_DIFFERS);
+        }
     }
     Ok(tables)
 }

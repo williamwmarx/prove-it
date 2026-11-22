@@ -407,7 +407,7 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
                     }
                 }
                 target(machine, IS_INIT)[*variable as usize] = value;
-                machine.note_assigned(*variable as usize, value);
+                machine.note_assigned(*variable as usize, value, IS_INIT);
                 machine.assigned += 1;
                 Ok(true)
             }
@@ -552,7 +552,7 @@ fn either_step(
         let current = target(machine, is_init)[index];
         if current == UNASSIGNED {
             target(machine, is_init)[index] = value;
-            machine.note_assigned(index, value);
+            machine.note_assigned(index, value, is_init);
             machine.assigned += 1;
             let result = run_rest(&rest, machine, on_complete);
             target(machine, is_init)[index] = UNASSIGNED;
@@ -1054,7 +1054,7 @@ impl<'a> Compiler<'a> {
         self.get_assignable(node, context, !is_init, 0)
     }
 
-    fn get_unchanged_indices(
+    pub(crate) fn get_unchanged_indices(
         &mut self,
         node: NodeId,
         context: &Context,
@@ -3268,7 +3268,7 @@ impl<'a> Compiler<'a> {
                 for position in positions {
                     let element = element_at(machine, id, position);
                     target(machine, is_init)[index] = element;
-                    machine.note_assigned(index, element);
+                    machine.note_assigned(index, element, true);
                     let result = run_rest(&assigned, machine, on_complete);
                     if result.is_err() || has_generated(machine) {
                         target(machine, is_init)[index] = UNASSIGNED;
@@ -3288,7 +3288,7 @@ impl<'a> Compiler<'a> {
                 for position in survivors {
                     let element = machine.store.element_at(id, position);
                     target(machine, is_init)[index] = element;
-                    machine.note_assigned(index, element);
+                    machine.note_assigned(index, element, true);
                     run_rest(&assigned, machine, on_complete)?;
                 }
                 target(machine, is_init)[index] = UNASSIGNED;
@@ -3299,7 +3299,7 @@ impl<'a> Compiler<'a> {
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
-                machine.note_assigned(index, element);
+                machine.note_assigned(index, element, true);
                 if let Some((first, lazy)) = &held {
                     let is_first = element == *first || machine.store.equals(element, *first)?;
                     machine.held[index] = is_first.then(|| (element, lazy.clone()));
@@ -3858,6 +3858,19 @@ impl<'a> Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
+    /// The state variables an expression read in a scope is a tuple of, or of such tuples, by
+    /// slot and in order, as UNCHANGED of it reads them: its value on a state is then the
+    /// nested tuple of those slots' values.
+    pub fn tuple_slots_in_scope(&mut self, node: NodeId, scope: Option<Index>) -> Option<Vec<u32>> {
+        let context = self.context_from_scope(scope).ok()??;
+        let found = self.get_unchanged_indices(node, &context, 0).ok()??;
+        let slots: Vec<u32> = found.into_iter().map(|(slot, _)| slot).collect();
+        slots
+            .iter()
+            .all(|&slot| (slot as usize) < self.ir.variables.len())
+            .then_some(slots)
+    }
+
     /// Compiles ENABLED of an action in the scope of an instance, as the liveness checker's
     /// ENABLED atoms are compiled, or `None` when the engine can't translate the scope.
     pub fn compile_enabled_in_scope(
