@@ -2229,7 +2229,7 @@ impl Store {
         }
         if meta.kind == KIND_TUPLE {
             return (key_meta.kind == KIND_INT)
-                .then(|| key_meta.payload >= 1 && key_meta.payload as usize <= size);
+                .then_some(key_meta.payload >= 1 && key_meta.payload as usize <= size);
         }
         if meta.kind != KIND_FUNCTION
             || self.comparison_can_fail(function)
