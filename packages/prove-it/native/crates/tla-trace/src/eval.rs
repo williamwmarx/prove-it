@@ -1048,10 +1048,10 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
-    /// How many times the evaluator applied TLCGet to a key whose value changes in a run, the
-    /// search's or the split's, which an \E's bound in the split of the next-state relation keeps
-    /// as TLC starts (`Splitter::evaluate_bound`).
-    pub(crate) tlc_gets: u64,
+    /// How many times the evaluator applied TLCGet to a key the search or the split makes
+    /// (`is_varying_tlc_get_key`), which an \E's bound in the split of the next-state relation
+    /// reads as TLC starts (`Splitter::evaluate_bound`).
+    pub(crate) varying_tlc_gets: u64,
     /// How many lazy functions and filters the evaluator built, each holding the states to
     /// evaluate later in them: a definition that built one isn't the same value in other states.
     captures: u64,
@@ -1401,14 +1401,20 @@ fn is_simulation_run_key(key: &[u16]) -> bool {
         && !key.starts_with(JAVA_PROPERTY_PREFIX)
 }
 
-// Whether TLCGet of this key reads what TLC fixes for the run as it starts, the configuration, its
-// revision and a Java property, rather than the search or the split (`TLCGetStringValue`).
-fn is_fixed_tlc_get_key(key: &Value) -> bool {
+// Whether TLCGet of this key reads what the search or the split makes, so that TLC's split, which
+// reads it once as TLC starts, and an evaluation at each state read different values: the
+// search's statistics and the state's level (`TLCGetSet.TLCGetStringValue`), and the spec, whose
+// actions the split is still building. The other keys TLC fixes for the run, or read registers
+// and properties, which change only where the spec sets them (`Splitter::evaluate_bound`).
+fn is_varying_tlc_get_key(key: &Value) -> bool {
     let Value::Str(key) = key else {
         return false;
     };
     let key = String::from_utf16_lossy(&key.units);
-    matches!(key.as_str(), "config" | "revision") || key.starts_with(JAVA_PROPERTY_PREFIX)
+    matches!(
+        key.as_str(),
+        "level" | "diameter" | "generated" | "distinct" | "queue" | "duration" | "stats" | "spec"
+    )
 }
 
 fn undefined_register<T>(key: &Value) -> Evaluated<T> {
@@ -1817,7 +1823,7 @@ const LAZY_BODY_EFFECTS: &str = "effects in the body of a function TLC keeps laz
 
 /// The prints, TLCGet reads, TLCSet writes and random draws so far, which tell whether anything
 /// had effects between two points.
-pub(crate) type Effects = (usize, usize, usize, Option<u64>);
+type Effects = (usize, usize, usize, Option<u64>);
 
 /// A function TLC keeps lazy whose body printed as the evaluator built it: where its first body
 /// that printed began and where the function was built.
@@ -2667,7 +2673,7 @@ impl<'ir> Evaluator<'ir> {
             searched_failing: HashSet::new(),
             searched_limited: HashSet::new(),
             searched_unwarned: HashSet::new(),
-            tlc_gets: 0,
+            varying_tlc_gets: 0,
             searched_printed: HashMap::new(),
             searched_effects: HashMap::new(),
             searched_unworded: HashSet::new(),
@@ -10094,7 +10100,7 @@ impl<'ir> Evaluator<'ir> {
         self.lazy_prints.partition_point(|lazy| lazy.id < first)
     }
 
-    pub(crate) fn lazy_effects(&self) -> Effects {
+    fn lazy_effects(&self) -> Effects {
         (
             self.printed.len(),
             self.register_reads,
@@ -13517,8 +13523,8 @@ impl<'ir> Evaluator<'ir> {
 
     fn tlc_get(&mut self, operand: &Operand, context: &Context) -> Evaluated<Value> {
         let key = self.operand(operand)?;
-        if !is_fixed_tlc_get_key(&key) {
-            self.tlc_gets += 1;
+        if is_varying_tlc_get_key(&key) {
+            self.varying_tlc_gets += 1;
         }
         Ok(match key {
             // A register, whose value no cache may keep.

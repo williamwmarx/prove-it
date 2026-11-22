@@ -860,8 +860,31 @@ impl Splitter<'_, '_> {
                 .is_ok())
     }
 
-    // An \E's bound the split evaluates, as TLC does when it starts: one whose evaluation printed,
-    // drew, applied TLCGet or set a register, which the engine would do again at each state.
+    // An \E's bound the split evaluates, as TLC does when it starts (`Tool.getActions`), which the
+    // engine, taking the relation whole, would evaluate at each state instead. It declines where
+    // that would differ, from what the evaluation did:
+    //
+    // | what the bound did                               | counted | why                         |
+    // |--------------------------------------------------|---------|-----------------------------|
+    // | printed (Print, PrintT, ...)                     | yes     | once, or at each state      |
+    // | drew (RandomElement, Randomization's)            | yes     | the generator advances      |
+    // | TLCGet of "level", "diameter", "generated",      | yes     | the search's, which differ  |
+    // |   "distinct", "queue", "duration", "stats"       |         |   between TLC's start and a |
+    // |                                                  |         |   state                     |
+    // | TLCGet("spec")                                   | yes     | the split's actions so far  |
+    // | TLCGet of "config", "revision", "action"         | no      | fixed for the run; "action" |
+    // |                                                  |         |   is Action.UNKNOWN outside |
+    // |                                                  |         |   simulation                |
+    // | TLCGet or TLCGetOrDefault of a register or a     | no      | change only where the spec  |
+    // |   property                                       |         |   sets them, which the      |
+    // |                                                  |         |   split doesn't follow: the |
+    // |                                                  |         |   engine's as before        |
+    // | TLCSet                                           | refused | fails as TLC starts, so TLC |
+    // |                                                  |         |   takes the relation whole, |
+    // |                                                  |         |   as the engine does        |
+    //
+    // A key not in the table, or a TLCGet the split evaluator can't answer, fails or is left to
+    // the engine as before.
     fn evaluate_bound(
         &mut self,
         node: NodeId,
@@ -874,10 +897,24 @@ impl Splitter<'_, '_> {
             .evaluator
             .random
             .replace(tla_values::random::JavaRandom::seeded(seed));
-        let before = (self.evaluator.lazy_effects(), self.evaluator.tlc_gets);
+        let effects = |evaluator: &Evaluator<'_>| {
+            (
+                evaluator.printed.len(),
+                evaluator.random.as_ref().map(|random| random.state()),
+                evaluator.varying_tlc_gets,
+            )
+        };
+        let before = effects(self.evaluator);
+        let writes = self.evaluator.register_writes;
         let value = self.evaluator.evaluate(node, context);
-        let after = (self.evaluator.lazy_effects(), self.evaluator.tlc_gets);
+        let after = effects(self.evaluator);
         self.evaluator.random = random;
+        // TLCSet of a register as TLC starts finds neither a worker's thread nor a checker
+        // (`TLCGetSet.TLCSet`), and TLC takes the relation whole where it fails, as the engine
+        // does where the split refuses.
+        if self.evaluator.register_writes != writes {
+            return Err(Unsupported(SPLIT_EFFECTS.into()));
+        }
         if after != before {
             return Err(Unsupported(SPLIT_BOUND_EFFECTS.into()));
         }
