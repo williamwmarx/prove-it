@@ -11,11 +11,9 @@ const getFixture = (name: string, configName = name) => ({
   config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
 });
 
-const TRACE = "the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep";
-
 describe("TLCExt matches TLC", () => {
-  it("declines TLC's TLCExtTrace model with Trace in an invariant and a constraint", async () => {
-    await expectDeclined(getFixture("TLCExtTrace"), TRACE);
+  it("declines the trace of TLC's TLCExtTrace model, rebuilt through Trace in a constraint", async () => {
+    await expectDeclined(getFixture("TLCExtTrace"), "rebuilding a trace: the builtin Trace");
   });
 
   it("checks TLC's TLCExtTrace model with an alias", async () => {
@@ -25,7 +23,14 @@ describe("TLCExt matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 7, 7]);
   });
 
-  it("declines Trace in the state that the next-state relation extends", async () => {
-    await expectDeclined(getFixture("TraceNext"), TRACE);
+  // TLC's output at d8fb231.
+  it("checks Trace in the state that the next-state relation extends", async () => {
+    const result = await checkOnEngine(getFixture("TraceNext"));
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      5,
+      5,
+      5,
+    ]);
   });
 });
