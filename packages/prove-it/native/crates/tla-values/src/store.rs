@@ -97,7 +97,7 @@ const SCANNED_SIZE: usize = 256;
 const SCAN_LANES: usize = 8;
 
 /// The position of the first word equal to the key.
-#[inline]
+#[inline(always)]
 fn position_of(words: &[Id], key: Id) -> Option<usize> {
     #[inline(always)]
     fn matches(lanes: &[Id], key: Id) -> u32 {
@@ -2018,6 +2018,12 @@ impl Store {
         if size <= LINEAR_SIZE || size <= SCANNED_SIZE && self.is_key_comparable(block, key) {
             return Ok(position_of(self.words(offset, size), key).map_or(-1, |index| index as i32));
         }
+        self.search_comparing(offset, size, key)
+    }
+
+    // TLC's search of a sorted block by compareTo, out of the line of the searches by id.
+    #[inline(never)]
+    fn search_comparing(&mut self, offset: usize, size: usize, key: Id) -> Outcome<i32> {
         let (mut low, mut high) = (0i64, size as i64 - 1);
         while low <= high {
             let middle = (low + high) >> 1;
