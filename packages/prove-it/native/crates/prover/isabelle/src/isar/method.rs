@@ -13,8 +13,10 @@ use std::rc::Rc;
 
 use crate::error::{Error, Res, error_exn};
 use crate::provers::clasimp::{BlastDepthTac, ClasimpContext, auto_tac, clarsimp_tac, force_tac};
-use crate::provers::classical::{ClassicalContext, add_unsafe_dest, add_unsafe_intro, with_claset};
-use crate::pure::drule::{asm_rl, is_norm_hhf, norm_hhf_eq, reflexive_thm, term_i};
+use crate::provers::classical::{
+    ClassicalContext, add_unsafe_dest, add_unsafe_intro, fast_tac, with_claset,
+};
+use crate::pure::drule::{asm_rl, is_norm_hhf, multi_resolves, norm_hhf_eq, reflexive_thm, term_i};
 use crate::pure::logic::{is_equals, strip_assums_concl, strip_imp_prems};
 use crate::pure::name::variant_list;
 use crate::pure::object_logic::atomize_prems_tac;
@@ -41,7 +43,77 @@ use super::theory::{OuterToken, OuterTokenKind};
 pub enum ModifierKind {
     Intro,
     Dest,
+    /// `simp:` and `simp add:` of the clasimp methods, `add:` of simp.
+    Simp,
 }
+
+/// The modifiers a method's Method.sections takes: Classical.cla_modifiers, Clasimp's
+/// clasimp_modifiers, Simplifier.simp_modifiers'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sections {
+    Classical,
+    Clasimp,
+    Simp,
+}
+
+/// The methods Isabelle/Pure and the provers of Isabelle/TLA+'s session define that the port has
+/// no tactic for: a theory that names one declines, where any other name is Isabelle's error.
+const KNOWN_METHODS: &[&str] = &[
+    "-",
+    "assumption",
+    "atomize",
+    "best",
+    "bestsimp",
+    "cases",
+    "clarify",
+    "coinduct",
+    "contradiction",
+    "cut_tac",
+    "deepen",
+    "drule",
+    "drule_tac",
+    "elim",
+    "erule",
+    "erule_tac",
+    "fact",
+    "fail",
+    "fastforce",
+    "fold",
+    "frule",
+    "frule_tac",
+    "goal_cases",
+    "hypsubst",
+    "hypsubst_thin",
+    "induct",
+    "induction",
+    "insert",
+    "inst_step",
+    "intro_classes",
+    "intro_locales",
+    "rename_tac",
+    "rotate_tac",
+    "rule_tac",
+    "safe",
+    "safe_step",
+    "simp_all",
+    "simplesubst",
+    "sleep",
+    "slow",
+    "slow_step",
+    "slowsimp",
+    "split",
+    "standard",
+    "step",
+    "subgoal_tac",
+    "subst",
+    "succeed",
+    "tactic",
+    "raw_tactic",
+    "thin_tac",
+    "this",
+    "unfold",
+    "unfold_locales",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Modifier {
@@ -55,9 +127,11 @@ pub enum MethodText {
     Blast { modifiers: Vec<Modifier> },
     Force { modifiers: Vec<Modifier> },
     Clarsimp { modifiers: Vec<Modifier> },
-    Simp,
+    Fast { modifiers: Vec<Modifier> },
+    Simp { modifiers: Vec<Modifier> },
     Iprover,
     Intro { facts: Vec<String> },
+    Rule { facts: Vec<String> },
     Then { methods: Vec<MethodText> },
     Try { method: Box<MethodText> },
 }
@@ -128,75 +202,129 @@ impl MethodParser<'_> {
         }
     }
 
-    fn is_section_start(&self) -> bool {
-        self.is_word() && self.is_symbol(":", 1)
+    fn token_at(&self, at: usize) -> Option<&OuterToken> {
+        self.tokens.get(at)
     }
 
-    fn facts(&mut self) -> Res<Vec<String>> {
+    fn symbol_at(&self, at: usize, symbol: &str) -> bool {
+        self.token_at(at)
+            .is_some_and(|token| token.kind == OuterTokenKind::Symbol && token.text == symbol)
+    }
+
+    /// Method.sections: the length in tokens of the section header at `at` among those the
+    /// method's sections parse (one or two words, `!` for a safe rule after them, then `:`), or 0
+    /// where none starts there, so a fact named like a header's word is still a fact.
+    fn header_length(&self, at: usize, sections: Sections) -> usize {
+        let is_word = |offset: usize, word: &str| {
+            self.token_at(at + offset)
+                .is_some_and(|token| token.kind == OuterTokenKind::Word && token.text == word)
+        };
+        for header in section_headers(sections) {
+            let words: Vec<&str> = header.split(' ').filter(|word| *word != "!").collect();
+            if !words
+                .iter()
+                .enumerate()
+                .all(|(offset, word)| is_word(offset, word))
+            {
+                continue;
+            }
+            let bang = usize::from(header.ends_with('!'));
+            if bang == usize::from(self.symbol_at(at + words.len(), "!"))
+                && self.symbol_at(at + words.len() + bang, ":")
+            {
+                return words.len() + bang + 1;
+            }
+        }
+        0
+    }
+
+    /// Attrib.thms: fact names up to the next section of `sections`, if any. An attribute in
+    /// brackets after a name, which the port doesn't apply, declines.
+    fn facts(&mut self, sections: Option<Sections>) -> Res<Vec<String>> {
         let mut names = Vec::new();
-        while self.is_word() && !self.is_section_start() {
+        while self.is_word()
+            && sections.is_none_or(|sections| self.header_length(self.position, sections) == 0)
+        {
             names.push(self.word()?);
+            if self.is_symbol("[", 0) {
+                return Err(Error::Unsupported("Isabelle's fact attributes".into()));
+            }
         }
         Ok(names)
     }
 
-    fn modifiers(&mut self) -> Res<Vec<Modifier>> {
+    fn modifiers(&mut self, sections: Sections) -> Res<Vec<Modifier>> {
         let mut result = Vec::new();
-        while self.is_section_start() {
-            let kind = self.word()?;
-            self.position += 1;
-            let kind = match kind.as_str() {
-                "intro" => ModifierKind::Intro,
-                "dest" => ModifierKind::Dest,
-                _ => {
-                    return Err(Error::Unsupported(format!(
-                        "Isabelle's method modifier {kind}:"
-                    )));
-                }
-            };
+        loop {
+            let length = self.header_length(self.position, sections);
+            if length == 0 {
+                return Ok(result);
+            }
+            let header = self.tokens[self.position..self.position + length - 1]
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.position += length;
             result.push(Modifier {
-                kind,
-                facts: self.facts()?,
+                kind: section_kind(sections, &header)?,
+                facts: self.facts(Some(sections))?,
             });
         }
-        Ok(result)
     }
 
     fn method(&mut self, name: &str, has_args: bool) -> Res<MethodText> {
-        let modifiers = |parser: &mut Self| {
+        let modifiers = |parser: &mut Self, sections| {
             if has_args {
-                parser.modifiers()
+                parser.modifiers(sections)
+            } else {
+                Ok(Vec::new())
+            }
+        };
+        let facts = |parser: &mut Self| {
+            if has_args {
+                parser.facts(None)
             } else {
                 Ok(Vec::new())
             }
         };
         Ok(match name {
             "auto" => MethodText::Auto {
-                modifiers: modifiers(self)?,
+                modifiers: modifiers(self, Sections::Clasimp)?,
             },
             "blast" => MethodText::Blast {
-                modifiers: modifiers(self)?,
+                modifiers: modifiers(self, Sections::Classical)?,
+            },
+            "fast" => MethodText::Fast {
+                modifiers: modifiers(self, Sections::Classical)?,
             },
             "force" => MethodText::Force {
-                modifiers: modifiers(self)?,
+                modifiers: modifiers(self, Sections::Clasimp)?,
             },
             "clarsimp" => MethodText::Clarsimp {
-                modifiers: modifiers(self)?,
+                modifiers: modifiers(self, Sections::Clasimp)?,
             },
-            // Simplifier.simp_method takes modifiers (`add:`, `only:`, …) and options
-            // (`(no_asm)`), which the port doesn't implement.
+            // Simplifier.simp_method: an option such as `(no_asm)` comes before the sections.
             "simp" => {
-                if has_args && (self.is_section_start() || self.is_symbol("(", 0)) {
+                if has_args && self.is_symbol("(", 0) {
                     return Err(Error::Unsupported(
-                        "Isabelle's simp method with arguments".into(),
+                        "Isabelle's simp method with options".into(),
                     ));
                 }
-                MethodText::Simp
+                MethodText::Simp {
+                    modifiers: modifiers(self, Sections::Simp)?,
+                }
             }
             "iprover" => MethodText::Iprover,
             "intro" => MethodText::Intro {
-                facts: if has_args { self.facts()? } else { Vec::new() },
+                facts: facts(self)?,
             },
+            "rule" => MethodText::Rule {
+                facts: facts(self)?,
+            },
+            _ if KNOWN_METHODS.contains(&name) => {
+                return Err(Error::Unsupported(format!("Isabelle's {name} method")));
+            }
             _ => return Err(error_exn(format!("Undefined method: {name}"))),
         })
     }
@@ -247,6 +375,61 @@ impl MethodParser<'_> {
     }
 }
 
+/// The section headers a method's Method.sections parse, each as its words with ` !` for a safe
+/// rule: Classical.cla_modifiers; Clasimp's clasimp_modifiers (the simp, split, cla and iff
+/// modifiers); Simplifier.simp_modifiers' with the cong modifiers.
+fn section_headers(sections: Sections) -> &'static [&'static str] {
+    const CLA: &[&str] = &[
+        "intro", "intro !", "elim", "elim !", "dest", "dest !", "del",
+    ];
+    const CLASIMP: &[&str] = &[
+        "simp",
+        "simp add",
+        "simp del",
+        "simp flip",
+        "simp only",
+        "cong",
+        "cong add",
+        "cong del",
+        "split",
+        "split add",
+        "split del",
+        "intro",
+        "intro !",
+        "elim",
+        "elim !",
+        "dest",
+        "dest !",
+        "del",
+        "iff",
+        "iff add",
+        "iff !",
+        "iff add !",
+        "iff del",
+    ];
+    const SIMP: &[&str] = &["add", "del", "flip", "only", "cong", "cong add", "cong del"];
+    match sections {
+        Sections::Classical => CLA,
+        Sections::Clasimp => CLASIMP,
+        Sections::Simp => SIMP,
+    }
+}
+
+/// The modifier a section's header declares: one the port applies as Isabelle does, or one
+/// Isabelle takes and the port doesn't, which declines.
+fn section_kind(sections: Sections, header: &str) -> Res<ModifierKind> {
+    match (sections, header) {
+        (Sections::Classical | Sections::Clasimp, "intro") => Ok(ModifierKind::Intro),
+        (Sections::Classical | Sections::Clasimp, "dest") => Ok(ModifierKind::Dest),
+        (Sections::Clasimp, "simp" | "simp add") | (Sections::Simp, "add") => {
+            Ok(ModifierKind::Simp)
+        }
+        _ => Err(Error::Unsupported(format!(
+            "Isabelle's method modifier {header}:"
+        ))),
+    }
+}
+
 pub fn parse_proof_text(tokens: &[OuterToken]) -> Res<ProofText> {
     let mut parser = MethodParser {
         tokens,
@@ -280,6 +463,7 @@ fn with_modifiers(context: &ProofContext, modifiers: &[Modifier]) -> Res<Classic
             let claset = match modifier.kind {
                 ModifierKind::Intro => add_unsafe_intro(&classical, &fact)?,
                 ModifierKind::Dest => add_unsafe_dest(&classical, &fact)?,
+                ModifierKind::Simp => continue,
             };
             classical = with_claset(&classical, claset);
         }
@@ -287,15 +471,49 @@ fn with_modifiers(context: &ProofContext, modifiers: &[Modifier]) -> Res<Classic
     Ok(classical)
 }
 
-fn get_clasimp(context: &ProofContext, classical: ClassicalContext) -> ClasimpContext {
-    ClasimpContext {
-        classical,
-        simp: SimpContext {
-            simpset: context.simpset.clone(),
-            bounds: 0,
-        },
-        blast_depth_tac: context.blast_depth_tac.clone(),
+/// Simplifier.simp_add for each fact of the `simp` modifiers, in order.
+fn with_simps(context: &ProofContext, modifiers: &[Modifier]) -> Res<SimpContext> {
+    let mut simp = SimpContext {
+        simpset: context.simpset.clone(),
+        bounds: 0,
+    };
+    for modifier in modifiers {
+        if modifier.kind == ModifierKind::Simp {
+            simp.simpset = add_simps(&simp, &get_facts(context, &modifier.facts)?)?;
+        }
     }
+    Ok(simp)
+}
+
+fn get_clasimp(context: &ProofContext, modifiers: &[Modifier]) -> Res<ClasimpContext> {
+    Ok(ClasimpContext {
+        classical: with_modifiers(context, modifiers)?,
+        simp: with_simps(context, modifiers)?,
+        blast_depth_tac: context.blast_depth_tac.clone(),
+    })
+}
+
+/// Method.rule_tac: the rules, with their first premises resolved against the facts, resolve
+/// against the goal, whose new goals are then normalized.
+fn rule_tac(rules: Vec<Thm>, facts: Vec<Thm>) -> Res<GoalTactic> {
+    let rules: Rc<[Thm]> = rules.into();
+    let facts: Rc<[Thm]> = facts.into();
+    Ok(then_all_new(
+        Rc::new(move |index| {
+            let rules = rules.clone();
+            let facts = facts.clone();
+            Rc::new(move |state: Thm| {
+                if facts.is_empty() {
+                    return resolve_tac(&rules)(index)(state);
+                }
+                Ok(maps_seq(
+                    move |rule: Thm| resolve_tac(std::slice::from_ref(&rule))(index)(state.clone()),
+                    multi_resolves(&facts, &rules),
+                ))
+            })
+        }),
+        norm_hhf_tac()?,
+    ))
 }
 
 fn insert_all_tac(facts: &[Thm]) -> Tactic {
@@ -320,37 +538,47 @@ fn evaluate(context: &Rc<ProofContext>, text: &MethodText) -> Method {
             let insert = insert_all_tac(facts);
             Ok(then_tac(
                 insert,
-                changed_prop(auto_tac(&get_clasimp(
-                    &context,
-                    with_modifiers(&context, &modifiers)?,
-                ))?),
+                changed_prop(auto_tac(&get_clasimp(&context, &modifiers)?)?),
             ))
         }),
         // The TypeScript reads the modifiers once SIMPLE_METHOD' gives the tactic its goal, after
         // building insert_tac.
         MethodText::Clarsimp { modifiers } => Rc::new(move |facts| {
             let insert = insert_tac(facts, 1)?;
-            let clasimp = get_clasimp(&context, with_modifiers(&context, &modifiers)?);
+            let clasimp = get_clasimp(&context, &modifiers)?;
             Ok(then_tac(insert, changed_prop(clarsimp_tac(&clasimp)(1))))
         }),
         // Simplifier.simp_method with its default options: SIMPLE_METHOD' of CHANGED_PROP over
-        // asm_full_simp_tac.
-        MethodText::Simp => Rc::new(move |facts| {
-            let simp = SimpContext {
-                simpset: context.simpset.clone(),
-                bounds: 0,
-            };
+        // asm_full_simp_tac, in the simpset its `add:` sections extend.
+        MethodText::Simp { modifiers } => Rc::new(move |facts| {
+            let simp = with_simps(&context, &modifiers)?;
             simple_method_head(
                 facts,
                 Rc::new(move |index| changed_prop(asm_full_simp_tac(&simp)(index))),
             )
         }),
         MethodText::Force { modifiers } => Rc::new(move |facts| {
-            let tactic = force_tac(
-                &get_clasimp(&context, with_modifiers(&context, &modifiers)?),
+            let tactic = force_tac(&get_clasimp(&context, &modifiers)?, &context.atomize_rules)?;
+            simple_method_head(facts, tactic)
+        }),
+        // Classical.cla_method' fast_tac.
+        MethodText::Fast { modifiers } => Rc::new(move |facts| {
+            let tactic = fast_tac(
+                &with_modifiers(&context, &modifiers)?,
                 &context.atomize_rules,
             )?;
             simple_method_head(facts, tactic)
+        }),
+        // Classical's rule method: METHOD (HEADGOAL o rule_tac ctxt rules), which without rules
+        // is some_rule_tac over the context's rules, which the port doesn't search.
+        MethodText::Rule { facts: names } => Rc::new(move |facts| {
+            let rules = get_facts(&context, &names)?;
+            if rules.is_empty() {
+                return Err(Error::Unsupported(
+                    "Isabelle's rule method without rules".into(),
+                ));
+            }
+            Ok(rule_tac(rules, facts.to_vec())?(1))
         }),
         MethodText::Blast { modifiers } => Rc::new(move |facts| {
             let tactic = (context.blast_tac)(&with_modifiers(&context, &modifiers)?)?;
@@ -551,4 +779,107 @@ pub fn terminal_proof(
             results,
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Exception;
+    use crate::isar::theory::tokenize;
+
+    fn parse(text: &str) -> Res<MethodText> {
+        Ok(parse_proof_text(&tokenize(text)?)?.initial)
+    }
+
+    fn modifier(kind: ModifierKind, facts: &[&str]) -> Modifier {
+        Modifier {
+            kind,
+            facts: facts.iter().map(|fact| (*fact).to_owned()).collect(),
+        }
+    }
+
+    // Method.sections of each method: a fact named like a header's word stays a fact, and a
+    // header another method's sections take is no section of this one.
+    #[test]
+    fn parses_the_sections_each_method_takes() {
+        assert_eq!(
+            parse("(auto intro: conjI dest: conjunct1)").unwrap(),
+            MethodText::Auto {
+                modifiers: vec![
+                    modifier(ModifierKind::Intro, &["conjI"]),
+                    modifier(ModifierKind::Dest, &["conjunct1"]),
+                ]
+            }
+        );
+        assert_eq!(
+            parse("(auto simp add: add dest intro: dest)").unwrap(),
+            MethodText::Auto {
+                modifiers: vec![
+                    modifier(ModifierKind::Simp, &["add", "dest"]),
+                    modifier(ModifierKind::Intro, &["dest"]),
+                ]
+            }
+        );
+        assert_eq!(
+            parse("(simp add: simp cong)").unwrap(),
+            MethodText::Simp {
+                modifiers: vec![modifier(ModifierKind::Simp, &["simp", "cong"])]
+            }
+        );
+        assert_eq!(
+            parse("(rule chooseI dest)").unwrap(),
+            MethodText::Rule {
+                facts: vec!["chooseI".into(), "dest".into()]
+            }
+        );
+        assert_eq!(
+            parse("(fast intro: conjI)").unwrap(),
+            MethodText::Fast {
+                modifiers: vec![modifier(ModifierKind::Intro, &["conjI"])]
+            }
+        );
+        assert_eq!(
+            parse("(simp)").unwrap(),
+            MethodText::Simp {
+                modifiers: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn declines_what_isabelle_takes_and_the_port_does_not() {
+        for text in [
+            "(auto elim: conjE)",
+            "(auto intro!: conjI)",
+            "(auto simp del: x)",
+            "(simp only: x)",
+            "(blast dest!: x)",
+            "(simp (no_asm))",
+            "(rule x [OF y])",
+            "clarify",
+        ] {
+            assert!(
+                matches!(parse(text), Err(Error::Unsupported(_))),
+                "{text}: {:?}",
+                parse(text)
+            );
+        }
+    }
+
+    // A section another method takes, or a word that is no section, is Isabelle's syntax error.
+    #[test]
+    fn rejects_what_isabelle_rejects() {
+        for text in [
+            "(simp intro: x)",
+            "(blast simp: x)",
+            "(auto foo: x)",
+            "no_such_method",
+        ] {
+            assert!(
+                matches!(parse(text), Err(Error::Isabelle(Exception::Error, _))),
+                "{text}: {:?}",
+                parse(text)
+            );
+        }
+    }
 }

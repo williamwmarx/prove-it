@@ -276,3 +276,55 @@ fn fairness_warning_names_the_configured_property_at_its_override_location() {
             .contains("The temporal formula Fair at line 18, col 1")
     );
 }
+
+// A property through a chain of `count` definitions, each conjoining one more.
+fn lower_definition_chain(count: usize) -> Result<LoweredModel, FrontError> {
+    let mut spec = String::from(
+        "---- MODULE Chain ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n",
+    );
+    spec.push_str(&format!("D{count} == [](x # 5)\n"));
+    for index in (1..count).rev() {
+        spec.push_str(&format!("D{index} == [](x # 5) /\\ D{}\n", index + 1));
+    }
+    spec.push_str("Prop == D1\n====\n");
+    let directory =
+        std::env::temp_dir().join(format!("tla-front-chain-{count}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let path = directory.join("Chain.tla");
+    std::fs::write(&path, spec).expect("the spec");
+    let options = ModelOptions {
+        libraries: &[],
+        version: None,
+        is_warning_enabled: true,
+        is_spec_described: false,
+        random_seed: 0,
+        root_extendees: &[],
+    };
+    let lowered = lower_front(&path, "SPECIFICATION Spec\nPROPERTY Prop\n", &options);
+    std::fs::remove_dir_all(&directory).expect("removed");
+    lowered
+}
+
+#[test]
+fn declines_a_property_through_definitions_nested_past_tlc_stack() {
+    // At the corpus's -Xss2m TLC's expansion of the property completes through 2,250 definitions
+    // and overflows from 2,300 to 2,450 from run to run. The front end's analysis of such a chain
+    // recurses deeper than a test thread's stack holds.
+    let lowered = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| {
+            (
+                lower_definition_chain(2250).map(|lowered| lowered.ir.len()),
+                lower_definition_chain(2251).map(|lowered| lowered.ir.len()),
+            )
+        })
+        .expect("a thread")
+        .join()
+        .expect("the lowering");
+    assert!(lowered.0.is_ok(), "{:?}", lowered.0);
+    assert!(
+        matches!(&lowered.1, Err(FrontError::NotYet(reason)) if reason == "a temporal formula through definitions nested more deeply than TLC's stack may hold"),
+        "{:?}",
+        lowered.1
+    );
+}
