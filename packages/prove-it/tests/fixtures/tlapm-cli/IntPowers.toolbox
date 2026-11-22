@@ -1,0 +1,122 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:1:4:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:4:4:6
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:1:6:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:4:6:6
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:1:8:3
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:4:8:13
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:6
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:1:4:3
+@!!status:proved
+@!!prover:z3
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:4:4:6
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:1:6:3
+@!!status:proved
+@!!prover:z3
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:4:6:6
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:1:8:3
+@!!status:failed
+@!!prover:z3
+@!!meth:time-limit: inf; time-used: 0.2 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+(* SMT failed with status = unknown
+ *)
+ASSUME NEW CONSTANT n \in Int,
+       n # 0 ,
+       TRUE 
+PROVE  n ^ (-1) \in Int
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:4:8:13
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./IntPowers.tla", line 8, characters 1-2:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT n \in Int,
+                  n # 0 ,
+                  Z3T("r1") 
+           PROVE  n ^ (-1) \in Int
+File "./IntPowers.tla", line 1, character 1 to line 9, character 4:
+[ERROR]: 1/6 obligations failed.
+There were backend errors processing module `"IntPowers"`.
