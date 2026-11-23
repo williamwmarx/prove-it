@@ -1,0 +1,6 @@
+and([
+or([not a]), 
+or([not c]), 
+or([a, c]), 
+or([not b, c])]).
+

@@ -1,0 +1,4 @@
+and([
+or([p(skolem1)]),
+always(or([q(skolem2)]))]).
+

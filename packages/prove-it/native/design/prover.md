@@ -30,7 +30,7 @@ about 9.5 times the TypeScript engine the model checker replaced.
 | `prover/smt/solver/nlsat/` | 7,875 | 12 | Z3's nlsat: polynomials, univariate factorisation, real algebraic numbers, interval sets, the explain module and levelwise projection. |
 | `prover/zenon/` | 11,594 | 38 | A port of Zenon as tlapm ships it, with its TLA+ extension (`tla/`): the `.znn` reader, the tableau search, the low-level proof translation (`mltoll.ts`), the Isar printer (`isar*.ts`), and an independent proof checker (`check/`) that every proof must pass before it counts. |
 | `prover/isabelle/` | 11,713 | 50 | A port of the parts of Isabelle2025 TLAPS uses: the Pure kernel (`pure/`: terms, types, `thm`, unification, higher-order patterns, the rewriter and simplifier, nets), classical reasoning, hypsubst and blast (`provers/`), Isar's outer and inner syntax, type inference and methods (`isar/`), and the Isabelle/TLA+ object logic decoded from a generated 509 KB JSON (`tla/logic-data.ts`, made by `scripts/isabelle-logic.ts` from tlapm's heap). The encoder (`encode.ts`) writes the theory tlapm writes. |
-| `prover/ptl/` | 739 | 4 | tlapm's PTL path: the encoder to LS4's syntax and a decider (a tableau over a CDCL SAT solver) standing in for LS4. |
+| `prover/ptl/` | 739 | 4 | tlapm's PTL path: the encoder to LS4's syntax, a port of tlapm's `translate` (`ptl_to_trp`), which reads the text and writes LS4's clauses, and a decider of the clauses (a tableau over a CDCL SAT solver) standing in for LS4. |
 | `prover/tlapm/` | 502 | 3 | tlapm's fingerprints file (`.tlacache`) in OCaml's Marshal format (`ocaml-marshal.ts`, `cache.ts`), and the `tlapm` back end that runs a real tlapm (`tlapm.ts`). |
 | `prover/*.ts` | 1,362 | 8 | `prove.ts` (the driver: methods in turn, fingerprint reuse, ordering, CASE-error numbering, reports), `decide-pool.ts` and `prove-worker.ts` (worker threads), `deciders.ts`, `verdict.ts`, `first-order.ts`, `ocaml.ts`, and `tlaps-module.ts` (TLAPS.tla verbatim). |
 
@@ -572,7 +572,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
 | `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section names the crate, which keeps `LICENSE` and `LICENSE-tlapm` beside the code (the TypeScript Isabelle, which kept them too, is deleted) |
-| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section (no section named the TypeScript decider, which is deleted) |
+| `prove-ptl` | tlapm's PTL backend input and its `translate` (`ptl_to_trp`, Boris Konev's, BSD by `translate/README`); the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` and `translate.rs` port | tlapm section (no section named the TypeScript decider, which is deleted) |
 | `prove-obligations` | tlapm (obligations, Prep, encoders, `.tlacache`, TLAPS.tla verbatim) | BSD-2-Clause-style (INRIA, Microsoft, Linux Foundation) | tlapm section |
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
 
@@ -1374,6 +1374,27 @@ is next.
     of `tlapm.json` (1,507 byte for byte, 366 declined at tlapm's backtrace). The TypeScript's
     `tlapm/cache.ts`, `ocaml-marshal.ts` and `scripts/tlapm-cache-fixtures.ts` are deleted; the
     fixtures it wrote stay as frozen records.
+- P1 PTL, LS4's input read as `ptl_to_trp | ls4` reads it (this entry's PR): `prove-ptl::translate`
+  ports tlapm's `translate` at b91fb6c, the `ptl_to_trp` tlapm pipes LS4's input through
+  (`folex.mll`, `foyacc.mly` with ocamlyacc's precedences, `fofunctions.ml` and `main.ml` as run
+  with no option), to the clauses it writes: negation normal form, the DSNF renaming (`dsnf`,
+  with the names `NVV<n>` and the seen list), quantifier elimination with Skolem constants, CNF
+  and clausification, and the text `main.ml` prints. `decide` reads the clauses as
+  `Trp2Spec.cc` does (an identifier of up to 31 characters; `not`, `next(l)` and `sometime(l)`;
+  an argument list, a second eventuality or a `next` beside one is a syntax error that ends LS4)
+  into the tableau's formula, so a constant `True` or `False` inside a clause is the atom
+  `ptl_to_trp` prints it as, and the verdict is LS4's: `unknown` where `ptl_to_trp` writes no
+  clauses (a parse error, a reserved word such as `skolem`, a lowercase bound variable, a past
+  operator's `Illegal1`) or LS4 reads none. `tests/conformance/ptl` gains each formula's `.trp`,
+  the standard output of `translate` built from tlapm b91fb6c's source with OCaml 4.14 and
+  cmdliner 1.2 (nothing printed where an exception ended it), on the 26 formulas, on tla-ts's
+  `backends/ls4/syntax` suite (`syntax-*.ls4`, with LS4 1.0's verdicts as the suite records them)
+  and on 46 formulas that pin the names' order, the precedences and the constants; the tableau
+  decides the clauses with the same verdict on every `.ls4.out`, and three of the encoder's
+  thirteen pinned inputs take other step counts (14, 15 and 40 for 16, 16 and 36). The
+  translation checks the user's stop as it recurses, since the expansion of `<->` and of a
+  disjunction of conjunctions grows exponentially, as it does in `ptl_to_trp`, and a stop ends it
+  within milliseconds with no cap on the output.
 - P6d, the Rust driver alone (this entry's PR): `prove` proves with the Rust driver, and
   `PROVE_IT_PROVER_DRIVER` is gone (4c, "Selection").
   - **Deleted:** the TypeScript driver of `src/prover/prove.ts`, its encoders and Prep

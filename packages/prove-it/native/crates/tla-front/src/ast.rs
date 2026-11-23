@@ -337,6 +337,9 @@ pub enum DefinitionKind {
     Operator {
         params: Vec<OperatorParam>,
         body_range: Option<SourceRange>,
+        /// Whether it is a theorem's or an assumption's name, a `ThmOrAssumpDefNode` in TLC
+        /// rather than an OpDefNode.
+        is_fact: bool,
     },
     Function {
         bounds: Vec<Bound>,

@@ -1,0 +1,11 @@
+and([
+or([not p, q]), 
+or([p, not p, q]), 
+or([not q, not p, q]), 
+or([not p, q, p]), 
+or([p]), 
+or([not q, p]), 
+or([not p, q, not q]), 
+or([p, not q]), 
+or([not q])]).
+

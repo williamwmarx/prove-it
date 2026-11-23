@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use prove_decide::{Limits, Statistic};
+use prove_decide::{DecideError, Limits, Statistic};
 use prove_zenon::decide::{ZenonDecision, decide_zenon, run_zenon};
 
 const FIXTURES: &str = concat!(
@@ -248,6 +248,26 @@ fn searches_each_fixture_the_same_way() {
     }
 }
 
+/// tla-ts's `backends/zenon/sets/subseteq_cap.znn` at 0341dbe5, with the proof it records of
+/// tlapm b91fb6c's Zenon (`rules/not_subseteq_cap.isar`): `not_subseteq_cap` assumes
+/// `~(U \subseteq T)` on both branches, which proves `U \subseteq T => U \subseteq S \cap T`
+/// too. The port's search finds Zenon's proof, its check refuses it, and the decision declines
+/// rather than print an unsound proof.
+#[test]
+fn declines_the_unsound_proof_zenon_prints_of_a_subset_of_an_intersection() {
+    let text = read_fixture("rules/not_subseteq_cap.znn");
+    let recorded = read_fixture("rules/not_subseteq_cap.isar");
+    assert!(recorded.contains("zenon_not_subseteq_cap"));
+    let run = run_zenon(&text, &limits()).expect("a valid input");
+    assert!(run.proof.is_some() && run.isar.is_none() && run.failure.is_none());
+    assert_eq!(
+        prove_zenon::decide(&text, &limits()),
+        Err(DecideError::Declined(
+            "a proof Zenon finds that the port's check refuses".into()
+        ))
+    );
+}
+
 #[test]
 fn prints_the_proof_that_tlapm_writes() {
     for fixture in fixtures() {
@@ -435,6 +455,8 @@ fn gives_up_once_the_cancel_cell_is_set() {
 /// tests/fixtures/zenon/decisions.txt holds, per fixture and step limit, the statistics the
 /// TypeScript Zenon reported before it was deleted, which show the port makes the same search and
 /// prints the same proof. Nothing rewrites it: a change to a line is a change to Zenon's search.
+/// A line with neither a proof nor a stop is a proof the check refused, which the decision now
+/// declines with the search's statistics.
 #[test]
 fn decides_as_recorded_under_a_step_limit() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../tests/fixtures");
@@ -446,8 +468,27 @@ fn decides_as_recorded_under_a_step_limit() {
         let text = std::fs::read_to_string(format!("{root}/{path}")).expect("a fixture");
         let step_limit = step_limit.parse().expect("a step limit");
         let limits = Limits::new(f64::INFINITY, Some(step_limit), None);
-        let decision = prove_zenon::decide(&text, &limits).expect("a decision");
-        let statistics = decision.statistics.iter().map(|(name, value)| match value {
+        let statistics = match prove_zenon::decide(&text, &limits) {
+            Ok(decision) => decision.statistics,
+            Err(DecideError::Declined(reason)) => {
+                assert_eq!(reason, "a proof Zenon finds that the port's check refuses");
+                let limits = Limits::new(f64::INFINITY, Some(step_limit), None);
+                let run = run_zenon(&text, &limits).expect("a valid input");
+                assert!(run.proof.is_some() && run.isar.is_none() && run.failure.is_none());
+                vec![
+                    ("steps", Statistic::Count(limits.steps())),
+                    ("nodesSearched", Statistic::Count(run.nodes_searched)),
+                    (
+                        "maxBranchFormulas",
+                        Statistic::Count(run.max_branch_formulas),
+                    ),
+                    ("proofNodes", Statistic::Count(run.proof_nodes)),
+                    ("formulasCreated", Statistic::Count(run.formulas_created)),
+                ]
+            }
+            Err(error) => panic!("{path}: {error:?}"),
+        };
+        let statistics = statistics.iter().map(|(name, value)| match value {
             Statistic::Count(count) => format!("{name}={count}"),
             Statistic::Text(text) => format!("{name}=\"{text}\""),
         });

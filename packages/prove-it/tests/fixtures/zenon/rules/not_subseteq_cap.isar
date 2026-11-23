@@ -1,0 +1,22 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(~(((a_CONSTANTunde_Uunde_a \\subseteq a_CONSTANTunde_Sunde_a)&(a_CONSTANTunde_Uunde_a \\subseteq a_CONSTANTunde_Tunde_a))=>(a_CONSTANTunde_Uunde_a \\subseteq (a_CONSTANTunde_Sunde_a \\cap a_CONSTANTunde_Tunde_a))))" (is "~(?z_hc=>?z_hi)")
+ have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+ by (rule zenon_notimply_0 [OF z_Ha])
+ have z_Hk: "(~?z_hi)"
+ by (rule zenon_notimply_1 [OF z_Ha])
+ have z_Hg: "?z_hg"
+ by (rule zenon_and_1 [OF z_Hc])
+ show FALSE
+ proof (rule zenon_not_subseteq_cap [of , OF z_Hk])
+  assume z_Hl:"(~?z_hg)"
+  show FALSE
+  by (rule notE [OF z_Hl z_Hg])
+ next
+  assume z_Hl:"(~?z_hg)"
+  show FALSE
+  by (rule notE [OF z_Hl z_Hg])
+ qed
+qed
+(* END-PROOF *)

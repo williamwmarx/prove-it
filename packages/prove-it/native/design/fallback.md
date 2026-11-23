@@ -5005,6 +5005,18 @@ matches TLC or declines exactly.
   replay now walks the body of a startup definition that failed (`resolve_action`), and these
   match.
 
+- A constant definition that names a theorem whose statement reads a variable, found in the specs
+  of upstream tla-ts's unit tests at 0341dbe5. `getLevelBound` looks a theorem's or an
+  assumption's name up to a `ThmOrAssumpDefNode`, whose statement it never enters, so with
+  `THEOREM T == x \in {0, 1}` TLC takes `C == PrintT("c") /\ T` as constant and computes it as it
+  starts, printing `"c"` before T fails there. The front end's definition facts carried the
+  statement's level into C (`DependencyFacts`), so the binary never computed C and printed
+  nothing. They now count a fact's name at level 0 while keeping its reads; the engine then
+  declines such a definition as one TLC computes as it starts that fails there. A fact is the
+  name the parser makes for a THEOREM or an ASSUME, not any operator without a body's range: the
+  operator an INSTANCE with parameters makes of a function (`F[i \in {0}] == x + k` through `I(k)
+  == INSTANCE N WITH k <- k`) keeps its reads of variables (`theorem-level-instance-function`,
+  `-instance-operator`). Fixtures `theorem-level-*`.
 - A definition K the configuration substitutes for a declared constant (`CONSTANT J <- K`) and
   also names as an INVARIANT, a (ACTION_)CONSTRAINT, a PROPERTY, the INIT or the SPECIFICATION.
   `processConstantDefns` takes the modules in the order SANY finishes them, each one's constants
@@ -8757,6 +8769,42 @@ proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabel
 `imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
 port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
 
+The PTL decider reads LS4's input as `ptl_to_trp -i file | ls4` reads it (`Params.ls4`):
+tlapm's `translate` (`translate/` at b91fb6c) lexes `=>` and `<=>` beside `->` and `<->`, a `;`
+comment, `not`, `until` and `unless`, `!` and `?` quantifiers over `[X]`, `True` and `False`,
+and the past `alwaysp` and `sometimep`, parses with ocamlyacc's precedences (`until` below
+`unless`, `<->`, `|`, `->` and `&`, all left associative, each prefix operator above them) and
+writes LS4 clauses by renaming (`dsnf`), with a constant inside a clause printed as the atom
+`True` or `False`, so `sometime False` is satisfiable to LS4 (tla-ts calls this a bug of
+`string_of_formula` and records `unsat` as correct; the port prints LS4's `sat`); it writes no
+clauses for a parse error, the reserved word `skolem`, a lowercase bound variable or a past
+operator (`Illegal1`), and LS4 (`Trp2Spec.cc`) rejects an atom with arguments, so each such input
+reaches no verdict (`unknown`), where the port's own reader rejected every spelling and operator
+but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/conformance/ptl`'s
+`.trp` recordings and `syntax-*.ls4`).
+
+Zenon's `subseteq_cap` and `not_subseteq_cap` rules (`ext_tla.ml`'s `newnodes_prop`) build both
+subsets from the intersection's second set, where `Zenon.thy`'s lemmas take one from each, and
+the second is unsound: Zenon proves `U \subseteq S /\ U \subseteq T => U \subseteq S \cap T`
+with both branches assuming `~(U \subseteq T)` (the suite's `backends/zenon/sets/subseteq_cap.znn`;
+`tests/fixtures/zenon/rules/not_subseteq_cap`, its recorded proof), and `U \subseteq T =>
+U \subseteq S \cap T` the same way. The port's search finds the proof and its check refuses it;
+the port answered `unknown`, and now declines, listed above.
+
+The backend inputs are counted as the tlapm CLI treats a decision: one the SMT port can't take
+(a script outside the SMT-LIB tlapm's encoder writes, `stop: unsupported`) and a proof Zenon
+finds that the check refuses are declines, which the port of tla-ts's backend script printed as
+`unknown` before: the `backends/z3/options` scripts (`--smt-logic` UF, UFLIA and BOGUS, and
+QF_UF and QF_LIA until the port read a script under its logic, below),
+`backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
+`elim_multiarg`, which Z3 drops) and `backends/z3/sets/setof_two_bounds.smt`, the empty file
+tlapm hands Z3 for a set image over two bounds, on which the port printed Z3's `unknown` by
+chance. `backends/ls4/syntax/sometime_false.ls4`
+is set aside, neither matched nor wrong, as the two Zenon memory-limit runs are: the port prints
+LS4's `sat`, as the suite's recording of LS4 does (`ptl_to_trp` prints the `False` inside the
+renamed clause as an atom; the `.trp` recordings of `translate` show the clause), and the suite's
+header overrides the recording with `correct: unsat`, calling it a tlapm bug.
+
 The SMT port reads a script under the logic it sets as Z3 4.8.9 does (`check_logic.cpp`;
 `crates/prover/smt/src/core/script_subset.rs`, `design/smt-core.md`): under `--smt-logic QF_UF`
 Z3 refuses each quantified axiom and drops it, under `QF_LIA` each uninterpreted function and so
@@ -8788,7 +8836,9 @@ scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `B
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
-| reading a script under its logic as Z3 does | 771 / 577 / 1 | 321 / 1,059 / 17 |
+| with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
+| counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
+| reading a script under its logic as Z3 does | MEASURE |
 
 ### Declines
 
@@ -8816,7 +8866,17 @@ scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `B
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
-    limit, and an input a back end can't read.
+    limit, and an input a back end can't read;
+  - a proof Zenon finds that the port's check refuses (`zenon declined: a proof Zenon finds that
+    the port's check refuses`): Zenon's `not_subseteq_cap` rule (`ext_tla.ml`'s `newnodes_prop`)
+    assumes `~(U \subseteq T)` on both branches where `Zenon.thy`'s lemma has `~(U \subseteq S)`
+    and `~(U \subseteq T)`, so Zenon proves `U \subseteq T => U \subseteq S \cap T` and tlapm
+    reports it proved; the port's search finds the proof as Zenon does, its own check of the
+    proof (`crates/prover/zenon/src/check`, which takes each rule's branches from the lemma)
+    refuses it, and the port prints no unsound proof. The check refuses one other proof the
+    search finds, of `tests/fixtures/zenon-encoder/Encoder-7.znn` (a record's field and a
+    disequality of strings, one with a backslash), which the TypeScript answered `unknown` on too
+    (`decisions.txt`'s line with neither a proof nor a stop).
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
   or combinator the Isabelle port doesn't implement, where tlapm would try it: a method
