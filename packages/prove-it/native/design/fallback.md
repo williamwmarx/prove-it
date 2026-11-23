@@ -8845,6 +8845,7 @@ header overrides the recording with `correct: unsat`, calling it a tlapm bug.
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
 | with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 | counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
+| with the Trivial method's untreated obligation | 772 / 577 / 0 | 336 / 1,061 / 0 |
 
 ### Declines
 
@@ -8996,6 +8997,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   from the wait to the limit, counted from the start), so a back end runs 3 s whatever the limit,
   and `SMTT(0)` proves what it can in that time; the port's decisions run that long too, and a
   result before then is the back end's own (`false`), not a `timeout`.
+- The Trivial method (`BY Trivial`) ends an obligation's methods without a result
+  (`Prep.prove_with`, `Schedule.Immediate true`), so the obligation is untreated at the end of the
+  run and reported failed by `fail` with `unexpected error`, whatever its goal; the port does the
+  same, where it used to count the obligation proved.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
