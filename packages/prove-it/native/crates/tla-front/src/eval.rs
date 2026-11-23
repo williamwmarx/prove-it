@@ -220,6 +220,83 @@ pub(crate) fn for_every_draw(
     false
 }
 
+/// Each binding of bounds to their sets' elements, the last bound outermost and the first
+/// changing fastest, made one at a time as TLC's `ContextEnumerator` makes each context: a
+/// quantifier over a billion bindings holds one, not all of them.
+pub struct Bindings {
+    names: Vec<Name>,
+    sets: Vec<Vec<ConfigValue>>,
+    /// The element each bound takes next, or none once every binding is made.
+    positions: Option<Vec<usize>>,
+    /// The scope each bound binds over those after it, the outer scope last: the nodes of the
+    /// bounds that didn't change are kept from one binding to the next.
+    nodes: Vec<Option<Rc<Scope>>>,
+    /// How many of the first bounds changed since their nodes were made.
+    changed: usize,
+}
+
+impl Bindings {
+    fn new(names: Vec<Name>, sets: Vec<Vec<ConfigValue>>, scope: Option<Rc<Scope>>) -> Bindings {
+        let count = sets.len();
+        let mut nodes = vec![None; count];
+        nodes.push(scope);
+        Bindings {
+            positions: (!sets.iter().any(Vec::is_empty)).then(|| vec![0; count]),
+            names,
+            sets,
+            nodes,
+            changed: count,
+        }
+    }
+
+    /// No binding, as of a bound over an empty set.
+    fn none() -> Bindings {
+        Bindings {
+            names: Vec::new(),
+            sets: Vec::new(),
+            positions: None,
+            nodes: vec![None],
+            changed: 0,
+        }
+    }
+
+    /// Whether no binding is left to make.
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_none()
+    }
+}
+
+impl Iterator for Bindings {
+    type Item = Option<Rc<Scope>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let positions = self.positions.as_mut()?;
+        for index in (0..self.changed).rev() {
+            self.nodes[index] = Some(Rc::new(Scope {
+                name: self.names[index].clone(),
+                binding: Binding::Value(self.sets[index][positions[index]].clone()),
+                parent: self.nodes[index + 1].clone(),
+            }));
+        }
+        let binding = self.nodes[0].clone();
+        let mut index = 0;
+        loop {
+            if index == positions.len() {
+                self.positions = None;
+                break;
+            }
+            positions[index] += 1;
+            if positions[index] < self.sets[index].len() {
+                break;
+            }
+            positions[index] = 0;
+            index += 1;
+        }
+        self.changed = index + 1;
+        Some(binding)
+    }
+}
+
 pub struct Evaluator<'a> {
     pub environment: &'a Environment,
     pub order: ValueOrder<'a>,
@@ -792,7 +869,7 @@ impl Evaluator<'_> {
         &self,
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
-    ) -> Result<Vec<Option<Rc<Scope>>>> {
+    ) -> Result<Bindings> {
         if self.version == TlcVersion::Master
             && let Some(first) = bounds
                 .iter()
@@ -824,11 +901,7 @@ impl Evaluator<'_> {
         self.get_bindings(bounds, scope)
     }
 
-    pub fn get_bindings(
-        &self,
-        bounds: &[Bound],
-        scope: Option<&Rc<Scope>>,
-    ) -> Result<Vec<Option<Rc<Scope>>>> {
+    pub fn get_bindings(&self, bounds: &[Bound], scope: Option<&Rc<Scope>>) -> Result<Bindings> {
         self.bind(bounds, scope, true)
     }
 
@@ -837,7 +910,7 @@ impl Evaluator<'_> {
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
         is_contexts: bool,
-    ) -> Result<Vec<Option<Rc<Scope>>>> {
+    ) -> Result<Bindings> {
         let mut names = Vec::new();
         let mut sets = Vec::new();
         for bound in bounds {
@@ -873,36 +946,15 @@ impl Evaluator<'_> {
                 elements => elements?,
             });
         }
+        // A bound over an empty set binds nothing, whatever its pattern.
         if sets.iter().any(Vec::is_empty) {
-            return Ok(Vec::new());
+            return Ok(Bindings::none());
         }
         let names = names
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| not_yet("a tuple of bound names"))?;
-        let mut bindings = Vec::new();
-        fn visit(
-            index: usize,
-            bound: Option<Rc<Scope>>,
-            names: &[Name],
-            sets: &[Vec<ConfigValue>],
-            bindings: &mut Vec<Option<Rc<Scope>>>,
-        ) {
-            let Some(index) = index.checked_sub(1) else {
-                bindings.push(bound);
-                return;
-            };
-            for element in &sets[index] {
-                let scope = Rc::new(Scope {
-                    name: names[index].clone(),
-                    binding: Binding::Value(element.clone()),
-                    parent: bound.clone(),
-                });
-                visit(index, Some(scope), names, sets, bindings);
-            }
-        }
-        visit(bounds.len(), scope.cloned(), &names, &sets, &mut bindings);
-        Ok(bindings)
+        Ok(Bindings::new(names, sets, scope.cloned()))
     }
 
     fn apply_operator(

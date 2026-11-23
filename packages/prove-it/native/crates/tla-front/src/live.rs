@@ -699,7 +699,6 @@ impl Converter<'_> {
                 // and under \A it adds the message of a failure that isn't an EvalException.
                 let operands = match bindings.and_then(|bindings| {
                     bindings
-                        .iter()
                         .map(|bound| self.convert(body, bound.as_ref()))
                         .collect::<Result<Vec<_>>>()
                 }) {

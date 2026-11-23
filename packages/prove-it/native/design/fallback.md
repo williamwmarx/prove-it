@@ -4911,6 +4911,13 @@ matches TLC or declines exactly.
   branches). Fixtures `liveness-recursion-depth-{100,200,500,900}`,
   `liveness-recursion-state-guard` and `liveness-recursion-unevaluated-argument-read`, where a guard
   reads the argument that fails, which TLC reports as its evaluation error, as the binary does.
+- A quantifier the front end evaluates over many bindings, as a property's constant conjunct or
+  the guard of a temporal IF: `Prop == (\E i, j, k \in 1..1000 : i = 1) /\ <>(x = 1)`. TLC's
+  `ContextEnumerator` makes each binding as it goes, so a quantifier whose body decides it at the
+  first holds one binding, and one whose body reads each holds one at a time. The front end's
+  evaluator made every binding first, a billion here, and ran out of memory (exit 134) where TLC
+  completes. It now makes them one at a time, in the same order. Fixtures
+  `stream-bindings-property-{conjunct,guard}`.
 - A property or a specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F ==
   F /\ WF_x(Next)`, found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016,
   c0019). TLC's expansion of the formula recurses until the JVM's stack overflows, and it reports
