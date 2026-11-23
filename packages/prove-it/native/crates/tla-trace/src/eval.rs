@@ -25,7 +25,7 @@ use tla_values::{JAVA_PROPERTY_PREFIX, NAMED_REGISTER_PREFIX, is_settable_proper
 
 use tla_ir::{
     Bound, Builtin, Definition, DefinitionForm, EvaluatedDefinition, Index, Ir, Name, NodeId,
-    NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, TextId,
+    NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding, SourceRange, TextId,
 };
 
 use tla_values::store::NO_VALUE;
@@ -992,6 +992,10 @@ pub struct Evaluator<'ir> {
     substituted_nodes: Option<HashSet<NodeId>>,
     /// The nodes only those copies hold, and the copies' indices (`check_substituted_frames`).
     copy_frames: Option<CopyFrames>,
+    /// Where TLC places the body of an INSTANCE's copy with substitutions, by the body's node:
+    /// the copy's body is the `SubstInNode` of the INSTANCE, the root module's for a copy of a
+    /// copy. `None` where the IR doesn't place that INSTANCE or another definition has the body.
+    substitution_places: HashMap<NodeId, Option<SourceRange>>,
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
@@ -2651,6 +2655,7 @@ impl<'ir> Evaluator<'ir> {
         Evaluator {
             substituted_nodes: None,
             copy_frames: None,
+            substitution_places: get_substitution_places(ir),
             closed_java_context: ir
                 .builtins
                 .iter()
@@ -3249,7 +3254,11 @@ impl<'ir> Evaluator<'ir> {
                     Demand::Quantifier(quantifier) => quantifier,
                     _ => node,
                 };
-                let Some(written) = self.describe_node(written_node) else {
+                let written = match demand {
+                    Demand::Quantifier(_) => self.describe_node(written_node),
+                    _ => self.describe_root(written_node),
+                };
+                let Some(written) = written else {
                     return fail(reason);
                 };
                 return fail_with(
@@ -5131,15 +5140,25 @@ impl<'ir> Evaluator<'ir> {
     pub fn describe_range(&self, node: NodeId) -> String {
         let node = &self.ir.nodes.arena[self.resolved(node) as usize];
         match node.range {
-            Some(range) => format!(
-                "line {}, col {} to line {}, col {} of module {}",
-                range.start_line,
-                range.start_column,
-                range.end_line,
-                range.end_column,
-                self.ir.texts[range.module as usize]
-            ),
+            Some(range) => format_source_range(self.ir, &range),
             None => format!("line {}, column {}", node.line, node.column),
+        }
+    }
+
+    /// Where TLC places a node that is the body of an INSTANCE's copy with substitutions, as it
+    /// reports the body itself: `Some(None)` where it can't be told.
+    pub fn substitution_place(&self, node: NodeId) -> Option<Option<SourceRange>> {
+        self.substitution_places.get(&node).copied()
+    }
+
+    /// A definition's body as TLC's messages give it where they report the body itself, as the
+    /// predicate a configuration names: as `describe_node` gives it, but the body of an
+    /// INSTANCE's copy with substitutions is the copy's `SubstInNode`, at the INSTANCE. A failure
+    /// within the body is at the node it is in, which the `SubstInNode` holds.
+    pub fn describe_root(&self, node: NodeId) -> Option<String> {
+        match self.substitution_place(node) {
+            Some(place) => place.map(|range| format_source_range(self.ir, &range)),
+            None => self.describe_node(node),
         }
     }
 
@@ -18078,6 +18097,59 @@ fn is_null_enumeration(elements: &[Value]) -> Evaluated<bool> {
         );
     }
     Ok(true)
+}
+
+pub(crate) fn format_source_range(ir: &Ir, range: &SourceRange) -> String {
+    format!(
+        "line {}, col {} to line {}, col {} of module {}",
+        range.start_line,
+        range.start_column,
+        range.end_line,
+        range.end_column,
+        ir.texts[range.module as usize]
+    )
+}
+
+fn get_substitution_places(ir: &Ir) -> HashMap<NodeId, Option<SourceRange>> {
+    let get_definition = |node: NodeId| match &ir.nodes.arena[node as usize].kind {
+        NodeKind::Definition(definition) => Some(definition),
+        _ => None,
+    };
+    // A body the lowering wrote first as a root of its own is a reference to that root.
+    let get_written = |mut node: NodeId| {
+        while let NodeKind::Reference(target) = ir.nodes.arena[node as usize].kind {
+            node = target;
+        }
+        node
+    };
+    let mut holders: HashMap<NodeId, usize> = HashMap::new();
+    for definition in ir
+        .definitions
+        .iter()
+        .filter_map(|&node| get_definition(node))
+    {
+        *holders.entry(get_written(definition.body)).or_default() += 1;
+    }
+    let mut places = HashMap::new();
+    for (index, &node) in ir.definitions.iter().enumerate() {
+        let Some(definition) = get_definition(node) else {
+            continue;
+        };
+        if definition.flags & Definition::SUBSTITUTED == 0 {
+            continue;
+        }
+        let written = get_written(definition.body);
+        let place = (holders[&written] == 1)
+            .then(|| {
+                (ir.model.instance_actions.iter())
+                    .find(|action| action.definition as usize == index)
+                    .and_then(|action| action.location)
+            })
+            .flatten();
+        places.insert(definition.body, place);
+        places.insert(written, place);
+    }
+    places
 }
 
 #[cfg(test)]

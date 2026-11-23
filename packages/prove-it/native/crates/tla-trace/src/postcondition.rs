@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use tla_ir::{DefinitionForm, ScopeBinding};
+use tla_ir::{DefinitionForm, ScopeBinding, SourceRange};
 
 use crate::alias::Alias;
 use crate::eval::{Context, Evaluator, Runtime};
@@ -46,6 +46,10 @@ pub struct CounterExample<'a> {
 pub struct Checked {
     pub verdict: Verdict,
     pub printed: Vec<crate::OutputEvent>,
+    /// Where TLC places the postcondition as it reports it (`pc.getPred()`), where that isn't
+    /// where its body is written: the INSTANCE of an INSTANCE's copy with substitutions, whose
+    /// body is a `SubstInNode` there.
+    pub place: Option<SourceRange>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -358,6 +362,7 @@ impl Rebuilder<'_> {
         let body = evaluator
             .definition(ir.definitions[definition as usize])
             .body;
+        let place = evaluator.substitution_place(body);
         let width = ir.variables.len();
         evaluator.current = vec![None; width];
         evaluator.next = vec![None; width];
@@ -389,7 +394,7 @@ impl Rebuilder<'_> {
             Ok(Value::Bool(false)) => Verdict::False,
             // `Tool.isValid` fails on a value that is no boolean, naming the body as SANY's
             // `toString` does: a numeral by its image, else by where it is written.
-            Ok(_) => match evaluator.describe_node(body) {
+            Ok(_) => match evaluator.describe_root(body) {
                 Some(written) => {
                     let message = crate::value::TlcMessage {
                         text: format!(
@@ -414,7 +419,20 @@ impl Rebuilder<'_> {
                 None => return Err(Unsupported(format!("a postcondition: {}", error.reason))),
             },
         };
-        Ok(Checked { verdict, printed })
+        let place = match (&verdict, place) {
+            (Verdict::Holds, _) | (_, None) => None,
+            (_, Some(Some(range))) => Some(range),
+            (_, Some(None)) => {
+                return unsupported(
+                    "through an INSTANCE's copy whose INSTANCE the IR doesn't place",
+                );
+            }
+        };
+        Ok(Checked {
+            verdict,
+            printed,
+            place,
+        })
     }
 
     /// CounterExample's record of a violation's trace (`tlc2.value.impl.CounterExample`): each

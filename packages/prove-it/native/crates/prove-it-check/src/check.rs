@@ -5289,10 +5289,12 @@ pub(crate) fn print_postcondition_failure(
     };
     let postcondition = &ir.model.postconditions[*index];
     let name = &ir.texts[postcondition.name as usize];
+    let place = postconditions.and_then(|checked| checked.place);
     // `pc.getPred().toString()`: SANY names a numeral by its image, as written (`\b101`, `007`),
     // and any other node by where it is written.
     let location = postcondition
         .definition
+        .filter(|_| place.is_none())
         .and_then(|definition| {
             let node = ir.definitions[definition as usize];
             match &ir.nodes.arena[node as usize].kind {
@@ -5334,6 +5336,18 @@ pub(crate) fn print_postcondition_failure(
                     range.end_column,
                     ir.texts[range.module as usize]
                 ),
+            })
+        })
+        .or_else(|| {
+            place.map(|range| {
+                format!(
+                    " at line {}, col {} to line {}, col {} of module {}",
+                    range.start_line,
+                    range.start_column,
+                    range.end_line,
+                    range.end_column,
+                    ir.texts[range.module as usize]
+                )
             })
         })
         .unwrap_or_default();

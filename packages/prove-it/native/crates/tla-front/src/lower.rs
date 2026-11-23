@@ -3622,6 +3622,8 @@ pub struct Lowering<'a> {
     pub alias_decline: Option<String>,
     /// The constant definitions TLC computes and deep-normalizes at startup, by address.
     normalized: FastSet<usize>,
+    /// The copies INSTANCEs with substitutions make, by their bodies' addresses.
+    substituted_bodies: Option<FastMap<usize, Rc<Definition>>>,
     /// For each of those that a configuration substitutes for a name, by its address, the copy
     /// that name reads (`IrDefinition::CONFIGURED_SUBSTITUTE`).
     substitute_copies: FastMap<usize, Rc<Definition>>,
@@ -3732,6 +3734,7 @@ impl<'a> Lowering<'a> {
                 .map(|definition| Rc::as_ptr(definition) as usize)
                 .collect(),
             substitute_copies: FastMap::default(),
+            substituted_bodies: None,
             facts,
             environment,
             evaluator: None,
@@ -4923,6 +4926,17 @@ impl<'a> Lowering<'a> {
         }
         let id = self.write_node(expression)?;
         self.top.push(id);
+        // The copy an INSTANCE with substitutions makes whose body the root is, which TLC places
+        // at the INSTANCE as it reports the root.
+        let copies = self.substituted_bodies.get_or_insert_with(|| {
+            (self.environment.definitions.values())
+                .filter(|definition| self.environment.is_substituted(definition))
+                .map(|definition| (Rc::as_ptr(&definition.body) as usize, definition.clone()))
+                .collect()
+        });
+        if let Some(copy) = copies.get(&(Rc::as_ptr(expression) as usize)).cloned() {
+            self.get_definition_index(&copy);
+        }
         Ok(id)
     }
 

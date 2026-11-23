@@ -1,0 +1,4 @@
+---- MODULE A ----
+CONSTANT J
+INSTANCE I WITH K <- J
+====

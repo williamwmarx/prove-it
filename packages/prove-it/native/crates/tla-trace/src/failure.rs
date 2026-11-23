@@ -9,6 +9,7 @@ use tla_values::{Id, Store};
 
 use crate::eval::{
     CallStack, Context, Demand, Evaluator, SUBSTITUTED_FRAMES, StackFrame, UNFOLLOWED_FRAMES,
+    format_source_range,
 };
 use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
@@ -3470,7 +3471,17 @@ fn constraint_value_holds(
             TlcMessage {
                 text: format!(
                     "TLC expected a boolean value, but did not find one. {}",
-                    evaluator.describe_range(body)
+                    match evaluator.substitution_place(body) {
+                        None => evaluator.describe_range(body),
+                        Some(place) =>
+                            match place.map(|range| format_source_range(evaluator.ir, &range)) {
+                                Some(written) => written,
+                                None =>
+                                    return fail(
+                                        "a constraint of an INSTANCE's copy the IR doesn't place"
+                                    ),
+                            },
+                    }
                 ),
                 code: Some(EXPECTED_VALUE),
                 is_eval_exception: false,

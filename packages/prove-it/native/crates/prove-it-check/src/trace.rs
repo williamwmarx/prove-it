@@ -6,7 +6,7 @@
 use tla_engine::machine::Registers as EngineRegisters;
 use tla_engine::search::{AcceptedTrace, ContinuedTrace, FinalRegisters, Violation, ViolationKind};
 use tla_engine::symmetry::NamedGroup;
-use tla_ir::Ir;
+use tla_ir::{Ir, SourceRange};
 use tla_trace::{
     Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
     Value, Verdict, format_units, format_value,
@@ -67,6 +67,8 @@ pub struct TraceChecks<'a> {
 pub struct Postconditions {
     pub printed: Vec<PrintedOutput>,
     pub failure: Option<(usize, Verdict)>,
+    /// Where TLC places the one that doesn't hold, where that isn't its body's place.
+    pub place: Option<SourceRange>,
 }
 
 pub struct PrintedState {
@@ -644,12 +646,14 @@ pub(crate) fn check(
             return Ok(Postconditions {
                 printed,
                 failure: Some((index, checked.verdict)),
+                place: checked.place,
             });
         }
     }
     Ok(Postconditions {
         printed,
         failure: None,
+        place: None,
     })
 }
 
@@ -676,12 +680,14 @@ fn check_prepared(
             return Ok(Postconditions {
                 printed,
                 failure: Some((index, checked.verdict)),
+                place: checked.place,
             });
         }
     }
     Ok(Postconditions {
         printed,
         failure: None,
+        place: None,
     })
 }
 
