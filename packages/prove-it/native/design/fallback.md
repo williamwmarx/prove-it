@@ -4942,6 +4942,14 @@ matches TLC or declines exactly.
   evaluator made every binding first, a billion here, and ran out of memory (exit 134) where TLC
   completes. It now makes them one at a time, in the same order. Fixtures
   `stream-bindings-property-{conjunct,guard}`.
+- An ALIAS or a POSTCONDITION that names an INSTANCE's copy with substitutions of a literal
+  definition: `INSTANCE I WITH K <- 1`, I's `Alias == "a"` (or `7`), `ALIAS Alias`. TLC's `lookup`
+  reads the literal through the copy's `SubstInNode`, so `processConstantDefns` leaves the copy an
+  OpDefNode, and TLC evaluates it as an alias or a postcondition. The front end held no such copy
+  as a literal, and the binary rejected it ("The alias Alias cannot be a constant."). The literal
+  is read in the definition as its module writes it: `Post == K` with `K <- "b"` applies K under
+  the `SubstInNode`, which TLC computes and rejects as a constant. Fixtures
+  `instance-copy-literal-alias{,-number}` and `instance-copy-substituted-postcondition`.
 - A property or a specification through a LET's `RECURSIVE F` with `F == F /\ <>(x = 1)` or `F ==
   F /\ WF_x(Next)`, found in the specs of upstream tla-ts's unit tests at 0341dbe5 (liveness c0016,
   c0019). TLC's expansion of the formula recurses until the JVM's stack overflows, and it reports
