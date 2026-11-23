@@ -1195,6 +1195,12 @@ impl Reporter for Relay<'_> {
         }
     }
 
+    fn undotted(&mut self, reason: &'static str) {
+        if self.dot.is_some() {
+            self.dotted = Some(Err(reason));
+        }
+    }
+
     fn dotted(&mut self, store: &Store, log: &tla_engine::search::DotLog) {
         let Some(options) = self.dot else {
             return;

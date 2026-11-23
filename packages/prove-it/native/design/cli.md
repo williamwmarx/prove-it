@@ -680,7 +680,9 @@ Not native, where TLC writes what the binary doesn't model:
   `cleanup`), which then holds only what Java's buffers flushed;
 - an invariant that fails to evaluate past the initial states: TLC expands the state again to
   print the call stack and writes the new states it finds then (`keepCallStack`);
-- a spec with no variables, and a state holding a value whose text depends on how TLC built it.
+- a spec with no variables, a state holding a value whose text depends on how TLC built it, and,
+  for either dump, a state that may hold a set TLC prints by its parts, which the store holds as
+  its enumeration (`[a : Int, b : {}]` as `{}`).
 
 ## -continue
 

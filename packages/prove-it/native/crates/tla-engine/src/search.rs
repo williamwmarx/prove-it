@@ -276,6 +276,16 @@ fn dump(machine: &Machine<'_>, reporter: &mut dyn Reporter, states: &[Id], width
     }
 }
 
+// Hands what TLC's `DotStateWriter` wrote to the reporter for `-dump dot`, or why it can't write
+// the states as TLC does.
+fn dump_dot(machine: &Machine<'_>, reporter: &mut dyn Reporter, log: &DotLog) {
+    if machine.program.holds_collapsed() {
+        reporter.undotted(COLLAPSED_DUMP);
+    } else {
+        reporter.dotted(&machine.store, log);
+    }
+}
+
 /// What TLC's model checker hands its `DotStateWriter` as it searches, in that order: each new
 /// initial state in the model (`DoInitFunctor.addElement`), and each step to a successor in the
 /// model as TLC puts the successor's fingerprint in its set (`Worker.isSeenState`).
@@ -441,6 +451,9 @@ pub trait Reporter {
     /// What TLC's `DotStateWriter` wrote as the search went, for `-dump dot`: once, as the search
     /// ends, where `Settings::is_dot_dumped`, with the states in ids of `store`.
     fn dotted(&mut self, _store: &Store, _log: &DotLog) {}
+    /// In place of `dotted`, where the store may hold a value of a state that it prints otherwise
+    /// than TLC writes it: why.
+    fn undotted(&mut self, _reason: &'static str) {}
     /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
     /// it.
     fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
@@ -7447,7 +7460,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             if let Some(dot) = &search.dot {
-                search.reporter.dotted(&machine.store, dot);
+                dump_dot(&machine, search.reporter, dot);
             }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
@@ -7846,7 +7859,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 dump(&machine, search.reporter, &states, width);
             }
             if let Some(dot) = &search.dot {
-                search.reporter.dotted(&machine.store, dot);
+                dump_dot(&machine, search.reporter, dot);
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;

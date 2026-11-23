@@ -5273,6 +5273,26 @@ fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
     }
 }
 
+// A state holding `[a : Int, b : {}]`, which TLC prints by its parts and the store holds as its
+// enumeration, `{}`: TLC writes the set by its parts, which neither dump can.
+#[test]
+fn declines_a_dump_of_a_set_tlc_prints_by_its_parts() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = [a : Int, b : {}]\nNext == UNCHANGED x\n====\n";
+    for (test, args) in [
+        ("dump-collapsed", &["-dump", "states"][..]),
+        ("dump-dot-collapsed", &["-dump", "dot", "states"]),
+    ] {
+        let (output, directory) = run_spec_with(test, spec, "INIT Init\nNEXT Next\n", args);
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            "prove-it: not native yet: dumping a state that may hold a set TLC prints by its parts\n",
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 // TLC's FingerprintExceptionHang: TypeOK fails to evaluate on the second state, and TLC expands the
 // first state again to print the call stack, writing the third state it finds then.
 #[test]

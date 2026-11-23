@@ -3109,7 +3109,8 @@ dot with temporal properties"), whose behavior graphs TLC writes beside it
 step, which the liveness checker doesn't keep in TLC's order); with several workers, `-dfid`,
 `-simulate` or an ALIAS; `constrained` where TLC writes steps to states it leaves out;
 `actionlabels` of an action with parameters; `snapshot` into a path with ".dot" before its suffix;
-and a rank that TLC's `HashMap` keeps in a tree. On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+a rank that TLC's `HashMap` keeps in a tree; and, as `-dump` does, a state that may hold a set TLC
+prints by its parts. On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
 (72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
 the pinned jar) main answers 72,579 runs as the jar does, declines 299 and answers none otherwise;
 with the graph it answers 72,582 and declines 296: `cli/dump/dot_file`, `dot_options` and
