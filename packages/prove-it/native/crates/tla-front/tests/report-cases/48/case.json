@@ -1,0 +1,5 @@
+{
+  "root": "LetBeforeRecursiveSection",
+  "version": "1.7.4",
+  "test": "reports a LET whose definition before its RECURSIVE statement is outside the section"
+}

@@ -226,7 +226,14 @@ declines it (tests/report-cases/41); TLC's, which the generator writes, reports 
 a section SANY accepts, applied before its definition, keeps its report (case 42). Of 552
 generated specs with a LET's recursive section run through TLC 1.7.4's jar, 22 that linking
 reported clean, which SANY rejects, now decline, 4 that it rejected, which SANY accepts, now
-match, and none that matched declines; cases 43 to 47 are five of them.
+match, and none that matched declines; cases 43 to 47 are five of them. A section is what the
+generator makes one (`processRecursive`, `setOpDefNodeRecursionFields`): it starts at a RECURSIVE
+statement no declaration before it leaves undefined and holds each definition that starts while
+one is, so a definition before the statement, or after the last of its operators is defined, is
+outside it and keeps its own level, and a LET's second RECURSIVE statement after the first's are
+all defined starts a section of its own (cases 48 and 49). A LET with a RECURSIVE statement within
+a definition of another section, as in a module's recursive operator, joins that section in SANY,
+which the analysis here doesn't follow, and declines (case 50).
 
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a

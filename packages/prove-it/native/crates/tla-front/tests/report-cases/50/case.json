@@ -1,0 +1,6 @@
+{
+  "root": "LetSectionInRecursiveOperator",
+  "version": "1.7.4",
+  "test": "declines a LET whose RECURSIVE statement is within a module's recursive section, which SANY joins it to",
+  "declines": "a recursive operator whose levels fail to analyze"
+}
