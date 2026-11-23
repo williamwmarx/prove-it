@@ -119,6 +119,7 @@ pub fn operator_definition(
         kind: DefinitionKind::Operator {
             params,
             body_range: None,
+            is_fact: false,
         },
         body,
         is_local,
@@ -620,13 +621,18 @@ fn rename_params(definition: &Definition, rename: &mut dyn FnMut(&Name) -> Name)
             },
             ..definition.clone()
         },
-        DefinitionKind::Operator { params, body_range } => Definition {
+        DefinitionKind::Operator {
+            params,
+            body_range,
+            is_fact,
+        } => Definition {
             kind: DefinitionKind::Operator {
                 params: params
                     .iter()
                     .map(|item| param(rename(&item.name), item.arity))
                     .collect(),
                 body_range: body_range.clone(),
+                is_fact: *is_fact,
             },
             ..definition.clone()
         },
@@ -721,10 +727,12 @@ impl<'a> Instantiator<'a> {
             DefinitionKind::Operator {
                 params: own,
                 body_range,
+                is_fact,
             } => Definition {
                 kind: DefinitionKind::Operator {
                     params: params.iter().chain(own).cloned().collect(),
                     body_range: body_range.clone(),
+                    is_fact: *is_fact,
                 },
                 ..(**definition).clone()
             },

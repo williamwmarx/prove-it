@@ -66,6 +66,8 @@ pub struct LiveGraph<'g> {
     /// Whether no two of the states are equal and no comparison of two values of a variable can
     /// fail: a step then changes a tuple of every variable just where it reaches another state.
     pub is_distinct: bool,
+    /// By atom, whether the checker may read it, where it reads only some.
+    pub asked: Option<&'g [bool]>,
 }
 
 /// How a step is told to leave a subscript unchanged: by the subscript's value on each of its
@@ -807,6 +809,18 @@ pub fn answer_atoms(
     for (position, atom) in atoms.iter().enumerate() {
         if let Some(table) = pending.remove(&position) {
             tables.push(table);
+            continue;
+        }
+        if graph
+            .asked
+            .is_some_and(|asked| asked.get(position) != Some(&true))
+        {
+            tables.push(Table {
+                answers: Vec::new(),
+                is_from_steps: false,
+                unknown: Some("an atom the checker doesn't read".into()),
+                prints: Vec::new(),
+            });
             continue;
         }
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,

@@ -1,0 +1,6 @@
+and([
+always(or([p, r])), 
+always(or([q, r])), 
+always(or([p, s])), 
+always(or([q, s]))]).
+

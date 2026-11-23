@@ -95,7 +95,7 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 8] = [
+    let cases: [(&[&str], &str); 11] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
@@ -151,11 +151,41 @@ fn prints_the_obligations_tlapm_prints() {
             &["-N", "--toolbox", "0", "0", "--printallobs", "Warnings.tla"],
             "Warnings.toolbox",
         ),
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "InstanceFairness.tla",
+            ],
+            "InstanceFairness.toolbox",
+        ),
+        (
+            &["-N", "--toolbox", "0", "0", "--printallobs", "Take.tla"],
+            "Take.toolbox",
+        ),
+        (
+            &["-N", "--toolbox", "0", "0", "--printallobs", "Primes.tla"],
+            "Primes.toolbox",
+        ),
     ];
     for (args, recording) in cases {
         let output = run("obligations", args);
         assert_eq!(output.status.code(), Some(0), "{recording}");
-        assert_eq!(stdout(&output), header(&args.join(" ")), "{recording}");
+        // Where tlapm's stdout is recorded, what follows its header, as the port prints it after
+        // its own.
+        let printed = recording.replace(".toolbox", ".stdout");
+        let rest = match fs::read_to_string(fixtures().join("obligations").join(&printed)) {
+            Ok(text) => text.splitn(6, '\n').nth(5).unwrap_or_default().to_owned(),
+            Err(_) => String::new(),
+        };
+        assert_eq!(
+            stdout(&output),
+            header(&args.join(" ")) + &rest,
+            "{recording}"
+        );
         assert_eq!(
             stderr(&output),
             read_recording("obligations", recording),
@@ -418,6 +448,7 @@ fn prints_each_provers_result_in_toolbox_mode() {
         "IsabelleMethods",
         "IsaReuse",
         "EnabledLevel",
+        "IsaRules",
     ] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
@@ -437,6 +468,61 @@ fn prints_each_provers_result_in_toolbox_mode() {
                 )
             ),
             "{name}"
+        );
+    }
+}
+
+// `BY ONLY Trivial` settles each obligation without a backend, so no two decisions are ever in
+// flight and four threads print what one does.
+#[test]
+fn prints_the_trivial_methods_results_in_toolbox_mode() {
+    for threads in ["1", "4"] {
+        let output = run(
+            "tlapm-cli",
+            &[
+                "--threads",
+                threads,
+                "--toolbox",
+                "0",
+                "0",
+                "TrivialMethod.tla",
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0), "{threads}");
+        assert_eq!(
+            without_time_used(&stderr(&output)),
+            without_time_used(&read_recording("tlapm-cli", "TrivialMethod.toolbox")),
+            "{threads}"
+        );
+    }
+}
+
+// Zenon turns two of ZenonUnsupported's obligations down before it launches, so one decision is
+// in flight at a time: tlapm's stream with one thread, and with four, where the trivial obligation
+// 6 settles while obligation 5's Zenon runs (Record tlapm on Depot, run nd24rrr936: six runs at four
+// threads, all alike).
+#[test]
+fn prints_a_declined_zenon_launch_in_toolbox_mode() {
+    for (threads, recording) in [
+        ("1", "ZenonUnsupported.toolbox"),
+        ("4", "ZenonUnsupported-4.toolbox"),
+    ] {
+        let output = run(
+            "tlapm-cli",
+            &[
+                "--threads",
+                threads,
+                "--toolbox",
+                "0",
+                "0",
+                "ZenonUnsupported.tla",
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0), "{threads}");
+        assert_eq!(
+            without_time_used(&stderr(&output)),
+            without_time_used(&read_recording("tlapm-cli", recording)),
+            "{threads}"
         );
     }
 }
@@ -883,6 +969,27 @@ fn names_the_command_lines_module_as_tlapm_does() {
         return;
     }
     assert_eq!(stderr(&output), expected.replace("./Notes.tla", &absolute));
+}
+
+// Zenon's not_subseteq_cap rule (ext_tla.ml's newnodes_prop) assumes ~(U \subseteq T) on both
+// branches where Zenon.thy's lemma has ~(U \subseteq S) and ~(U \subseteq T), so Zenon proves
+// U \subseteq T => U \subseteq S \cap T and tlapm reports it proved. The port's search finds
+// Zenon's proof, its check refuses it, and the run declines rather than print an unsound proof.
+#[test]
+fn declines_a_zenon_proof_the_check_refuses() {
+    let directory = write_files(&[(
+        "M.tla",
+        "---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM ASSUME NEW U, NEW S, NEW T, U \\subseteq T PROVE U \\subseteq S \\cap T\n  BY Zenon\n====\n",
+    )]);
+    let output = run_in(
+        &directory,
+        &["--toolbox", "0", "0", "--threads", "1", "M.tla"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}zenon declined: a proof Zenon finds that the port's check refuses\n")
+    );
 }
 
 // Tlapm_args gathers the command line's modules last first, and Tlapm_lib.read_new_modules adds

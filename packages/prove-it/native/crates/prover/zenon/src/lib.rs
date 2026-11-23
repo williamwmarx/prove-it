@@ -41,6 +41,13 @@ impl ZenonError {
 /// error, which tlapm counts as a failure.
 pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
     let run = decide::run_zenon(text, limits).map_err(|error| DecideError::Prover(error.0))?;
+    // Zenon prints every proof its search finds; the port's check of the proof (`check`) refuses
+    // one a rule of Zenon's finds unsoundly, and the port declines rather than print it.
+    if run.proof.is_some() && run.isar.is_none() && run.failure.is_none() {
+        return Err(DecideError::Declined(
+            "a proof Zenon finds that the port's check refuses".into(),
+        ));
+    }
     let mut statistics = vec![
         ("steps", Statistic::Count(limits.steps())),
         ("nodesSearched", Statistic::Count(run.nodes_searched)),

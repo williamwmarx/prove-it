@@ -1,0 +1,116 @@
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:0
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:19:1:19:3
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE u,
+       NEW VARIABLE v,
+       NEW VARIABLE z,
+       I!En ==
+         ?EnabledWrapper(LAMBDA r#0, r#1 :
+                           r#1 = z + 1 /\ r#0 = z - 1
+                           /\ ~(/\ r#1 = z
+                                /\ r#0 = z)),
+       I!WFair ==
+         <>[]?EnabledWrapper(LAMBDA r#0, r#1 :
+                               r#1 = z + 1 /\ r#0 = z - 1
+                               /\ ~(/\ r#1 = z
+                                    /\ r#0 = z))
+         => []<><<I!Next>>_I!vars,
+       PTL 
+PROVE  I!WFair <=> (<>[]I!En => []<><<I!Next>>_I!vars)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:19:4:19:7
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE u,
+       NEW VARIABLE v,
+       NEW VARIABLE z,
+       I!En ==
+         ?EnabledWrapper(LAMBDA r#0, r#1 :
+                           r#1 = z + 1 /\ r#0 = z - 1
+                           /\ ~(/\ r#1 = z
+                                /\ r#0 = z)),
+       I!WFair ==
+         <>[]?EnabledWrapper(LAMBDA r#0, r#1 :
+                               r#1 = z + 1 /\ r#0 = z - 1
+                               /\ ~(/\ r#1 = z
+                                    /\ r#0 = z))
+         => []<><<I!Next>>_I!vars
+PROVE  PTL
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:22:1:22:3
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE u,
+       NEW VARIABLE v,
+       NEW VARIABLE z,
+       J!En ==
+         ?EnabledWrapper(LAMBDA r#0, r#1 :
+                           r#1 = u + 1 /\ r#0 = v - 1
+                           /\ ~(/\ r#1 = u
+                                /\ r#0 = v)),
+       J!SFair ==
+         []<>?EnabledWrapper(LAMBDA r#0, r#1 :
+                               r#1 = u + 1 /\ r#0 = v - 1
+                               /\ ~(/\ r#1 = u
+                                    /\ r#0 = v))
+         => []<><<J!Next>>_J!vars,
+       PTL 
+PROVE  J!SFair <=> ([]<>J!En => []<><<J!Next>>_J!vars)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:22:4:22:7
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE u,
+       NEW VARIABLE v,
+       NEW VARIABLE z,
+       J!En ==
+         ?EnabledWrapper(LAMBDA r#0, r#1 :
+                           r#1 = u + 1 /\ r#0 = v - 1
+                           /\ ~(/\ r#1 = u
+                                /\ r#0 = v)),
+       J!SFair ==
+         []<>?EnabledWrapper(LAMBDA r#0, r#1 :
+                               r#1 = u + 1 /\ r#0 = v - 1
+                               /\ ~(/\ r#1 = u
+                                    /\ r#0 = v))
+         => []<><<J!Next>>_J!vars
+PROVE  PTL
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:25:1:25:8
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE u,
+       NEW VARIABLE v,
+       NEW VARIABLE z
+PROVE  (WF_(z) (z' = z + 1)) => TRUE
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:5
+@!!END
+

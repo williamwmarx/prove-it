@@ -127,10 +127,24 @@ smt and z3 input of the decider corpus and every fixture. `decide` declines any 
 before a step: unknown, `stop=unsupported`, `steps=0`, never a verdict. That covers what Z3 reads
 with an error and reads past (unknown attributes, symbols and numerals the encoder never spells,
 a stray parenthesis), what it reads otherwise than the encoder means (`:named` references, `let`,
-overloaded and builtin names, `(reset)`, a second check-sat, `echo`), a logic other than UFNIA,
-and the forms it writes otherwise (a negative numeral is `(- 1)`, a chained equality two). The
-parser keeps the TypeScript's reading of what lies outside, for the tests that run the solver on
-its own.
+overloaded and builtin names, `(reset)`, a second check-sat, `echo`), and the forms it writes
+otherwise (a negative numeral is `(- 1)`, a chained equality two). The parser keeps the
+TypeScript's reading of what lies outside, for the tests that run the solver on its own.
+
+**The logic.** `(set-logic L)`, UFNIA unless tlapm runs with `--smt-logic`, sets the checks Z3's
+`check_logic` (`cmd_context/check_logic.cpp`, 4.8.9) makes as `cmd_context::insert` declares a
+function and `assert_expr` asserts: per logic of its table, uninterpreted functions (a declared
+sort passes every logic: it is of the `user_sort` family, not `null_family_id`), integers,
+quantifiers and nonlinear arithmetic (`check_mul`, `check_div`); a logic off the table, as one Z3
+doesn't support at all (`unsupported`), gets none. A declaration or assertion that fails is an
+error Z3 prints and reads past, so `script_subset` drops it, and an assertion naming a dropped
+function with it (the parser's `unknown function/constant`); `check_smt` reads the script
+without them. Z3 decides the survivors with the logic's tactic (`mk_tactic_for_logic`), and the
+port runs UFNIA's, so under another logic it decides only what every tactic answers alike, no
+assertion (`sat`) or a quantifier-free script without integers (congruence closure), and
+declines the rest, an rlimit under such a logic, the comparisons a difference logic checks and a
+numeral a logic of reals reads as a real. `tests/fixtures/smt/logics` records Z3 4.8.9's errors and
+answers on tlapm's scripts under other logics (`reads_a_script_under_its_logic_as_z3_does`).
 
 **Limits.** Past the step limit, the deadline or the signal a decision is unknown with its `stop`.
 Some work takes no step: reading a script, splitting and simplifying the goal, expanding a

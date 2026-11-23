@@ -130,6 +130,16 @@ struct MethodFailure {
 // The backends ENCODERS has.
 const ENCODED: [&str; 5] = ["smt", "z3", "zenon", "isabelle", "ls4"];
 
+/// Params.wait: the seconds tlapm's scheduler lets a back end run before it reports the
+/// obligation as being proved and starts to hold it to the method's time limit (Schedule.run's
+/// deadlines, from Prep's mk_timec), so a back end gets that long whatever the limit.
+const SCHEDULER_WAIT_MS: f64 = 3_000.0;
+
+/// How long a back end runs for the method before tlapm kills it.
+fn get_deadline_ms(method: &Method) -> f64 {
+    method.time_limit_ms.max(SCHEDULER_WAIT_MS)
+}
+
 // The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
 // only in an obligation that has one after Prep.normalize_expand.
 fn has_incomplete_case(expression: &Expr) -> bool {
@@ -604,9 +614,20 @@ impl Run<'_> {
                 task.next += 1;
                 continue;
             }
-            // Prep.prove_with: the Trivial method proves anything.
+            // Prep.prove_with: the Trivial method ends the obligation's methods (Schedule.Immediate
+            // true) without a result, whatever the goal. The methods before it keep theirs: an
+            // obligation none recorded a result for is untreated at tlapm's end of run, which
+            // reports it failed by `fail` with an unexpected error (tlapm_lib's
+            // collect_untreated_obligations).
             if method.prover == "trivial" {
-                return Ok(self.settle_proved(task, &method.prover));
+                let attempts = std::mem::take(&mut task.attempts);
+                return Ok(Step::Settled(self.get_base(
+                    position,
+                    Status::Failed {
+                        reason: "the Trivial method records no result".to_owned(),
+                    },
+                    attempts,
+                )));
             }
             if !ENCODED.contains(&method.prover.as_str()) {
                 skip(
@@ -651,7 +672,7 @@ impl Run<'_> {
                         index,
                         &method.prover,
                         text,
-                        method.time_limit_ms,
+                        get_deadline_ms(method),
                     )?;
                     task.pending = Some(index);
                     task.next += 1;
@@ -722,7 +743,7 @@ impl Run<'_> {
                         is_reused: false,
                     },
                     reason: (!is_proved).then(|| {
-                        if time_used_ms >= method.time_limit_ms {
+                        if time_used_ms >= get_deadline_ms(method) {
                             "timeout".to_owned()
                         } else {
                             "false".to_owned()

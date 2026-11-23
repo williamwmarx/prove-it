@@ -97,8 +97,9 @@ fn set_statistic(
 /// the TypeScript writes them. Every other error, which the TypeScript rethrows, fails as well.
 pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
     let mut statistics = Vec::new();
-    // Only the SMT-LIB tlapm's encoder writes is decided; anything else is declined.
-    let Ok(rlimit) = check_script(text) else {
+    // Only the SMT-LIB tlapm's encoder writes is decided, as Z3 reads it under the script's
+    // logic; anything else is declined.
+    let Ok(script) = check_script(text) else {
         set_statistic(
             &mut statistics,
             "stop",
@@ -112,9 +113,11 @@ pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
     };
     // The steps are Z3's rlimit units, so the rlimit is a step limit.
     let limit = ResourceLimit::new(
-        &rlimit.map_or_else(|| limits.clone(), |steps| limits.with_step_limit(steps)),
+        &script
+            .rlimit
+            .map_or_else(|| limits.clone(), |steps| limits.with_step_limit(steps)),
     );
-    let verdict = match check_smt(text, limit.clone()) {
+    let verdict = match check_smt(&script.text, limit.clone()) {
         Ok(check) => {
             set_statistic(
                 &mut statistics,

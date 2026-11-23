@@ -1,5 +1,9 @@
-//! The decider against the reference LS4: each formula in tests/conformance/ptl, which the corpora
-//! never send LS4, beside LS4's output on it.
+//! The decider against the reference `ptl_to_trp | ls4`: each formula in tests/conformance/ptl,
+//! which the corpora never send LS4, beside LS4's output on it (`.ls4.out`) and the clauses
+//! tlapm's `translate` at b91fb6c, built from its source, writes for it (`.trp`, its standard
+//! output; one with no `and([` is a parse error it printed in the clauses' place, or nothing, as
+//! an exception ended it). The `syntax-` formulas are aidenybai/tla-ts's `backends/ls4/syntax`
+//! suite at 0341dbe5, whose verdicts are LS4 1.0's as the suite records them.
 
 use std::fs;
 use std::path::Path;
@@ -17,6 +21,7 @@ fn gives_ls4s_verdict_on_each_formula() {
         .expect("the PTL fixtures")
         .map(|entry| entry.expect("an entry").path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "ls4"))
+        .filter(|path| path.with_extension("ls4.out").exists())
         .collect();
     paths.sort();
     assert!(paths.len() > 20);
@@ -37,6 +42,104 @@ fn gives_ls4s_verdict_on_each_formula() {
         let text = fs::read_to_string(&path).expect("the formula");
         let decision = decide(&text, None).expect("a decision");
         assert_eq!(decision.verdict, expected, "{}", path.display());
+    }
+}
+
+#[test]
+fn translates_each_formula_as_ptl_to_trp_does() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/conformance/ptl");
+    let mut paths: Vec<_> = fs::read_dir(&directory)
+        .expect("the PTL fixtures")
+        .map(|entry| entry.expect("an entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "ls4"))
+        .filter(|path| path.with_extension("trp").exists())
+        .collect();
+    paths.sort();
+    assert!(paths.len() > 90);
+    for path in paths {
+        let recorded = fs::read_to_string(path.with_extension("trp")).expect("ptl_to_trp's output");
+        let text = fs::read_to_string(&path).expect("the formula");
+        let translation = prove_ptl::translate::translate(&text, &mut || false);
+        if recorded.starts_with("and([") {
+            let clauses =
+                translation.unwrap_or_else(|failure| panic!("{}: {failure:?}", path.display()));
+            assert_eq!(clauses.text(), recorded, "{}", path.display());
+        } else {
+            assert!(
+                matches!(
+                    translation,
+                    Err(prove_ptl::translate::Failure::NoClauses(_))
+                ),
+                "{}: {translation:?}",
+                path.display()
+            );
+        }
+    }
+}
+
+/// `ptl_to_trp` expands `(p0 & q0) | (p1 & q1) | ...` to 2^n clauses, and the port with it, so a
+/// stop during the expansion has to end it: the translation checks the stop as it recurses.
+#[test]
+fn stops_the_translation_when_the_decision_is_canceled() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let text = (0..40)
+        .map(|i| format!("(p{i} & q{i})"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&polls);
+    let cancel: prove_decide::Cancel =
+        Arc::new(move || counted.fetch_add(1, Ordering::Relaxed) >= 1_000);
+    let started = std::time::Instant::now();
+    let decision = prove_ptl::decide(&text, &Limits::new(f64::INFINITY, None, Some(cancel)))
+        .expect("a decision");
+    assert_eq!(decision.verdict, Verdict::Unknown);
+    assert!(started.elapsed().as_secs() < 5, "{:?}", started.elapsed());
+    assert!(polls.load(Ordering::Relaxed) >= 1_000);
+    let translation = prove_ptl::translate::translate(&text, &mut || true);
+    assert_eq!(translation, Err(prove_ptl::translate::Failure::Stopped));
+}
+
+/// tla-ts's `backends/ls4/syntax` suite: LS4's verdict on each, `unknown` where `ptl_to_trp`
+/// writes no clauses or LS4 rejects them.
+#[test]
+fn gives_ls4s_verdict_on_the_syntax_suite() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/conformance/ptl");
+    for (name, expected) in [
+        ("always_binds_tighter_than_and", Verdict::Unsat),
+        ("arrow_spellings", Verdict::Unsat),
+        ("comment_ignored", Verdict::Unsat),
+        ("disjunction_binds_looser_than_implication", Verdict::Sat),
+        ("equiv_spellings", Verdict::Unsat),
+        ("false_alone", Verdict::Unsat),
+        ("ident_with_keyword_prefix", Verdict::Sat),
+        ("implication_binds_looser_than_conjunction", Verdict::Unsat),
+        ("implication_left_associative", Verdict::Unsat),
+        ("lowercase_bound_variable", Verdict::Unknown),
+        ("next_keyword", Verdict::Unsat),
+        ("not_keyword", Verdict::Unsat),
+        ("parse_error", Verdict::Unknown),
+        ("past_always", Verdict::Unknown),
+        ("predicate_with_arguments", Verdict::Unknown),
+        ("quantifier", Verdict::Unknown),
+        ("reserved_word", Verdict::Unknown),
+        ("sometime_contradiction", Verdict::Unsat),
+        ("sometime_false", Verdict::Sat),
+        ("tla_box_not_accepted", Verdict::Unknown),
+        ("true_keyword", Verdict::Sat),
+        ("unless_needs_left", Verdict::Unsat),
+        ("unless_without_eventuality", Verdict::Sat),
+        ("until_eventually", Verdict::Unsat),
+        ("until_satisfiable", Verdict::Sat),
+    ] {
+        let text =
+            fs::read_to_string(directory.join(format!("syntax-{name}.ls4"))).expect("the formula");
+        assert_eq!(
+            decide(&text, None).expect("a decision").verdict,
+            expected,
+            "{name}"
+        );
     }
 }
 
@@ -68,12 +171,12 @@ fn decides_the_encoders_inputs_as_recorded() {
         (
             "not (((always (always hc5714)) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
             Verdict::Unsat,
-            16,
+            15,
         ),
         (
             "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
             Verdict::Sat,
-            36,
+            40,
         ),
         (
             "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((always (sometime hc5714)) -> (always (sometime (hfc35e & (~ h18388))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
@@ -147,21 +250,20 @@ fn a_canceled_decision_is_unknown() {
 
 /// tlapm counts an LS4 that stops on its input as a failure.
 #[test]
-fn fails_on_what_isnt_ls4_input() {
-    for (text, message) in [
-        (
-            "not ((always h00000) ->",
-            "Expected a formula in LS4 input, found the end",
-        ),
-        ("p q", "Expected the end of LS4 input, found q"),
-        ("(p", "Expected ) in LS4 input, found the end"),
-        ("p & ~", "Expected a formula in LS4 input, found the end"),
-        ("p \u{a0} q", "Expected ASCII LS4 input"),
-        ("p -> )", "Expected a formula in LS4 input, found )"),
+fn reaches_no_verdict_on_what_isnt_ptl_to_trps_input() {
+    for text in [
+        "not ((always h00000) ->",
+        "p q",
+        "(p",
+        "p & ~",
+        "p \u{a0} q",
+        "p -> )",
+        "p = q",
+        "1 & p",
     ] {
         assert_eq!(
-            decide(text, None),
-            Err(DecideError::Prover(message.into())),
+            decide(text, None).expect("a decision").verdict,
+            Verdict::Unknown,
             "{text}"
         );
     }

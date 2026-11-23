@@ -1,0 +1,27 @@
+Computing initial states...
+Error: Evaluating invariant Inv failed.
+Attempted to check if the value:
+"x"
+is in the integer interval 1..2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+msgs = {}
+
+State 2: <Next line 6, col 48 to line 6, col 68 of module PassedRaise>
+msgs = {[type |-> "a", n |-> 1]}
+
+State 3: <Next line 6, col 48 to line 6, col 68 of module PassedRaise>
+msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2]}
+
+State 4: <Next line 6, col 48 to line 6, col 68 of module PassedRaise>
+msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2], [type |-> "a", n |-> 3]}
+
+State 5: <Next line 7, col 12 to line 8, col 63 of module PassedRaise>
+msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [k |-> "x", l |-> 1, z |-> 1] }
+
+26 states generated, 9 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).

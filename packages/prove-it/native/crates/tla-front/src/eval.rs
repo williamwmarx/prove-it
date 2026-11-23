@@ -1175,6 +1175,30 @@ impl Evaluator<'_> {
     }
 
     /// `evaluate` of a constant expression read in a scope.
+    /// The value of the thunk `node` binds, computed where it is first read and kept, as TLC's
+    /// `LazyValue` keeps an operator's argument.
+    pub fn evaluate_thunk(&self, node: &Rc<Scope>) -> Result<ConfigValue> {
+        let Binding::Thunk { expression, scope } = &node.binding else {
+            return Err(not_yet("an operator as a value"));
+        };
+        if let Some(value) = self.computed_thunk(node) {
+            return Ok(value);
+        }
+        let value = self.evaluate(expression, scope.resolve(node).as_ref())?;
+        self.thunks
+            .borrow_mut()
+            .insert(Rc::as_ptr(node) as usize, (node.clone(), value.clone()));
+        Ok(value)
+    }
+
+    /// The value of the thunk `node` binds, where it has been read.
+    pub fn computed_thunk(&self, node: &Rc<Scope>) -> Option<ConfigValue> {
+        self.thunks
+            .borrow()
+            .get(&(Rc::as_ptr(node) as usize))
+            .map(|(_, value)| value.clone())
+    }
+
     pub fn evaluate(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<ConfigValue> {
         // A definition that recurses without end overflows TLC's stack, which TLC words in ways
         // the front end doesn't follow.
@@ -1205,17 +1229,7 @@ impl Evaluator<'_> {
                         Some((_, Binding::Value(value) | Binding::Literal { value, .. })) => {
                             Ok(value.clone())
                         }
-                        Some((node, Binding::Thunk { expression, scope })) => {
-                            let key = Rc::as_ptr(node) as usize;
-                            if let Some((_, value)) = self.thunks.borrow().get(&key) {
-                                return Ok(value.clone());
-                            }
-                            let value = self.evaluate(expression, scope.resolve(node).as_ref())?;
-                            self.thunks
-                                .borrow_mut()
-                                .insert(key, (node.clone(), value.clone()));
-                            Ok(value)
-                        }
+                        Some((node, Binding::Thunk { .. })) => self.evaluate_thunk(node),
                         _ => Err(not_yet("an operator as a value")),
                     };
                 }

@@ -1,0 +1,4 @@
+and([
+or([nextp]),
+always(or([not p]))]).
+

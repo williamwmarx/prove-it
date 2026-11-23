@@ -28,12 +28,13 @@ const SMT_RECORDED: Decided = {
 
 // What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
 // as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt record Zenon's and
-// Isabelle's too.
+// Isabelle's too. LS4's steps are the tableau's over the clauses ptl_to_trp writes, which the
+// TypeScript didn't translate to (5 steps over the formula).
 const RECORDED: Record<string, Decided> = {
   smt: SMT_RECORDED,
   z3: SMT_RECORDED,
   isabelle: { kind: "decided", verdict: "unsat", statistics: { steps: 840 } },
-  ls4: { kind: "decided", verdict: "unsat", statistics: { steps: 5 } },
+  ls4: { kind: "decided", verdict: "unsat", statistics: { steps: 7 } },
   zenon: {
     kind: "decided",
     verdict: "unsat",
@@ -116,13 +117,20 @@ describe("the Rust ports", () => {
     },
   );
 
-  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
+  // tlapm counts a Zenon or an Isabelle that stops on its input as a failure.
   it.each([
     ["zenon", "$sig a"],
     ["isabelle", "theory \u{e9}"],
-    ["ls4", "not ((always h00000) ->"],
   ])("fails on a malformed %s input", (prover, text) => {
     expect(decide(prover, text)).toMatchObject({ kind: "error" });
+  });
+
+  // ptl_to_trp prints a parse error in the clauses' place, and LS4 reaches no verdict.
+  it("reaches no verdict on a malformed ls4 input", () => {
+    expect(decide("ls4", "not ((always h00000) ->")).toMatchObject({
+      kind: "decided",
+      verdict: "unknown",
+    });
   });
 
   it("declines a prover without a backend", () => {

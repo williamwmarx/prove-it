@@ -14,12 +14,97 @@ use crate::errors::{FrontError, TAUTOLOGY, describe_range};
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
-    Binding, Expanded, Property, Scope, ScopeOf, bind_definitions, bind_operator_arguments,
-    get_definition, get_level, lookup_scope, resolve_apply_operator,
+    Binding, Expanded, Property, Scope, ScopeOf, ThunkLevels, bind_definitions,
+    bind_operator_arguments, get_definition, get_level_keeping, lookup_scope,
+    resolve_apply_operator,
 };
 use crate::tlc_messages::is_eval_exception;
 
-const MAXIMUM_EXPANSION_DEPTH: usize = 100;
+/// How deep the translation nests expansions other than of recursive calls before it declines,
+/// which a formula's own nesting doesn't reach before SANY's parser gives out.
+const MAXIMUM_EXPANSION_DEPTH: usize = 2000;
+
+/// How many nested calls of recursive operators overflow TLC's stack whatever their shape, past
+/// which the translation overflows as TLC's does, as on a recursion that never ends.
+const OVERFLOWING_RECURSION: usize = 2000;
+
+/// How much of TLC's stack the translation's walk within a recursion takes, in hundredths of what
+/// a level of `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` takes, with the walk `nesting`
+/// conversions deep through `calls` recursive calls, each level two conversions: a further
+/// conversion takes about 31. At `-Xss2m` TLC's translation overflows from about 1,050 levels of
+/// that IF, 750 with one `[]` around the call, 170 with twenty and 33 with a hundred, from run to
+/// run: about 760 to 1,150 of these units.
+fn get_stack_cost(calls: usize, nesting: usize) -> usize {
+    100 * calls + 31 * nesting.saturating_sub(2 * calls)
+}
+
+/// How much of TLC's stack its translation surely holds, below any it was measured to overflow at;
+/// a translation that takes more and ends declines rather than guess.
+const MAXIMUM_STACK_COST: usize = 75_000;
+
+/// How much of TLC's stack overflows it whatever the shape of the recursion, twice as much as any
+/// it was measured to complete; past it the translation overflows as TLC's does, before its own
+/// stack gives out.
+const OVERFLOWING_STACK_COST: usize = 240_000;
+
+/// An argument of a recursive call, as the translation compares calls to find one it is already in.
+#[derive(PartialEq)]
+enum Argument {
+    /// An argument above constant level, which the translation can't decide on, so that TLC
+    /// expands every branch of the call again whatever its value.
+    Variable,
+    /// A constant argument: the expression it is and the scope it is read in, which a parameter
+    /// passed on as it is keeps (`bind_operator_arguments`), and none for one that names nothing a
+    /// scope binds.
+    Constant(*const Expression, *const Scope),
+}
+
+/// Whether an expression may name what an operator's parameters or a LET bind, through a name
+/// resolved in a scope; a global definition it applies can't, but for its arguments. A LET counts
+/// as one that may.
+fn may_name_local(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExpressionKind::Let { .. } => true,
+        ExpressionKind::Identifier { .. }
+        | ExpressionKind::Apply { .. }
+        | ExpressionKind::OperatorReference { .. }
+            if expression.is_locally_resolved() =>
+        {
+            true
+        }
+        _ => expression.children().iter().any(may_name_local),
+    }
+}
+
+/// A call of a recursive operator the translation is in: the operator's body, the scope it closes
+/// over, its arguments with the node that binds each as a thunk, and how many constant
+/// expressions the translation had evaluated when it made the call.
+struct RecursiveCall {
+    body: *const Expression,
+    scope: *const Scope,
+    arguments: Vec<Argument>,
+    nodes: Vec<Option<Rc<Scope>>>,
+    evaluations: usize,
+}
+
+impl RecursiveCall {
+    fn is_of(&self, other: &RecursiveCall) -> bool {
+        self.body == other.body && self.scope == other.scope
+    }
+
+    /// Whether each argument is of the same kind in both calls, constant or above constant level,
+    /// so that what the translation can decide of one it can decide of the other.
+    fn has_arguments_of_kinds(&self, other: &RecursiveCall) -> bool {
+        self.arguments.len() == other.arguments.len()
+            && self
+                .arguments
+                .iter()
+                .zip(&other.arguments)
+                .all(|(left, right)| {
+                    matches!(left, Argument::Variable) == matches!(right, Argument::Variable)
+                })
+    }
+}
 
 /// A part of the formula (`LiveExpression`). An atom is itself: two atoms are the same just when
 /// they are the same `Rc`, as two objects are in `liveness.ts`.
@@ -119,6 +204,18 @@ struct Converter<'a> {
     facts: &'a DefinitionFacts,
     evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
+    /// The calls of recursive operators the translation is in.
+    recursion: Vec<RecursiveCall>,
+    /// How many constant expressions that may name a parameter the translation has evaluated to
+    /// decide what it expands, which is what an argument's value can decide (`count_decision`).
+    evaluations: std::cell::Cell<usize>,
+    /// The levels of the recursive calls' arguments, kept from one call to the next.
+    thunk_levels: ThunkLevels,
+    /// How many conversions the walk is nested in.
+    nesting: usize,
+    /// Whether the translation followed more nested recursive calls than TLC's stack surely
+    /// holds, so that TLC may have overflowed where it didn't.
+    is_past_tlc_stack: bool,
     /// Levels of pure, context-free global calls whose translation is non-temporal.
     call_levels: HashMap<*const Definition, Level>,
     /// Whether the formula being translated is part of an expression an INSTANCE put in for a
@@ -128,7 +225,21 @@ struct Converter<'a> {
 
 impl Converter<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
-        get_level(expression, scope, self.environment, self.facts, &[])
+        get_level_keeping(
+            expression,
+            scope,
+            self.environment,
+            self.facts,
+            &self.thunk_levels,
+        )
+    }
+
+    /// Counts a constant expression the translation evaluates to decide what it expands, where an
+    /// argument of a recursive call may decide it: one that may name a parameter.
+    fn count_decision(&self, expression: &Expr) {
+        if may_name_local(expression) {
+            self.evaluations.set(self.evaluations.get() + 1);
+        }
     }
 
     /// The evaluator, whose failures TLC words in ways the front end doesn't follow yet.
@@ -143,6 +254,7 @@ impl Converter<'_> {
         scope: Option<&Rc<Scope>>,
         reason: &str,
     ) -> Result<Option<bool>> {
+        self.count_decision(expression);
         match self.get_evaluator(reason)?.evaluate(expression, scope) {
             Ok(ConfigValue::Boolean(value)) => Ok(Some(value)),
             Ok(_) => Ok(None),
@@ -227,10 +339,10 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
-        // TLC's translation of the formula recurses until it overflows its stack, as on its
-        // Github1389Loops and Github1389StateGuard (`createStackOverflowError`).
-        if self.depth >= MAXIMUM_EXPANSION_DEPTH {
-            return Err(FrontError::StackOverflow);
+        if self.depth >= MAXIMUM_EXPANSION_DEPTH + self.recursion.len() {
+            return Err(not_yet(
+                "a temporal formula nested more deeply than the translation follows",
+            ));
         }
         self.depth += 1;
         let result = self.convert(body, body_scope);
@@ -290,9 +402,125 @@ impl Converter<'_> {
             _ => &[],
         };
         let is_recursive = self.is_recursive_call(expression, scope);
+        let call = is_recursive.then(|| RecursiveCall {
+            body: Rc::as_ptr(&body),
+            scope: closure_scope.as_ref().map_or(std::ptr::null(), Rc::as_ptr),
+            arguments: args
+                .iter()
+                .map(|argument| self.argument(argument, scope))
+                .collect(),
+            nodes: Vec::new(),
+            evaluations: self.evaluations.get(),
+        });
         let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
+        let Some(mut call) = call else {
+            let expanded = self.expand(&body, bound.as_ref(), expression, scope);
+            return Self::expanded_call(expression, expanded, false);
+        };
+        call.nodes = params
+            .iter()
+            .map(|param| match lookup_scope(bound.as_ref(), &param.name) {
+                Some((node, Binding::Thunk { .. })) => {
+                    self.thunk_levels.register(node);
+                    Some(node.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        // TLC's translation recurses until its stack overflows (`createStackOverflowError`) on a
+        // call it is already in with the same arguments, as on its Github1389Loops and, where the
+        // argument is a state's, Github1389StateGuard; and on a call of an operator it is in that
+        // it reached evaluating nothing an argument could decide, with arguments of the same
+        // kinds, as through an IF on the state alone (`IF x = 0 THEN <>P ELSE Reach(n + 1)`),
+        // which it expands again and again whatever their values. An argument above constant
+        // level that becomes a constant (`F(0)` in `F(x)`) can make a guard decidable.
+        if self.repeats_entered()
+            || self.recursion.iter().any(|entered| {
+                entered.is_of(&call)
+                    && (self.has_same_arguments(entered, &call)
+                        || (entered.evaluations == call.evaluations
+                            && entered.has_arguments_of_kinds(&call)))
+            })
+        {
+            return Err(FrontError::StackOverflow);
+        }
+        if self.recursion.len() >= OVERFLOWING_RECURSION {
+            return Err(FrontError::StackOverflow);
+        }
+        self.recursion.push(call);
         let expanded = self.expand(&body, bound.as_ref(), expression, scope);
-        Self::expanded_call(expression, expanded, is_recursive)
+        self.recursion.pop();
+        Self::expanded_call(expression, expanded, true)
+    }
+
+    /// An argument of a recursive call, for comparing the call with those the translation is in.
+    /// It isn't evaluated: TLC computes an argument only where the body reads it.
+    fn argument(&self, argument: &Expr, scope: Option<&Rc<Scope>>) -> Argument {
+        if self.level(argument, scope) != Level::Constant {
+            return Argument::Variable;
+        }
+        let (mut argument, mut scope) = (argument.clone(), scope.cloned());
+        while matches!(argument.kind, ExpressionKind::Identifier { .. })
+            && argument.is_locally_resolved()
+        {
+            let Some((
+                node,
+                Binding::Thunk {
+                    expression,
+                    scope: of,
+                },
+            )) = lookup_scope(scope.as_ref(), &argument.reference().unwrap_or_default())
+            else {
+                break;
+            };
+            let next = (expression.clone(), of.resolve(node));
+            (argument, scope) = next;
+        }
+        Argument::Constant(
+            Rc::as_ptr(&argument),
+            match &scope {
+                Some(scope) if may_name_local(&argument) => Rc::as_ptr(scope),
+                _ => std::ptr::null(),
+            },
+        )
+    }
+
+    /// Whether a call has the arguments of one the translation is in: each the same expression in
+    /// the same scope, or above constant level in both, or of the same value where the bodies of
+    /// both calls already read it. Nothing is computed to compare them: TLC computes an argument
+    /// only where the body reads it.
+    fn has_same_arguments(&self, entered: &RecursiveCall, call: &RecursiveCall) -> bool {
+        entered.arguments.len() == call.arguments.len()
+            && (0..call.arguments.len()).all(|position| {
+                if entered.arguments[position] == call.arguments[position] {
+                    return true;
+                }
+                let (Some(evaluator), Some(Some(read)), Some(Some(node))) = (
+                    self.evaluator,
+                    entered.nodes.get(position),
+                    call.nodes.get(position),
+                ) else {
+                    return false;
+                };
+                match (
+                    evaluator.computed_thunk(read),
+                    evaluator.computed_thunk(node),
+                ) {
+                    (Some(left), Some(right)) => left == right,
+                    _ => false,
+                }
+            })
+    }
+
+    /// Whether the call the translation is in repeats one it was already in, by the arguments its
+    /// body has read since it was made.
+    fn repeats_entered(&self) -> bool {
+        let Some((last, entered)) = self.recursion.split_last() else {
+            return false;
+        };
+        entered
+            .iter()
+            .any(|entered| entered.is_of(last) && self.has_same_arguments(entered, last))
     }
 
     /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
@@ -325,13 +553,27 @@ impl Converter<'_> {
     }
 
     fn convert(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
-        if !self.is_substituted && self.environment.tables.is_substitution(expression) {
-            self.is_substituted = true;
-            let converted = self.convert_part(expression, scope);
-            self.is_substituted = false;
-            return converted;
+        if !self.recursion.is_empty() {
+            let cost = get_stack_cost(self.recursion.len(), self.nesting);
+            if cost >= OVERFLOWING_STACK_COST {
+                return Err(FrontError::StackOverflow);
+            }
+            if cost >= MAXIMUM_STACK_COST {
+                self.is_past_tlc_stack = true;
+            }
         }
-        self.convert_part(expression, scope)
+        self.nesting += 1;
+        let converted =
+            if !self.is_substituted && self.environment.tables.is_substitution(expression) {
+                self.is_substituted = true;
+                let converted = self.convert_part(expression, scope);
+                self.is_substituted = false;
+                converted
+            } else {
+                self.convert_part(expression, scope)
+            };
+        self.nesting -= 1;
+        converted
     }
 
     fn convert_part(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
@@ -447,6 +689,9 @@ impl Converter<'_> {
                     return Err(cannot_handle(expression));
                 }
                 let reason = "a temporal quantifier over a set TLC fails to list";
+                for bound in bounds {
+                    self.count_decision(&bound.set);
+                }
                 let bindings = self
                     .get_evaluator(reason)?
                     .get_temporal_bindings(bounds, scope);
@@ -547,6 +792,28 @@ impl Converter<'_> {
     }
 }
 
+/// The fairness conditions, the properties' negations and the properties by name, translated.
+type Translated = (Vec<Rc<Live>>, Vec<Rc<Live>>, Vec<(Rc<str>, Rc<Live>)>);
+
+fn convert_all(
+    converter: &mut Converter,
+    temporals: &[Expanded],
+    properties: &[Property],
+) -> Result<Translated> {
+    let fairness = temporals
+        .iter()
+        .map(|temporal| converter.convert(&temporal.expression, temporal.scope.as_ref()))
+        .collect::<Result<Vec<_>>>()?;
+    let mut negations = Vec::with_capacity(properties.len());
+    let mut named = Vec::with_capacity(properties.len());
+    for property in properties {
+        let formula = converter.convert(&property.expression, property.scope.as_ref())?;
+        negations.push(Rc::new(Live::Not(formula.clone())));
+        named.push((property.name.clone(), formula));
+    }
+    Ok((fairness, negations, named))
+}
+
 /// `createLivenessChecker`'s formula, properties and atoms, or none without temporal properties.
 pub fn get_liveness(
     temporals: &[Expanded],
@@ -567,20 +834,21 @@ pub fn get_liveness(
         facts,
         evaluator,
         depth: 0,
+        recursion: Vec::new(),
+        evaluations: std::cell::Cell::new(0),
+        thunk_levels: ThunkLevels::default(),
+        nesting: 0,
+        is_past_tlc_stack: false,
         call_levels: HashMap::new(),
         is_substituted: false,
     };
-    let fairness = temporals
-        .iter()
-        .map(|temporal| converter.convert(&temporal.expression, temporal.scope.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
-    let mut negations = Vec::with_capacity(properties.len());
-    let mut named = Vec::with_capacity(properties.len());
-    for property in properties {
-        let formula = converter.convert(&property.expression, property.scope.as_ref())?;
-        negations.push(Rc::new(Live::Not(formula.clone())));
-        named.push((property.name.clone(), formula));
+    let converted = convert_all(&mut converter, temporals, properties);
+    if converter.is_past_tlc_stack && !matches!(converted, Err(FrontError::StackOverflow)) {
+        return Err(not_yet(
+            "a recursive temporal formula nested more deeply than TLC's stack may hold",
+        ));
     }
+    let (fairness, mut negations, named) = converted?;
     let violation = if negations.len() == 1 {
         negations.remove(0)
     } else {

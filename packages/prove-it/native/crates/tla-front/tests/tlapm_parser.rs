@@ -148,3 +148,30 @@ fn rejects_a_bare_by_and_a_star_step_reference() {
         .is_ok()
     );
 }
+
+// tlapm's lexer reads WF_vars as the tokens WF_ and vars of one match, both located at the whole
+// word, so the subscript's locus starts at the WF_ (its Auto-expanding note says so); a subscript
+// after a space, or in parentheses, has its own.
+#[test]
+fn locates_a_joined_fairness_subscript_at_the_operator() {
+    let subscript_range = |text: &str| {
+        let subscript = text.split("\"subscript\":").nth(1).expect("a subscript");
+        let range = subscript.split("\"range\":").nth(1).expect("a range");
+        range[..range.find("}}").expect("the range's end") + 2].to_owned()
+    };
+    assert_eq!(
+        subscript_range(&tlapm(&module("F == WF_vars(Next)"))),
+        r#"{"end":{"column":12,"line":2},"module":"M","start":{"column":6,"line":2}}"#
+    );
+    assert_eq!(
+        subscript_range(&tlapm(&module("F == WF_ vars(Next)"))),
+        r#"{"end":{"column":13,"line":2},"module":"M","start":{"column":10,"line":2}}"#
+    );
+    let sany = parse_module(&module("F == WF_vars(Next)")).expect("parses");
+    let mut out = String::new();
+    dump::expression(&sany.definitions.first().expect("a definition").body).write(&mut out);
+    assert_eq!(
+        subscript_range(&out),
+        r#"{"end":{"column":12,"line":2},"module":"M","start":{"column":9,"line":2}}"#
+    );
+}
