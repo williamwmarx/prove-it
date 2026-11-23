@@ -4874,6 +4874,18 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A POSTCONDITION, an INVARIANT, a CONSTRAINT, an ACTION_CONSTRAINT or a PROPERTY that names an
+  INSTANCE's copy with substitutions and fails at the copy's body: `INSTANCE I WITH K <- 1`, I's
+  `Post == TLCGet("level")`, `POSTCONDITION Post`. TLC's copy has a `SubstInNode` for its body,
+  written at the INSTANCE, and reports the body there ("Evaluating postcondition Post at line 5,
+  col 1 to line 5, col 22 of module M failed.", "Postcondition Post at ... is false.", and "TLC
+  expected a boolean value, but did not find one." with the same place), the root module's
+  INSTANCE for a copy of a copy. The binary placed them at the body in the instancee. A failure
+  within the body stays at the node it is in, which the `SubstInNode` holds (`Seq({}) \subseteq
+  Seq({})` as a copy's body, at its place in I). Where the IR doesn't place the INSTANCE or
+  another definition holds the body, it declines ("a postcondition through an INSTANCE's copy
+  whose INSTANCE the IR doesn't place", "a constraint of an INSTANCE's copy the IR doesn't
+  place"). Fixtures `instance-copy-place-*`.
 - A temporal property through a recursive operator nested 100 calls deep or more. TLC's
   translation of the formula (`Liveness.astToLive`) expands such a call level by level, and
   completes `F(n) == IF n = 0 THEN <>(x = 1) ELSE F(n - 1)` with `Prop == F(n)` up to n = 1,000 at
