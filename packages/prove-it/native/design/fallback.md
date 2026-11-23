@@ -3100,6 +3100,24 @@ one takes each of those sites' capacities, matched to the engine's set builders;
 configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
 `presized_function_set_ignores_bound`) otherwise than TLC.
 
+#### -dump dot
+
+`-dump dot` writes the state graph as TLC's `DotStateWriter` does ([cli.md](cli.md), "-dump"), with
+its options, on one worker without temporal properties. It declines with temporal properties ("-dump
+dot with temporal properties"), whose behavior graphs TLC writes beside it
+(`DotLivenessStateWriter`, the tableau nodes of each state and the bits of the action checks of each
+step, which the liveness checker doesn't keep in TLC's order); with several workers, `-dfid`,
+`-simulate` or an ALIAS; `constrained` where TLC writes steps to states it leaves out;
+`actionlabels` of an action with parameters; `snapshot` into a path with ".dot" before its suffix;
+a rank that TLC's `HashMap` keeps in a tree; and, as `-dump` does, a state that may hold a set TLC
+prints by its parts. On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+(72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
+the pinned jar) main answers 72,579 runs as the jar does, declines 299 and answers none otherwise;
+with the graph it answers 72,582 and declines 296: `cli/dump/dot_file`, `dot_options` and
+`dot_prefix_any_word`, whose graphs equal the jar's under `-fp 7` too. The four of
+`temporal/modes/dump_dot_*` decline for the reason above, and no other run changes. `tests/dump-dot`
+holds TLC's graph beside its specs (`writes_the_state_graph_as_tlc`).
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
@@ -8838,7 +8856,8 @@ scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `B
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
 | with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 | counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
-| reading a script under its logic as Z3 does | MEASURE |
+| with the Trivial method's untreated obligation | 772 / 577 / 0 | 336 / 1,061 / 0 |
+| reading a script under its logic as Z3 does | 772 / 577 / 0 | 338 / 1,059 / 0 |
 
 ### Declines
 
@@ -8995,6 +9014,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   from the wait to the limit, counted from the start), so a back end runs 3 s whatever the limit,
   and `SMTT(0)` proves what it can in that time; the port's decisions run that long too, and a
   result before then is the back end's own (`false`), not a `timeout`.
+- The Trivial method (`BY Trivial`) ends an obligation's methods without a result
+  (`Prep.prove_with`, `Schedule.Immediate true`), so the obligation is untreated at the end of the
+  run and reported failed by `fail` with `unexpected error`, whatever its goal; the port does the
+  same, where it used to count the obligation proved.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.

@@ -226,6 +226,53 @@ fn a_pragma_string_reaches_the_backend_as_tlapm_lexes_it() {
     );
 }
 
+// Prep.prove_with's Trivial method ends the obligation's methods without a result
+// (Schedule.Immediate true), so the obligation is untreated at the end of the run, whatever its
+// goal: tlapm reports it failed by `fail` with an unexpected error.
+#[test]
+fn the_trivial_method_leaves_the_obligation_untreated() {
+    let obligations = get_module_obligations(&get_pragma_module(
+        "THEOREM ASSUME NEW P, NEW Q, P /\\ Q PROVE Q /\\ P\n  BY ONLY Trivial",
+    ));
+    let (round, requested) = prove(&obligations, |_| decided(Verdict::Unsat));
+    assert!(requested.is_empty());
+    let reports = get_decided(&round);
+    assert_eq!(
+        (&reports[0].status, reports[0].attempts.len()),
+        (
+            &Status::Failed {
+                reason: "the Trivial method records no result".to_owned()
+            },
+            0
+        )
+    );
+    // The methods before it keep their results: one that failed, which tlapm reports, and one
+    // Prove It couldn't try, which it declines over.
+    let obligations = get_module_obligations(&get_pragma_module(
+        "THEOREM ASSUME NEW P, NEW Q, P /\\ Q PROVE Q /\\ P\n  BY ONLY Zenon, Trivial\nTHEOREM ASSUME NEW R PROVE R\n  BY ONLY CVC3, Trivial",
+    ));
+    let (round, requested) = prove(&obligations, |_| decided(Verdict::Sat));
+    assert_eq!(
+        requested
+            .iter()
+            .map(|request| request.prover.as_str())
+            .collect::<Vec<_>>(),
+        ["zenon"]
+    );
+    let reports = get_decided(&round);
+    let attempts: Vec<(&str, bool)> = reports
+        .iter()
+        .flat_map(|report| &report.attempts)
+        .map(|attempt| (attempt.attempt.method.prover.as_str(), attempt.is_skipped))
+        .collect();
+    assert_eq!(attempts, [("zenon", false), ("cvc3", true)]);
+    assert!(
+        reports
+            .iter()
+            .all(|report| matches!(report.status, Status::Failed { .. }))
+    );
+}
+
 // Schedule.run holds a back end to the method's time limit only from Params.wait (3 s) on, when
 // it first looks at the deadline, so a back end runs that long whatever the limit, and a result
 // before then is the back end's own.

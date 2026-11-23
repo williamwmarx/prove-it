@@ -1,0 +1,250 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:28
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:42
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:43
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:12:3:12:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:12:6:12:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:46
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:16:6:16:51
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:14
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:fast; time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(rule chooseI); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:28
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(simp add: emptysetIffEmpty); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:42
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:10:3:10:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto simp: emptysetIffEmpty); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:10:6:10:43
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:12:3:12:5
+@!!status:failed
+@!!prover:isabelle
+@!!meth:simp; time-limit: 30; time-used: 0.1 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT S,
+       TRUE 
+PROVE  S = {} <=> (\A x : x \notin S)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:12:6:12:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:14:3:14:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(auto intro: conjI dest: conjD1); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:12
+@!!loc:14:6:14:46
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:13
+@!!loc:16:3:16:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:(simp add: emptysetIffEmpty setEqual); time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:14
+@!!loc:16:6:16:51
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./IsaRules.tla", line 12, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  IsaM("simp") 
+           PROVE  S = {} <=> (\A x : x \notin S)
+File "./IsaRules.tla", line 1, character 1 to line 17, character 4:
+[ERROR]: 1/14 obligations failed.
+There were backend errors processing module `"IsaRules"`.
