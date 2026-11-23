@@ -1091,7 +1091,9 @@ pub fn is_startup_definition(
         && facts.is_constant_level(definition, environment)
 }
 
-/// Whether TLC holds a definition as the value of its literal body (`IrDefinition::LITERAL`).
+/// Whether TLC holds a definition as the value of its literal body (`IrDefinition::LITERAL`):
+/// `lookup` finds the literal's value, through the SubstInNode of an INSTANCE's copy too, so
+/// `processConstantDefns` doesn't compute the definition.
 fn is_held_literal(definition: &Rc<Definition>, environment: &Environment) -> bool {
     // A theorem's or an assumption's name, which has no body range, isn't one of TLC's definitions.
     matches!(
@@ -1101,12 +1103,11 @@ fn is_held_literal(definition: &Rc<Definition>, environment: &Environment) -> bo
             ..
         }
     ) && matches!(
-        definition.body.kind,
+        environment.get_written(definition).body.kind,
         ExpressionKind::Number { .. } | ExpressionKind::String { .. }
-    ) && !environment.is_substituted(definition)
-        && !environment
-            .substitutes_for_definitions
-            .contains(&definition.name)
+    ) && !environment
+        .substitutes_for_definitions
+        .contains(&definition.name)
 }
 
 /// The builtins whose effects show each time TLC evaluates them again: they print, set a

@@ -176,7 +176,8 @@ pub struct Environment {
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
     pub root_symbols: Rc<Symbols>,
-    /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address.
+    /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address,
+    /// each with the definition it copies.
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
     /// The copies an INSTANCE with substitutions makes of a definition that is itself such a
     /// copy, by address: TLC's copy's body is a `SubstInNode` over the copied one's.
@@ -725,6 +726,20 @@ impl Environment {
     pub fn is_substituted(&self, definition: &Rc<Definition>) -> bool {
         self.substituted_definitions
             .contains_key(&(Rc::as_ptr(definition) as usize))
+    }
+
+    /// The definition as its module writes it, which TLC reads under the SubstInNodes of an
+    /// INSTANCE's copies of it (`lookup`).
+    pub fn get_written(&self, definition: &Rc<Definition>) -> Rc<Definition> {
+        let mut current = definition.clone();
+        while let Some(copied) = self
+            .substituted_definitions
+            .get(&(Rc::as_ptr(&current) as usize))
+            && !Rc::ptr_eq(copied, &current)
+        {
+            current = copied.clone();
+        }
+        current
     }
 
     /// Whether the configuration substitutes a definition without parameters for a name other
@@ -2284,9 +2299,11 @@ impl Linker<'_> {
                             .borrow_mut()
                             .insert(Rc::as_ptr(&definition) as usize);
                     }
+                    let copied = (self.definitions.borrow().get(source).cloned())
+                        .unwrap_or_else(|| definition.clone());
                     self.substituted_definitions
                         .borrow_mut()
-                        .insert(Rc::as_ptr(&definition) as usize, definition.clone());
+                        .insert(Rc::as_ptr(&definition) as usize, copied);
                 }
                 self.json_source_opcodes.borrow_mut().remove(&key);
                 self.definitions
