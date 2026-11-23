@@ -8896,8 +8896,9 @@ the port answered `unknown`, and now declines, listed above.
 The backend inputs are counted as the tlapm CLI treats a decision: one the SMT port can't take
 (a script outside the SMT-LIB tlapm's encoder writes, `stop: unsupported`) and a proof Zenon
 finds that the check refuses are declines, which the port of tla-ts's backend script printed as
-`unknown` before: the five `backends/z3/options` scripts (`--smt-logic` UF, QF_UF, QF_LIA,
-UFLIA and BOGUS), `backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
+`unknown` before: the `backends/z3/options` scripts (`--smt-logic` UF, UFLIA and BOGUS, and
+QF_UF and QF_LIA until the port read a script under its logic, below),
+`backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
 `elim_multiarg`, which Z3 drops) and `backends/z3/sets/setof_two_bounds.smt`, the empty file
 tlapm hands Z3 for a set image over two bounds, on which the port printed Z3's `unknown` by
 chance. `backends/ls4/syntax/sometime_false.ls4`
@@ -8905,6 +8906,16 @@ is set aside, neither matched nor wrong, as the two Zenon memory-limit runs are:
 LS4's `sat`, as the suite's recording of LS4 does (`ptl_to_trp` prints the `False` inside the
 renamed clause as an atom; the `.trp` recordings of `translate` show the clause), and the suite's
 header overrides the recording with `correct: unsat`, calling it a tlapm bug.
+
+The SMT port reads a script under the logic it sets as Z3 4.8.9 does (`check_logic.cpp`;
+`crates/prover/smt/src/core/script_subset.rs`, `design/smt-core.md`): under `--smt-logic QF_UF`
+Z3 refuses each quantified axiom and drops it, under `QF_LIA` each uninterpreted function and so
+each assertion that names one, and answers `sat` on what survives (the suite's
+`backends/z3/options/smt_logic_qf_uf_drops_quantified_axiom.smt` and
+`smt_logic_qf_lia_nonlinear.smt`; `tests/fixtures/smt/logics`, recorded with Z3 4.8.9), where
+the port declined every logic but UFNIA. It still declines, as listed above, the three `options`
+scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `BOGUS`),
+`fcn_two_args.smt` and `setof_two_bounds.smt`.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
@@ -8930,6 +8941,7 @@ header overrides the recording with `correct: unsat`, calling it a tlapm bug.
 | with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 | counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
 | with the Trivial method's untreated obligation | 772 / 577 / 0 | 336 / 1,061 / 0 |
+| reading a script under its logic as Z3 does | 772 / 577 / 0 | 338 / 1,059 / 0 |
 
 ### Declines
 
@@ -9046,6 +9058,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A script under a logic Z3 decides with a tactic other than UFNIA's, whose surviving assertions
+  any tactic doesn't settle alike (a quantifier, or an integer term): the suite's
+  `backends/z3/options` scripts under `--smt-logic UF`, `UFLIA` and `BOGUS`, which Z3 4.8.9
+  proves through its default tactic (`mk_default_tactic`: the preamble's `solve_eqs`,
+  `elim_uncnstr` and ite hoisting, then the kernel). Winning them back takes that tactic.
 - A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
   `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
   no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
