@@ -418,6 +418,7 @@ fn prints_each_provers_result_in_toolbox_mode() {
         "IsabelleMethods",
         "IsaReuse",
         "EnabledLevel",
+        "TrivialMethod",
     ] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
