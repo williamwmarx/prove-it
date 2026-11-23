@@ -1,0 +1,65 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+4182752708428164002 [label="x = 1",style = filled]
+8816552070183741055 [label="x = 2",style = filled]
+4182752708428164002 -> 8816552070183741055 [label="Next",color="black",fontcolor="black"];
+4182752708428164002 -> -7277384582208172655 [label="Next",color="black",fontcolor="black"];
+-7277384582208172655 [label="x = 3",tooltip="x = 3"];
+8816552070183741055 -> -7277384582208172655 [label="Next",color="black",fontcolor="black"];
+8816552070183741055 -> -362593141896217147 [label="Next",color="black",fontcolor="black"];
+-362593141896217147 [label="x = 4",tooltip="x = 4"];
+8816552070183741055 -> 6627708068902886390 [label="Next",color="black",fontcolor="black"];
+6627708068902886390 [label="x = 6",tooltip="x = 6"];
+-7277384582208172655 -> -362593141896217147 [label="Next",color="black",fontcolor="black"];
+-7277384582208172655 -> 1994225297973761579 [label="Next",color="black",fontcolor="black"];
+1994225297973761579 [label="x = 5",tooltip="x = 5"];
+-7277384582208172655 -> 8740909738430009520 [label="Next",color="black",fontcolor="black"];
+8740909738430009520 [label="x = 9",tooltip="x = 9"];
+-362593141896217147 -> 1994225297973761579 [label="Next",color="black",fontcolor="black"];
+-362593141896217147 -> 6627708068902886390 [label="Next",color="black",fontcolor="black"];
+-362593141896217147 -> -5064822244824447273 [label="Next",color="black",fontcolor="black"];
+-5064822244824447273 [label="x = 12",tooltip="x = 12"];
+6627708068902886390 -> -4998573934587088872 [label="Next",color="black",fontcolor="black"];
+-4998573934587088872 [label="x = 7",tooltip="x = 7"];
+6627708068902886390 -> -7487562884025336994 [label="Next",color="black",fontcolor="black"];
+-7487562884025336994 [label="x = 8",tooltip="x = 8"];
+6627708068902886390 -> -227018850327752613 [label="Next",color="black",fontcolor="black"];
+-227018850327752613 [label="x = 18",tooltip="x = 18"];
+1994225297973761579 -> 6627708068902886390 [label="Next",color="black",fontcolor="black"];
+1994225297973761579 -> -4998573934587088872 [label="Next",color="black",fontcolor="black"];
+1994225297973761579 -> -441191098084324598 [label="Next",color="black",fontcolor="black"];
+-441191098084324598 [label="x = 15",tooltip="x = 15"];
+8740909738430009520 -> 4114956422997810541 [label="Next",color="black",fontcolor="black"];
+4114956422997810541 [label="x = 10",tooltip="x = 10"];
+8740909738430009520 -> -2864178096403794301 [label="Next",color="black",fontcolor="black"];
+-2864178096403794301 [label="x = 11",tooltip="x = 11"];
+8740909738430009520 -> 6828510203982987431 [label="Next",color="black",fontcolor="black"];
+6828510203982987431 [label="x = 27",tooltip="x = 27"];
+-5064822244824447273 -> 6407783490185899321 [label="Next",color="black",fontcolor="black"];
+6407783490185899321 [label="x = 13",tooltip="x = 13"];
+-5064822244824447273 -> 1782217271629062372 [label="Next",color="black",fontcolor="black"];
+1782217271629062372 [label="x = 14",tooltip="x = 14"];
+-5064822244824447273 -> -7760928330334936990 [label="Next",color="black",fontcolor="black"];
+-7760928330334936990 [label="x = 36",tooltip="x = 36"];
+-4998573934587088872 -> -7487562884025336994 [label="Next",color="black",fontcolor="black"];
+-4998573934587088872 -> 8740909738430009520 [label="Next",color="black",fontcolor="black"];
+-4998573934587088872 -> -7120417802120454129 [label="Next",color="black",fontcolor="black"];
+-7120417802120454129 [label="x = 21",tooltip="x = 21"];
+-7487562884025336994 -> 8740909738430009520 [label="Next",color="black",fontcolor="black"];
+-7487562884025336994 -> 4114956422997810541 [label="Next",color="black",fontcolor="black"];
+-7487562884025336994 -> 2203682787920825722 [label="Next",color="black",fontcolor="black"];
+2203682787920825722 [label="x = 24",tooltip="x = 24"];
+-227018850327752613 -> 2126351773793729461 [label="Next",color="black",fontcolor="black"];
+2126351773793729461 [label="x = 19",tooltip="x = 19"];
+-227018850327752613 -> 8967818729008434145 [label="Next",color="black",fontcolor="black"];
+8967818729008434145 [label="x = 20",tooltip="x = 20"];
+-227018850327752613 -> -5492726833142550411 [label="Next",color="black",fontcolor="black"];
+-5492726833142550411 [label="x = 54",tooltip="x = 54"];
+{rank = same; 8816552070183741055;4182752708428164002;}
+{rank = same; 6627708068902886390;-7277384582208172655;-362593141896217147;}
+{rank = same; 1994225297973761579;-7487562884025336994;-227018850327752613;8740909738430009520;-4998573934587088872;-5064822244824447273;}
+}
+}

@@ -1,0 +1,65 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:21:4:28
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  ENABLED (x'')
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:5:20:5:27
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  ENABLED (x')
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:23:6:30
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  UNCHANGED (x'')
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:7:18:7:25
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  -x'' = 1
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:24:8:31
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  SUBSET x' = {}
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:9:22:9:29
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  (ENABLED x)'
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:6
+@!!END
+

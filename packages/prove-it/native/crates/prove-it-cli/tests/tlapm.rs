@@ -95,7 +95,7 @@ fn header(command: &str) -> String {
 
 #[test]
 fn prints_the_obligations_tlapm_prints() {
-    let cases: [(&[&str], &str); 8] = [
+    let cases: [(&[&str], &str); 11] = [
         (
             &["-N", "--toolbox", "0", "0", "--printallobs", "Proofs.tla"],
             "Proofs.toolbox",
@@ -151,11 +151,41 @@ fn prints_the_obligations_tlapm_prints() {
             &["-N", "--toolbox", "0", "0", "--printallobs", "Warnings.tla"],
             "Warnings.toolbox",
         ),
+        (
+            &[
+                "-N",
+                "--toolbox",
+                "0",
+                "0",
+                "--printallobs",
+                "InstanceFairness.tla",
+            ],
+            "InstanceFairness.toolbox",
+        ),
+        (
+            &["-N", "--toolbox", "0", "0", "--printallobs", "Take.tla"],
+            "Take.toolbox",
+        ),
+        (
+            &["-N", "--toolbox", "0", "0", "--printallobs", "Primes.tla"],
+            "Primes.toolbox",
+        ),
     ];
     for (args, recording) in cases {
         let output = run("obligations", args);
         assert_eq!(output.status.code(), Some(0), "{recording}");
-        assert_eq!(stdout(&output), header(&args.join(" ")), "{recording}");
+        // Where tlapm's stdout is recorded, what follows its header, as the port prints it after
+        // its own.
+        let printed = recording.replace(".toolbox", ".stdout");
+        let rest = match fs::read_to_string(fixtures().join("obligations").join(&printed)) {
+            Ok(text) => text.splitn(6, '\n').nth(5).unwrap_or_default().to_owned(),
+            Err(_) => String::new(),
+        };
+        assert_eq!(
+            stdout(&output),
+            header(&args.join(" ")) + &rest,
+            "{recording}"
+        );
         assert_eq!(
             stderr(&output),
             read_recording("obligations", recording),
@@ -418,6 +448,7 @@ fn prints_each_provers_result_in_toolbox_mode() {
         "IsabelleMethods",
         "IsaReuse",
         "EnabledLevel",
+        "IsaRules",
     ] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
@@ -464,6 +495,28 @@ fn prints_the_trivial_methods_results_in_toolbox_mode() {
             "{threads}"
         );
     }
+}
+
+// Zenon turns two of ZenonUnsupported's obligations down before it launches, so one decision is
+// in flight at a time; tlapm's stream with one thread.
+#[test]
+fn prints_a_declined_zenon_launch_in_toolbox_mode() {
+    let output = run(
+        "tlapm-cli",
+        &[
+            "--threads",
+            "1",
+            "--toolbox",
+            "0",
+            "0",
+            "ZenonUnsupported.tla",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        without_time_used(&stderr(&output)),
+        without_time_used(&read_recording("tlapm-cli", "ZenonUnsupported.toolbox"))
+    );
 }
 
 // tlapm evaluates an obligation's methods as its scheduler starts them (Prep.already_processed in
