@@ -3132,8 +3132,16 @@ it from one that printed something else. Each is outside the corpus:
   recursive properties run through the jar, 4 such runs that main matched decline; of 50 with 0
   to 100 `[]`s around the call, 15: 11 where TLC overflows past main's 100 calls and 4 where it
   completes with 50 or 100 `[]`s below them, within where TLC's own result varies from run to
-  run. Winning them back takes the stack each level of
-  TLC's translation takes. As WebAssembly, whose host's stack holds about 900 levels of the
+  run. The 4 are `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5) /\ F(n - 1, m + 1))` with `Prop ==
+  F(1100, 0)` and `F(n) == TRUE /\ IF n = 0 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop ==
+  F(1100)`, each also with the guard `n \in {0, 1}`; the 15, as `wK-N` for `N` calls with `K` `[]`s
+  around the call, are w0-1100, w0-1200, w1-800, w1-900, w1-1200, w5-300, w5-400, w5-600, w5-900,
+  w20-180 and w20-200, where TLC overflowed, and w50-50, w50-60, w100-25 and w100-30, where it
+  completed. Winning them back takes more than the stack each level of TLC's translation takes:
+  TLC's own verdict there varies from run to run, as repeated runs of the jar on the same specs
+  show (see the table under "A recursive temporal formula nested more deeply than TLC's stack may
+  hold" in the declines below), so a rule would have to say which run TLC makes. As WebAssembly,
+  whose host's stack holds about 900 levels of the
   translation, one past that declines ("WebAssembly ran out of stack"), also where it never
   ends and TLC overflows, which main reported at 100 calls.
 - a constant definition with effects that converts a value with `ToJson`, `ToJsonArray` or
@@ -6822,6 +6830,25 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   To fit them again, run the jar on these shapes at more k and N, read the walk's nesting where
   each completes and overflows (2 + k conversions a level), and keep the thresholds below the
   least overflow and twice above the most completion.
+
+  Within that band TLC's own result varies from run to run, so no threshold of a measure can
+  answer it as TLC does. Run 6 or 8
+  times each, one after another, the jar's runs of the same `wK-N` (`N` calls with `K` `[]`s
+  around the call) overflowed:
+
+  | spec    | measure | overflowed | spec     | measure | overflowed |
+  | ------- | ------- | ---------- | -------- | ------- | ---------- |
+  | w5-300  | 765     | 1 of 6     | w20-160  | 1,152   | 3 of 8     |
+  | w5-350  | 893     | 2 of 6     | w100-40  | 1,280   | 4 of 8     |
+  | w5-400  | 1,020   | 3 of 6     | w20-180  | 1,296   | 6 of 8     |
+  | w0-1000 | 1,000   | 2 of 6     | w20-200  | 1,440   | 6 of 8     |
+  | w50-60  | 990     | 4 of 6     | w100-50  | 1,600   | 7 of 8     |
+  | w100-35 | 1,120   | 5 of 14    |          |         |            |
+
+  and w0-1100, w0-1200, w1-900, w1-1200, w50-70, w50-80, w5-600 and w5-900 overflowed each time.
+  These ran beside a suite run, and load moves where the JIT's frames overflow; the recorded
+  table above, run alone, shows the same inversion (five `[]`s: overflow at 300, complete at 350).
+  The 19 generated runs main matched that this declines are listed under "Declines to win back".
 
   And a temporal formula nested more deeply than the translation follows ("a temporal formula
   nested more deeply than the translation follows"), past 2,000 nested expansions other than of
