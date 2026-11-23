@@ -5,11 +5,13 @@
 //! any case takes, so that they are deterministic. Each runs on a thread with the stack the binding
 //! gives a decision.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use prove_decide::{Cancel, DecideError, Decision, Limits, Statistic, Verdict};
+use prove_smt::core::script_subset::check_script;
 use prove_smt::core::solver::check_smt;
 use prove_smt::util::error::SmtError;
 use prove_smt::util::rlimit::{ResourceLimit, StopReason};
@@ -696,6 +698,90 @@ fn stops_a_large_term_at_the_deadline_without_a_step() {
             })
             .map(|decision| get_decision_text(&decision));
             assert_eq!(decision, Ok(format!("unknown steps=1 stop={stop}")));
+        }
+    }
+}
+
+// Z3 4.8.9 (z3-solver 4.8.9.0 from PyPI, run as tlapm runs it, `-smt2 -v:0 AUTO_CONFIG=false
+// smt.MBQI=true`, under `-T:60`) on tlapm's scripts under other logics: each `logics/<name>.smt`
+// with its stdout as `<name>.z3`. The port drops the commands Z3 prints an error at, one error in
+// each dropped command and none elsewhere, and answers as Z3 does where it answers at all: where
+// Z3 runs another tactic on what survives, or reads numerals as reals, the port declines.
+#[test]
+fn reads_a_script_under_its_logic_as_z3_does() {
+    let declined: HashMap<&str, &str> = [
+        ("auflia-square", "a logic Z3 runs through another tactic"),
+        ("bogus-cup", "a logic Z3 runs through another tactic"),
+        (
+            "qf_lra-numerals",
+            "a numeral a logic of reals reads as a real",
+        ),
+        ("qf_ufidl-square", "a logic Z3 runs through another tactic"),
+        ("uf-cup", "a logic Z3 runs through another tactic"),
+        ("uflia-square", "a logic Z3 runs through another tactic"),
+    ]
+    .into();
+    let directory = get_directory().join("logics");
+    let mut names: Vec<String> = fs::read_dir(&directory)
+        .expect("the logic fixtures")
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "smt").then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    names.sort();
+    assert!(names.len() > declined.len());
+    for name in &names {
+        let text = fs::read_to_string(directory.join(format!("{name}.smt"))).expect("a script");
+        let recorded =
+            fs::read_to_string(directory.join(format!("{name}.z3"))).expect("Z3's answer");
+        let line_of = |byte: usize| text[..byte].matches('\n').count() + 1;
+        let error_lines: Vec<usize> = recorded
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix("(error \"line ")?
+                    .split(' ')
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        let verdict = recorded.lines().last().expect("a verdict");
+        let decision = decide_with(&text, None).map(|decision| get_decision_text(&decision));
+        match check_script(&text) {
+            Ok(script) => {
+                assert!(!declined.contains_key(name.as_str()), "{name}");
+                let dropped: Vec<(usize, usize)> = script
+                    .dropped
+                    .iter()
+                    .map(|span| (line_of(span.start), line_of(span.end - 1)))
+                    .collect();
+                assert_eq!(dropped.len(), error_lines.len(), "{name}: {dropped:?}");
+                for line in &error_lines {
+                    let holders = dropped
+                        .iter()
+                        .filter(|(first, last)| (*first..=*last).contains(line))
+                        .count();
+                    assert_eq!(holders, 1, "{name}: Z3's error at line {line}");
+                }
+                assert_eq!(
+                    decision.as_deref().map(|text| text.split(' ').next()),
+                    Ok(Some(verdict)),
+                    "{name}"
+                );
+            }
+            Err(reason) => {
+                assert_eq!(
+                    declined.get(name.as_str()),
+                    Some(&reason.as_str()),
+                    "{name}"
+                );
+                assert_eq!(
+                    decision,
+                    Ok("unknown stop=unsupported steps=0".into()),
+                    "{name}"
+                );
+            }
         }
     }
 }

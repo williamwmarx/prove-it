@@ -3122,6 +3122,20 @@ holds TLC's graph beside its specs (`writes_the_state_graph_as_tlc`).
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
 it from one that printed something else. Each is outside the corpus:
+- a temporal property through a recursion that ends where the measure of TLC's stack is between
+  what TLC surely holds and twice what it was measured to complete ("a recursive temporal formula
+  nested more deeply than TLC's stack may hold"), as `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5)
+  /\ F(n - 1, m + 1))` with `Prop == F(1100, 0)`. Main reported TLC's overflow at 100 nested calls
+  whatever the recursion and completed one below, which matched only where TLC happened to agree,
+  and not at 800 or 1,000 calls of `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)`, which TLC completes,
+  nor at 35 calls with a hundred `[]`s around the call, where TLC overflows. Of 968 generated
+  recursive properties run through the jar, 4 such runs that main matched decline; of 50 with 0
+  to 100 `[]`s around the call, 15: 11 where TLC overflows past main's 100 calls and 4 where it
+  completes with 50 or 100 `[]`s below them, within where TLC's own result varies from run to
+  run. Winning them back takes the stack each level of
+  TLC's translation takes. As WebAssembly, whose host's stack holds about 900 levels of the
+  translation, one past that declines ("WebAssembly ran out of stack"), also where it never
+  ends and TLC overflows, which main reported at 100 calls.
 - a constant definition with effects that converts a value with `ToJson`, `ToJsonArray` or
   `ToJsonObject` ("a constant definition with effects applying a Json operator, which TLC computes
   as it starts"), also where the conversion can't fail and nothing reads the definition more
@@ -4860,6 +4874,50 @@ itself, or inside a record), that failure is placed as it converts, as TLC repor
 An earlier build of the native checker printed output the jar doesn't for each of these; each now
 matches TLC or declines exactly.
 
+- A temporal property through a recursive operator nested 100 calls deep or more. TLC's
+  translation of the formula (`Liveness.astToLive`) expands such a call level by level, and
+  completes `F(n) == IF n = 0 THEN <>(x = 1) ELSE F(n - 1)` with `Prop == F(n)` up to n = 1,000 at
+  the corpus's `-Xss2m`. The binary's translation stopped at 100 nested expansions and reported
+  TLC's StackOverflowError (1005, exit 255) where TLC checks the model. It now reports the overflow
+  only where TLC's recursion doesn't end: a call it is already in, with the same constant
+  arguments (Github1389Loops' `bad(FALSE)`), the same unevaluated expression in the same scope
+  where a constant argument fails to evaluate (`F(n) == <>(x = 0) /\ F(n)` with `Prop == F(1 \div
+  0)`, `liveness-recursion-unevaluated-argument`), or an argument above constant level, on which no
+  IF decides (Github1389StateGuard's `op(x)`), or a call of an operator it is in, with arguments of
+  the same kinds (a constant's value, above constant level, or one that fails to evaluate, as
+  `F(n) == <>(x = 0) /\ F(n + 1)` with `Prop == F(1 \div 0)`,
+  `liveness-recursion-unevaluated-growing-argument`), that it reached evaluating no constant
+  expression an argument could decide, as through an IF on the state alone (`Reach(n) == IF x = 0 THEN <>(x = 2) ELSE
+  Reach(n + 1)`). An argument above constant level that becomes a constant can make a guard
+  decidable, so `F(n) == IF n = 0 THEN <>P ELSE F(0)` with `Prop == F(x)` completes, as in TLC
+  (the `tla-front` test `follows_a_recursion_whose_argument_becomes_a_constant`). A recursion it follows as
+  far as a measure of TLC's stack holds surely (`get_stack_cost`: each recursive call and each
+  conversion of the walk within it, fitted to where TLC overflows with 0 to 100 `[]`s around the
+  call); one that ends past that declines, and one that reaches twice as much as TLC was measured
+  to complete, or 2,000 nested calls, gets the overflow, as one that never ends does (`F(n) == IF n
+  > 3 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop == F(0)`, fixtures
+  `liveness-recursion-endless-{descending,growing}`, and with twenty `[]`s around the call,
+  `liveness-recursion-wrapped-{endless,deep,shallow}`). An IF
+  decides only where its guard may name a parameter: `F(n) == TRUE /\ <>(x = 0) /\ F(n + 1)`
+  overflows from the first repeated call (`liveness-recursion-constant-conjunct`), as do the
+  shapes of `liveness-recursion-{mutual-cycle,state-argument,state-guard-conjunct,let-state-guard}`,
+  and `liveness-recursion-ending-past-stack` ends at 700 calls and declines. An argument stays the
+  expression TLC's `LazyValue` holds, compared by the expression and the scope it is read in, and
+  by value only where the bodies of both calls already read it, never computing one to compare
+  them: an argument the body never reads isn't computed (`liveness-recursion-unread-argument`,
+  `\A i, j, k \in 1..1000 : TRUE`, and `liveness-recursion-unread-repeated-argument`, where the
+  call before read its argument in that place), and the
+  level of `Ignore(x)` stays the expression's (`liveness-recursion-argument-level-bound`, two
+  branches). Fixtures `liveness-recursion-depth-{100,200,500,900}`,
+  `liveness-recursion-state-guard` and `liveness-recursion-unevaluated-argument-read`, where a guard
+  reads the argument that fails, which TLC reports as its evaluation error, as the binary does.
+- A quantifier the front end evaluates over many bindings, as a property's constant conjunct or
+  the guard of a temporal IF: `Prop == (\E i, j, k \in 1..1000 : i = 1) /\ <>(x = 1)`. TLC's
+  `ContextEnumerator` makes each binding as it goes, so a quantifier whose body decides it at the
+  first holds one binding, and one whose body reads each holds one at a time. The front end's
+  evaluator made every binding first, a billion here, and ran out of memory (exit 134) where TLC
+  completes. It now makes them one at a time, in the same order. Fixtures
+  `stream-bindings-property-{conjunct,guard}`.
 - An ALIAS or a POSTCONDITION that names an INSTANCE's copy with substitutions of a literal
   definition: `INSTANCE I WITH K <- 1`, I's `Alias == "a"` (or `7`), `ALIAS Alias`. TLC's `lookup`
   reads the literal through the copy's `SubstInNode`, so `processConstantDefns` leaves the copy an
@@ -6735,6 +6793,39 @@ Each of these declines exactly the shape it names; the reason is printed after `
 native yet:` and, where the engine or a replay meets it, after its prefix (`the engine stopped:`,
 `evaluating the failure again:`, ...).
 
+- A recursive temporal formula nested more deeply than TLC's stack may hold ("a recursive temporal
+  formula nested more deeply than TLC's stack may hold"): a property whose translation within a
+  recursion takes more of TLC's stack than it surely holds and ends before twice what TLC was
+  measured to complete. Where TLC's translation overflows depends on its stack, on what each level
+  takes and on the run: at `-Xss2m`, `F(n) == IF n = 0 THEN <>P ELSE F(n - 1)` completes at 1,000
+  and overflows at 1,100, with one `[]` around the call at 700 and 800, with five at 250 and 400
+  but at 300 and not at 350, with twenty at 160 and 180, with a hundred at 30 and 35. A recursion
+  whose levels take more of TLC's stack than the measure counts may overflow where the binary
+  completes it: a known wrong output, as for the evaluator's recursion.
+
+  The measure (`live.rs`, `get_stack_cost`) counts 100 for each recursive call the walk is within
+  and 31 for each conversion beyond the 2 a level of an IF and its call takes. Below 75,000 the
+  translation is trusted (`MAXIMUM_STACK_COST`); from there a recursion that ends declines; from
+  240,000 (`OVERFLOWING_STACK_COST`), or 2,000 nested calls, it overflows as TLC's does. Where TLC
+  completed and overflowed `F(n) == IF n = 0 THEN <>(x = 0) ELSE []( ... [](F(n - 1)) ... )` with
+  k `[]`s, `Prop == F(N)`, at `-Xss2m`, in calls and in the measure's units of 100:
+
+  | k   | completes at  | overflows at  | measure there  |
+  | --- | ------------- | ------------- | -------------- |
+  | 0   | 1,000         | 1,100         | 1,000 to 1,100 |
+  | 1   | 700           | 800           | 917 to 1,048   |
+  | 5   | 250, 350      | 300, 400      | 638 to 1,020   |
+  | 20  | 160           | 180           | 1,152 to 1,296 |
+  | 50  | 60            | 70            | 990 to 1,155   |
+  | 100 | 30            | 35            | 960 to 1,120   |
+
+  To fit them again, run the jar on these shapes at more k and N, read the walk's nesting where
+  each completes and overflows (2 + k conversions a level), and keep the thresholds below the
+  least overflow and twice above the most completion.
+
+  And a temporal formula nested more deeply than the translation follows ("a temporal formula
+  nested more deeply than the translation follows"), past 2,000 nested expansions other than of
+  recursive calls, which SANY's parser doesn't reach first.
 - A temporal formula through definitions nested more deeply than TLC's stack may hold ("a temporal
   formula through definitions nested more deeply than TLC's stack may hold"): a property or a
   specification whose expansion nests more than 2,250 definitions, global or of LETs. TLC's
@@ -8820,8 +8911,9 @@ the port answered `unknown`, and now declines, listed above.
 The backend inputs are counted as the tlapm CLI treats a decision: one the SMT port can't take
 (a script outside the SMT-LIB tlapm's encoder writes, `stop: unsupported`) and a proof Zenon
 finds that the check refuses are declines, which the port of tla-ts's backend script printed as
-`unknown` before: the five `backends/z3/options` scripts (`--smt-logic` UF, QF_UF, QF_LIA,
-UFLIA and BOGUS), `backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
+`unknown` before: the `backends/z3/options` scripts (`--smt-logic` UF, UFLIA and BOGUS, and
+QF_UF and QF_LIA until the port read a script under its logic, below),
+`backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
 `elim_multiarg`, which Z3 drops) and `backends/z3/sets/setof_two_bounds.smt`, the empty file
 tlapm hands Z3 for a set image over two bounds, on which the port printed Z3's `unknown` by
 chance. `backends/ls4/syntax/sometime_false.ls4`
@@ -8829,6 +8921,16 @@ is set aside, neither matched nor wrong, as the two Zenon memory-limit runs are:
 LS4's `sat`, as the suite's recording of LS4 does (`ptl_to_trp` prints the `False` inside the
 renamed clause as an atom; the `.trp` recordings of `translate` show the clause), and the suite's
 header overrides the recording with `correct: unsat`, calling it a tlapm bug.
+
+The SMT port reads a script under the logic it sets as Z3 4.8.9 does (`check_logic.cpp`;
+`crates/prover/smt/src/core/script_subset.rs`, `design/smt-core.md`): under `--smt-logic QF_UF`
+Z3 refuses each quantified axiom and drops it, under `QF_LIA` each uninterpreted function and so
+each assertion that names one, and answers `sat` on what survives (the suite's
+`backends/z3/options/smt_logic_qf_uf_drops_quantified_axiom.smt` and
+`smt_logic_qf_lia_nonlinear.smt`; `tests/fixtures/smt/logics`, recorded with Z3 4.8.9), where
+the port declined every logic but UFNIA. It still declines, as listed above, the three `options`
+scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `BOGUS`),
+`fcn_two_args.smt` and `setof_two_bounds.smt`.
 
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
@@ -8853,6 +8955,8 @@ header overrides the recording with `correct: unsat`, calling it a tlapm bug.
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
 | with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
 | counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
+| with the Trivial method's untreated obligation | 772 / 577 / 0 | 336 / 1,061 / 0 |
+| reading a script under its logic as Z3 does | 772 / 577 / 0 | 338 / 1,059 / 0 |
 
 ### Declines
 
@@ -8969,6 +9073,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A script under a logic Z3 decides with a tactic other than UFNIA's, whose surviving assertions
+  any tactic doesn't settle alike (a quantifier, or an integer term): the suite's
+  `backends/z3/options` scripts under `--smt-logic UF`, `UFLIA` and `BOGUS`, which Z3 4.8.9
+  proves through its default tactic (`mk_default_tactic`: the preamble's `solve_eqs`,
+  `elim_uncnstr` and ite hoisting, then the kernel). Winning them back takes that tactic.
 - A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
   `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
   no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
@@ -9004,6 +9113,10 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   from the wait to the limit, counted from the start), so a back end runs 3 s whatever the limit,
   and `SMTT(0)` proves what it can in that time; the port's decisions run that long too, and a
   result before then is the back end's own (`false`), not a `timeout`.
+- The Trivial method (`BY Trivial`) ends an obligation's methods without a result
+  (`Prep.prove_with`, `Schedule.Immediate true`), so the obligation is untreated at the end of the
+  run and reported failed by `fail` with `unexpected error`, whatever its goal; the port does the
+  same, where it used to count the obligation proved.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
