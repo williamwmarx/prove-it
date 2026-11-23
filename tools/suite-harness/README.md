@@ -1,0 +1,3 @@
+A port of tla-ts's conformance harness for the tlapm suite: `measure2.sh <tree> <backend-run-dir> <tag>` builds the tree's `prove-it-cli` release and `backend-run` (whose `Cargo.toml` path dependencies must point at the tree measured), runs the suite and counts with `classify.py`; `z3run.sh` runs Z3 4.8.9 on a suite `.smt` with its front matter stripped.
+Run line: `cd harness && SUITES=tlapm BACKEND_CMD=<backend-run-dir>/target/release/backend-run bun harness.ts <tla-ts>/packages/conformance/test results/tlapm-<tag>.jsonl 120 2 <tree>/packages/prove-it/native/target/release/prove-it`
+Then count `classify.load("results/tlapm-<tag>.jsonl")` by (kind, class), setting aside the two Zenon memory-limit runs and `sometime_false.ls4` by hand.

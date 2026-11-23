@@ -1,0 +1,13 @@
+[package]
+name = "backend-run"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+prove-it-prover = { path = "/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/cl-wt/packages/prove-it/native/crates/prover/prover" }
+prove-zenon = { path = "/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/cl-wt/packages/prove-it/native/crates/prover/zenon" }
+prove-decide = { path = "/tmp/claude-0/-home-user-prove-it/41c9ddda-3031-5ac6-9e2b-4d93d5416735/scratchpad/cl-wt/packages/prove-it/native/crates/prover/decide" }
+
+[profile.release]
+opt-level = 3
+debug = false
