@@ -108,7 +108,46 @@ pub fn get_level(
         facts,
         shadowed,
         &levels::Scope::default(),
-        &LevelWalk::new(environment),
+        &LevelWalk::new(environment, None),
+    )
+}
+
+/// The levels of the operator arguments a caller bound as thunks and registered, which it keeps
+/// from one walk to the next: a chain of calls that each pass an expression of the parameter
+/// before (`F(n + 1)`) would otherwise walk the whole chain at each call. A level found where the
+/// walk met a cycle depends on where it entered the cycle, and isn't kept.
+#[derive(Default)]
+pub struct ThunkLevels(std::cell::RefCell<FastMap<*const Scope, KeptLevel>>);
+
+/// A registered thunk's node, which the entry keeps alive, and its level once a walk finds it.
+type KeptLevel = (Rc<Scope>, Option<Level>);
+
+impl ThunkLevels {
+    /// Keeps the level of the thunk `node` binds, once a walk finds it.
+    pub fn register(&self, node: &Rc<Scope>) {
+        self.0
+            .borrow_mut()
+            .entry(Rc::as_ptr(node))
+            .or_insert_with(|| (node.clone(), None));
+    }
+}
+
+/// `get_level`, with the levels of the thunks `kept` registers kept from one walk to the next.
+pub fn get_level_keeping(
+    expression: &Expr,
+    scope: Option<&Rc<Scope>>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+    kept: &ThunkLevels,
+) -> Level {
+    get_level_inner(
+        expression,
+        scope,
+        environment,
+        facts,
+        &[],
+        &levels::Scope::default(),
+        &LevelWalk::new(environment, Some(kept)),
     )
 }
 
@@ -134,11 +173,14 @@ struct LevelWalk<'a> {
     /// The levels of a closure bound around the formula, a LAMBDA or an operator passed as an
     /// argument, by its body.
     closure_levels: std::cell::RefCell<FastMap<*const Expression, OperatorLevels>>,
+    /// The levels of thunks kept from walk to walk.
+    kept: Option<&'a ThunkLevels>,
 }
 
 impl<'a> LevelWalk<'a> {
-    fn new(environment: &'a Environment) -> LevelWalk<'a> {
+    fn new(environment: &'a Environment, kept: Option<&'a ThunkLevels>) -> LevelWalk<'a> {
         LevelWalk {
+            kept,
             active: Default::default(),
             memo: Default::default(),
             cycles: Default::default(),
@@ -321,9 +363,19 @@ fn get_level_inner(
         Some(match binding {
             Binding::Value(_) | Binding::Literal { .. } => Level::Constant,
             Binding::Thunk { expression, scope } => {
+                let kept = walk.kept.and_then(|kept| {
+                    kept.0
+                        .borrow()
+                        .get(&Rc::as_ptr(node))
+                        .map(|(_, level)| *level)
+                });
+                if let Some(Some(level)) = kept {
+                    return Some(level);
+                }
+                let cycles = walk.cycles.get();
                 let body_shadowed = Vec::new();
                 let identity = LevelIdentity::Binding(Rc::as_ptr(node));
-                if walk.active.borrow().contains(&identity) {
+                let level = if walk.active.borrow().contains(&identity) {
                     walk.cycles.set(walk.cycles.get().saturating_add(1));
                     // TLC binds an operator being visited to the constant IntValue.One. A
                     // non-operator lazy argument has no such sentinel.
@@ -345,7 +397,14 @@ fn get_level_inner(
                     );
                     walk.active.borrow_mut().remove(&identity);
                     level
+                };
+                if let (Some(None), Some(kept)) = (kept, walk.kept)
+                    && walk.cycles.get() == cycles
+                    && let Some((_, kept)) = kept.0.borrow_mut().get_mut(&Rc::as_ptr(node))
+                {
+                    *kept = Some(level);
                 }
+                level
             }
             Binding::Closure {
                 name, body, scope, ..

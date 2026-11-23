@@ -325,10 +325,6 @@ fn get_number(value: &HostValue, what: &str) -> Result<f64, String> {
     }
 }
 
-/// The stack of the thread the check runs on, as the binary's run thread has.
-#[cfg(not(target_arch = "wasm32"))]
-const CHECK_STACK_BYTES: usize = 64 * 1024 * 1024;
-
 /// `checkSources(args, known, machine)`, on this thread: wasm's stack is the one it links.
 #[cfg(target_arch = "wasm32")]
 pub fn check_sources(arguments: &[HostValue]) -> HookResult {
@@ -340,7 +336,7 @@ pub fn check_sources(arguments: &[HostValue]) -> HookResult {
 pub fn check_sources(arguments: &[HostValue]) -> HookResult {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
-            .stack_size(CHECK_STACK_BYTES)
+            .stack_size(prove_it_check::RUN_STACK_BYTES)
             .spawn_scoped(scope, || check(arguments))
             .expect("a thread for the check")
             .join()
