@@ -226,7 +226,11 @@ declines it (tests/report-cases/41); TLC's, which the generator writes, reports 
 a section SANY accepts, applied before its definition, keeps its report (case 42). Of 552
 generated specs with a LET's recursive section run through TLC 1.7.4's jar, 22 that linking
 reported clean, which SANY rejects, now decline, 4 that it rejected, which SANY accepts, now
-match, and none that matched declines; cases 43 to 47 are five of them.
+match, and none that matched declines; cases 43 to 47 are five of them. A section is what SANY's
+`Generator` makes it (`processRecursive`, `setRecursionFields`): from a RECURSIVE statement to the
+definition of the last operator it declares, each its own, so a constant definition before or
+after one keeps its level, as SANY at 1.7.4 and d8fb231 accepts, and one inside takes the
+section's (`levels_only_the_definitions_of_a_lets_recursive_section`).
 
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
