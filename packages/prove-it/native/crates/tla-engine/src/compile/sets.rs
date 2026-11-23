@@ -141,10 +141,15 @@ impl Compiler<'_> {
             return test.clone();
         }
         // IntervalValue.member compares an integer with the bounds, building nothing.
-        if let Some((low, high)) = set.interval.clone() {
+        if let Some(interval) = set.interval.clone() {
             return member(move |machine, element| {
-                let (low, high) = (low(machine)?, high(machine)?);
-                let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
+                let (low, high) = match interval.known {
+                    Some((low, high)) => (i64::from(low), i64::from(high)),
+                    None => {
+                        let (low, high) = ((interval.low)(machine)?, (interval.high)(machine)?);
+                        (expect_int(machine, low)?, expect_int(machine, high)?)
+                    }
+                };
                 // An empty interval holds nothing, whatever TLC asks it of.
                 if machine.store.kind_of(element) != KIND_INT {
                     if low > high {
@@ -161,6 +166,11 @@ impl Compiler<'_> {
                 member(move |machine, element| is_in_named(machine, name, element))
             }
             Some(_) => member(|machine, element| is_in_named(machine, "STRING", element)),
+            None if let Shape::Constant(id) = set.shape
+                && is_tested_set_kind(self.store.kind_of(id)) =>
+            {
+                member(move |machine, element| machine.store.is_member(element, id))
+            }
             None => {
                 let evaluate = set.eval.clone();
                 member(move |machine, element| {

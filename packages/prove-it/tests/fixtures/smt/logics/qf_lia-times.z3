@@ -1,0 +1,12 @@
+(error "line 18 column 44: logic does not support uninterpreted functions")
+(error "line 22 column 47: logic does not support uninterpreted functions")
+(error "line 24 column 43: logic does not support uninterpreted functions")
+(error "line 26 column 44: logic does not support uninterpreted functions")
+(error "line 28 column 53: logic does not support uninterpreted functions")
+(error "line 37 column 45: unknown function/constant smt__TLA____Mem")
+(error "line 46 column 71: unknown function/constant smt__TLA____Cast__Int")
+(error "line 53 column 55: unknown function/constant smt__TLA____Cast__Int")
+(error "line 62 column 54: unknown function/constant smt__TLA____Mem")
+(error "line 73 column 62: unknown function/constant smt__TLA____Cast__Int")
+(error "line 97 column 67: unknown function/constant smt__TLA____Mem")
+sat

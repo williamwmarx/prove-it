@@ -1,0 +1,21 @@
+and([
+or([NVV1, NVV4]), 
+or([NVV7]), 
+or([NVV10]),
+always(or([not NVV2, NVV3])), 
+always(or([not NVV3, not e])), 
+always(or([not NVV4, NVV5])), 
+always(or([not NVV6, t])), 
+always(or([not NVV7, NVV8])), 
+always(or([not NVV9, e])), 
+always(or([not NVV11, NVV12])), 
+always(or([not NVV12, not t])),
+always(or([not NVV3, next(NVV3)])), 
+always(or([not NVV4, next(NVV4)])), 
+always(or([not NVV7, next(NVV7)])), 
+always(or([not NVV12, next(NVV12)])),
+always(or([not NVV1, sometime(NVV2)])), 
+always(or([not NVV5, sometime(NVV6)])), 
+always(or([not NVV8, sometime(NVV9)])), 
+always(or([not NVV10, sometime(NVV11)]))]).
+

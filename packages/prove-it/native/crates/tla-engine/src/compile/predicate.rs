@@ -126,7 +126,7 @@ impl Leaf {
     }
 
     #[inline(always)]
-    fn read(&self, machine: &mut Machine<'_>) -> Outcome<Id> {
+    pub(crate) fn read(&self, machine: &mut Machine<'_>) -> Outcome<Id> {
         match self {
             Leaf::Slot(slot) | Leaf::IntSlot(slot) => Ok(machine.locals[*slot as usize]),
             Leaf::Constant(id) => Ok(*id),
@@ -341,6 +341,13 @@ fn build_equal(left: &Leaf, right: &Leaf, is_equal: bool) -> Test {
             let (variable, slot, second, constant) = (*variable, *slot, *second, *constant);
             test(move |machine| {
                 let value = apply_var2(machine, variable, slot, second)?;
+                Ok(machine.store.equals_asked(value, constant)? == is_equal)
+            })
+        }
+        (Leaf::Slot(slot) | Leaf::IntSlot(slot), Leaf::Constant(constant)) => {
+            let (slot, constant) = (*slot as usize, *constant);
+            test(move |machine| {
+                let value = machine.locals[slot];
                 Ok(machine.store.equals_asked(value, constant)? == is_equal)
             })
         }

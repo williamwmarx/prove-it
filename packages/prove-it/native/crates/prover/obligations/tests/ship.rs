@@ -470,3 +470,38 @@ fn an_applied_variable_is_tlapm_bug() {
         "{result:?}"
     );
 }
+
+// Instantiation doesn't distribute over ENABLED, so not over WF and SF: Module.Elab lambdifies
+// an instancee's definitions with each fairness operator expanded to its ENABLED form first
+// (`Expr.Action.lambdify`), so I!Fair and the ENABLED of I!En are one lambdified operator, which
+// PTL relates.
+#[test]
+fn an_instanced_fairness_is_lambdified_through_its_enabled() {
+    let inner = "---- MODULE Inner ----\nEXTENDS Integers\nVARIABLES x, y\nNext == x' = x + 1 /\\ y' = y - 1\nvars == <<x, y>>\nEn == ENABLED <<Next>>_vars\nFair == WF_vars(Next)\n====\n";
+    let main = "---- MODULE M ----\nEXTENDS Integers, TLAPS\nVARIABLE z\nI == INSTANCE Inner WITH x <- z, y <- z\nTHEOREM I!Fair <=> (<>[]I!En => []<><<I!Next>>_(I!vars))\nBY PTL DEF I!Fair, I!En\n====\n";
+    let obligations = get_module_obligations("M", main.to_owned(), &mut |name| match name {
+        "Inner" => Some(ObligationSource {
+            file: "Inner.tla".to_owned(),
+            source: inner.to_owned(),
+        }),
+        "TLAPS" => Some(ObligationSource {
+            file: "TLAPS.tla".to_owned(),
+            source: TLAPS_MODULE.to_owned(),
+        }),
+        _ => None,
+    });
+    let cited = obligations
+        .iter()
+        .find(|obligation| obligation.text.contains("PTL \nPROVE"))
+        .expect("an obligation cites PTL");
+    let text = &cited.text;
+    assert!(
+        text.matches("?EnabledWrapper(LAMBDA").count() == 2 && !text.contains("WF_"),
+        "{text}"
+    );
+    println!(
+        "LS4: {}",
+        collapse_whitespace(&encode(cited, "ls4").expect("the obligation encodes"))
+    );
+    println!("TEXT: {text}");
+}

@@ -5167,15 +5167,78 @@ fn opens_the_dump_before_it_reads_the_configuration() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// tests/dump-dot: `-dump dot` with the options in each spec's `.args`, TLC's output beside each at
+// d8fb231 under `-fp 7`, and the graph it writes: steps of three actions, labelled, colored with
+// their legend, strict and snapshotted; levels of more states than a Java HashSet holds before
+// it grows, whose ranks TLC writes in its order; an invariant violated part way through a state's
+// steps; an action with parameters, colored; and every option on a spec of one action.
+#[test]
+fn writes_the_state_graph_as_tlc() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dump-dot");
+    let read = |file: String| std::fs::read_to_string(directory.join(&file)).expect(&file);
+    for (name, exit) in [
+        ("DotActions", 0),
+        ("DotLevels", 0),
+        ("DotViolated", 12),
+        ("DotParameters", 0),
+        ("DotOptions", 0),
+    ] {
+        let word = read(format!("{name}.args"));
+        let word = word.trim();
+        let (output, run) = run_front(
+            &format!("dump-dot-{name}"),
+            &read(format!("{name}.tla")),
+            &read(format!("{name}.cfg")),
+            &[
+                "-workers",
+                "1",
+                "-nowarning",
+                "-seed",
+                "4",
+                "-fp",
+                "7",
+                "-lncheck",
+                "final",
+                "-dump",
+                word,
+                "graph",
+            ],
+        );
+        let graph = std::fs::read_to_string(run.join("graph.dot")).unwrap_or_default();
+        assert_eq!(
+            (
+                output.status.code(),
+                get_untimed(&stdout(&output)),
+                graph.as_str()
+            ),
+            (
+                Some(exit),
+                read(format!("{name}.txt")),
+                read(format!("{name}.dot")).as_str()
+            ),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // TLC's last snapshot is the graph it closes.
+        if word.contains("snapshot") {
+            let snapshot =
+                std::fs::read_to_string(run.join("graph_snapshot.dot")).expect("a snapshot");
+            assert_eq!(snapshot, graph, "{name}");
+        }
+        std::fs::remove_dir_all(run).expect("removed");
+    }
+}
+
 #[test]
 fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nLive == <>(x = 2)\nInv == x > 0\n====\n";
     for (test, config, args, reason) in [
+        // TLC writes the behavior graphs too (`DotLivenessStateWriter`).
         (
-            "dump-dot",
-            "INIT Init\nNEXT Next\n",
+            "dump-dot-temporal",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
             &["-dump", "dot", "states"][..],
-            "-dump dot",
+            "-dump dot with temporal properties",
         ),
         (
             "dump-metadir",
@@ -5204,6 +5267,26 @@ fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
         assert_eq!(
             stderr(&output),
             format!("prove-it: not native yet: {reason}\n"),
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// A state holding `[a : Int, b : {}]`, which TLC prints by its parts and the store holds as its
+// enumeration, `{}`: TLC writes the set by its parts, which neither dump can.
+#[test]
+fn declines_a_dump_of_a_set_tlc_prints_by_its_parts() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLE x\nInit == x = [a : Int, b : {}]\nNext == UNCHANGED x\n====\n";
+    for (test, args) in [
+        ("dump-collapsed", &["-dump", "states"][..]),
+        ("dump-dot-collapsed", &["-dump", "dot", "states"]),
+    ] {
+        let (output, directory) = run_spec_with(test, spec, "INIT Init\nNEXT Next\n", args);
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            "prove-it: not native yet: dumping a state that may hold a set TLC prints by its parts\n",
             "{test}"
         );
         std::fs::remove_dir_all(directory).expect("removed");
