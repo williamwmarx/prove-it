@@ -418,7 +418,6 @@ fn prints_each_provers_result_in_toolbox_mode() {
         "IsabelleMethods",
         "IsaReuse",
         "EnabledLevel",
-        "TrivialMethod",
     ] {
         let args = ["--toolbox", "0", "0", &format!("{name}.tla")];
         let output = run("tlapm-cli", &[&["--threads", "1"], &args[..]].concat());
@@ -438,6 +437,31 @@ fn prints_each_provers_result_in_toolbox_mode() {
                 )
             ),
             "{name}"
+        );
+    }
+}
+
+// `BY ONLY Trivial` settles each obligation without a backend, so no two decisions are ever in
+// flight and four threads print what one does.
+#[test]
+fn prints_the_trivial_methods_results_in_toolbox_mode() {
+    for threads in ["1", "4"] {
+        let output = run(
+            "tlapm-cli",
+            &[
+                "--threads",
+                threads,
+                "--toolbox",
+                "0",
+                "0",
+                "TrivialMethod.tla",
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0), "{threads}");
+        assert_eq!(
+            without_time_used(&stderr(&output)),
+            without_time_used(&read_recording("tlapm-cli", "TrivialMethod.toolbox")),
+            "{threads}"
         );
     }
 }
