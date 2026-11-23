@@ -19,6 +19,7 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::coverage;
+use crate::dot::DotOptions;
 use crate::dump_trace::{TraceDumps, write};
 use crate::failure::{
     ErrorStop, deadlock_atom_stack, print_assumption_failure, print_call_stack, print_failure,
@@ -535,6 +536,10 @@ pub(crate) struct Relay<'ir> {
     is_dumped: bool,
     /// Whether the dump holds every state, or why it doesn't, once the search handed them over.
     dumped: Option<Result<(), &'static str>>,
+    /// Under `-dump dot`, its options, and the graph once the search handed it over, or why the
+    /// binary doesn't write it as TLC does.
+    dot: Option<DotOptions>,
+    dotted: Option<Result<(String, bool), &'static str>>,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     /// Whether a trace's states carry plain data (`Host::is_plain`).
@@ -586,6 +591,8 @@ impl<'ir> Relay<'ir> {
             dfid: None,
             is_dumped: false,
             dumped: None,
+            dot: None,
+            dotted: None,
             ir,
             is_tool,
             is_plain,
@@ -1188,6 +1195,41 @@ impl Reporter for Relay<'_> {
         }
     }
 
+    fn undotted(&mut self, reason: &'static str) {
+        if self.dot.is_some() {
+            self.dotted = Some(Err(reason));
+        }
+    }
+
+    fn dotted(&mut self, store: &Store, log: &tla_engine::search::DotLog) {
+        let Some(options) = self.dot else {
+            return;
+        };
+        let ir = self.ir;
+        let names: Vec<String> = ir
+            .model
+            .actions
+            .iter()
+            .map(|action| ir.texts[action.name as usize].to_string())
+            .collect();
+        let mut state_text = |state: &[Id]| -> Result<String, &'static str> {
+            if state.len() != ir.variables.len() {
+                return Err("-dump dot of states other than the variables' values");
+            }
+            let texts = state
+                .iter()
+                .map(|&id| get_dumped_text(store, id))
+                .collect::<Option<Vec<_>>>()
+                .ok_or("dumping a value whose text depends on how TLC built it")?;
+            Ok(format_texts(ir, &texts))
+        };
+        let dotted = crate::dot::format(log, &options, &names, &mut state_text);
+        if let Ok(text) = &dotted {
+            let _ = self.sender.send(Event::Dumped(text.clone()));
+        }
+        self.dotted = Some(dotted.map(|text| (text, !log.writes.is_empty())));
+    }
+
     // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
     // a blank line.
     fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {
@@ -1206,14 +1248,7 @@ impl Reporter for Relay<'_> {
             .try_for_each(|(index, state)| {
                 let texts = state
                     .iter()
-                    .map(|&id| {
-                        let mut text = Vec::new();
-                        // TLC fingerprints a state, which normalizes it, before it writes it.
-                        is_printable_normalized(store, id)
-                            .then(|| write_value(store, id, &mut text).ok())
-                            .flatten()
-                            .and_then(|()| String::from_utf16(&text).ok())
-                    })
+                    .map(|&id| get_dumped_text(store, id))
                     .collect::<Option<Vec<_>>>()
                     .ok_or("dumping a value whose text depends on how TLC built it")?;
                 text.push_str(&format!(
@@ -1231,6 +1266,61 @@ impl Reporter for Relay<'_> {
         }
         self.dumped = Some(written);
     }
+}
+
+// TLC's text of a value of a state it dumps, which it fingerprinted first, normalizing it, where
+// the store words it as TLC does.
+fn get_dumped_text(store: &Store, id: Id) -> Option<String> {
+    let mut text = Vec::new();
+    is_printable_normalized(store, id)
+        .then(|| write_value(store, id, &mut text).ok())
+        .flatten()
+        .and_then(|()| String::from_utf16(&text).ok())
+}
+
+// Why the binary doesn't write the graph `-dump dot` asks for as TLC does, if it doesn't.
+fn decline_dot(ir: &tla_ir::Ir, dot: &DotOptions) -> Option<&'static str> {
+    let model = &ir.model;
+    if !model.live_formula.is_empty() {
+        // TLC writes the behavior graphs too (`DotLivenessStateWriter`).
+        return Some("-dump dot with temporal properties");
+    }
+    if model.alias.is_some() {
+        return Some("-dump dot with an ALIAS");
+    }
+    if ir.variables.is_empty() {
+        return Some("-dump dot of a spec without variables");
+    }
+    if dot.constrained {
+        // TLC writes a step to each state a constraint leaves out, and to each it finds a
+        // conjunct false of once every variable is assigned (`Tool.processUnsatisfied`).
+        let is_free = model.constraints.is_empty()
+            && model.action_constraints.is_empty()
+            && model
+                .next
+                .is_some_and(|next| crate::dot::is_free_of_guards(ir, next));
+        if !is_free {
+            return Some("-dump dot,constrained of steps to states TLC leaves out");
+        }
+    }
+    if dot.is_labelled() && model.actions.is_empty() {
+        return Some("-dump dot labels of steps of no action of TLC's");
+    }
+    // `Action.getInvocationSignature` writes the values of the action's parameters too.
+    let is_parameterized = model.actions.iter().any(|action| {
+        action.scope.is_some()
+            || action.definition.is_some_and(|definition| {
+                let node = ir.definitions[definition as usize];
+                matches!(&ir.nodes.arena[node as usize].kind,
+                    tla_ir::NodeKind::Definition(definition)
+                        if !matches!(&definition.form,
+                            tla_ir::DefinitionForm::Operator(params) if params.is_empty()))
+            })
+    });
+    if dot.action_labels && is_parameterized {
+        return Some("-dump dot,actionlabels of an action with parameters");
+    }
+    None
 }
 
 // The trace evaluator's computation of a constant definition TLC computes as it starts, which the
@@ -1427,6 +1517,11 @@ fn check_spec(
     if recover.is_some() && dump.is_some() {
         return report_not_native(printer, "-recover with -dump");
     }
+    // `-dump dot,...` writes the state graph (`DotStateWriter`), with the options its word holds.
+    let dot = match dump {
+        Some([word, _]) => Some(DotOptions::parse(word)),
+        _ => None,
+    };
     let dump = match dump {
         None => None,
         Some([.., file]) if file.starts_with("${metadir}") => {
@@ -1454,8 +1549,24 @@ fn check_spec(
                     &format!("Error: Given file name {path} for dumping states invalid."),
                 );
             }
-            if values.len() > 1 {
-                return report_not_native(printer, "-dump dot");
+            if let [word, _] = values {
+                // TLC's workers, its depth-first search and its simulator write the graph in
+                // orders of their own.
+                let why = if workers > 1 {
+                    Some("-dump dot with several workers")
+                } else if dfid.is_some() {
+                    Some("-dump dot with -dfid")
+                } else if simulation.is_some() {
+                    Some("-dump dot in a simulation")
+                } else if DotOptions::parse(word).snapshot && path.matches(".dot").count() > 1 {
+                    // TLC names the snapshot by replacing every ".dot" of the path.
+                    Some("-dump dot,snapshot into a path with .dot before its suffix")
+                } else {
+                    None
+                };
+                if let Some(why) = why {
+                    return report_not_native(printer, why);
+                }
             }
             // A run that declines later, as a search can, puts the file back as it found it
             // (`tla_values::written::restore`). The journal keeps a file it can read whole, of
@@ -2322,6 +2433,14 @@ fn check_spec(
             Err(_) => {}
         }
     }
+    if let Some(dot) = &dot {
+        if let Some(why) = decline_dot(&ir, dot) {
+            return report_not_native(printer, why);
+        }
+        // An edge that names or colors its action is a step the search takes through TLC's
+        // actions, in their order, as TLC's `getNextStates` takes them.
+        ir.model.is_labelled |= dot.is_labelled();
+    }
     // Shared with the engine's computation of a constant definition it fails on
     // (`Settings::adopter`).
     let ir = Arc::new(ir);
@@ -2455,7 +2574,8 @@ fn check_spec(
             .host
             .get_variable("PROVE_IT_TEST_EVALUATIONS")
             .and_then(|evaluations| evaluations.parse().ok()),
-        is_dumped,
+        is_dumped: is_dumped && dot.is_none(),
+        is_dot_dumped: dot.is_some(),
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
         json_files: json_files.clone(),
@@ -2483,7 +2603,7 @@ fn check_spec(
         .iter()
         .any(|substitution| substitution.module.is_some());
     let ir_ref: &tla_ir::Ir = &ir;
-    let (outcome, assumed_printed, dumped) = alongside(
+    let (outcome, assumed_printed, (dumped, dotted)) = alongside(
         move || {
             let ir = ir_ref;
             let mut relay = Relay::new(
@@ -2495,12 +2615,20 @@ fn check_spec(
                 front.startup_messages,
             );
             relay.is_periodic = is_periodic;
-            relay.is_dumped = is_dumped;
+            relay.is_dumped = is_dumped && dot.is_none();
+            relay.dot = dot;
             relay.is_scoped_substituted = is_scoped_substituted;
             relay.dfid = settings.dfid;
             relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
-            (outcome, relay.assumed_printed, relay.dumped)
+            // Under -dump dot the graph stands for the dump.
+            let (dumped, dotted) = match relay.dotted {
+                Some(Ok(graph)) => (Some(Ok(())), Some(graph)),
+                Some(Err(reason)) => (Some(Err(reason)), None),
+                None if dot.is_some() => (None, None),
+                None => (relay.dumped, None),
+            };
+            (outcome, relay.assumed_printed, (dumped, dotted))
         },
         || {
             loop {
@@ -2716,6 +2844,24 @@ fn check_spec(
             );
         }
         _ => {}
+    }
+    // `DotStateWriter.snapshot` copies the graph after each state it writes, closed as it closes
+    // it, so the last copy is the graph, beside it under the path with ".dot" replaced.
+    if let (Some(dot), Some((text, true)), Some(path)) = (&dot, &dotted, &dump)
+        && dot.snapshot
+    {
+        let snapshot = path.replace(".dot", "_snapshot.dot");
+        if printer.host.is_file_system()
+            && tla_values::written::keep_file(Path::new(&snapshot)).is_err()
+        {
+            return report_not_native(printer, "-dump dot,snapshot into a file it can't keep");
+        }
+        if !printer
+            .host
+            .write_file(Path::new(&snapshot), text.as_bytes(), false)
+        {
+            return report_not_native(printer, "-dump dot,snapshot into a file it can't create");
+        }
     }
     // TLC counts into its cost model as it rebuilds the trace of each violation -continue carries
     // it past, which the coverage pass doesn't count.

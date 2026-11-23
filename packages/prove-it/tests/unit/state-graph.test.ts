@@ -91,11 +91,19 @@ const getDeclined = (args: string[]) => {
 };
 
 describe("the CLI takes TLC's -dump flag", () => {
-  it("adds the extension of the format to the file name, and declines dot", () => {
+  // TLC's graph at d8fb231 under -fp 0, which its fingerprints name the nodes by.
+  it("adds the extension of the format to the file name, and writes the dot graph", () => {
     const directory = mkdtempSync(join(tmpdir(), "prove-it-dump-"));
-    expect(getDeclined(["-dump", "dot,actionlabels", join(directory, "Counter")])).toBe(
-      "-dump dot",
-    );
+    const dotted = runCli([
+      "-noGenerateSpecTE",
+      "-fp",
+      "0",
+      "-dump",
+      "dot,actionlabels",
+      join(directory, "Counter"),
+    ]);
+    expect(dotted.status).toBe(11);
+    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
     runCli(["-dump", join(directory, "Counter")]);
     expect(readFileSync(join(directory, "Counter.dump"), "utf8")).toBe(
       readFileSync(join(import.meta.dirname, "../fixtures/state-graph/Counter.dump"), "utf8"),
