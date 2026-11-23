@@ -8783,6 +8783,27 @@ reaches no verdict (`unknown`), where the port's own reader rejected every spell
 but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/conformance/ptl`'s
 `.trp` recordings and `syntax-*.ls4`).
 
+Zenon's `subseteq_cap` and `not_subseteq_cap` rules (`ext_tla.ml`'s `newnodes_prop`) build both
+subsets from the intersection's second set, where `Zenon.thy`'s lemmas take one from each, and
+the second is unsound: Zenon proves `U \subseteq S /\ U \subseteq T => U \subseteq S \cap T`
+with both branches assuming `~(U \subseteq T)` (the suite's `backends/zenon/sets/subseteq_cap.znn`;
+`tests/fixtures/zenon/rules/not_subseteq_cap`, its recorded proof), and `U \subseteq T =>
+U \subseteq S \cap T` the same way. The port's search finds the proof and its check refuses it;
+the port answered `unknown`, and now declines, listed above.
+
+The backend inputs are counted as the tlapm CLI treats a decision: one the SMT port can't take
+(a script outside the SMT-LIB tlapm's encoder writes, `stop: unsupported`) and a proof Zenon
+finds that the check refuses are declines, which the port of tla-ts's backend script printed as
+`unknown` before: the five `backends/z3/options` scripts (`--smt-logic` UF, QF_UF, QF_LIA,
+UFLIA and BOGUS), `backends/z3/functions/fcn_two_args.smt` (an ill-sorted `let` of tlapm's
+`elim_multiarg`, which Z3 drops) and `backends/z3/sets/setof_two_bounds.smt`, the empty file
+tlapm hands Z3 for a set image over two bounds, on which the port printed Z3's `unknown` by
+chance. `backends/ls4/syntax/sometime_false.ls4`
+is set aside, neither matched nor wrong, as the two Zenon memory-limit runs are: the port prints
+LS4's `sat`, as the suite's recording of LS4 does (`ptl_to_trp` prints the `False` inside the
+renamed clause as an atom; the `.trp` recordings of `translate` show the clause), and the suite's
+header overrides the recording with `correct: unsat`, calling it a tlapm bug.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8805,7 +8826,8 @@ but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/co
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
 | with LS4's input read as ptl_to_trp and LS4 read it | 771 / 577 / 1 | 337 / 1,053 / 8 |
-| with the Trivial method's untreated obligation | 772 / 577 / 0 | 337 / 1,053 / 8 |
+| counting the CLI's declines, with a refused Zenon proof one | 771 / 577 / 1 | 336 / 1,061 / 0 |
+| with the Trivial method's untreated obligation | 772 / 577 / 0 | 336 / 1,061 / 0 |
 
 ### Declines
 
@@ -8833,7 +8855,17 @@ but its encoder's, exit 1, and read `False` as an atom at the top too (`tests/co
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
   `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
   - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
-    limit, and an input a back end can't read.
+    limit, and an input a back end can't read;
+  - a proof Zenon finds that the port's check refuses (`zenon declined: a proof Zenon finds that
+    the port's check refuses`): Zenon's `not_subseteq_cap` rule (`ext_tla.ml`'s `newnodes_prop`)
+    assumes `~(U \subseteq T)` on both branches where `Zenon.thy`'s lemma has `~(U \subseteq S)`
+    and `~(U \subseteq T)`, so Zenon proves `U \subseteq T => U \subseteq S \cap T` and tlapm
+    reports it proved; the port's search finds the proof as Zenon does, its own check of the
+    proof (`crates/prover/zenon/src/check`, which takes each rule's branches from the lemma)
+    refuses it, and the port prints no unsound proof. The check refuses one other proof the
+    search finds, of `tests/fixtures/zenon-encoder/Encoder-7.znn` (a record's field and a
+    disequality of strings, one with a backslash), which the TypeScript answered `unknown` on too
+    (`decisions.txt`'s line with neither a proof nor a stop).
 - **What Prove It can't try as tlapm does:** a method with no back end in Prove It, a method
   whose encoder can't take the obligation (`smt can't encode …`), and an Isabelle method, modifier
   or combinator the Isabelle port doesn't implement, where tlapm would try it: a method

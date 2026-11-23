@@ -910,6 +910,27 @@ fn names_the_command_lines_module_as_tlapm_does() {
     assert_eq!(stderr(&output), expected.replace("./Notes.tla", &absolute));
 }
 
+// Zenon's not_subseteq_cap rule (ext_tla.ml's newnodes_prop) assumes ~(U \subseteq T) on both
+// branches where Zenon.thy's lemma has ~(U \subseteq S) and ~(U \subseteq T), so Zenon proves
+// U \subseteq T => U \subseteq S \cap T and tlapm reports it proved. The port's search finds
+// Zenon's proof, its check refuses it, and the run declines rather than print an unsound proof.
+#[test]
+fn declines_a_zenon_proof_the_check_refuses() {
+    let directory = write_files(&[(
+        "M.tla",
+        "---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM ASSUME NEW U, NEW S, NEW T, U \\subseteq T PROVE U \\subseteq S \\cap T\n  BY Zenon\n====\n",
+    )]);
+    let output = run_in(
+        &directory,
+        &["--toolbox", "0", "0", "--threads", "1", "M.tla"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}zenon declined: a proof Zenon finds that the port's check refuses\n")
+    );
+}
+
 // Tlapm_args gathers the command line's modules last first, and Tlapm_lib.read_new_modules adds
 // each to a map by its name, so the first of two with one name is the one tlapm proves.
 #[test]
