@@ -1,0 +1,2 @@
+(p unless q) & always ~q
+

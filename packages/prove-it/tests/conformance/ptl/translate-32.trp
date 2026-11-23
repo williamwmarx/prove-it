@@ -1,0 +1,3 @@
+and([
+or([p(skolem1), q])]).
+

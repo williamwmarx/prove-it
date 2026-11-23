@@ -1,0 +1,5 @@
+and([
+or([NVV1]),
+always(or([not NVV2, False])),
+always(or([not NVV1, sometime(NVV2)]))]).
+
