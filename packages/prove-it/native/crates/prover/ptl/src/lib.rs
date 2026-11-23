@@ -4,5 +4,6 @@
 mod decide;
 mod sat;
 mod tableau;
+pub mod translate;
 
 pub use decide::decide;

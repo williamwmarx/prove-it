@@ -235,6 +235,12 @@ pub fn parse_theory(text: &str) -> Res<TheoryText> {
         tokens: tokenize(text)?,
         position: 0,
     };
+    // A markup command before the header, as Isabelle/TLA+'s own theories start.
+    if parser.is_name() && !parser.is_word("theory") {
+        return Err(Error::Unsupported(
+            "a theory beyond the consts and the one lemma tlapm writes a goal as".into(),
+        ));
+    }
     parser.expect_word("theory")?;
     let theory_name = parser.name()?;
     parser.expect_word("imports")?;
@@ -242,6 +248,18 @@ pub fn parse_theory(text: &str) -> Res<TheoryText> {
         parser.name()?;
     }
     parser.expect_word("begin")?;
+    // Isabelle.thy_header's checking theory, which ML_command markers the obligations' proofs
+    // in, and anything else than the goal theory Isabelle.thy_temp writes.
+    if parser.is_word("ML_command") {
+        return Err(Error::Unsupported(
+            "the checking theory tlapm writes for a module's proofs".into(),
+        ));
+    }
+    if parser.is_name() && !parser.is_word("consts") && !parser.is_word("lemma") {
+        return Err(Error::Unsupported(
+            "a theory beyond the consts and the one lemma tlapm writes a goal as".into(),
+        ));
+    }
     let mut consts = Vec::new();
     if parser.is_word("consts") {
         parser.position += 1;
@@ -292,6 +310,11 @@ pub fn parse_theory(text: &str) -> Res<TheoryText> {
         parser.position += 1;
         parser.expect_word("assms")?;
     }
+    if parser.is_word("proof") {
+        return Err(Error::Unsupported(
+            "Isabelle's structured Isar proof".into(),
+        ));
+    }
     parser.expect_word("by")?;
     let method_start = parser.position;
     while parser.position < parser.tokens.len() && !parser.is_word("qed") {
@@ -299,6 +322,11 @@ pub fn parse_theory(text: &str) -> Res<TheoryText> {
     }
     let method = parser.tokens[method_start..parser.position].to_vec();
     parser.expect_word("qed")?;
+    if parser.is_word("lemma") {
+        return Err(Error::Unsupported(
+            "a theory beyond the consts and the one lemma tlapm writes a goal as".into(),
+        ));
+    }
     parser.expect_word("end")?;
     if parser.position != parser.tokens.len() {
         return Err(parser.syntax_error());

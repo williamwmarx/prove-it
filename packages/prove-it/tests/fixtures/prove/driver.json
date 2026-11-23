@@ -1520,8 +1520,8 @@
         "id": 1,
         "location": "3:15:3:17",
         "text": "ASSUME Trivial \nPROVE  1 = 1\n",
-        "status": "proved",
-        "prover": "trivial"
+        "status": "failed",
+        "reason": "the Trivial method records no result"
       }
     ]
   },

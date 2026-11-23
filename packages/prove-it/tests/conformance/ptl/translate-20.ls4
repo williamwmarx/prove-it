@@ -1,0 +1,1 @@
+always (! [X] (p | next q))

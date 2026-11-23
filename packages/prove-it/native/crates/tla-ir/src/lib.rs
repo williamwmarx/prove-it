@@ -761,11 +761,11 @@ impl Definition {
     /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
     pub const NORMALIZED: i32 = 32;
     /// An operator definition whose body is a numeral or a string, which TLC holds as the value it
-    /// gave the literal and never computes as it starts (`SymbolNodeValueLookupProvider.lookup`):
-    /// not an INSTANCE's copy with substitutions, whose body is a substitution, and not one the
-    /// configuration substitutes for another definition, which TLC computes in that one's name
-    /// (`processConstantDefns`); the front end counts any name but a declared constant of the root
-    /// module as one.
+    /// gave the literal and never computes as it starts (`SymbolNodeValueLookupProvider.lookup`),
+    /// an INSTANCE's copy with substitutions of one too, as `lookup` reads the literal through the
+    /// copy's `SubstInNode`; not one the configuration substitutes for another definition, which
+    /// TLC computes in that one's name (`processConstantDefns`); the front end counts any name but
+    /// a declared constant of the root module as one.
     pub const LITERAL: i32 = 64;
     /// A copy of a constant definition TLC computes as it starts, which a name the configuration
     /// substitutes it for reads: that name's lookup finds the definition's OpDefNode, not the

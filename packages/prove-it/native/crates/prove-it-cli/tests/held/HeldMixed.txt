@@ -1,0 +1,125 @@
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Error: Evaluating invariant Inv failed.
+Attempted to compare integer 1 with non-integer:
+[type |-> "b", n |-> 1, m |-> 1]
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = {}
+
+State 2: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = {[type |-> "a", n |-> 1]}
+
+State 3: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2]}
+
+State 4: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = {[type |-> "a", n |-> 1], [type |-> "a", n |-> 2], [type |-> "a", n |-> 3]}
+
+State 5: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4] }
+
+State 6: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5] }
+
+State 7: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1] }
+
+State 8: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2] }
+
+State 9: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2],
+  [type |-> "b", n |-> 1, m |-> 3] }
+
+State 10: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2],
+  [type |-> "b", n |-> 1, m |-> 3],
+  [type |-> "b", n |-> 2, m |-> 1] }
+
+State 11: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2],
+  [type |-> "b", n |-> 1, m |-> 3],
+  [type |-> "b", n |-> 2, m |-> 1],
+  [type |-> "b", n |-> 2, m |-> 2] }
+
+State 12: <Next line 6, col 31 to line 6, col 86 of module HeldMixed>
+/\ probe = [type |-> "a", n |-> 1]
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2],
+  [type |-> "b", n |-> 1, m |-> 3],
+  [type |-> "b", n |-> 2, m |-> 1],
+  [type |-> "b", n |-> 2, m |-> 2],
+  [type |-> "b", n |-> 2, m |-> 3] }
+
+State 13: <Next line 7, col 12 to line 7, col 55 of module HeldMixed>
+/\ probe = 1
+/\ msgs = { [type |-> "a", n |-> 1],
+  [type |-> "a", n |-> 2],
+  [type |-> "a", n |-> 3],
+  [type |-> "a", n |-> 4],
+  [type |-> "a", n |-> 5],
+  [type |-> "b", n |-> 1, m |-> 1],
+  [type |-> "b", n |-> 1, m |-> 2],
+  [type |-> "b", n |-> 1, m |-> 3],
+  [type |-> "b", n |-> 2, m |-> 1],
+  [type |-> "b", n |-> 2, m |-> 2],
+  [type |-> "b", n |-> 2, m |-> 3] }
+
+123916 states generated, 22529 distinct states found, 10 states left on queue.
+The depth of the complete state graph search is 13.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 11 and the 95th percentile is 4).

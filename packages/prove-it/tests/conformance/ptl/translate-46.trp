@@ -1,0 +1,4 @@
+and([
+always(or([p])), 
+always(or([p, q]))]).
+

@@ -29,10 +29,30 @@ const VARYING: &[&str] = &[
     "Finished checking temporal properties",
 ];
 
+/// The line that starts checking the temporal properties of several branches, which ends with
+/// the time TLC starts at, as `at ({time})` in a fixture: its count of branches is TLC's.
+fn get_untimed_line(line: &str) -> String {
+    match line.rfind(" at (") {
+        Some(at)
+            if line.starts_with("Checking ")
+                && line.contains(" branches of temporal properties ")
+                && line.ends_with(')') =>
+        {
+            format!("{} at ({{time}})", &line[..at])
+        }
+        _ => line.to_owned(),
+    }
+}
+
 fn get_untimed_lines(text: &str, directory: &str) -> String {
     text.lines()
         .filter(|line| !VARYING.iter().any(|varying| line.starts_with(varying)))
-        .map(|line| format!("{}\n", line.replace(directory, "{directory}")))
+        .map(|line| {
+            format!(
+                "{}\n",
+                get_untimed_line(line).replace(directory, "{directory}")
+            )
+        })
         .collect()
 }
 

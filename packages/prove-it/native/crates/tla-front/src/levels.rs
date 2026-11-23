@@ -1027,8 +1027,10 @@ impl<'a> LevelAnalyzer<'a> {
         body: &Expr,
         scope: &Scope,
     ) -> Result<LevelData> {
-        let sections = get_recursive_sections(definitions, recursive);
-        for member in sections.iter().flatten() {
+        for member in get_recursive_sections(definitions, recursive)
+            .iter()
+            .flatten()
+        {
             let mut nested = Vec::new();
             collect_let_definitions(&member.body, &mut nested);
             let mut lets = self.let_section_lets.borrow_mut();
@@ -1067,7 +1069,7 @@ impl<'a> LevelAnalyzer<'a> {
             }
         }
         if let Some(level) =
-            self.get_recursive_section_level(definitions, &sections, body, &inner)?
+            self.get_recursive_section_level(definitions, recursive, body, &inner)?
         {
             data.level = level;
         }
@@ -1086,10 +1088,11 @@ impl<'a> LevelAnalyzer<'a> {
     fn get_recursive_section_level(
         &self,
         definitions: &[Rc<Definition>],
-        sections: &[Vec<Rc<Definition>>],
+        recursive: &[Rc<Declaration>],
         body: &Expr,
         scope: &Scope,
     ) -> Result<Option<u8>> {
+        let sections = get_recursive_sections(definitions, recursive);
         if sections.is_empty() {
             return Ok(None);
         }
@@ -1118,51 +1121,66 @@ impl<'a> LevelAnalyzer<'a> {
                 levels.remove(&(Rc::as_ptr(definition) as usize));
             }
         }
-        let mut fails = false;
-        for section in sections {
-            for definition in section.iter().filter(|definition| definition.is_recursive) {
-                let formals: Vec<Formal> = get_formals(definition);
-                self.definition_levels.borrow_mut().insert(
-                    Rc::as_ptr(definition) as usize,
-                    (
-                        definition.clone(),
-                        Rc::new(OperatorLevels {
-                            data: LevelData::default(),
-                            name: definition.name.clone(),
-                            max_levels: vec![ACTION_LEVEL; formals.len()],
-                            weights: vec![1; formals.len()],
-                            min_max_levels: vec![Vec::new(); formals.len()],
-                            conditions: FastSet::default(),
-                            non_leibniz: FastSet::default(),
-                            formals,
-                        }),
-                    ),
-                );
-            }
-            // A RECURSIVE statement adds its operators to the section as it declares them
-            // (`Generator`), so they are checked before the definitions after it.
-            let ordered = section
-                .iter()
-                .filter(|definition| definition.is_recursive)
-                .chain(section.iter().filter(|definition| !definition.is_recursive));
-            let ordered: Vec<&Rc<Definition>> = ordered.collect();
-            if self.fails_in_first_pass(&ordered, scope)
-                || self.fails_in_second_pass(&ordered, scope)
-            {
-                fails = true;
-                break;
-            }
+        for definition in sections
+            .iter()
+            .flatten()
+            .filter(|definition| definition.is_recursive)
+        {
+            let formals: Vec<Formal> = get_formals(definition);
+            self.definition_levels.borrow_mut().insert(
+                Rc::as_ptr(definition) as usize,
+                (
+                    (*definition).clone(),
+                    Rc::new(OperatorLevels {
+                        data: LevelData::default(),
+                        name: definition.name.clone(),
+                        max_levels: vec![ACTION_LEVEL; formals.len()],
+                        weights: vec![1; formals.len()],
+                        min_max_levels: vec![Vec::new(); formals.len()],
+                        conditions: FastSet::default(),
+                        non_leibniz: FastSet::default(),
+                        formals,
+                    }),
+                ),
+            );
         }
-        // The definitions of no section, checked as the LET names them.
-        let level = if fails
+        // A RECURSIVE statement adds its operators to the section as it declares them
+        // (`Generator.processRecursive`), so they are checked first, in the order they are
+        // declared, and then the definitions after them. Each section is checked in turn, and the
+        // definitions outside every section as they are named.
+        let get_declared_index = |definition: &Rc<Definition>| {
+            recursive
+                .iter()
+                .position(|declaration| declaration.name == definition.name)
+        };
+        let fails_in_section = |section: &Vec<&Rc<Definition>>| {
+            let mut operators: Vec<&Rc<Definition>> = section
+                .iter()
+                .copied()
+                .filter(|definition| definition.is_recursive)
+                .collect();
+            operators.sort_by_key(|definition| get_declared_index(definition));
+            let ordered: Vec<&Rc<Definition>> = operators
+                .into_iter()
+                .chain(
+                    section
+                        .iter()
+                        .copied()
+                        .filter(|definition| !definition.is_recursive),
+                )
+                .collect();
+            self.fails_in_first_pass(&ordered, scope) || self.fails_in_second_pass(&ordered, scope)
+        };
+        let is_in_section = |definition: &Rc<Definition>| {
+            sections
+                .iter()
+                .flatten()
+                .any(|member| Rc::ptr_eq(member, definition))
+        };
+        let level = if sections.iter().any(fails_in_section)
             || definitions
                 .iter()
-                .filter(|definition| {
-                    !sections
-                        .iter()
-                        .flatten()
-                        .any(|member| Rc::ptr_eq(member, definition))
-                })
+                .filter(|definition| !is_in_section(definition))
                 .any(|definition| self.analyze_definition(definition, scope).is_err())
         {
             None
@@ -2209,40 +2227,42 @@ pub fn get_section_lets(module: &Module) -> FastSet<usize> {
     lets
 }
 
-/// A LET's recursive sections as SANY's generator makes them: one starts at a RECURSIVE statement
-/// that no declaration before it leaves undefined (`processRecursive`), and holds each definition
-/// that starts while one is (`setOpDefNodeRecursionFields`), up to the definition of the last.
-fn get_recursive_sections(
-    definitions: &[Rc<Definition>],
+/// A LET's recursive sections as SANY's `Generator` makes them (`processRecursive`,
+/// `setRecursionFields`): a RECURSIVE statement opens one where every operator declared before it
+/// is defined, and each definition made while a declared operator is still to be defined belongs
+/// to it, the definition of the last such operator included. A definition before the statement,
+/// or after its operators are all defined, is in no section.
+fn get_recursive_sections<'a>(
+    definitions: &'a [Rc<Definition>],
     recursive: &[Rc<Declaration>],
-) -> Vec<Vec<Rc<Definition>>> {
-    let position = |location: &Location| (location.line, location.column);
-    let mut declarations: Vec<(u32, u32)> = recursive
-        .iter()
-        .map(|declaration| position(&declaration.location))
-        .collect();
-    declarations.sort_unstable();
+) -> Vec<Vec<&'a Rc<Definition>>> {
+    let get_key = |position: crate::ast::Position| (position.line, position.column);
+    let mut declarations: Vec<&Rc<Declaration>> = recursive.iter().collect();
+    declarations.sort_by_key(|declaration| get_key(declaration.location.position()));
     let mut declarations = declarations.into_iter().peekable();
-    let mut sections: Vec<Vec<Rc<Definition>>> = Vec::new();
-    let mut unresolved = 0usize;
+    let mut unresolved: Vec<Name> = Vec::new();
+    let mut sections: Vec<Vec<&Rc<Definition>>> = Vec::new();
     for definition in definitions {
-        let start = position(&definition.location);
-        while declarations.next_if(|&declared| declared < start).is_some() {
-            if unresolved == 0 {
+        let start = get_key(definition.location.position());
+        while let Some(declaration) =
+            declarations.next_if(|declaration| get_key(declaration.location.position()) < start)
+        {
+            if unresolved.is_empty() {
                 sections.push(Vec::new());
             }
-            unresolved += 1;
+            unresolved.push(declaration.name.clone());
         }
-        if unresolved == 0 {
+        if unresolved.is_empty() {
             continue;
         }
         if let Some(section) = sections.last_mut() {
-            section.push(definition.clone());
+            section.push(definition);
         }
         if definition.is_recursive {
-            unresolved -= 1;
+            unresolved.retain(|name| *name != definition.name);
         }
     }
+    sections.retain(|section| section.iter().any(|definition| definition.is_recursive));
     sections
 }
 

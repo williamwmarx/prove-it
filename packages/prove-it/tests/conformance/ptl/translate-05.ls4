@@ -1,0 +1,1 @@
+p & always (q -> next r) & sometime (s & t)

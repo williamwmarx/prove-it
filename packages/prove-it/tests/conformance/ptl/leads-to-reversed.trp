@@ -1,0 +1,13 @@
+and([
+or([NVV1]), 
+or([NVV4]),
+always(or([not NVV1, not p, NVV2])), 
+always(or([not NVV3, q])), 
+always(or([not NVV5, q])), 
+always(or([not NVV5, NVV6])), 
+always(or([not NVV6, not p])),
+always(or([not NVV1, next(NVV1)])), 
+always(or([not NVV6, next(NVV6)])),
+always(or([not NVV2, sometime(NVV3)])), 
+always(or([not NVV4, sometime(NVV5)]))]).
+

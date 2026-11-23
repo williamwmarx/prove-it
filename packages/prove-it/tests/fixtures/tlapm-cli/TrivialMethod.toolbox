@@ -1,0 +1,153 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:11:4:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:11:6:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:13
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:8:15:8:18
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:7
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:11:4:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:11:6:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:6:8:13
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:8:15:8:18
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:8:3:8:5
+@!!status:failed
+@!!prover:fail
+@!!meth:time-limit: inf
+@!!reason:unexpected error
+@!!already:false
+@!!obl:ASSUME Trivial ,
+       SMT 
+PROVE  1 + 1 = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:failed
+@!!prover:fail
+@!!meth:time-limit: inf
+@!!reason:unexpected error
+@!!already:false
+@!!obl:ASSUME Trivial 
+PROVE  TRUE
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:failed
+@!!prover:fail
+@!!meth:time-limit: inf
+@!!reason:unexpected error
+@!!already:false
+@!!obl:ASSUME NEW CONSTANT P,
+       NEW CONSTANT Q,
+       Trivial 
+PROVE  Q /\ P
+
+@!!END
+
+File "./TrivialMethod.tla", line 8, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME Trivial ,
+                  SMT 
+           PROVE  1 + 1 = 2
+File "./TrivialMethod.tla", line 6, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME Trivial 
+           PROVE  TRUE
+File "./TrivialMethod.tla", line 4, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT P,
+                  NEW CONSTANT Q,
+                  Trivial 
+           PROVE  Q /\ P
+File "./TrivialMethod.tla", line 1, character 1 to line 9, character 4:
+[ERROR]: 3/7 obligations failed.
+There were backend errors processing module `"TrivialMethod"`.

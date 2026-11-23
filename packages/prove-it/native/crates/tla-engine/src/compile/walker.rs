@@ -1562,6 +1562,8 @@ impl<'a> Compiler<'a> {
                                 is_applied_function: false,
                                 is_named_once: false,
                                 is_built_alike: false,
+                                is_read_again: false,
+                                is_bound: std::cell::Cell::new(false),
                             }))
                         }
                         None => {
@@ -3327,6 +3329,7 @@ impl<'a> Compiler<'a> {
                 vars: compiled.footprint.vars,
                 primes: Vec::new(),
                 slots: compiled.footprint.slots,
+                through: None,
             }),
             Err(CompileError::Bail(_)) => {
                 let mut slots = Vec::new();
@@ -3337,6 +3340,7 @@ impl<'a> Compiler<'a> {
                     vars: (0..self.ir.variables.len() as u32).collect(),
                     primes: Vec::new(),
                     slots,
+                    through: None,
                 })
             }
             Err(decline) => Err(decline),
@@ -3660,6 +3664,8 @@ impl<'a> Compiler<'a> {
                     is_applied_function: false,
                     is_named_once: false,
                     is_built_alike: false,
+                    is_read_again: false,
+                    is_bound: std::cell::Cell::new(false),
                 }))
             }
             ScopeBinding::Closure {

@@ -1,0 +1,130 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:6:3:6:10
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       NEW CONSTANT y \in T
+PROVE  P(y)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:1:4:17
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a5 ,
+       S \subseteq T 
+PROVE  \A x \in S : P(x)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:4:1:4:17
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a5 
+PROVE  <1>_a5
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:4:10:4:11
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a5 ,
+       <1>_a5 
+PROVE  S \subseteq T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:10:3:10:10
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       NEW CONSTANT a \in T,
+       NEW CONSTANT b \in S
+PROVE  P(a)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:8:1:8:26
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a10 ,
+       T \subseteq S ,
+       S \subseteq T 
+PROVE  \A x \in S, z \in T : P(x)
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:8:1:8:26
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a10 
+PROVE  <1>_a10
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:8:19:8:20
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a10 ,
+       <1>_a10 
+PROVE  T \subseteq S
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:8:10:8:11
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT P(_),
+       NEW CONSTANT S,
+       NEW CONSTANT T,
+       <1>_a10 ,
+       <1>_a10 ,
+       T \subseteq S 
+PROVE  S \subseteq T
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:9
+@!!END
+
