@@ -645,9 +645,34 @@ With N workers TLC writes the states in the order its workers happen to add them
 from run to run. The binary's shared levels find what one thread finds, so its dump on any number
 of workers is TLC's dump on one worker.
 
+`-dump dot[,options] <file>` writes the state graph to `<file>.dot`, as TLC's `DotStateWriter`
+does, with the options TLC finds anywhere in the word it lowercases (`colorize`, `actionlabels`,
+`snapshot`, `constrained`, `stuttering`, `strict`), so `dotty` is a graph without options. The
+search records what TLC's model checker hands the writer, in its order (`DotLog`): each new
+initial state in the model (`DoInitFunctor.addElement`), and each step to a successor in the
+model as TLC puts its fingerprint in its set, before it checks the invariants
+(`Worker.isSeenState`), with the successor's node where it is new. The binary words the graph
+(`dot.rs`): the edges' labels and colors, where the search takes its steps through TLC's actions
+as TLC's `getNextStates` does; a step dropped under `strict` where the xor of its fingerprints
+repeats; and the ranks and the legend TLC closes the graph with, in the order of the Java
+`HashMap` and `HashSet` it keeps them in (`maintainRanks` adds the state expanded, by
+`computeIfAbsent`, which prepends to a bucket; `HashSet.add` and the colors' `put` append), whose
+resizes the binary follows. `snapshot` copies the graph closed after each state TLC writes, so
+the last copy, under the path with every ".dot" replaced by "_snapshot.dot", is the graph. Each
+was compared with TLC's graph at d8fb231 (`tests/dump-dot`).
+
 Not native, where TLC writes what the binary doesn't model:
 
-- `-dump dot ...` (`DotStateWriter`), `-dump class,...` and a file under `${metadir}`;
+- `-dump dot` with temporal properties, whose behavior graphs TLC writes beside
+  (`DotLivenessStateWriter`); with several workers, `-dfid` or `-simulate`, which write in orders
+  of their own; with an ALIAS; `constrained` where a state or action constraint, or a conjunct of
+  the next-state relation TLC finds false once every variable is assigned, has TLC write a step to
+  a state it leaves out (`Tool.processUnsatisfied`): the binary takes only a relation of
+  disjunctions and conjunctions of `v' = e` that assign distinct variables; `actionlabels` of an
+  action with parameters, whose values TLC writes (`Action.getInvocationSignature`); `snapshot`
+  into a path with ".dot" before its suffix; and a rank whose bucket TLC's `HashMap` turns into a
+  tree;
+- `-dump class,...` and a file under `${metadir}`;
 - temporal properties: TLC writes each state again as it adds its stuttering step to the behavior
   graph (`Worker.doNextCheckLiveness`);
 - SYMMETRY or a VIEW;

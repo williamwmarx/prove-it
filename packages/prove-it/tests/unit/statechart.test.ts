@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  getDumpPath,
   getStatechartSpecs,
   prepareStatechart,
   readExpected,
@@ -15,16 +16,29 @@ const CLI = join(import.meta.dirname, "../../dist/cli.js");
 const runCli = (args: string[], cwd: string) =>
   new Promise<{ output: string; status: number }>((resolve) => {
     execFile("node", [CLI, ...args], { cwd, maxBuffer: 1 << 30 }, (error, stdout, stderr) =>
-      resolve({ output: stdout + stderr, status: error ? Number(error.code) : 0 }),
+      resolve({
+        output: stdout + stderr,
+        status: error ? Number(error.code) : 0,
+      }),
     );
   });
 
 const TRACE_DECLINED = "rebuilding a trace: TLCGet";
+const REPLAY_DECLINED = "-dump of states TLC finds as it replays a step";
+const PARAMETERS_DECLINED = "-dump dot,actionlabels of an action with parameters";
+const VIEW_DECLINED = "-dump under SYMMETRY or a VIEW";
 
-// The calls other than those with -dump dot that the native check declines, by spec and index.
+// The calls that the native check declines, by spec and index.
 const DECLINED: Record<string, string> = {
   "CounterAction 2": TRACE_DECLINED,
   "CounterDeadlock 2": TRACE_DECLINED,
+  "CounterGuard 3": REPLAY_DECLINED,
+  "CounterRules 5": PARAMETERS_DECLINED,
+  "HiddenClock 2": VIEW_DECLINED,
+  "Login 2": VIEW_DECLINED,
+  "TwoPhase 3": PARAMETERS_DECLINED,
+  "TwoPhaseFixed 2": PARAMETERS_DECLINED,
+  "TypeGuard 3": REPLAY_DECLINED,
   "CounterGuard 2":
     "the engine stopped: applied a function outside its domain: rebuilding a trace: applied a function outside its domain",
   "CounterOrder 2": TRACE_DECLINED,
@@ -48,7 +62,7 @@ describe("the CLI answers pstack's statechart skill like TLC", () => {
     it.each([...readStatechartCalls(spec).entries()])("call %i", async (index, call) => {
       const args = getArgs(call);
       const result = await runCli(args, work);
-      const declined = args.includes("-dump") ? "-dump dot" : DECLINED[`${spec} ${index}`];
+      const declined = DECLINED[`${spec} ${index}`];
       if (declined !== undefined) {
         expect(/^prove-it: not native yet: (.*)$/m.exec(result.output)?.[1]).toBe(declined);
         expect(result.status).toBe(1);
@@ -58,6 +72,12 @@ describe("the CLI answers pstack's statechart skill like TLC", () => {
         readExpected(spec, call, index, "out"),
       );
       expect(result.status).toBe(call.status);
+      const dump = getDumpPath(args);
+      if (dump !== undefined) {
+        expect(readFileSync(dump, "utf8")).toBe<string | undefined>(
+          readExpected(spec, call, index, "dot"),
+        );
+      }
     });
   });
 });

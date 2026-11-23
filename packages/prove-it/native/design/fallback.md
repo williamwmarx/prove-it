@@ -3100,6 +3100,23 @@ one takes each of those sites' capacities, matched to the engine's set builders;
 configurable bound would answer the upstream tests that set one (`filter_within_default_capacity`,
 `presized_function_set_ignores_bound`) otherwise than TLC.
 
+#### -dump dot
+
+`-dump dot` writes the state graph as TLC's `DotStateWriter` does ([cli.md](cli.md), "-dump"), with
+its options, on one worker without temporal properties. It declines with temporal properties ("-dump
+dot with temporal properties"), whose behavior graphs TLC writes beside it
+(`DotLivenessStateWriter`, the tableau nodes of each state and the bits of the action checks of each
+step, which the liveness checker doesn't keep in TLC's order); with several workers, `-dfid`,
+`-simulate` or an ALIAS; `constrained` where TLC writes steps to states it leaves out;
+`actionlabels` of an action with parameters; `snapshot` into a path with ".dot" before its suffix;
+and a rank that TLC's `HashMap` keeps in a tree. On the `tlc` suite of aidenybai/tla-ts at 0341dbe5
+(72,878 runs, with `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS` and `JDK_JAVA_OPTIONS` unset, adjudicated by
+the pinned jar) main answers 72,579 runs as the jar does, declines 299 and answers none otherwise;
+with the graph it answers 72,582 and declines 296: `cli/dump/dot_file`, `dot_options` and
+`dot_prefix_any_word`, whose graphs equal the jar's under `-fp 7` too. The four of
+`temporal/modes/dump_dot_*` decline for the reason above, and no other run changes. `tests/dump-dot`
+holds TLC's graph beside its specs (`writes_the_state_graph_as_tlc`).
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell

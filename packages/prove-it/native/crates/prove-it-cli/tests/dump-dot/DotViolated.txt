@@ -1,0 +1,17 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 2
+
+State 2: <Next line 5, col 9 to line 5, col 36 of module DotViolated>
+x = 6
+
+State 3: <Next line 5, col 9 to line 5, col 36 of module DotViolated>
+x = 18
+
+State 4: <Next line 5, col 9 to line 5, col 36 of module DotViolated>
+x = 54
+
+34 states generated, 23 distinct states found, 11 states left on queue.
+The depth of the complete state graph search is 4.

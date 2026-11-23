@@ -120,6 +120,9 @@ pub struct Settings {
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
+    /// Whether the search records what TLC's `DotStateWriter` writes, for `-dump dot`, and hands
+    /// it to [`Reporter::dotted`] as it ends.
+    pub is_dot_dumped: bool,
     /// `-continue`: the search reports each invariant violated to [`Reporter::continued`] and goes
     /// on, on one thread, in the order TLC's worker finds them.
     pub is_continued: bool,
@@ -250,6 +253,7 @@ impl Default for Settings {
             test_evaluations: None,
             test_progress_at: None,
             is_dumped: false,
+            is_dot_dumped: false,
             is_continued: false,
             large_region_advice: None,
             json_files: JsonFiles::System,
@@ -270,6 +274,32 @@ fn dump(machine: &Machine<'_>, reporter: &mut dyn Reporter, states: &[Id], width
     } else {
         reporter.dumped(&machine.store, states, width);
     }
+}
+
+/// What TLC's model checker hands its `DotStateWriter` as it searches, in that order: each new
+/// initial state in the model (`DoInitFunctor.addElement`), and each step to a successor in the
+/// model as TLC puts the successor's fingerprint in its set (`Worker.isSeenState`).
+#[derive(Default)]
+pub struct DotLog {
+    pub writes: Vec<DotWrite>,
+}
+
+pub enum DotWrite {
+    Initial {
+        fingerprint: u64,
+        state: Vec<Id>,
+    },
+    Step {
+        from: u64,
+        /// TLC's level of the state expanded (`TLCState.getLevel`).
+        level: u64,
+        to: u64,
+        /// The successor, where it is new: TLC writes its node then.
+        state: Option<Vec<Id>>,
+        /// The position of the action the step took among the model's actions, where the search
+        /// takes the steps through them.
+        action: Option<u32>,
+    },
 }
 
 pub trait Reporter {
@@ -408,6 +438,9 @@ pub trait Reporter {
     /// In place of `dumped`, where the store may hold a value of a state that it prints otherwise
     /// than TLC writes it: why.
     fn undumped(&mut self, _reason: &'static str) {}
+    /// What TLC's `DotStateWriter` wrote as the search went, for `-dump dot`: once, as the search
+    /// ends, where `Settings::is_dot_dumped`, with the states in ids of `store`.
+    fn dotted(&mut self, _store: &Store, _log: &DotLog) {}
     /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
     /// it.
     fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
@@ -1988,6 +2021,12 @@ struct Search<'r, T, E = Dense> {
     // Whether the search keeps the behavior up to the state it expands for TLCExt's Trace
     // (`Machine::trace`).
     is_trace_kept: bool,
+    // What `-dump dot` writes (`Settings::is_dot_dumped`), and the fingerprint of the state the
+    // search expands, which its steps start from.
+    dot: Option<DotLog>,
+    expanding_fingerprint: u64,
+    // Whether the steps carry the action they took (`ModelIr::is_labelled`).
+    is_dot_labelled: bool,
     // Where it keeps it, each expanded state's behavior, by the state's index (`keep_trace`).
     trace_lists: Vec<Id>,
     // `-continue`: report each invariant violated and go on.
@@ -2086,6 +2125,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             is_distinct_read,
             is_counted: false,
             is_trace_kept: false,
+            dot: None,
+            expanding_fingerprint: 0,
+            is_dot_labelled: false,
             trace_lists: Vec::new(),
             is_continued: false,
             is_dfid: false,
@@ -2331,6 +2373,12 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         } else {
             None
         };
+        if let (Some(dot), Some((fingerprint, Err(_)))) = (&mut self.dot, found) {
+            dot.writes.push(DotWrite::Initial {
+                fingerprint,
+                state: machine.current().to_vec(),
+            });
+        }
         if !matches!(found, Some((_, Ok(_)))) {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
@@ -2767,6 +2815,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             }
             _ => None,
         };
+        if let (Some(dot), Some(to), Some(found)) = (&mut self.dot, fingerprint, found) {
+            let is_new = found.is_err();
+            dot.writes.push(DotWrite::Step {
+                from: self.expanding_fingerprint,
+                level: self.level,
+                to,
+                state: is_new.then(|| self.successor.clone()),
+                action: self.is_dot_labelled.then_some(self.action),
+            });
+        }
         if let (Some(statuses), Some(fp)) =
             (&mut self.dfid_statuses, fingerprint.filter(|_| is_in_model))
         {
@@ -3042,6 +3100,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         self.dfid_all_done = true;
         self.dfid_all_nonleaf = true;
         self.expansion_epoch = machine.next_epoch();
+        self.expanding_fingerprint = fingerprint;
         if self.is_trace_kept {
             self.keep_trace(machine);
         }
@@ -6040,6 +6099,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !is_distinct_read
         && !settings.is_continued
         && !is_trace_read
+        && !settings.is_dot_dumped
         && !(model.is_recording_graph && settings.test_live_check_at.is_some())
         // The online checker adds each state as it is expanded, between the expansions: it may
         // not meet a level the threads share.
@@ -6111,6 +6171,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.is_dfid = settings.dfid.is_some();
     search.is_contest_tracked = settings.workers > 1;
     search.is_counted = is_count_read;
+    if settings.is_dot_dumped {
+        search.dot = Some(DotLog::default());
+        search.is_dot_labelled = model.is_labelled && context.actions.is_some();
+    }
     // TLC's trace of a state is the one its workers wrote (`TLCTrace`), found again from the
     // fingerprints of a VIEW or symmetry's representative, where the search keeps the states it
     // reached; the liveness checker evaluates its atoms off the search.
@@ -6173,11 +6237,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         search.held = None;
         online = checker.ok();
     }
-    // The actions take each state's steps when the search labels them for ENABLED.
+    // The actions take each state's steps when the search labels them for ENABLED, or for the
+    // edges of -dump dot.
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph && model.is_labelled);
+        .filter(|_| model.is_labelled && (model.is_recording_graph || settings.is_dot_dumped));
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
@@ -7381,6 +7446,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     width,
                 );
             }
+            if let Some(dot) = &search.dot {
+                search.reporter.dotted(&machine.store, dot);
+            }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
@@ -7776,6 +7844,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     states.extend_from_slice(last);
                 }
                 dump(&machine, search.reporter, &states, width);
+            }
+            if let Some(dot) = &search.dot {
+                search.reporter.dotted(&machine.store, dot);
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;

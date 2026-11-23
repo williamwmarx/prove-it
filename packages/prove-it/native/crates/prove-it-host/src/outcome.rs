@@ -85,6 +85,7 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         test_progress_at: None,
         // The interpreter writes -dump itself.
         is_dumped: false,
+        is_dot_dumped: false,
         // The interpreter goes on past violations itself.
         is_continued: false,
         // The addon's tables stay on the pages its host's allocator gives.
