@@ -18130,6 +18130,34 @@ fn get_substitution_places(ir: &Ir) -> HashMap<NodeId, Option<SourceRange>> {
     {
         *holders.entry(get_written(definition.body)).or_default() += 1;
     }
+    // The bodies the configuration reaches through a definition no INSTANCE substitutes in, and
+    // through a copy or a property's root. A body another definition holds too keeps where it is
+    // written where only the former reach it, as TLC reports that definition's body: the body
+    // alone can't tell a copy from the definition it was copied from, so it declines otherwise.
+    let model = &ir.model;
+    let mut named_originals: HashSet<NodeId> = HashSet::new();
+    let mut named_otherwise: HashSet<NodeId> = (model.property_invariants.iter())
+        .map(|printed| get_written(printed.root))
+        .collect();
+    let named = (model.invariants.iter().map(|printed| &printed.root))
+        .chain(&model.constraints)
+        .chain(&model.action_constraints)
+        .chain(&model.postconditions);
+    for config_name in named {
+        let Some(definition) = config_name
+            .definition
+            .and_then(|index| ir.definitions.get(index as usize))
+            .and_then(|&node| get_definition(node))
+        else {
+            continue;
+        };
+        let written = get_written(definition.body);
+        if definition.flags & Definition::SUBSTITUTED == 0 {
+            named_originals.insert(written);
+        } else {
+            named_otherwise.insert(written);
+        }
+    }
     let mut places = HashMap::new();
     for (index, &node) in ir.definitions.iter().enumerate() {
         let Some(definition) = get_definition(node) else {
@@ -18139,6 +18167,12 @@ fn get_substitution_places(ir: &Ir) -> HashMap<NodeId, Option<SourceRange>> {
             continue;
         }
         let written = get_written(definition.body);
+        if holders[&written] > 1
+            && named_originals.contains(&written)
+            && !named_otherwise.contains(&written)
+        {
+            continue;
+        }
         let place = (holders[&written] == 1)
             .then(|| {
                 (ir.model.instance_actions.iter())

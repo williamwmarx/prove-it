@@ -1,0 +1,13 @@
+exit 10
+Semantic processing of module I
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module I
+Linting of module M
+Warning: The invariant Inv is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
+(Use the -nowarning option to disable this warning.)
+Computing initial states...
+Error: Evaluating postcondition Post at 007 failed.
+TLC expected a boolean value, but did not find one. 007
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

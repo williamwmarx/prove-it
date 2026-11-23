@@ -4885,7 +4885,11 @@ matches TLC or declines exactly.
   Seq({})` as a copy's body, at its place in I). Where the IR doesn't place the INSTANCE or
   another definition holds the body, it declines ("a postcondition through an INSTANCE's copy
   whose INSTANCE the IR doesn't place", "a constraint of an INSTANCE's copy the IR doesn't
-  place"). Fixtures `instance-copy-place-*`.
+  place"), unless the configuration reaches that body only through definitions no INSTANCE
+  substitutes in, whose body TLC reports where it is written (`EXTENDS I` with I's `Post == 007`,
+  `J == INSTANCE I WITH K <- 1`, `POSTCONDITION Post`: "Evaluating postcondition Post at 007
+  failed.", fixture `instance-copy-shared-original-postcondition`). Fixtures
+  `instance-copy-place-*`.
 - A temporal property through a recursive operator nested 100 calls deep or more. TLC's
   translation of the formula (`Liveness.astToLive`) expands such a call level by level, and
   completes `F(n) == IF n = 0 THEN <>(x = 1) ELSE F(n - 1)` with `Prop == F(n)` up to n = 1,000 at
