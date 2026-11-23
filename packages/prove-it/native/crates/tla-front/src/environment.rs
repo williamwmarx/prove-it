@@ -291,6 +291,7 @@ impl Environment {
     pub fn create_unsubstituted_level_analyzer(&self) -> LevelAnalyzer<'_> {
         LevelAnalyzer::new(
             LevelContext {
+                section_lets: FastSet::default(),
                 constants: self.constants.keys().cloned().collect(),
                 variables: self.variables.iter().cloned().collect(),
                 get_definition: Box::new(|name| {
@@ -313,6 +314,7 @@ impl Environment {
     pub fn create_level_analyzer(&self, state_builtins: &[&str]) -> LevelAnalyzer<'_> {
         LevelAnalyzer::new(
             LevelContext {
+                section_lets: FastSet::default(),
                 constants: self.constants.keys().cloned().collect(),
                 variables: self
                     .variables
@@ -1226,6 +1228,7 @@ impl Linker<'_> {
         };
         let definition_key = get_key.clone();
         LevelContext {
+            section_lets: crate::levels::get_section_lets(&linked.module),
             constants: linked
                 .constants
                 .iter()

@@ -32,6 +32,7 @@ fn checks_with_the_tla2tools_jar_on_the_class_path() {
             "tla2tools.jar",
             include_bytes!("../../prove-it-check/fixtures/tla2tools.jar"),
         ),
+        // A master build's manifest with TLC 1.7.4's tag, the one entry the binary reads.
         (
             "tla2tools-1.7.4.jar",
             include_bytes!("../../prove-it-check/fixtures/tla2tools-1.7.4.jar"),

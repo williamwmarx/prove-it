@@ -1,0 +1,5 @@
+{
+  "root": "Uboxxnxaprimexsqxrfirst",
+  "version": "1.7.4",
+  "test": "reports a LET with a recursive section used as an action outside it"
+}

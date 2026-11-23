@@ -1,0 +1,6 @@
+{
+  "root": "Uboxxnxaprimexsqxrlast",
+  "version": "1.7.4",
+  "test": "declines, as TLC 1.7.4's semantic errors, a LET whose level SANY raises to its recursive operator's, used as an action outside it",
+  "declines": "TLC 1.7.4's semantic errors"
+}

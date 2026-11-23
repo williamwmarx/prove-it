@@ -1,0 +1,6 @@
+{
+  "root": "Lrnotxboxxaxrlast",
+  "version": "1.7.4",
+  "test": "declines a LET whose recursive section SANY's first pass rejects through a definition the recursive operator's body names",
+  "declines": "a LET's recursive section, which SANY level-checks with its recursive operators' levels preset"
+}

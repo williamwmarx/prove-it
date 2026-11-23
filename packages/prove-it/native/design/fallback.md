@@ -209,6 +209,33 @@ reports 24 (tests/report-cases/38), which the generator now writes. Where the ge
 such a spec, linking declines too ("SANY's messages of the standard modules with one of them
 replaced").
 
+Linking's level check analyzes a recursive operator where a definition names it, where SANY checks
+a recursive section first, in order, with each recursive operator's levels preset: a constant
+level, each argument read and allowed up to an action's (`ModuleNode.levelCheck`, which a LET's
+sections join). In `Spec == LET RECURSIVE R(_)  A(n) == R(n) /\ n  Bad == [](A(x' = x))  R(n) ==
+[](A(n)) IN Bad`, SANY reads `R(n)` in A at n's level, so `A(x' = x)` is an action and Bad fails
+("[] followed by action not of form [A]_v."), where linking took R's own, temporal, level and
+printed no errors. Linking now checks a LET's recursive section as SANY does: the recursive
+operators first, in the order a RECURSIVE statement declares them, whatever the order of their
+definitions (`checks_a_sections_recursive_operators_in_their_declared_order`), then the section's other definitions, with
+the recursive operators' levels preset; then again with each at least the level of the
+section's recursive operators, which the LET's later definitions and body read, and which the
+LET's level takes. It declines where that check fails and its own analysis doesn't ("a LET's
+recursive section, which SANY level-checks with its recursive operators' levels preset"). SANY
+at TLC 1.7.4 (5a47802) checks sections as at d8fb231. TLC 1.7.4's report, which links, now
+declines it (tests/report-cases/41); TLC's, which the generator writes, reports it (case 40); and
+a section SANY accepts, applied before its definition, keeps its report (case 42). Of 552
+generated specs with a LET's recursive section run through TLC 1.7.4's jar, 22 that linking
+reported clean, which SANY rejects, now decline, 4 that it rejected, which SANY accepts, now
+match, and none that matched declines; cases 43 to 47 are five of them. A section is what SANY's
+`Generator` makes it (`processRecursive`, `setRecursionFields`): from a RECURSIVE statement to the
+definition of the last operator it declares, each its own, so a constant definition before or
+after one keeps its level, as SANY at 1.7.4 and d8fb231 accepts, and one inside takes the
+section's (`levels_only_the_definitions_of_a_lets_recursive_section`; cases 48 and 49, a definition
+before the statement and a LET of two sections). A LET with a RECURSIVE statement within a
+definition of another section, as in a module's recursive operator, joins that section in SANY,
+which the analysis here doesn't follow, and declines (case 50).
+
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
 spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) and review found the
