@@ -5714,6 +5714,15 @@ declined, "a postcondition: TLCGet", until the postcondition evaluator read that
 
 #### Known wrong outputs
 
+- TLC reports a POSTCONDITION, an INVARIANT, a CONSTRAINT, an ACTION_CONSTRAINT or a PROPERTY that
+  names an INSTANCE's copy with substitutions, and fails at the copy's body, at the INSTANCE: the
+  copy's body is a `SubstInNode` written there ("Evaluating postcondition Post at line 5, col 1 to
+  line 5, col 22 of module M failed.", "TLC expected a boolean value, but did not find one." with
+  the same place). The binary places it at the body in the instancee. The branch
+  `postcondition-copy-location` (williamwmarx/prove-it#450, closed) places it as TLC does for
+  configured names, but its evaluator can't tell a PROPERTY's root that names the original, where a
+  module both extends I and instantiates it, from the copy's, which needs the lowering to record
+  what each property root names.
 A constant-level definition through TLCDefer that the configuration names (`Inv == TLCDefer(FALSE)`
 as the invariant): TLCDefer's Java method sets no `minLevel` either, so TLC computes the
 definition as it starts, to TRUE, and warns of a constant invariant, where the binary checks it in
