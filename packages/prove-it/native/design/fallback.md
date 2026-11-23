@@ -209,6 +209,33 @@ reports 24 (tests/report-cases/38), which the generator now writes. Where the ge
 such a spec, linking declines too ("SANY's messages of the standard modules with one of them
 replaced").
 
+Linking's level check analyzes a recursive operator where a definition names it, where SANY checks
+a recursive section first, in order, with each recursive operator's levels preset: a constant
+level, each argument read and allowed up to an action's (`ModuleNode.levelCheck`, which a LET's
+sections join). In `Spec == LET RECURSIVE R(_)  A(n) == R(n) /\ n  Bad == [](A(x' = x))  R(n) ==
+[](A(n)) IN Bad`, SANY reads `R(n)` in A at n's level, so `A(x' = x)` is an action and Bad fails
+("[] followed by action not of form [A]_v."), where linking took R's own, temporal, level and
+printed no errors. Linking now checks a LET's recursive section as SANY does: the recursive
+operators first, in the order a RECURSIVE statement declares them, whatever the order of their
+definitions (`checks_a_sections_recursive_operators_in_their_declared_order`), then the section's other definitions, with
+the recursive operators' levels preset; then again with each at least the level of the
+section's recursive operators, which the LET's later definitions and body read, and which the
+LET's level takes. It declines where that check fails and its own analysis doesn't ("a LET's
+recursive section, which SANY level-checks with its recursive operators' levels preset"). SANY
+at TLC 1.7.4 (5a47802) checks sections as at d8fb231. TLC 1.7.4's report, which links, now
+declines it (tests/report-cases/41); TLC's, which the generator writes, reports it (case 40); and
+a section SANY accepts, applied before its definition, keeps its report (case 42). Of 552
+generated specs with a LET's recursive section run through TLC 1.7.4's jar, 22 that linking
+reported clean, which SANY rejects, now decline, 4 that it rejected, which SANY accepts, now
+match, and none that matched declines; cases 43 to 47 are five of them. A section is what SANY's
+`Generator` makes it (`processRecursive`, `setRecursionFields`): from a RECURSIVE statement to the
+definition of the last operator it declares, each its own, so a constant definition before or
+after one keeps its level, as SANY at 1.7.4 and d8fb231 accepts, and one inside takes the
+section's (`levels_only_the_definitions_of_a_lets_recursive_section`; cases 48 and 49, a definition
+before the statement and a LET of two sections). A LET with a RECURSIVE statement within a
+definition of another section, as in a module's recursive operator, joins that section in SANY,
+which the analysis here doesn't follow, and declines (case 50).
+
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
 spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) and review found the
@@ -3132,8 +3159,16 @@ it from one that printed something else. Each is outside the corpus:
   recursive properties run through the jar, 4 such runs that main matched decline; of 50 with 0
   to 100 `[]`s around the call, 15: 11 where TLC overflows past main's 100 calls and 4 where it
   completes with 50 or 100 `[]`s below them, within where TLC's own result varies from run to
-  run. Winning them back takes the stack each level of
-  TLC's translation takes. As WebAssembly, whose host's stack holds about 900 levels of the
+  run. The 4 are `F(n, m) == IF n = 0 THEN <>P ELSE ([](x # 5) /\ F(n - 1, m + 1))` with `Prop ==
+  F(1100, 0)` and `F(n) == TRUE /\ IF n = 0 THEN <>P ELSE (<>P /\ F(n - 1))` with `Prop ==
+  F(1100)`, each also with the guard `n \in {0, 1}`; the 15, as `wK-N` for `N` calls with `K` `[]`s
+  around the call, are w0-1100, w0-1200, w1-800, w1-900, w1-1200, w5-300, w5-400, w5-600, w5-900,
+  w20-180 and w20-200, where TLC overflowed, and w50-50, w50-60, w100-25 and w100-30, where it
+  completed. Winning them back takes more than the stack each level of TLC's translation takes:
+  TLC's own verdict there varies from run to run, as repeated runs of the jar on the same specs
+  show (see the table under "A recursive temporal formula nested more deeply than TLC's stack may
+  hold" in the declines below), so a rule would have to say which run TLC makes. As WebAssembly,
+  whose host's stack holds about 900 levels of the
   translation, one past that declines ("WebAssembly ran out of stack"), also where it never
   ends and TLC overflows, which main reported at 100 calls.
 - a constant definition with effects that converts a value with `ToJson`, `ToJsonArray` or
@@ -6838,6 +6873,25 @@ native yet:` and, where the engine or a replay meets it, after its prefix (`the 
   To fit them again, run the jar on these shapes at more k and N, read the walk's nesting where
   each completes and overflows (2 + k conversions a level), and keep the thresholds below the
   least overflow and twice above the most completion.
+
+  Within that band TLC's own result varies from run to run, so no threshold of a measure can
+  answer it as TLC does. Run 6 or 8
+  times each, one after another, the jar's runs of the same `wK-N` (`N` calls with `K` `[]`s
+  around the call) overflowed:
+
+  | spec    | measure | overflowed | spec     | measure | overflowed |
+  | ------- | ------- | ---------- | -------- | ------- | ---------- |
+  | w5-300  | 765     | 1 of 6     | w20-160  | 1,152   | 3 of 8     |
+  | w5-350  | 893     | 2 of 6     | w100-40  | 1,280   | 4 of 8     |
+  | w5-400  | 1,020   | 3 of 6     | w20-180  | 1,296   | 6 of 8     |
+  | w0-1000 | 1,000   | 2 of 6     | w20-200  | 1,440   | 6 of 8     |
+  | w50-60  | 990     | 4 of 6     | w100-50  | 1,600   | 7 of 8     |
+  | w100-35 | 1,120   | 5 of 14    |          |         |            |
+
+  and w0-1100, w0-1200, w1-900, w1-1200, w50-70, w50-80, w5-600 and w5-900 overflowed each time.
+  These ran beside a suite run, and load moves where the JIT's frames overflow; the recorded
+  table above, run alone, shows the same inversion (five `[]`s: overflow at 300, complete at 350).
+  The 19 generated runs main matched that this declines are listed under "Declines to win back".
 
   And a temporal formula nested more deeply than the translation follows ("a temporal formula
   nested more deeply than the translation follows"), past 2,000 nested expansions other than of

@@ -1,0 +1,5 @@
+{
+  "root": "LetTwoRecursiveSections",
+  "version": "1.7.4",
+  "test": "reports a LET of two recursive sections, each checked at its own operators' levels"
+}

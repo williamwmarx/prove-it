@@ -80,6 +80,7 @@ mod tests {
         let host = SystemHost::new(None);
         let fixture = |name: &str| format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         assert_eq!(is_174(&host, &fixture("tla2tools.jar")), Ok(false));
+        // The fixture's manifest is a master build's with TLC 1.7.4's tag, the one entry read.
         assert_eq!(is_174(&host, &fixture("tla2tools-1.7.4.jar")), Ok(true));
         // getTlcVersion takes a path without a jar for the master build.
         assert_eq!(is_174(&host, &fixture("missing.jar")), Ok(false));

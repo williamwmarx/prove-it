@@ -1,0 +1,6 @@
+{
+  "root": "LetRecursiveSection",
+  "version": "1.7.4",
+  "test": "declines a LET whose recursive section SANY checks with its operators' levels preset",
+  "declines": "a LET's recursive section, which SANY level-checks with its recursive operators' levels preset"
+}
