@@ -8757,6 +8757,16 @@ proof, and a theory of Isabelle/TLA+'s own sources (the suite's `backends/isabel
 `imported/isabelle/examples/Allocator.thy` and `imported/isabelle/tests/Tests.thy`), where the
 port answered `unknown` on its outer syntax error and Isabelle checks the proofs.
 
+The SMT port reads a script under the logic it sets as Z3 4.8.9 does (`check_logic.cpp`;
+`crates/prover/smt/src/core/script_subset.rs`, `design/smt-core.md`): under `--smt-logic QF_UF`
+Z3 refuses each quantified axiom and drops it, under `QF_LIA` each uninterpreted function and so
+each assertion that names one, and answers `sat` on what survives (the suite's
+`backends/z3/options/smt_logic_qf_uf_drops_quantified_axiom.smt` and
+`smt_logic_qf_lia_nonlinear.smt`; `tests/fixtures/smt/logics`, recorded with Z3 4.8.9), where
+the port declined every logic but UFNIA. It still declines, as listed above, the three `options`
+scripts whose survivors Z3 runs through its default tactic (`UF`, `UFLIA` and `BOGUS`),
+`fcn_two_args.smt` and `setof_two_bounds.smt`.
+
 | main | tlapm runs: match / decline / wrong | backend inputs: match / decline / wrong |
 |---|---|---|
 | b7f832b9 | 718 / 574 / 59 | 292 / 1,042 / 64 |
@@ -8778,6 +8788,7 @@ port answered `unknown` on its outer syntax error and Isabelle checks the proofs
 | with the scheduler's wait before a time limit holds | 770 / 577 / 2 | 321 / 1,042 / 35 |
 | with an instanced fairness expanded before lambdifying | 771 / 577 / 1 | 321 / 1,042 / 35 |
 | declining the theories the Isabelle port doesn't read | 771 / 577 / 1 | 320 / 1,053 / 25 |
+| reading a script under its logic as Z3 does | 771 / 577 / 1 | 321 / 1,059 / 17 |
 
 ### Declines
 
@@ -8884,6 +8895,11 @@ Runs the deleted TypeScript CLI printed as tlapm does only by chance:
   also failed and nothing printed it, as outside toolbox mode.
 - A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
   theorem of a module the module extends: read as U+FFFD, the theorem was never read.
+- A script under a logic Z3 decides with a tactic other than UFNIA's, whose surviving assertions
+  any tactic doesn't settle alike (a quantifier, or an integer term): the suite's
+  `backends/z3/options` scripts under `--smt-logic UF`, `UFLIA` and `BOGUS`, which Z3 4.8.9
+  proves through its default tactic (`mk_default_tactic`: the preamble's `solve_eqs`,
+  `elim_uncnstr` and ite hoisting, then the kernel). Winning them back takes that tactic.
 - A checking theory whose Zenon proof Isabelle rejects (the upstream suite's
   `backends/isabelle/zenon/in_cup_wrong_rule.thy`): the port answered `unknown` because it read
   no such theory, as Isabelle answers because the proof is wrong. Winning it back, and the nine
