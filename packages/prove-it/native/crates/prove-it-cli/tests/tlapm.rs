@@ -473,25 +473,33 @@ fn prints_each_provers_result_in_toolbox_mode() {
 }
 
 // Zenon turns two of ZenonUnsupported's obligations down before it launches, so one decision is
-// in flight at a time; tlapm's stream with one thread.
+// in flight at a time: tlapm's stream with one thread, and with four, where the trivial obligation
+// 6 settles while obligation 5's Zenon runs (Record tlapm on Depot, run nd24rrr936: six runs at four
+// threads, all alike).
 #[test]
 fn prints_a_declined_zenon_launch_in_toolbox_mode() {
-    let output = run(
-        "tlapm-cli",
-        &[
-            "--threads",
-            "1",
-            "--toolbox",
-            "0",
-            "0",
-            "ZenonUnsupported.tla",
-        ],
-    );
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(
-        without_time_used(&stderr(&output)),
-        without_time_used(&read_recording("tlapm-cli", "ZenonUnsupported.toolbox"))
-    );
+    for (threads, recording) in [
+        ("1", "ZenonUnsupported.toolbox"),
+        ("4", "ZenonUnsupported-4.toolbox"),
+    ] {
+        let output = run(
+            "tlapm-cli",
+            &[
+                "--threads",
+                threads,
+                "--toolbox",
+                "0",
+                "0",
+                "ZenonUnsupported.tla",
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0), "{threads}");
+        assert_eq!(
+            without_time_used(&stderr(&output)),
+            without_time_used(&read_recording("tlapm-cli", recording)),
+            "{threads}"
+        );
+    }
 }
 
 // tlapm evaluates an obligation's methods as its scheduler starts them (Prep.already_processed in
