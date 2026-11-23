@@ -725,3 +725,44 @@ fn levels_only_the_definitions_of_a_lets_recursive_section() {
         Err(FrontError::NotYet(_))
     ));
 }
+
+// SANY checks a section's recursive operators in the order its RECURSIVE statement declares them
+// (`Generator.processRecursive`), whatever the order of their definitions: declared `R(_), S(_)`,
+// R's check gives A its temporal level and `[](A(x' = x))` is a temporal formula, which SANY at
+// TLC 1.7.4 accepts; declared `S(_), R(_)`, S's check reads A at constant level first, and
+// SANY reports "[] followed by action not of form [A]_v.".
+#[test]
+fn checks_a_sections_recursive_operators_in_their_declared_order() {
+    let spec = |declared: &str| {
+        format!(
+            "---- MODULE Main ----\nVARIABLE x\nSpec == LET RECURSIVE {declared}\n            A(n) == R(n)\n            Bad == [](A(x' = x))\n            S(n) == A(n)\n            R(n) == []n\n        IN Bad\n====\n"
+        )
+    };
+    let accepted = "Parsing file Main File\nSemantic processing of module Main\n";
+    for version in [TlcVersion::Master, TlcVersion::V1_7_4] {
+        let text = get_report_in(
+            &format!("declared-{version:?}"),
+            &spec("R(_), S(_)"),
+            version,
+        )
+        .expect("a text")
+        .text;
+        let expected = match version {
+            TlcVersion::Master => format!("{accepted}Linting of module Main\n"),
+            TlcVersion::V1_7_4 => accepted.to_owned(),
+        };
+        assert_eq!(text, expected, "{version:?}");
+    }
+    let reversed = spec("S(_), R(_)");
+    let text = get_report_in("declared-reversed", &reversed, TlcVersion::Master)
+        .expect("a text")
+        .text;
+    assert!(
+        text.contains("[] followed by action not of form [A]_v."),
+        "{text}"
+    );
+    assert!(matches!(
+        get_report_in("declared-reversed-174", &reversed, TlcVersion::V1_7_4),
+        Err(FrontError::NotYet(_))
+    ));
+}

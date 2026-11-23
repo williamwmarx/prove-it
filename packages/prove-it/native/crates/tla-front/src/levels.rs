@@ -1117,13 +1117,23 @@ impl<'a> LevelAnalyzer<'a> {
             );
         }
         // A RECURSIVE statement adds its operators to the section as it declares them
-        // (`Generator`), so they are checked before the definitions after it. Each section is
-        // checked in turn, and the definitions outside every section as they are named.
+        // (`Generator.processRecursive`), so they are checked first, in the order they are
+        // declared, and then the definitions after them. Each section is checked in turn, and the
+        // definitions outside every section as they are named.
+        let get_declared_index = |definition: &Rc<Definition>| {
+            recursive
+                .iter()
+                .position(|declaration| declaration.name == definition.name)
+        };
         let fails_in_section = |section: &Vec<&Rc<Definition>>| {
-            let ordered: Vec<&Rc<Definition>> = section
+            let mut operators: Vec<&Rc<Definition>> = section
                 .iter()
                 .copied()
                 .filter(|definition| definition.is_recursive)
+                .collect();
+            operators.sort_by_key(|definition| get_declared_index(definition));
+            let ordered: Vec<&Rc<Definition>> = operators
+                .into_iter()
                 .chain(
                     section
                         .iter()

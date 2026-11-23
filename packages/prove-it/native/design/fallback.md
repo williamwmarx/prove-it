@@ -216,7 +216,8 @@ sections join). In `Spec == LET RECURSIVE R(_)  A(n) == R(n) /\ n  Bad == [](A(x
 [](A(n)) IN Bad`, SANY reads `R(n)` in A at n's level, so `A(x' = x)` is an action and Bad fails
 ("[] followed by action not of form [A]_v."), where linking took R's own, temporal, level and
 printed no errors. Linking now checks a LET's recursive section as SANY does: the recursive
-operators first, as a RECURSIVE statement adds them, then the section's other definitions, with
+operators first, in the order a RECURSIVE statement declares them, whatever the order of their
+definitions (`checks_a_sections_recursive_operators_in_their_declared_order`), then the section's other definitions, with
 the recursive operators' levels preset; then again with each at least the level of the
 section's recursive operators, which the LET's later definitions and body read, and which the
 LET's level takes. It declines where that check fails and its own analysis doesn't ("a LET's
